@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* Loota palette: dark game panels, gold for keys and main actions,
+   blue for you, red for rivals and danger. */
+@theme {
+  --color-ink: #0f1420;
+  --color-ink-2: #182033;
+  --color-line: #29324a;
+  --color-paper: #f4f1ea;
+  --color-muted: #a9b2c6;
+  --color-gold: #f4b41a;
+  --color-gold-hover: #ffd15c;
+  --color-you: #2f6feb;
+  --color-danger: #d93b3b;
+  --color-danger-text: #ff7a7a;
+  --color-ok: #3dd68c;
+  --color-map: #e9e2d3;
+}
+
+@theme inline {
+  --font-display: var(--font-bricolage);
+  --font-sans: var(--font-dm-sans);
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}

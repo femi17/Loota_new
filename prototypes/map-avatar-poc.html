@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Loota Map Test</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+:root{
+  --bg:#f4f1ea; --fg:#1a1a1a; --muted:#5c5c5c; --card:#ffffffee; --line:#0000001f;
+  --accent:#e8a200; --ok:#1f9d55; --warn:#e8a200; --bad:#d64545; --btn:#ffffff;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--bg:#14161a;--fg:#f2f2f2;--muted:#a8a8a8;--card:#1e2128ee;--line:#ffffff24;--btn:#2a2e36}
+}
+:root[data-theme="dark"]{--bg:#14161a;--fg:#f2f2f2;--muted:#a8a8a8;--card:#1e2128ee;--line:#ffffff24;--btn:#2a2e36}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+#map{position:fixed;inset:0}
+.card{background:var(--card);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:14px;box-shadow:0 6px 24px #0003}
+#top{position:fixed;left:12px;top:calc(12px + env(safe-area-inset-top,0px));width:min(320px,calc(100vw - 24px));padding:12px;font-size:13px}
+#top h1{margin:0 0 8px;font-size:15px}
+.seg{display:flex;gap:6px;margin-bottom:10px}
+.seg button{flex:1;font:inherit;font-weight:600;padding:8px;border-radius:10px;border:2px solid var(--accent);background:transparent;color:var(--fg);cursor:pointer}
+.seg button.on{background:var(--accent);color:#1a1a1a}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+.stats div{background:#8881;border-radius:8px;padding:6px}
+.stats b{display:block;font-size:15px}
+.stats span{color:var(--muted);font-size:11px}
+#ebar{height:10px;border-radius:6px;background:#8884;overflow:hidden}
+#efill{height:100%;width:100%;background:var(--ok);transition:background .2s}
+#elabel{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;margin-bottom:4px}
+#rivalRow{margin-top:8px;font-size:12px;color:var(--muted)}
+#rivalRow b{color:var(--bad)}
+#perf{position:fixed;right:12px;top:calc(12px + env(safe-area-inset-top,0px));padding:10px;font-size:12px;display:flex;flex-direction:column;gap:6px;align-items:stretch;min-width:132px}
+#perf b{font-size:18px}
+.small{font:inherit;font-weight:600;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--btn);color:var(--fg);cursor:pointer}
+#hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(120px + env(safe-area-inset-bottom,0px));padding:9px 14px;font-size:14px;text-align:center;max-width:min(520px,calc(100vw - 24px))}
+#hint.flash{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent)}
+.hold{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));width:88px;height:88px;border-radius:50%;font:inherit;font-weight:800;font-size:16px;border:3px solid var(--accent);background:var(--card);color:var(--fg);touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:pointer}
+.hold.down{background:var(--accent);color:#1a1a1a}
+#go{right:20px;width:104px;height:104px;font-size:20px}
+#sprint{right:36px;bottom:calc(136px + env(safe-area-inset-bottom,0px));width:72px;height:72px;font-size:13px}
+#steerL{left:20px;width:72px;height:72px;font-size:26px}
+#steerR{left:104px;width:72px;height:72px;font-size:26px}
+body:not(.free) .steer{display:none}
+#recenter{position:fixed;right:20px;bottom:calc(222px + env(safe-area-inset-bottom,0px));display:none}
+@media (max-width:520px){
+  #top{width:calc(100vw - 24px - 150px);padding:10px}
+  .stats{grid-template-columns:1fr 1fr}
+  .stats div:nth-child(3){display:none}
+  #hint{bottom:calc(132px + env(safe-area-inset-bottom,0px))}
+}
+.maplibregl-ctrl-bottom-left,.maplibregl-ctrl-bottom-right{bottom:calc(120px + env(safe-area-inset-bottom,0px))}
+</style>
+</head>
+<body class="free">
+<div id="map"></div>
+
+<div id="top" class="card">
+  <h1>Loota: map + 3D test</h1>
+  <div class="seg" id="travel">
+    <button data-travel="free" class="on">Free roam</button>
+    <button data-travel="route">Go to a place</button>
+  </div>
+  <div class="seg" id="modes">
+    <button data-mode="walk" class="on">Walk</button>
+    <button data-mode="bicycle">Bicycle</button>
+  </div>
+  <div class="stats">
+    <div><b id="spd">0</b><span>km/h (real)</span></div>
+    <div><b id="left">–</b><span>to go</span></div>
+    <div><b id="eta">–</b><span>at full pace</span></div>
+  </div>
+  <div id="elabel"><span>Energy</span><span id="eval">100</span></div>
+  <div id="ebar"><div id="efill"></div></div>
+  <div id="rivalRow" hidden><b>Rival</b>: <span id="rleft">–</span></div>
+  <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+    <button class="small" id="locate">Start from my location</button>
+  </div>
+</div>
+
+<div id="perf" class="card">
+  <div><b id="fps">–</b> fps</div>
+  <div><span id="pcount">1</span> players shown</div>
+  <button class="small" id="addGhosts">+25 players</button>
+  <button class="small" id="clearGhosts">Clear players</button>
+</div>
+
+<div id="hint" class="card">Free roam: hold GO to move. Tap the map to turn towards a spot, or use ◀ ▶ to steer.</div>
+<button id="steerL" class="hold steer" aria-label="Steer left">◀</button>
+<button id="steerR" class="hold steer" aria-label="Steer right">▶</button>
+<button id="sprint" class="hold">SPRINT</button>
+<button id="go" class="hold">HOLD<br>TO GO</button>
+<button id="recenter" class="small">Follow me</button>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+
+// ---------------------------------------------------------------------------
+// Settings (from docs/GAME_DESIGN.md, section 5)
+// ---------------------------------------------------------------------------
+const C = 12;                                   // time scale factor
+const MODES = {
+  walk:    { kmh: 5,  profile: 'foot', drain: 1.0 },
+  bicycle: { kmh: 16, profile: 'bike', drain: 1.4 },
+};
+const SPRINT_MULT = 1.6, SPRINT_DRAIN = 2.5;    // sprint: 60% faster, 2.5x energy use
+const REST_REGEN = 6;                           // energy per second while standing still
+const TIRED_AT = 20;                            // below this energy you slow down
+// Phones: start closer in, slightly less tilt (a tall screen otherwise shows a long
+// stretch towards the horizon and feels zoomed out), and a slightly bigger avatar.
+const SMALL_SCREEN = matchMedia('(max-width: 600px)').matches;
+const START_ZOOM = SMALL_SCREEN ? 20.5 : 19.5;
+const START_PITCH = SMALL_SCREEN ? 55 : 60;
+const AVATAR_PX = SMALL_SCREEN ? 40 : 32;       // target on-screen avatar height
+const START = { lng: 3.3958, lat: 6.4541 };     // Lagos Island
+
+const $ = id => document.getElementById(id);
+const TURN_RATE = 110 * Math.PI / 180;          // free roam steering, radians per second
+const state = {
+  travel: 'free',                               // free (roam anywhere) | route (go to a tapped place)
+  // Scene heading: compass bearing = 180° − heading. 200° faces the starting map bearing (−20°).
+  heading: 200 * Math.PI / 180, wantHeading: 200 * Math.PI / 180, steerL: false, steerR: false,
+  pos: { ...START }, mode: 'walk',
+  route: null, s: 0, v: 0, dist: 0, energy: 100,
+  holding: false, sprinting: false,
+  phase: 'idle', phaseUntil: 0,               // idle | fainted | celebrate
+  dest: null, follow: true, planId: 0,
+};
+
+// ---------------------------------------------------------------------------
+// Geometry helpers
+// ---------------------------------------------------------------------------
+function havM(a, b) {
+  const r = d => d * Math.PI / 180;
+  const dLat = r(b[1] - a[1]), dLng = r(b[0] - a[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a[1])) * Math.cos(r(b[1])) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+function buildRoute(coords) {
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) cum.push(cum[i - 1] + havM(coords[i - 1], coords[i]));
+  return { coords, cum, total: cum[cum.length - 1] };
+}
+function pointAt(r, s) {
+  let i = 1;
+  while (i < r.cum.length - 1 && r.cum[i] < s) i++;
+  const a = r.coords[i - 1], b = r.coords[i];
+  const t = Math.min(1, Math.max(0, (s - r.cum[i - 1]) / ((r.cum[i] - r.cum[i - 1]) || 1e-9)));
+  return { lng: a[0] + (b[0] - a[0]) * t, lat: a[1] + (b[1] - a[1]) * t, a, b };
+}
+// Heading in scene space: x = east, z = south. Avatars face +z by default.
+function headingOf(a, b) {
+  const dx = (b[0] - a[0]) * Math.cos(a[1] * Math.PI / 180);
+  const dz = -(b[1] - a[1]);
+  return Math.atan2(dx, dz);
+}
+function turnTowards(cur, target, k) {
+  const d = Math.atan2(Math.sin(target - cur), Math.cos(target - cur));
+  return cur + d * k;
+}
+// Compass bearing (degrees) from a to b, and a point m metres from p along a bearing.
+function bearingDeg(a, b) {
+  const dE = (b.lng - a.lng) * Math.cos(a.lat * Math.PI / 180);
+  return Math.atan2(dE, b.lat - a.lat) * 180 / Math.PI;
+}
+function offsetLngLat(p, deg, m) {
+  const b = deg * Math.PI / 180;
+  return {
+    lng: p.lng + m * Math.sin(b) / (111320 * Math.cos(p.lat * Math.PI / 180)),
+    lat: p.lat + m * Math.cos(b) / 110574,
+  };
+}
+const lerp = (a, b, k) => a + (b - a) * k;
+const fmtDist = m => m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.round(m) + ' m';
+const fmtTime = s => s >= 60 ? Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's' : Math.round(s) + 's';
+
+// ---------------------------------------------------------------------------
+// 3D models built in code (ported from mini-loota.html, shared materials)
+// ---------------------------------------------------------------------------
+const matCache = new Map();
+function mat(c) {
+  if (!matCache.has(c)) matCache.set(c, new THREE.MeshLambertMaterial({ color: c }));
+  return matCache.get(c);
+}
+const G = {
+  torso: new THREE.BoxGeometry(.5, .95, .28),
+  head: new THREE.SphereGeometry(.34, 14, 12),
+  hair: new THREE.SphereGeometry(.35, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+  eye: new THREE.SphereGeometry(.045, 6, 6),
+  leg: new THREE.BoxGeometry(.19, .85, .19),
+  shoe: new THREE.BoxGeometry(.22, .12, .38),
+  arm: new THREE.BoxGeometry(.14, .75, .14),
+  hand: new THREE.SphereGeometry(.09, 8, 8),
+  tyre: new THREE.CylinderGeometry(.5, .5, .22, 16),
+  spoke: new THREE.BoxGeometry(.24, .86, .08),
+  tube: new THREE.BoxGeometry(.16, .16, 1.45),
+  post: new THREE.BoxGeometry(.14, .6, .14),
+  fork: new THREE.BoxGeometry(.14, .7, .14),
+  bar: new THREE.BoxGeometry(.8, .1, .1),
+  seat: new THREE.BoxGeometry(.36, .1, .55),
+  guard: new THREE.BoxGeometry(.3, .08, .9),
+};
+function mesh(geo, color, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(geo, mat(color));
+  m.position.set(x, y, z);
+  return m;
+}
+function limb(rig, x, y, geo, len, color, end) {
+  const g = new THREE.Group();
+  g.position.set(x, y, 0);
+  g.add(mesh(geo, color, 0, -len / 2, 0));
+  g.add(end);
+  rig.add(g);
+  return g;
+}
+function makeAvatar(o) {
+  const root = new THREE.Group(), rig = new THREE.Group();
+  root.add(rig);
+  rig.add(mesh(G.torso, o.shirt, 0, 1.3, 0));
+  rig.add(mesh(G.head, o.skin, 0, 2.0, 0));
+  rig.add(mesh(G.hair, o.hair, 0, 2.03, -.02));
+  rig.add(mesh(G.eye, 0x111111, -.12, 2.03, .31));
+  rig.add(mesh(G.eye, 0x111111, .12, 2.03, .31));
+  const legL = limb(rig, -.13, .85, G.leg, .85, o.pants, mesh(G.shoe, 0x222222, 0, -.88, .06));
+  const legR = limb(rig, .13, .85, G.leg, .85, o.pants, mesh(G.shoe, 0x222222, 0, -.88, .06));
+  const armL = limb(rig, -.34, 1.72, G.arm, .75, o.skin, mesh(G.hand, o.skin, 0, -.77, 0));
+  const armR = limb(rig, .34, 1.72, G.arm, .75, o.skin, mesh(G.hand, o.skin, 0, -.77, 0));
+
+  const bike = new THREE.Group();
+  bike.visible = false;
+  root.add(bike);
+  const wheels = [];
+  for (const z of [-.95, .95]) {
+    const w = new THREE.Group();
+    w.position.set(0, .5, z);
+    const tyre = mesh(G.tyre, 0x1d1d1d);
+    tyre.rotation.z = Math.PI / 2;
+    w.add(tyre, mesh(G.spoke, 0xbbbbbb));
+    bike.add(w);
+    wheels.push(w);
+  }
+  bike.add(mesh(G.tube, o.bike, 0, .85, 0), mesh(G.post, o.bike, 0, .75, -.55), mesh(G.fork, o.bike, 0, .75, .8),
+           mesh(G.bar, 0x222222, 0, 1.1, .78), mesh(G.seat, 0x222222, 0, 1.05, -.55),
+           mesh(G.guard, o.bike, 0, 1.08, -1.0));   // rear mudguard: makes the bike readable from behind
+  return { root, rig, legL, legR, armL, armR, bike, wheels, wt: Math.random() * 6, amp: 0 };
+}
+
+// Animation in code: limbs swing with sine waves; no animation files needed.
+function animate(av, o, dt, t) {
+  const k = Math.min(1, 10 * dt);
+  av.bike.visible = o.mode === 'bicycle' && o.phase !== 'fainted';
+  const limbs = [av.legL, av.legR, av.armL, av.armR];
+
+  if (o.phase === 'fainted') {
+    av.rig.rotation.x = lerp(av.rig.rotation.x, -Math.PI / 2, k * .5);
+    av.rig.position.y = lerp(av.rig.position.y, .22, k);
+    limbs.forEach(l => { l.rotation.x = lerp(l.rotation.x, 0, k); });
+    av.armL.rotation.z = lerp(av.armL.rotation.z, -1.2, k);
+    av.armR.rotation.z = lerp(av.armR.rotation.z, 1.2, k);
+    return;
+  }
+  av.rig.rotation.x = lerp(av.rig.rotation.x, 0, k);
+  av.armL.rotation.z = lerp(av.armL.rotation.z, 0, k);
+  av.armR.rotation.z = lerp(av.armR.rotation.z, 0, k);
+
+  if (o.phase === 'celebrate') {
+    av.armL.rotation.x = lerp(av.armL.rotation.x, Math.PI, k);
+    av.armR.rotation.x = lerp(av.armR.rotation.x, Math.PI, k);
+    av.legL.rotation.x = av.legR.rotation.x = 0;
+    av.rig.position.y = Math.abs(Math.sin(t * 8)) * .35 + (o.mode === 'bicycle' ? .25 : 0);
+    return;
+  }
+  if (o.mode === 'bicycle') {
+    av.wt += dt * 9 * Math.min(1.6, o.moving);
+    const pd = Math.sin(av.wt) * .45;
+    av.legL.rotation.x = -.8 + pd;
+    av.legR.rotation.x = -.8 - pd;
+    av.armL.rotation.x = av.armR.rotation.x = -1;
+    av.rig.position.y = .25;
+    av.rig.rotation.x = lerp(av.rig.rotation.x, .35, k);       // lean forward over the handlebars
+    av.wheels.forEach(w => { w.rotation.x += o.dist / .5; });
+    return;
+  }
+  av.wt += dt * 11 * (o.moving > 0.05 ? Math.max(.6, o.moving) : 0);
+  av.amp = lerp(av.amp, o.moving > 0.05 ? Math.min(1.1, .85 * Math.max(1, o.moving)) : 0, k);
+  const sw = Math.sin(av.wt) * av.amp;
+  av.legL.rotation.x = sw;
+  av.legR.rotation.x = -sw;
+  av.armL.rotation.x = -sw;
+  av.armR.rotation.x = sw;
+  av.rig.position.y = Math.abs(Math.sin(av.wt)) * .07 * (av.amp / .85);
+}
+
+function makeKey() {
+  const gold = new THREE.MeshLambertMaterial({ color: 0xffc83d, emissive: 0x6a4500 });
+  const glow = new THREE.MeshBasicMaterial({ color: 0xffd34d, transparent: true, opacity: .45 });
+  const g = new THREE.Group(), spin = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(.5, .14, 10, 24), gold);
+  ring.position.y = 2.9;
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(.16, 1.6, .16), gold);
+  shaft.position.y = 1.65;
+  const t1 = new THREE.Mesh(new THREE.BoxGeometry(.42, .14, .14), gold);
+  t1.position.set(.2, 1.0, 0);
+  const t2 = new THREE.Mesh(new THREE.BoxGeometry(.3, .14, .14), gold);
+  t2.position.set(.15, 1.3, 0);
+  spin.add(ring, shaft, t1, t2);
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(.08, .08, 30, 8), glow);
+  beam.position.y = 15;
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(1.4, .08, 8, 32), glow);
+  halo.rotation.x = Math.PI / 2;
+  halo.position.y = .1;
+  g.add(spin, beam, halo);
+  g.visible = false;
+  g.userData = { spin, halo };
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// Scene
+// ---------------------------------------------------------------------------
+const scene = new THREE.Scene();
+const camera = new THREE.Camera();
+scene.add(new THREE.HemisphereLight(0xffffff, 0x667755, 2.2));
+const sun = new THREE.DirectionalLight(0xfff2d0, 1.6);
+sun.position.set(30, 80, 20);
+scene.add(sun);
+
+// Name tag that floats above an avatar's head and always faces the camera.
+function makeNameplate(text, bg) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = bg;
+  g.beginPath(); g.roundRect(4, 4, 248, 56, 28); g.fill();
+  g.fillStyle = '#fff';
+  g.font = 'bold 36px system-ui, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, 128, 34);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+  s.scale.set(1.6, .4, 1);
+  s.position.y = 2.9;
+  s.renderOrder = 10;
+  return s;
+}
+
+const player = makeAvatar({ shirt: 0x2a6fdb, skin: 0x8d5524, hair: 0x1b120c, pants: 0x333a4a, bike: 0xd62828 });
+player.root.add(makeNameplate('YOU', '#2a6fdb'));
+scene.add(player.root);
+
+// A computer-controlled rival heading for the same key from another direction.
+const rival = {
+  av: makeAvatar({ shirt: 0xd64545, skin: 0x5c3a1e, hair: 0x111111, pants: 0x222831, bike: 0x222831 }),
+  route: null, s: 0, v: 0, heading: 0, pos: null, mode: 'walk',
+  speedMult: 1, pauseUntil: 0, nextPauseAt: 0, done: false, phase: 'idle', phaseUntil: 0,
+};
+rival.av.root.add(makeNameplate('RIVAL', '#d64545'));
+rival.av.root.visible = false;
+scene.add(rival.av.root);
+const key = makeKey();
+scene.add(key);
+
+const SHIRTS = [0xe63946, 0x2a9d8f, 0xf4a261, 0x6a4c93, 0x1982c4, 0x8ac926, 0xff595e, 0xffca3a];
+const SKINS = [0x8d5524, 0xc68642, 0xe0ac69, 0x5c3a1e, 0xf1c27d];
+const ghosts = [];
+
+// ---------------------------------------------------------------------------
+// Map + three.js custom layer
+// ---------------------------------------------------------------------------
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  center: [START.lng, START.lat], zoom: START_ZOOM, pitch: START_PITCH, bearing: -20, maxPitch: 70,
+  keyboard: false,                              // arrow keys steer the avatar instead of panning the map
+  antialias: true,
+});
+
+let renderer;
+const layer3d = {
+  id: 'loota-3d', type: 'custom', renderingMode: '3d',
+  onAdd(m, gl) {
+    renderer = new THREE.WebGLRenderer({ canvas: m.getCanvas(), context: gl, antialias: true });
+    renderer.autoClear = false;
+  },
+  render(gl, matrix) {
+    // The scene is anchored on the player every frame, so 1 unit = 1 metre around them
+    // and positions stay precise anywhere in the world.
+    const a = maplibregl.MercatorCoordinate.fromLngLat([state.pos.lng, state.pos.lat], 0);
+    const s = a.meterInMercatorCoordinateUnits();
+    placeObjects(a, s);
+    const l = new THREE.Matrix4()
+      .makeTranslation(a.x, a.y, a.z)
+      .scale(new THREE.Vector3(s, -s, s))
+      .multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+    camera.projectionMatrix = new THREE.Matrix4().fromArray(matrix).multiply(l);
+    renderer.resetState();
+    renderer.render(scene, camera);
+  },
+};
+
+// Draw avatars larger than life so they stay the same size on screen at any zoom.
+// (Buildings are flat, so there is nothing for an enlarged avatar to look out of scale with.)
+function exaggeration() {
+  const mpp = 40075016.686 * Math.cos(state.pos.lat * Math.PI / 180) / (512 * 2 ** map.getZoom());
+  return Math.max(1, Math.min(400, AVATAR_PX * mpp / 2.4));
+}
+
+function placeObjects(a, s) {
+  const k = exaggeration();
+  player.root.position.set(0, 0, 0);
+  player.root.rotation.y = state.heading;
+  player.root.scale.setScalar(k);
+
+  if (state.dest) {
+    const d = maplibregl.MercatorCoordinate.fromLngLat([state.dest.lng, state.dest.lat], 0);
+    key.position.set((d.x - a.x) / s, 0, (d.y - a.y) / s);
+    key.scale.setScalar(k * 1.2);
+    key.visible = true;
+  } else {
+    key.visible = false;
+  }
+  if (rival.av.root.visible && rival.pos) {
+    const r = maplibregl.MercatorCoordinate.fromLngLat([rival.pos.lng, rival.pos.lat], 0);
+    rival.av.root.position.set((r.x - a.x) / s, 0, (r.y - a.y) / s);
+    rival.av.root.rotation.y = rival.heading;
+    rival.av.root.scale.setScalar(k);
+  }
+  for (const g of ghosts) {
+    g.av.root.position.set((g.mx - a.x) / s, 0, (g.my - a.y) / s);
+    g.av.root.rotation.y = g.heading;
+    g.av.root.scale.setScalar(k);
+  }
+}
+
+map.on('load', () => {
+  map.addSource('route', { type: 'geojson', data: emptyLine() });
+  map.addSource('rival-route', { type: 'geojson', data: emptyLine() });
+  const firstSymbol = map.getStyle().layers.find(l => l.type === 'symbol');
+  map.addLayer({
+    id: 'rival-line', type: 'line', source: 'rival-route',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#d64545', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 18, 6], 'line-opacity': .7, 'line-dasharray': [1.5, 1.5] },
+  }, firstSymbol && firstSymbol.id);
+  map.addLayer({
+    id: 'route-line', type: 'line', source: 'route',
+    layout: { 'line-cap': 'round', 'line-join': 'round' },
+    paint: { 'line-color': '#e8a200', 'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 18, 10], 'line-opacity': .9 },
+  }, firstSymbol && firstSymbol.id);
+  map.addLayer(layer3d);
+  // Flat buildings: hide the 3D extrusions and show the flat footprints at every zoom.
+  if (map.getLayer('building-3d')) map.setLayoutProperty('building-3d', 'visibility', 'none');
+  if (map.getLayer('building')) map.setLayerZoomRange('building', 13, 24);
+  requestAnimationFrame(loop);
+});
+map.on('error', e => {
+  if (e && e.error && /style|Failed to fetch/i.test(String(e.error.message))) hint('Could not load the map. Check your internet connection.', true);
+});
+// Only the user's own drag or rotate stops following (the chase camera's own moves have no originalEvent).
+function stopFollow(e) {
+  if (!e.originalEvent) return;
+  state.follow = false;
+  $('recenter').style.display = 'block';
+}
+map.on('dragstart', stopFollow);
+map.on('rotatestart', stopFollow);
+map.on('click', e => {
+  const p = { lng: e.lngLat.lng, lat: e.lngLat.lat };
+  if (state.travel === 'free') {
+    // Free roam: turn to face the tapped spot and keep going past it.
+    if (state.phase === 'idle') state.wantHeading = headingOf([state.pos.lng, state.pos.lat], [p.lng, p.lat]);
+  } else {
+    planRoute(p);
+  }
+});
+
+function emptyLine() { return { type: 'FeatureCollection', features: [] }; }
+function setRouteLine(coords, id = 'route') {
+  const src = map.getSource(id);
+  if (src) src.setData(coords ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } : emptyLine());
+}
+
+// ---------------------------------------------------------------------------
+// Routing (free OpenStreetMap routing service; straight line if unavailable)
+// ---------------------------------------------------------------------------
+// prepend: start the line exactly at `from` (the player's own position). The rival
+// skips this because its random start point may be off-road (e.g. in the lagoon).
+async function fetchRoute(from, to, mode, prepend = true) {
+  const p = MODES[mode].profile;
+  const url = `https://routing.openstreetmap.de/routed-${p}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const c = j.routes && j.routes[0] && j.routes[0].geometry.coordinates;
+    if (!c || c.length < 2) throw new Error('no route');
+    return { coords: prepend ? [[from.lng, from.lat], ...c] : c, fallback: false };
+  } catch {
+    return { coords: [[from.lng, from.lat], [to.lng, to.lat]], fallback: true };
+  }
+}
+
+async function planRoute(to) {
+  if (state.phase !== 'idle') return;
+  const id = ++state.planId;
+  hint('Finding a route…');
+  const r = await fetchRoute(state.pos, to, state.mode);
+  if (id !== state.planId) return;
+  state.route = buildRoute(r.coords);
+  state.s = 0;
+  const end = r.coords[r.coords.length - 1];
+  state.dest = { lng: end[0], lat: end[1] };
+  setRouteLine(r.coords);
+  state.raceOn = false;
+  state.arrived = false;
+  spawnRival(state.dest, state.mode, id);
+  hint(r.fallback
+    ? 'Routing service unavailable, so a straight line is shown. Hold GO to move.'
+    : `Route ready: ${fmtDist(state.route.total)} by ${state.mode === 'walk' ? 'foot' : 'bicycle'}. Hold GO to move, or SPRINT to go fast.`);
+}
+
+// ---------------------------------------------------------------------------
+// Rival: starts about as far from the key as you, mostly from the opposite side,
+// and sets off when you do.
+// ---------------------------------------------------------------------------
+async function spawnRival(dest, mode, id) {
+  const far = Math.max(300, havM([state.pos.lng, state.pos.lat], [dest.lng, dest.lat]));
+  const side = bearingDeg(dest, state.pos) + 180 + (Math.random() - .5) * 120;
+  const start = offsetLngLat(dest, side, far);
+  const r = await fetchRoute(start, dest, mode, false);
+  if (id !== state.planId) return;
+  const coords = [...r.coords, [dest.lng, dest.lat]];   // finish exactly at the key
+  Object.assign(rival, {
+    route: buildRoute(coords), s: 0, v: 0, mode, done: false, phase: 'idle',
+    pos: { lng: coords[0][0], lat: coords[0][1] },
+    heading: headingOf(coords[0], coords[1]),
+    speedMult: .88 + Math.random() * .15,
+    pauseUntil: 0, nextPauseAt: performance.now() / 1000 + 15 + Math.random() * 20,
+  });
+  rival.av.root.visible = true;
+  setRouteLine(coords, 'rival-route');
+  $('rivalRow').hidden = false;
+}
+
+function updateRival(dt, t) {
+  if (!rival.route) return;
+  const base = MODES[rival.mode].kmh / 3.6 * C;
+  if (!rival.done && state.raceOn && t > rival.nextPauseAt) {   // short stops, as if at traffic
+    rival.pauseUntil = t + 1.5 + Math.random() * 2.5;
+    rival.nextPauseAt = t + 15 + Math.random() * 25;
+  }
+  const target = !rival.done && state.raceOn && t >= rival.pauseUntil ? base * rival.speedMult : 0;
+  rival.v += (target - rival.v) * Math.min(1, (target > rival.v ? 2.5 : 4) * dt);
+  if (target === 0 && rival.v < .3) rival.v = 0;
+
+  let dist = 0;
+  if (rival.v > 0) {
+    const before = rival.s;
+    rival.s = Math.min(rival.route.total, rival.s + rival.v * dt);
+    dist = rival.s - before;
+    const p = pointAt(rival.route, rival.s);
+    rival.pos = { lng: p.lng, lat: p.lat };
+    rival.heading = turnTowards(rival.heading, headingOf(p.a, p.b), Math.min(1, 8 * dt));
+    if (rival.route.total - rival.s < 1.5) {
+      rival.done = true;
+      rival.v = 0;
+      rival.phase = 'celebrate';
+      rival.phaseUntil = t + 3.5;
+      setRouteLine(null, 'rival-route');
+      if (!state.arrived) hint('Your rival reached the key first! In a real hunt they would be starting their Key Trial now. Keep going.', true);
+    }
+  }
+  if (rival.phase === 'celebrate' && t > rival.phaseUntil) rival.phase = 'idle';
+  animate(rival.av, { mode: rival.mode, phase: rival.phase, moving: rival.v / base, dist: dist / exaggeration() }, dt, t);
+}
+
+// ---------------------------------------------------------------------------
+// Game loop
+// ---------------------------------------------------------------------------
+function faint(t) {
+  state.phase = 'fainted';
+  state.phaseUntil = t + 4;
+  state.v = 0;
+  hint('You fainted from exhaustion! In the full game: ambulance and hospital bill. Rest before your energy runs out.', true);
+}
+function arrive(t) {
+  state.phase = 'celebrate';
+  state.phaseUntil = t + 3.5;
+  state.v = 0;
+  state.route = null;
+  state.arrived = true;
+  setRouteLine(null);
+  hint(rival.done
+    ? 'You reached the key, but your rival got here first. In a real hunt, a fast Key Trial could still win it back.'
+    : 'You beat your rival to the key! In the full game, the Key Trial starts here.', true);
+}
+
+function update(dt, t) {
+  const m = MODES[state.mode];
+  const base = m.kmh / 3.6 * C;                 // metres per second on screen
+
+  if (state.phase !== 'idle' && t > state.phaseUntil) {
+    if (state.phase === 'fainted') { state.energy = 35; hint('Back on your feet. Hold GO to continue.'); }
+    if (state.phase === 'celebrate') { state.dest = null; hint('Tap the map to choose where to go next.'); }
+    state.phase = 'idle';
+  }
+
+  const free = state.travel === 'free';
+  let target = 0;
+  if (state.phase === 'idle' && (free || state.route) && (state.holding || state.sprinting)) {
+    target = base * (state.sprinting ? SPRINT_MULT : 1);
+    if (state.energy < TIRED_AT) target *= .6;
+  }
+  state.v += (target - state.v) * Math.min(1, (target > state.v ? 2.5 : 4) * dt);
+  if (target === 0 && state.v < .3) state.v = 0;
+
+  state.dist = 0;
+  if (free) {
+    // Free roam: steer with ◀ ▶ (turning right lowers the scene heading), then move
+    // straight ahead. No destination, no end.
+    const steer = (state.steerL ? 1 : 0) - (state.steerR ? 1 : 0);
+    if (state.phase === 'idle') state.wantHeading += steer * TURN_RATE * dt;
+    state.heading = turnTowards(state.heading, state.wantHeading, Math.min(1, 6 * dt));
+    if (state.v > 0) {
+      state.dist = state.v * dt;
+      const east = Math.sin(state.heading) * state.dist, south = Math.cos(state.heading) * state.dist;
+      state.pos = {
+        lng: state.pos.lng + east / (111320 * Math.cos(state.pos.lat * Math.PI / 180)),
+        lat: state.pos.lat - south / 110574,
+      };
+    }
+  } else if (state.route && state.v > 0) {
+    state.raceOn = true;                           // the rival sets off when you do
+    const before = state.s;
+    state.s = Math.min(state.route.total, state.s + state.v * dt);
+    state.dist = state.s - before;
+    const p = pointAt(state.route, state.s);
+    state.pos = { lng: p.lng, lat: p.lat };
+    state.heading = turnTowards(state.heading, headingOf(p.a, p.b), Math.min(1, 8 * dt));
+    if (state.route.total - state.s < 1.5) arrive(t);
+  }
+
+  if (state.v > .5) {
+    state.energy -= m.drain * (state.sprinting ? SPRINT_DRAIN : 1) * (state.v / base) * dt;
+    if (state.energy <= 0) { state.energy = 0; faint(t); }
+  } else if (state.phase === 'idle') {
+    state.energy = Math.min(100, state.energy + REST_REGEN * dt);
+  }
+
+  animate(player, { mode: state.mode, phase: state.phase, moving: state.v / base, dist: state.dist / exaggeration() }, dt, t);
+  updateRival(dt, t);
+
+  for (const g of ghosts) {
+    g.angle += g.w * dt;
+    g.mx = g.cx + g.r * Math.cos(g.angle);
+    g.my = g.cy + g.r * Math.sin(g.angle);
+    g.heading = Math.atan2(-Math.sin(g.angle) * Math.sign(g.w), Math.cos(g.angle) * Math.sign(g.w));
+    animate(g.av, { mode: g.mode, phase: 'idle', moving: 1, dist: g.speed * dt / exaggeration() }, dt, t);
+  }
+
+  if (key.visible) {
+    key.userData.spin.rotation.y = t * 2;
+    key.userData.spin.position.y = Math.sin(t * 2.5) * .2;
+    key.userData.halo.scale.setScalar(1 + Math.sin(t * 4) * .1);
+  }
+}
+
+function updateHud() {
+  const base = MODES[state.mode].kmh / 3.6 * C;
+  $('spd').textContent = Math.round(state.v / C * 3.6);
+  const left = state.route ? state.route.total - state.s : 0;
+  $('left').textContent = state.route ? fmtDist(left) : '–';
+  $('eta').textContent = state.route ? fmtTime(left / base) : '–';
+  const e = Math.round(state.energy);
+  $('eval').textContent = e;
+  $('efill').style.width = e + '%';
+  $('efill').style.background = e < TIRED_AT ? 'var(--bad)' : e < 50 ? 'var(--warn)' : 'var(--ok)';
+  if (rival.route) {
+    $('rleft').textContent = rival.done ? 'reached the key'
+      : !state.raceOn ? `${fmtDist(rival.route.total)} away, waiting for you to start`
+      : `${fmtDist(rival.route.total - rival.s)} to go`;
+  }
+}
+
+let last = performance.now(), frames = 0, fpsAt = last, camBearing = -20;
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(.05, (now - last) / 1000);
+  last = now;
+  update(dt, now / 1000);
+  updateHud();
+  if (state.follow) {
+    // Chase camera: turn the map so the camera sits behind the avatar.
+    // Compass bearing of travel = 180° − scene heading.
+    const want = 180 - state.heading * 180 / Math.PI;
+    const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
+    camBearing += diff * Math.min(1, 2.5 * dt);
+    map.jumpTo({ center: [state.pos.lng, state.pos.lat], bearing: camBearing });
+  } else {
+    map.triggerRepaint();
+  }
+  frames++;
+  if (now - fpsAt >= 1000) {
+    $('fps').textContent = Math.round(frames * 1000 / (now - fpsAt));
+    frames = 0;
+    fpsAt = now;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+let hintTimer;
+function hint(text, flash) {
+  const h = $('hint');
+  h.textContent = text;
+  h.classList.toggle('flash', !!flash);
+  clearTimeout(hintTimer);
+  if (flash) hintTimer = setTimeout(() => h.classList.remove('flash'), 2500);
+}
+
+function bindHold(el, onChange) {
+  const set = v => { onChange(v); el.classList.toggle('down', v); };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); el.setPointerCapture(e.pointerId); set(true); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => el.addEventListener(ev, () => set(false)));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+function needRoute(v) {
+  if (v && state.travel === 'route' && !state.route && state.phase === 'idle') hint('Tap the map to choose where to go first.', true);
+}
+bindHold($('go'), v => { state.holding = v; needRoute(v); });
+bindHold($('sprint'), v => { state.sprinting = v; needRoute(v); });   // sprint moves you on its own
+bindHold($('steerL'), v => { state.steerL = v; });
+bindHold($('steerR'), v => { state.steerR = v; });
+const KEYS = {
+  Space: ['holding', 'go'], ShiftLeft: ['sprinting', 'sprint'], ShiftRight: ['sprinting', 'sprint'],
+  ArrowLeft: ['steerL', 'steerL'], KeyA: ['steerL', 'steerL'], ArrowRight: ['steerR', 'steerR'], KeyD: ['steerR', 'steerR'],
+};
+function onKey(e, down) {
+  const k = KEYS[e.code];
+  if (!k) return;
+  e.preventDefault();
+  state[k[0]] = down;
+  $(k[1]).classList.toggle('down', down);
+}
+addEventListener('keydown', e => onKey(e, true));
+addEventListener('keyup', e => onKey(e, false));
+
+function clearRoute() {
+  state.route = null; state.dest = null; state.s = 0; state.planId++;
+  setRouteLine(null);
+  setRouteLine(null, 'rival-route');
+  rival.route = null;
+  rival.av.root.visible = false;
+  $('rivalRow').hidden = true;
+}
+$('travel').addEventListener('click', e => {
+  const b = e.target.closest('button[data-travel]');
+  if (!b || b.dataset.travel === state.travel || state.phase !== 'idle') return;
+  state.travel = b.dataset.travel;
+  document.querySelectorAll('#travel button').forEach(x => x.classList.toggle('on', x === b));
+  document.body.classList.toggle('free', state.travel === 'free');
+  clearRoute();
+  state.wantHeading = state.heading;
+  hint(state.travel === 'free'
+    ? 'Free roam: hold GO to move. Tap the map to turn towards a spot, or use ◀ ▶ to steer.'
+    : 'Tap the map to choose a destination. A rival will race you there.');
+});
+
+$('modes').addEventListener('click', e => {
+  const b = e.target.closest('button[data-mode]');
+  if (!b || b.dataset.mode === state.mode || state.phase !== 'idle') return;
+  state.mode = b.dataset.mode;
+  document.querySelectorAll('#modes button').forEach(x => x.classList.toggle('on', x === b));
+  if (state.route && state.dest) planRoute({ ...state.dest });   // re-plan on roads for the new mode
+});
+
+$('recenter').addEventListener('click', () => {
+  state.follow = true;
+  camBearing = map.getBearing();
+  $('recenter').style.display = 'none';
+});
+
+$('locate').addEventListener('click', () => {
+  if (!navigator.geolocation) return hint('Location is not available on this device.', true);
+  hint('Getting your location…');
+  navigator.geolocation.getCurrentPosition(p => {
+    state.pos = { lng: p.coords.longitude, lat: p.coords.latitude };
+    state.route = null; state.dest = null; state.s = 0;
+    setRouteLine(null);
+    setRouteLine(null, 'rival-route');
+    rival.route = null;
+    rival.av.root.visible = false;
+    $('rivalRow').hidden = true;
+    state.follow = true;
+    $('recenter').style.display = 'none';
+    hint('You start here. Tap the map to choose where to go.');
+  }, () => hint('Could not get your location (it needs permission, and a secure https page on some browsers).', true),
+  { enableHighAccuracy: true, timeout: 10000 });
+});
+
+// Performance test: extra players circling nearby
+$('addGhosts').addEventListener('click', () => {
+  const a = maplibregl.MercatorCoordinate.fromLngLat([state.pos.lng, state.pos.lat], 0);
+  const s = a.meterInMercatorCoordinateUnits();
+  for (let i = 0; i < 25 && ghosts.length < 500; i++) {
+    const mode = Math.random() < .4 ? 'bicycle' : 'walk';
+    const speed = mode === 'bicycle' ? 20 : 8;                     // metres per second
+    const rM = 40 + Math.random() * 300;
+    const av = makeAvatar({
+      shirt: SHIRTS[i % SHIRTS.length], skin: SKINS[i % SKINS.length], hair: 0x1b120c,
+      pants: 0x333a4a, bike: SHIRTS[(i + 3) % SHIRTS.length],
+    });
+    scene.add(av.root);
+    ghosts.push({
+      av, mode, speed,
+      cx: a.x + (Math.random() - .5) * 600 * s, cy: a.y + (Math.random() - .5) * 600 * s,
+      r: rM * s, angle: Math.random() * Math.PI * 2,
+      w: (Math.random() < .5 ? -1 : 1) * speed / rM,
+      mx: a.x, my: a.y, heading: 0,
+    });
+  }
+  $('pcount').textContent = ghosts.length + 1;
+});
+$('clearGhosts').addEventListener('click', () => {
+  ghosts.forEach(g => scene.remove(g.av.root));
+  ghosts.length = 0;
+  $('pcount').textContent = 1;
+});
+</script>
+</body>
+</html>

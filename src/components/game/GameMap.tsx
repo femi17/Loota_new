@@ -1310,7 +1310,15 @@ export function GameMap({
 
       map.on("load", () => {
         map.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-        const firstSymbol = map.getStyle().layers.find((l) => l.type === "symbol")?.id;
+        // Above every road, bridge and tunnel line (the style puts some labels before
+        // the bridges, so "before the first label" would hide the route under bridges),
+        // but below the labels that follow them.
+        const styleLayers = map.getStyle().layers;
+        let lastRoad = -1;
+        styleLayers.forEach((l, i) => {
+          if (l.type === "line" && /^(road|bridge|tunnel)_/.test(l.id)) lastRoad = i;
+        });
+        const firstSymbol = styleLayers.slice(lastRoad + 1).find((l) => l.type === "symbol")?.id;
         // The route: a blue line with a white edge, so it stands out from yellow main roads and coins.
         map.addLayer(
           {

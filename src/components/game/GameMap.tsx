@@ -1372,6 +1372,10 @@ export function GameMap({
             <p>
               <b>Touch or mouse:</b> tap the map and your hunter walks there along the roads. Hold SPRINT to run or pedal faster.
             </p>
+            <p>
+              <b>Look around:</b> drag the map left or right to turn the view, up or down to tilt it. Pinch or scroll to zoom. In <b>Go to a
+              place</b>, search for a place or address.
+            </p>
             <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
               Got it
             </button>

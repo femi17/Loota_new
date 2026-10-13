@@ -225,9 +225,16 @@ export function GameMap({
       let lastNetworkCheck = 0;
       let lastDeadEndCheck = 0;
 
-      function buildRoads() {
+      let builtFrom = ""; // what the current network was built from, to skip rebuilding the same thing
+
+      /** (Re)build the roads around the hunter; `ifChanged` skips it when no new map tiles have loaded. */
+      function buildRoads(ifChanged = false) {
         const features = map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation" });
         if (!features.length) return false;
+        const source = `${features.length}:${traveller.mode}`;
+        const near = network && geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) < 300;
+        if (ifChanged && near && onRoad && source === builtFrom) return true;
+        builtFrom = source;
         // Keep facing the way the player chose on the road (e.g. just turned round), not the way the body still points.
         const facing = network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading;
         network = roads.buildNetwork(features as import("@/game/roads").RoadFeature[], traveller.mode, traveller.pos);
@@ -898,7 +905,7 @@ export function GameMap({
             geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) > 300;
           if (stale && now - lastNetworkCheck > 1000) {
             lastNetworkCheck = now;
-            buildRoads();
+            buildRoads(true);
           }
         }
 

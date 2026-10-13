@@ -13,7 +13,8 @@ export type RoadFeature = {
 };
 
 type RoadNode = { lng: number; lat: number; edges: number[] };
-type RoadEdge = { a: number; b: number; length: number };
+/** `level`: 1 on a bridge, −1 in a tunnel, 0 on the ground (roads only meet at the same level). */
+type RoadEdge = { a: number; b: number; length: number; level: number };
 
 export type RoadNetwork = { nodes: RoadNode[]; edges: RoadEdge[]; centre: LngLat };
 
@@ -60,7 +61,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     return id;
   };
 
-  const addLine = (line: Coord[]) => {
+  const addLine = (line: Coord[], level: number) => {
     for (let i = 1; i < line.length; i++) {
       const p = local({ lng: line[i - 1][0], lat: line[i - 1][1] });
       const q = local({ lng: line[i][0], lat: line[i][1] });
@@ -72,7 +73,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
       if (seen.has(key)) continue; // the same road from two overlapping tiles
       seen.add(key);
       const id = edges.length;
-      edges.push({ a, b, length: Math.hypot(q.x - p.x, q.y - p.y) });
+      edges.push({ a, b, length: Math.hypot(q.x - p.x, q.y - p.y), level });
       nodes[a].edges.push(id);
       nodes[b].edges.push(id);
     }
@@ -80,12 +81,138 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
 
   for (const f of features) {
     if (!allowed(mode, f.properties)) continue;
-    if (f.geometry.type === "LineString") addLine(f.geometry.coordinates as Coord[]);
-    else if (f.geometry.type === "MultiLineString") (f.geometry.coordinates as Coord[][]).forEach(addLine);
+    const brunnel = f.properties?.brunnel;
+    const level = brunnel === "bridge" ? 1 : brunnel === "tunnel" ? -1 : 0;
+    if (f.geometry.type === "LineString") addLine(f.geometry.coordinates as Coord[], level);
+    else if (f.geometry.type === "MultiLineString") for (const line of f.geometry.coordinates as Coord[][]) addLine(line, level);
   }
 
+  joinCrossings(nodes, edges, local);
   joinLooseEnds(nodes, edges, local);
-  return { nodes, edges, centre };
+  return { nodes, ...mergeTinyGaps(nodes, edges), centre };
+}
+
+/**
+ * One junction is sometimes drawn as two or three points a metre apart, with
+ * tiny road pieces between them; turning there would land on a piece with no
+ * real direction. Merge points joined by a piece shorter than 1.5 m.
+ */
+function mergeTinyGaps(nodes: RoadNode[], edges: RoadEdge[]): { edges: RoadEdge[] } {
+  const parent = nodes.map((_, i) => i);
+  const root = (i: number): number => (parent[i] === i ? i : (parent[i] = root(parent[i])));
+  for (const e of edges) if (e.length < 1.5) parent[root(e.b)] = root(e.a);
+
+  const kept: RoadEdge[] = [];
+  const byPair = new Map<string, number>();
+  for (const e of edges) {
+    const a = root(e.a);
+    const b = root(e.b);
+    if (a === b) continue; // the tiny piece itself
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    const same = byPair.get(key);
+    if (same !== undefined) {
+      if (e.length < kept[same].length) kept[same] = { ...e, a, b }; // two pieces now join the same points: keep one
+      continue;
+    }
+    byPair.set(key, kept.length);
+    kept.push({ ...e, a, b });
+  }
+  for (const n of nodes) n.edges = [];
+  kept.forEach((e, id) => {
+    nodes[e.a].edges.push(id);
+    nodes[e.b].edges.push(id);
+  });
+  return { edges: kept };
+}
+
+/**
+ * Map tiles simplify road shapes, which can drop the point two roads share at
+ * a crossroads: the roads then cross without meeting. Put a junction wherever
+ * two roads at the same level cross (a bridge over a road doesn't count).
+ */
+function joinCrossings(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: number; lat: number }) => { x: number; y: number }) {
+  const CELL_M = 25;
+  const SNAP_M = 0.5; // a crossing this close to a road's existing point uses that point
+  const xy = nodes.map((n) => local(n));
+  const grid = new Map<string, number[]>();
+  edges.forEach((e, id) => {
+    const a = xy[e.a];
+    const b = xy[e.b];
+    for (let cx = Math.floor(Math.min(a.x, b.x) / CELL_M); cx <= Math.floor(Math.max(a.x, b.x) / CELL_M); cx++) {
+      for (let cy = Math.floor(Math.min(a.y, b.y) / CELL_M); cy <= Math.floor(Math.max(a.y, b.y) / CELL_M); cy++) {
+        const key = `${cx},${cy}`;
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(id);
+        else grid.set(key, [id]);
+      }
+    }
+  });
+
+  // Where each road piece gets cut: how far along it (0–1) and by which node.
+  const cuts = new Map<number, { t: number; node: number }[]>();
+  const addCut = (edge: number, t: number, node: number) => {
+    const e = edges[edge];
+    if (node === e.a || node === e.b) return;
+    const list = cuts.get(edge);
+    if (list) list.push({ t, node });
+    else cuts.set(edge, [{ t, node }]);
+  };
+  const checked = new Set<string>();
+  for (const bucket of grid.values()) {
+    for (let i = 0; i < bucket.length; i++) {
+      for (let j = i + 1; j < bucket.length; j++) {
+        const [m, n] = bucket[i] < bucket[j] ? [bucket[i], bucket[j]] : [bucket[j], bucket[i]];
+        const key = `${m}-${n}`;
+        if (checked.has(key)) continue;
+        checked.add(key);
+        const e1 = edges[m];
+        const e2 = edges[n];
+        if (e1.level !== e2.level) continue;
+        if (e1.a === e2.a || e1.a === e2.b || e1.b === e2.a || e1.b === e2.b) continue; // already meet
+        const p = xy[e1.a];
+        const r = { x: xy[e1.b].x - p.x, y: xy[e1.b].y - p.y };
+        const q = xy[e2.a];
+        const sv = { x: xy[e2.b].x - q.x, y: xy[e2.b].y - q.y };
+        const d = r.x * sv.y - r.y * sv.x;
+        if (Math.abs(d) < 1e-9) continue; // parallel
+        const t = ((q.x - p.x) * sv.y - (q.y - p.y) * sv.x) / d;
+        const u = ((q.x - p.x) * r.y - (q.y - p.y) * r.x) / d;
+        if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+        // Use an existing end point if the crossing is right at it; otherwise a new junction.
+        let node: number;
+        if (t * e1.length < SNAP_M) node = e1.a;
+        else if ((1 - t) * e1.length < SNAP_M) node = e1.b;
+        else if (u * e2.length < SNAP_M) node = e2.a;
+        else if ((1 - u) * e2.length < SNAP_M) node = e2.b;
+        else {
+          node = nodes.length;
+          const a = nodes[e1.a];
+          const b = nodes[e1.b];
+          nodes.push({ lng: a.lng + (b.lng - a.lng) * t, lat: a.lat + (b.lat - a.lat) * t, edges: [] });
+          xy.push(local(nodes[node]));
+        }
+        addCut(m, t, node);
+        addCut(n, u, node);
+      }
+    }
+  }
+  if (!cuts.size) return;
+
+  // Cut the crossing pieces into shorter ones that meet at the new junctions.
+  for (const [id, list] of cuts) {
+    const e = edges[id];
+    list.sort((x, y) => x.t - y.t);
+    const chain = [e.a, ...list.map((c) => c.node).filter((v, k, all) => v !== all[k - 1]), e.b];
+    const piece = (from: number, to: number) => Math.max(0.01, Math.hypot(xy[to].x - xy[from].x, xy[to].y - xy[from].y));
+    e.b = chain[1];
+    e.length = piece(chain[0], chain[1]);
+    for (let k = 1; k < chain.length - 1; k++) edges.push({ a: chain[k], b: chain[k + 1], length: piece(chain[k], chain[k + 1]), level: e.level });
+  }
+  for (const n of nodes) n.edges = [];
+  edges.forEach((e, id) => {
+    nodes[e.a].edges.push(id);
+    nodes[e.b].edges.push(id);
+  });
 }
 
 /**
@@ -171,7 +298,7 @@ function joinLooseEnds(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: n
       xy.push(local(nodes[target]));
       const oldB = e.b;
       const tail = edges.length;
-      edges.push({ a: target, b: oldB, length: e.length * (1 - bestT) });
+      edges.push({ a: target, b: oldB, length: e.length * (1 - bestT), level: e.level });
       e.b = target;
       e.length *= bestT;
       nodes[target].edges.push(bestEdge, tail);

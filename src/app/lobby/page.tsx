@@ -72,10 +72,21 @@ async function Lobby() {
           </Link>
         </section>
 
+        <Link
+          href="/play"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border-[1.5px] border-gold bg-ink-2 p-6 hover:bg-line"
+        >
+          <span className="flex flex-col gap-1">
+            <span className="font-display text-2xl font-extrabold">Enter the map</span>
+            <span className="text-muted">Start from home and explore the real map with your hunter.</span>
+          </span>
+          <span className="inline-flex h-12 items-center rounded-2xl bg-gold px-6 font-bold text-ink">Play</span>
+        </Link>
+
         <section className="rounded-3xl border-[1.5px] border-dashed border-line p-6">
           <h2 className="font-display text-2xl font-extrabold">No hunts live yet</h2>
           <p className="mt-2 text-muted">
-            The next hunt will appear here with its prize, keys and start time. Free roam on the map is coming next.
+            The next hunt will appear here with its prize, keys and start time.
           </p>
         </section>
       </main>

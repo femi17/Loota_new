@@ -118,11 +118,19 @@ function joinLooseEnds(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: n
   };
   edges.forEach((_, id) => addToGrid(id));
 
-  const connect = (a: number, b: number, length: number) => {
-    const id = edges.length;
-    edges.push({ a, b, length: Math.max(length, 0.01) });
-    nodes[a].edges.push(id);
-    nodes[b].edges.push(id);
+  // Attach the loose end itself to the meeting point, rather than adding a tiny
+  // connector: a piece only centimetres long has no meaningful direction, and
+  // junction turns are decided by direction.
+  const attach = (end: number, target: number) => {
+    const id = nodes[end].edges[0];
+    const e = edges[id];
+    const other = e.a === end ? e.b : e.a;
+    if (other === target) return; // would fold the road onto itself
+    if (e.a === end) e.a = target;
+    else e.b = target;
+    e.length = Math.max(0.01, Math.hypot(xy[other].x - xy[target].x, xy[other].y - xy[target].y));
+    nodes[end].edges = [];
+    nodes[target].edges.push(id);
     addToGrid(id);
   };
 
@@ -171,7 +179,7 @@ function joinLooseEnds(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: n
       bEdges[bEdges.indexOf(bestEdge)] = tail;
       addToGrid(tail);
     }
-    if (target !== i) connect(i, target, bestD);
+    if (target !== i) attach(i, target);
   }
 }
 
@@ -187,7 +195,34 @@ function edgeHeading(net: RoadNetwork, edge: number, dir: 1 | -1) {
 
 const angleBetween = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 
-/** Snap a point to the nearest road, facing whichever way is closest to `heading`. */
+/**
+ * The direction a road leaves `node` along edge `id`, judged over its first
+ * ~10 m (following bends, stopping at the next junction), so small wiggles
+ * and short pieces at junctions don't decide which way a road goes.
+ */
+function headingAway(net: RoadNetwork, node: number, id: number, lookM = 10) {
+  let at = node;
+  let edge = id;
+  let travelled = 0;
+  for (let hops = 0; hops < 20; hops++) {
+    const e = net.edges[edge];
+    at = e.a === at ? e.b : e.a;
+    travelled += e.length;
+    if (travelled >= lookM) break;
+    const onward = net.nodes[at].edges.filter((x) => x !== edge);
+    if (onward.length !== 1) break; // a junction or the end of the road
+    edge = onward[0];
+  }
+  const from = net.nodes[node];
+  const to = net.nodes[at];
+  return Math.atan2((to.lng - from.lng) * Math.cos((from.lat * Math.PI) / 180), -(to.lat - from.lat));
+}
+
+/**
+ * Snap a point to the nearest road, facing whichever way is closest to
+ * `heading`. Roads within a few metres of each other (e.g. all the roads at a
+ * junction) are tied, and the one lined up with `heading` wins.
+ */
 export function snapToNetwork(net: RoadNetwork, pos: LngLat, heading: number): RoadPosition | null {
   const local = projector(pos);
   let edge = -1;
@@ -202,8 +237,11 @@ export function snapToNetwork(net: RoadNetwork, pos: LngLat, heading: number): R
     const len2 = dx * dx + dy * dy || 1e-9;
     const along = Math.max(0, Math.min(1, -(a.x * dx + a.y * dy) / len2));
     const d = Math.hypot(a.x + dx * along, a.y + dy * along);
-    if (d < nearest) {
-      nearest = d;
+    // Up to 3 m extra for a road at right angles to the way the player faces.
+    const off = angleBetween(edgeHeading(net, i, 1), heading);
+    const score = d + (3 * Math.min(off, Math.PI - off)) / (Math.PI / 2);
+    if (score < nearest) {
+      nearest = score;
       edge = i;
       t = along;
     }
@@ -245,7 +283,7 @@ function sideBranch(net: RoadNetwork, node: number, straight: number, turn: -1 |
   let best: { id: number; dir: 1 | -1; score: number } | null = null;
   for (const id of net.nodes[node].edges) {
     const d: 1 | -1 = net.edges[id].a === node ? 1 : -1;
-    const h = edgeHeading(net, id, d);
+    const h = headingAway(net, node, id);
     // Turning left raises the scene heading, turning right lowers it (see geo.headingOf).
     const side = -turn * Math.atan2(Math.sin(h - straight), Math.cos(h - straight));
     if (side < SIDE_MIN || side > SIDE_MAX) continue;
@@ -265,6 +303,7 @@ export type PassedJunction = { lng: number; lat: number; heading: number; metres
 export function turnAtPassed(net: RoadNetwork, passed: PassedJunction, turn: -1 | 1): RoadPosition | null {
   const local = projector(passed);
   const node = net.nodes.findIndex((n) => {
+    if (n.edges.length < 3) return false; // only real junctions
     const q = local(n);
     return Math.hypot(q.x, q.y) < 3;
   });
@@ -272,6 +311,28 @@ export function turnAtPassed(net: RoadNetwork, passed: PassedJunction, turn: -1 
   const branch = sideBranch(net, node, passed.heading, turn);
   if (!branch) return null;
   return { edge: branch.id, t: branch.dir === 1 ? 0 : 1, dir: branch.dir };
+}
+
+/**
+ * Turn at the junction the player is standing on: one a few metres ahead
+ * (`maxAheadM`), or one just left behind on this road (`maxBackM`). Null if
+ * there isn't one, or no road goes that way.
+ */
+export function turnHere(net: RoadNetwork, rp: RoadPosition, turn: -1 | 1, maxBackM = 30, maxAheadM = 8): RoadPosition | null {
+  const e = net.edges[rp.edge];
+  const ahead = rp.dir === 1 ? e.b : e.a;
+  const behind = rp.dir === 1 ? e.a : e.b;
+  const toAhead = (rp.dir === 1 ? 1 - rp.t : rp.t) * e.length;
+  const toBehind = e.length - toAhead;
+  const candidates: { node: number; straight: number }[] = [];
+  // Arriving at the junction ahead: travelling the way it's reached along this road.
+  if (toAhead <= maxAheadM && net.nodes[ahead].edges.length >= 3) candidates.push({ node: ahead, straight: headingAway(net, ahead, rp.edge) + Math.PI });
+  if (toBehind <= maxBackM && net.nodes[behind].edges.length >= 3) candidates.push({ node: behind, straight: headingAway(net, behind, rp.edge) });
+  for (const { node, straight } of candidates) {
+    const branch = sideBranch(net, node, straight, turn);
+    if (branch && branch.id !== rp.edge) return { edge: branch.id, t: branch.dir === 1 ? 0 : 1, dir: branch.dir };
+  }
+  return null;
 }
 
 /**
@@ -312,7 +373,7 @@ export function advance(
       let best = { id: options[0], dir: (net.edges[options[0]].a === node ? 1 : -1) as 1 | -1, angle: Infinity };
       for (const id of options) {
         const d: 1 | -1 = net.edges[id].a === node ? 1 : -1;
-        const angle = angleBetween(edgeHeading(net, id, d), heading);
+        const angle = angleBetween(headingAway(net, node, id), heading);
         if (angle < best.angle) best = { id, dir: d, angle };
       }
       return best;
@@ -320,7 +381,7 @@ export function advance(
 
     let choice: { id: number; dir: 1 | -1 } = closestTo(aim);
     const junction = options.length >= 2;
-    const straight = edgeHeading(net, edge, dir);
+    const straight = headingAway(net, node, edge) + Math.PI; // the way the player arrived
     const branch = turn !== 0 && !turned && junction ? sideBranch(net, node, straight, turn) : null;
     if (branch) {
       choice = branch;

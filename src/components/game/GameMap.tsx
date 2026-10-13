@@ -36,6 +36,8 @@ type Hud = {
   vehicle: { kind: VehicleKind; source: "owned" | "rented"; fuel: number | null; meter: string | null } | null;
   /** Names of the petrol station and place to eat within reach, if any. */
   services: { fuel: string | null; food: string | null };
+  /** Name of the street the hunter is on, if it has one. */
+  street: string | null;
   /** A purchase or vehicle change is on its way to the server. */
   busy: boolean;
   /** Moving by itself towards a tapped spot or along a route. */
@@ -133,6 +135,7 @@ export function GameMap({
     turn: 0,
     vehicle: null,
     services: { fuel: null, food: null },
+    street: null,
     busy: false,
     auto: false,
   });
@@ -543,6 +546,48 @@ export function GameMap({
 
       let foodHere: string | null = null;
 
+      /**
+       * The street the hunter is on, from the map's own street names. The hunter
+       * walks on road centre lines, which street names share, so only a name
+       * within 10 m can be theirs; one running the way the hunter's road does wins
+       * (so a cross street at a junction doesn't).
+       */
+      function scanStreet() {
+        const k = Math.cos((traveller.pos.lat * Math.PI) / 180);
+        const toLocal = ([lng, lat]: number[]) => [(lng - traveller.pos.lng) * 111320 * k, (lat - traveller.pos.lat) * 110574];
+        let street: string | null = null;
+        let best = 10;
+        const along = network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading;
+        for (const f of map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation_name" })) {
+          const name = f.properties?.name;
+          if (!name) continue;
+          const g = f.geometry;
+          const lines = g.type === "LineString" ? [g.coordinates] : g.type === "MultiLineString" ? g.coordinates : [];
+          for (const line of lines) {
+            for (let i = 1; i < line.length; i++) {
+              const [ax, ay] = toLocal(line[i - 1]);
+              const [bx, by] = toLocal(line[i]);
+              if (Math.min(Math.abs(ax), Math.abs(bx)) > 300 && Math.min(Math.abs(ay), Math.abs(by)) > 300) continue;
+              const dx = bx - ax;
+              const dy = by - ay;
+              const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1e-9)));
+              const d = Math.hypot(ax + dx * t, ay + dy * t);
+              if (d > 10) continue;
+              // Up to 15 m extra for a street at right angles to the hunter's road.
+              const off = Math.abs(Math.atan2(Math.sin(Math.atan2(dx, -dy) - along), Math.cos(Math.atan2(dx, -dy) - along)));
+              const score = d + (15 * Math.min(off, Math.PI - off)) / (Math.PI / 2);
+              if (score < best) {
+                best = score;
+                street = String(name);
+              }
+            }
+          }
+        }
+        // Many smaller streets have no name in OpenStreetMap yet.
+        if (!street && style === "roam" && onRoad) street = "Unnamed road";
+        setHud((h) => (h.street === street ? h : { ...h, street }));
+      }
+
       /** Petrol stations and places to eat within reach, from the map's own points of interest. */
       function scanServices() {
         const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
@@ -735,9 +780,11 @@ export function GameMap({
         turn(dir) {
           if (style !== "roam") return;
           aimTarget = null;
-          // Pressed just after going through a junction: go back to it and take the turn.
-          if (network && justPassed && justPassed.metresSince < 30) {
-            const turned = roads.turnAtPassed(network, justPassed, dir);
+          // Standing on a junction, or pressed just after going through one: take the turn there.
+          if (network && onRoad) {
+            const turned =
+              roads.turnHere(network, onRoad, dir) ??
+              (justPassed && justPassed.metresSince < 30 ? roads.turnAtPassed(network, justPassed, dir) : null);
             if (turned) {
               onRoad = turned;
               justPassed = null;
@@ -958,9 +1005,10 @@ export function GameMap({
           void savePosition();
         }
 
-        // Petrol stations and food within reach, and the rental meter ticking.
-        if (now - lastServices > 2000) {
+        // The street you're on, petrol stations and food within reach, and the rental meter ticking.
+        if (now - lastServices > 1000) {
           lastServices = now;
+          scanStreet();
           scanServices();
           if (rental) showVehicle();
         }
@@ -1260,6 +1308,19 @@ export function GameMap({
         {/* Row 3: the hunt (riddle, keys, Search here) */}
         {huntId && <HuntPanel huntId={huntId} actions={huntActions} />}
       </div>
+
+      {hud.street && (
+        <div
+          className="pointer-events-none absolute bottom-[112px] left-1/2 sm:bottom-[100px] flex max-w-[calc(100%-200px)] -translate-x-1/2 items-center gap-1.5 rounded-full bg-paper px-4 py-1.5 text-sm font-bold text-ink shadow sm:max-w-md"
+          style={{ marginBottom: "env(safe-area-inset-bottom)" }}
+          aria-label={`You're on ${hud.street}`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="#2F6FEB" aria-hidden="true">
+            <path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z" />
+          </svg>
+          <span className="truncate">{hud.street}</span>
+        </div>
+      )}
 
       <p
         role="status"

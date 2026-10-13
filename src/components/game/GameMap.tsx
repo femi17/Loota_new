@@ -10,6 +10,8 @@ import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from
 import { MEAL_ENERGY, MEAL_PRICE, SERVICE_RADIUS_M, VEHICLES, type VehicleKind } from "@/game/economy";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
+import { HuntPanel, type HuntActions } from "./HuntPanel";
+import type { SearchResult } from "@/game/hunt";
 
 /** Free roam follows the roads with no destination; route goes to a tapped place. */
 type Style = "roam" | "route";
@@ -93,11 +95,14 @@ export function GameMap({
   start,
   startMode,
   initialCoins,
+  huntId,
 }: {
   look: AvatarLook;
   start: LngLat;
   startMode: Mode;
   initialCoins: number;
+  /** The hunt the player has joined, if any. */
+  huntId: string | null;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false });
@@ -114,6 +119,7 @@ export function GameMap({
     turnAround: () => void;
     stop: () => void;
   } | null>(null);
+  const huntActions = useRef<HuntActions | null>(null);
   const [failed, setFailed] = useState(false);
   const [hud, setHud] = useState<Hud>({
     energy: 100,
@@ -222,6 +228,11 @@ export function GameMap({
         onRoad = roads.snapToNetwork(network, traveller.pos, facing);
         if (!onRoad) return false;
         const p = roads.positionOf(network, onRoad);
+        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > 400) {
+          // Only far-away roads loaded so far (e.g. just thrown out of a trial): wait for nearer tiles.
+          onRoad = null;
+          return false;
+        }
         traveller.pos = { lng: p.lng, lat: p.lat };
         return true;
       }
@@ -740,6 +751,52 @@ export function GameMap({
         },
       };
 
+      // ---- Hunts: searching where you stand, trials and being thrown out ----
+      let frozen = false; // standing still during a Key Trial
+
+      /** Put the hunter at a spot the server has already recorded (e.g. thrown 2 km after a failed trial). */
+      function placeAt(lng: number, lat: number) {
+        traveller.pos = { lng, lat };
+        traveller.v = 0;
+        saved = { lng, lat };
+        clearRoute();
+        aimTarget = null;
+        setTurn(0);
+        network = null; // rebuilt around the new spot once its map tiles load
+        onRoad = null;
+        lastNetworkCheck = 0;
+        actions.current?.follow();
+      }
+
+      huntActions.current = {
+        async search(hunt) {
+          traveller.v = 0;
+          aimTarget = null;
+          if (style === "route") clearRoute();
+          const { data, error } = await supabase.rpc("search_here", {
+            p_hunt: hunt,
+            p_lng: traveller.pos.lng,
+            p_lat: traveller.pos.lat,
+            p_mode: traveller.mode,
+          });
+          if (disposed || error || !data) return null;
+          const result = data as SearchResult;
+          if (result.ok) saved = { ...traveller.pos }; // searching also saved the position
+          else if (result.reason === "position" || result.reason === "thrown") placeAt(result.lng, result.lat);
+          return result;
+        },
+        placeAt,
+        setFrozen(value) {
+          frozen = value;
+          if (value) {
+            traveller.v = 0;
+            aimTarget = null;
+            if (style === "route") clearRoute();
+          }
+        },
+        say,
+      };
+
       // The player's own drag or rotate pauses the chase camera.
       const stopFollowing = (e: { originalEvent?: unknown }) => {
         if (!e.originalEvent) return;
@@ -762,6 +819,7 @@ export function GameMap({
       let last = performance.now();
       let lastHud = 0;
       let lastServices = 0;
+      let roamHintShown = false;
 
       const loop = (now: number) => {
         frame = requestAnimationFrame(loop);
@@ -780,12 +838,15 @@ export function GameMap({
           if (stale && now - lastNetworkCheck > 1000) {
             lastNetworkCheck = now;
             const hadRoad = !!onRoad;
-            if (buildRoads() && !hadRoad) say(roamHint);
+            if (buildRoads() && !hadRoad && !roamHintShown) {
+              roamHintShown = true;
+              say(roamHint);
+            }
           }
         }
 
         // A tapped spot or a planned route moves the hunter by itself; keys move them in free roam.
-        const canMove = style === "roam" ? !!onRoad : !!traveller.route;
+        const canMove = !frozen && (style === "roam" ? !!onRoad : !!traveller.route);
         const auto = style === "roam" ? !!aimTarget : !!traveller.route;
         const { distance, events } = movement.step(traveller, { go: c.go || auto, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
@@ -988,6 +1049,7 @@ export function GameMap({
         window.removeEventListener("keyup", keyUp);
         document.removeEventListener("visibilitychange", saveOnHide);
         actions.current = null;
+        huntActions.current = null;
         map.remove();
       };
     })().catch(() => setFailed(true));
@@ -1156,6 +1218,9 @@ export function GameMap({
           </button>
         )}
         </div>
+
+        {/* Row 3: the hunt (riddle, keys, Search here) */}
+        {huntId && <HuntPanel huntId={huntId} actions={huntActions} />}
       </div>
 
       <p

@@ -13,6 +13,8 @@ export type Player = {
   home: { lng: number; lat: number } | null;
   /** Where the player last was on the map (null until they first move). */
   position: { lng: number; lat: number; mode: Mode } | null;
+  /** The owner, who can create and publish hunts. */
+  isAdmin: boolean;
 };
 
 /** The signed-in player's profile, or null when nobody is signed in. Server only. */
@@ -27,7 +29,7 @@ export async function getPlayer(): Promise<Player | null> {
 
   const { data } = await supabase
     .from("profiles")
-    .select("id, username, avatar, coins, home_lng, home_lat")
+    .select("id, username, avatar, coins, home_lng, home_lat, is_admin")
     .eq("id", id)
     .single();
   if (!data) return null;
@@ -43,6 +45,7 @@ export async function getPlayer(): Promise<Player | null> {
     lookChosen,
     coins: Number(data.coins),
     home: data.home_lng != null && data.home_lat != null ? { lng: data.home_lng, lat: data.home_lat } : null,
+    isAdmin: data.is_admin === true,
     position: pos ? { lng: pos.lng, lat: pos.lat, mode: pos.mode in MODES ? (pos.mode as Mode) : "walk" } : null,
   };
 }

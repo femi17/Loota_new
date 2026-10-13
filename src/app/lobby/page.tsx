@@ -5,7 +5,65 @@ import { redirect } from "next/navigation";
 import { Logo } from "@/components/Logo";
 import { HunterFigure } from "@/components/HunterFigure";
 import { getPlayer } from "@/lib/player";
+import { listHunts } from "@/lib/hunts";
 import { logOut } from "../(auth)/actions";
+import { joinHunt } from "./actions";
+
+const PHASE_LABEL = { draft: "Draft", upcoming: "Coming up", live: "Live now", ended: "Ended" } as const;
+
+const when = (iso: string) =>
+  `${new Date(iso).toLocaleString("en-NG", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" })} (Lagos time)`;
+
+async function HuntList() {
+  const hunts = await listHunts();
+  if (!hunts.length) {
+    return (
+      <section className="rounded-3xl border-[1.5px] border-dashed border-line p-6">
+        <h2 className="font-display text-2xl font-extrabold">No hunts live yet</h2>
+        <p className="mt-2 text-muted">The next hunt will appear here with its prize, keys and start time.</p>
+      </section>
+    );
+  }
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="font-display text-2xl font-extrabold">Hunts</h2>
+      {hunts.map((h) => (
+        <article key={h.id} className={`flex flex-col gap-3 rounded-3xl bg-ink-2 p-6 ${h.phase === "live" ? "border-[1.5px] border-gold" : ""}`}>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${h.phase === "live" ? "bg-gold text-ink" : "bg-line text-paper"}`}>
+              {PHASE_LABEL[h.phase]}
+            </span>
+            <span className="text-sm text-muted">
+              {h.keys} key{h.keys === 1 ? "" : "s"} · {h.winners} winner{h.winners === 1 ? "" : "s"} · {h.players} hunter{h.players === 1 ? "" : "s"}
+            </span>
+          </div>
+          <h3 className="font-display text-xl font-extrabold">{h.title}</h3>
+          <p className="text-sm">
+            <span className="text-muted">Prize: </span>
+            <b>{h.prize}</b>
+          </p>
+          {h.description && <p className="text-sm text-muted">{h.description}</p>}
+          <p className="text-sm text-muted">
+            {h.phase === "upcoming" ? `Starts ${when(h.startsAt)}` : h.phase === "live" ? `Ends ${when(h.endsAt)}` : `Ended ${when(h.endsAt)}`}
+          </p>
+          {h.phase !== "ended" &&
+            (h.joined ? (
+              <Link href={`/play?hunt=${h.id}`} className="inline-flex h-12 items-center self-start rounded-2xl bg-gold px-6 font-bold text-ink">
+                {h.phase === "live" ? "Continue the hunt" : "You're in · enter the map"}
+              </Link>
+            ) : (
+              <form action={joinHunt}>
+                <input type="hidden" name="hunt" value={h.id} />
+                <button type="submit" className="h-12 rounded-2xl bg-gold px-6 font-bold text-ink">
+                  Join this hunt
+                </button>
+              </form>
+            ))}
+        </article>
+      ))}
+    </section>
+  );
+}
 
 export const metadata: Metadata = { title: "Lobby · Loota" };
 
@@ -83,12 +141,12 @@ async function Lobby() {
           <span className="inline-flex h-12 items-center rounded-2xl bg-gold px-6 font-bold text-ink">Play</span>
         </Link>
 
-        <section className="rounded-3xl border-[1.5px] border-dashed border-line p-6">
-          <h2 className="font-display text-2xl font-extrabold">No hunts live yet</h2>
-          <p className="mt-2 text-muted">
-            The next hunt will appear here with its prize, keys and start time.
-          </p>
-        </section>
+        <HuntList />
+        {player.isAdmin && (
+          <Link href="/admin" className="self-start text-sm font-bold text-gold hover:underline">
+            Owner tools: create and publish hunts →
+          </Link>
+        )}
       </main>
     </>
   );

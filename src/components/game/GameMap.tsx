@@ -257,10 +257,20 @@ export function GameMap({
           for (let iy = Math.floor((lat - dLat) / ROAD_CELL_DEG); iy <= Math.floor((lat + dLat) / ROAD_CELL_DEG); iy++) {
             const key = roadCellKey(ix, iy);
             keys.push(key);
-            if (!roadSquares.has(key)) void loadSquare(key);
+            void ensureSquare(key);
           }
         }
         return keys;
+      }
+
+      const squareLoads = new Map<string, Promise<void>>();
+      function ensureSquare(key: string) {
+        let load = squareLoads.get(key);
+        if (!load) {
+          load = loadSquare(key);
+          squareLoads.set(key, load);
+        }
+        return load;
       }
 
       async function loadSquare(key: string) {
@@ -343,11 +353,14 @@ export function GameMap({
           const path = roads.findPath(network, onRoad, to);
           if (path) route = geo.buildRoute(path);
         }
-        // Farther away: the routing service.
+        // Farther away: our own roads between here and there.
         if (!route) {
           if (!quiet) say("Finding a route…", false, true);
-          ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
+          const path = await routeOnOwnRoads(traveller.pos, to);
+          if (path) route = geo.buildRoute(path);
         }
+        // Very far, or outside the areas we host: the routing service (a straight line if that fails).
+        if (!route) ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
         if (disposed || id !== planId) return;
         const end = route.coords[route.coords.length - 1];
         if (route.total < 30 && geo.distanceM([traveller.pos.lng, traveller.pos.lat], end) < 30) {
@@ -382,6 +395,30 @@ export function GameMap({
           );
         }
         updateGuide();
+      }
+
+      /**
+       * The shortest way along our own roads, for trips beyond the roads kept
+       * around the hunter: loads the squares between here and there (up to
+       * ~25 km across; longer trips are for buses and planes) and searches them.
+       */
+      async function routeOnOwnRoads(from: LngLat, to: LngLat): Promise<import("@/game/geo").Coord[] | null> {
+        const MARGIN = 0.01; // ~1 km around the straight line's box, for roads that bend outward
+        const x0 = Math.floor((Math.min(from.lng, to.lng) - MARGIN) / ROAD_CELL_DEG);
+        const x1 = Math.floor((Math.max(from.lng, to.lng) + MARGIN) / ROAD_CELL_DEG);
+        const y0 = Math.floor((Math.min(from.lat, to.lat) - MARGIN) / ROAD_CELL_DEG);
+        const y1 = Math.floor((Math.max(from.lat, to.lat) + MARGIN) / ROAD_CELL_DEG);
+        if ((x1 - x0 + 1) * (y1 - y0 + 1) > 30) return null;
+        const keys: string[] = [];
+        for (let ix = x0; ix <= x1; ix++) for (let iy = y0; iy <= y1; iy++) keys.push(roadCellKey(ix, iy));
+        await Promise.all(keys.map(ensureSquare));
+        const cells = keys.map((k) => roadSquares.get(k)).filter((c): c is RoadCellData => typeof c === "object");
+        if (!cells.length || disposed) return null;
+        await new Promise((r) => setTimeout(r, 30)); // let "Finding a route…" show before the search
+        const centre = { lng: (from.lng + to.lng) / 2, lat: (from.lat + to.lat) / 2 };
+        const net = roads.buildNetworkFromCells(cells, traveller.mode, centre, Infinity);
+        const start = roads.snapToNetwork(net, from, traveller.heading);
+        return start ? roads.findPath(net, start, to, 300) : null;
       }
 
       /** Roughly how long a trip takes at the current mode's normal pace. */
@@ -1194,8 +1231,11 @@ export function GameMap({
         me.heading = traveller.heading;
         marker.halo.scale.setScalar(1 + Math.sin(t * 4) * 0.1);
 
-        // Spin the finds, and pick up anything within reach.
+        // Spin the finds, and pick up anything within reach. Zoomed far out they
+        // would crowd the map (they keep their size on screen), so they hide.
+        const showFinds = map.getZoom() >= 17;
         for (const [id, { item, model }] of onMap) {
+          model.group.visible = showFinds;
           model.spin.rotation.y += dt * 2;
           if (picking.has(id) || (retryAfter.get(id) ?? 0) > now) continue;
           if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [item.lng, item.lat]) < PICKUP_RADIUS_M) void pickUp(id);

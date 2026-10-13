@@ -232,15 +232,55 @@ export function wantsUTurn(net: RoadNetwork, rp: RoadPosition, aim: number) {
   return angleBetween(edgeHeading(net, rp.edge, rp.dir), aim) > U_TURN_ANGLE;
 }
 
-/** A turn is taken only if a road leaves within this angle of the turn direction. */
-const TURN_TOLERANCE = (60 * Math.PI) / 180;
+/** A road counts as going off to one side if it bends at least this much from straight on (and isn't a U-turn). */
+const SIDE_MIN = (20 * Math.PI) / 180;
+const SIDE_MAX = (170 * Math.PI) / 180;
+
+/**
+ * At a junction, the road leaving on the asked side (−1 left, +1 right) that
+ * is closest to a square turn, for a player arriving with heading `straight`.
+ * Any road off to that side will do, including sharp or shallow ones.
+ */
+function sideBranch(net: RoadNetwork, node: number, straight: number, turn: -1 | 1) {
+  let best: { id: number; dir: 1 | -1; score: number } | null = null;
+  for (const id of net.nodes[node].edges) {
+    const d: 1 | -1 = net.edges[id].a === node ? 1 : -1;
+    const h = edgeHeading(net, id, d);
+    // Turning left raises the scene heading, turning right lowers it (see geo.headingOf).
+    const side = -turn * Math.atan2(Math.sin(h - straight), Math.cos(h - straight));
+    if (side < SIDE_MIN || side > SIDE_MAX) continue;
+    const score = Math.abs(side - Math.PI / 2);
+    if (!best || score < best.score) best = { id, dir: d, score };
+  }
+  return best;
+}
+
+/**
+ * A junction the player just went through without turning (for a turn pressed
+ * a moment too late). Kept by place, as the network is rebuilt as they travel.
+ */
+export type PassedJunction = { lng: number; lat: number; heading: number; metresSince: number };
+
+/** Turn at a junction just passed: back to it and onto the side road. Null if no road goes that way. */
+export function turnAtPassed(net: RoadNetwork, passed: PassedJunction, turn: -1 | 1): RoadPosition | null {
+  const local = projector(passed);
+  const node = net.nodes.findIndex((n) => {
+    const q = local(n);
+    return Math.hypot(q.x, q.y) < 3;
+  });
+  if (node < 0) return null;
+  const branch = sideBranch(net, node, passed.heading, turn);
+  if (!branch) return null;
+  return { edge: branch.id, t: branch.dir === 1 ? 0 : 1, dir: branch.dir };
+}
 
 /**
  * Move `distance` metres along the roads. At each real junction (two or more
  * ways on), take the road closest to `aim`; or, when `turn` is set (−1 left,
- * +1 right), the road closest to that turn, if one branches that way, and
- * report `turned`; otherwise carry straight on and keep the turn for later.
- * At a dead end, stop at the end of the road (`deadEnd`), still facing it.
+ * +1 right), any road leaving on that side, and report `turned`; otherwise
+ * carry straight on and keep the turn for later. At a dead end, stop at the
+ * end of the road (`deadEnd`), still facing it. `passed` is the last junction
+ * gone straight through, with how far beyond it the player now is.
  */
 export function advance(
   net: RoadNetwork,
@@ -248,23 +288,24 @@ export function advance(
   distance: number,
   aim: number,
   turn: -1 | 0 | 1 = 0,
-): { position: RoadPosition; deadEnd: boolean; turned: boolean } {
+): { position: RoadPosition; deadEnd: boolean; turned: boolean; passed: PassedJunction | null } {
   let { edge, t, dir } = rp;
   let remaining = distance;
   let turned = false;
+  let passed: PassedJunction | null = null;
 
   for (let hops = 0; remaining > 0 && hops < 50; hops++) {
     const e = net.edges[edge];
     const toEnd = (dir === 1 ? 1 - t : t) * e.length;
     if (remaining < toEnd) {
       t += (dir * remaining) / (e.length || 1e-9);
-      return { position: { edge, t, dir }, deadEnd: false, turned };
+      return { position: { edge, t, dir }, deadEnd: false, turned, passed };
     }
     remaining -= toEnd;
     const node = dir === 1 ? e.b : e.a;
     const options = net.nodes[node].edges.filter((id) => id !== edge);
     if (options.length === 0) {
-      return { position: { edge, t: dir === 1 ? 1 : 0, dir }, deadEnd: true, turned };
+      return { position: { edge, t: dir === 1 ? 1 : 0, dir }, deadEnd: true, turned, passed };
     }
 
     const closestTo = (heading: number) => {
@@ -277,19 +318,19 @@ export function advance(
       return best;
     };
 
-    let choice = closestTo(aim);
-    if (turn !== 0 && !turned && options.length >= 2) {
-      // Turning right lowers the scene heading (see geo.headingOf), turning left raises it.
-      const turnHeading = edgeHeading(net, edge, dir) - (turn * Math.PI) / 2;
-      const branch = closestTo(turnHeading);
-      if (branch.angle <= TURN_TOLERANCE) {
-        choice = branch;
-        turned = true;
-      }
+    let choice: { id: number; dir: 1 | -1 } = closestTo(aim);
+    const junction = options.length >= 2;
+    const straight = edgeHeading(net, edge, dir);
+    const branch = turn !== 0 && !turned && junction ? sideBranch(net, node, straight, turn) : null;
+    if (branch) {
+      choice = branch;
+      turned = true;
+    } else if (junction) {
+      passed = { lng: net.nodes[node].lng, lat: net.nodes[node].lat, heading: straight, metresSince: remaining };
     }
     edge = choice.id;
     dir = choice.dir;
     t = dir === 1 ? 0 : 1;
   }
-  return { position: { edge, t, dir }, deadEnd: false, turned };
+  return { position: { edge, t, dir }, deadEnd: false, turned, passed };
 }

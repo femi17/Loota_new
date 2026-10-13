@@ -44,10 +44,6 @@ type Hud = {
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
-const ROAM_HINTS = {
-  keys: "Free roam: hold ↑ to move and ↓ to go back. ← or → turns at the next junction; Shift runs. Or click the map to walk there.",
-  touch: "Free roam: tap the map to walk there along the roads (tap behind you to go back). Hold SPRINT to run.",
-};
 const ROUTE_HINT = "Tap the map to choose where to go.";
 
 /** A button that reports while it's held down (mouse, touch or pen). */
@@ -128,7 +124,7 @@ export function GameMap({
     mode: startMode,
     style: "roam",
     following: true,
-    hint: "Finding the nearest road…",
+    hint: "",
     alert: false,
     coins: initialCoins,
     relics: 0,
@@ -141,6 +137,7 @@ export function GameMap({
     auto: false,
   });
   const [bagOpen, setBagOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the Vehicles panel, when open
 
   const lookKey = JSON.stringify(look);
@@ -172,14 +169,13 @@ export function GameMap({
       const supabase = createClient();
       const small = window.matchMedia("(max-width: 600px)").matches;
       // Mouse and keyboard, or touch: the hints describe the controls the player has.
-      const roamHint = window.matchMedia("(pointer: fine)").matches ? ROAM_HINTS.keys : ROAM_HINTS.touch;
       const traveller = movement.createTraveller({ lng: startLng, lat: startLat }, startMode);
 
       const map = new MapLibre({
         container: container.current,
         style: MAP_STYLE,
         center: [startLng, startLat],
-        zoom: small ? 20.5 : 19.5,
+        zoom: 20.5,
         pitch: small ? 55 : 60,
         bearing: geo.compassFromHeading(traveller.heading),
         maxPitch: 70,
@@ -194,7 +190,13 @@ export function GameMap({
       const marker = models.makeDestinationMarker();
       const destination = layer.add({ object: marker.group, lng: startLng, lat: startLat });
 
-      const say = (hint: string, alert = false) => setHud((h) => ({ ...h, hint, alert }));
+      // Messages show for a few seconds, then get out of the way.
+      let hintTimer = 0;
+      const say = (hint: string, alert = false) => {
+        setHud((h) => ({ ...h, hint, alert }));
+        window.clearTimeout(hintTimer);
+        hintTimer = window.setTimeout(() => setHud((h) => (h.hint === hint ? { ...h, hint: "" } : h)), alert ? 9000 : 5000);
+      };
       const showRoute = (coords: [number, number][] | null) => {
         const source = map.getSource("route") as import("maplibre-gl").GeoJSONSource | undefined;
         source?.setData(
@@ -216,6 +218,7 @@ export function GameMap({
       let aimTarget: LngLat | null = null;
       let aimClosest = Infinity; // closest the roads have brought the player to aimTarget
       let pendingTurn: -1 | 0 | 1 = 0;
+      let justPassed: import("@/game/roads").PassedJunction | null = null;
       let lastNetworkCheck = 0;
       let lastDeadEndCheck = 0;
 
@@ -726,23 +729,35 @@ export function GameMap({
           aimTarget = null;
           setTurn(0);
           if (style === "roam") buildRoads();
-          setHud((h) => ({ ...h, style: next, hint: next === "roam" ? roamHint : ROUTE_HINT, alert: false }));
+          setHud((h) => ({ ...h, style: next }));
+          if (next === "route") say(ROUTE_HINT);
         },
         turn(dir) {
           if (style !== "roam") return;
           aimTarget = null;
+          // Pressed just after going through a junction: go back to it and take the turn.
+          if (network && justPassed && justPassed.metresSince < 30) {
+            const turned = roads.turnAtPassed(network, justPassed, dir);
+            if (turned) {
+              onRoad = turned;
+              justPassed = null;
+              setTurn(0);
+              return;
+            }
+          }
           setTurn(pendingTurn === dir ? 0 : dir); // pressing the same way again cancels
         },
         turnAround() {
           if (style !== "roam" || !onRoad) return;
           onRoad = roads.reverse(onRoad);
           aimTarget = null;
+          justPassed = null;
           setTurn(0);
         },
         stop() {
           aimTarget = null;
           if (style === "route") clearRoute();
-          say(style === "roam" ? roamHint : ROUTE_HINT);
+          say("Stopped.");
         },
         follow() {
           following = true;
@@ -819,7 +834,6 @@ export function GameMap({
       let last = performance.now();
       let lastHud = 0;
       let lastServices = 0;
-      let roamHintShown = false;
 
       const loop = (now: number) => {
         frame = requestAnimationFrame(loop);
@@ -837,11 +851,7 @@ export function GameMap({
             geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) > 300;
           if (stale && now - lastNetworkCheck > 1000) {
             lastNetworkCheck = now;
-            const hadRoad = !!onRoad;
-            if (buildRoads() && !hadRoad && !roamHintShown) {
-              roamHintShown = true;
-              say(roamHint);
-            }
+            buildRoads();
           }
         }
 
@@ -873,8 +883,10 @@ export function GameMap({
             // Straight on, unless heading for a tapped spot.
             const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
             const aim = aimTarget ? geo.headingOf(here, [aimTarget.lng, aimTarget.lat]) : p0.heading;
-            const { position, deadEnd, turned } = roads.advance(network, onRoad, distance, aim, pendingTurn);
+            const { position, deadEnd, turned, passed } = roads.advance(network, onRoad, distance, aim, pendingTurn);
             if (turned) setTurn(0);
+            if (passed) justPassed = passed;
+            else if (justPassed) justPassed.metresSince += distance;
             onRoad = position;
             if (deadEnd) {
               traveller.v = 0;
@@ -1045,6 +1057,7 @@ export function GameMap({
       cleanup = () => {
         void savePosition();
         cancelAnimationFrame(frame);
+        window.clearTimeout(hintTimer);
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
         document.removeEventListener("visibilitychange", saveOnHide);
@@ -1112,6 +1125,15 @@ export function GameMap({
           </svg>
           Bag{hud.relics > 0 ? ` · ${hud.relics}` : ""}
           {hud.leads > 0 && <span className="rounded-md bg-[#C3A6FF] px-1.5 text-xs text-ink">{hud.leads} lead{hud.leads > 1 ? "s" : ""}</span>}
+        </button>
+        <button
+          type="button"
+          aria-label="How to move"
+          aria-expanded={helpOpen}
+          onClick={() => setHelpOpen((o) => !o)}
+          className="pointer-events-auto flex size-11 shrink-0 items-center justify-center rounded-xl bg-ink text-lg font-extrabold"
+        >
+          ?
         </button>
         </div>
 
@@ -1219,6 +1241,22 @@ export function GameMap({
         )}
         </div>
 
+        {helpOpen && (
+          <div className="pointer-events-auto flex max-w-md flex-col gap-2 rounded-2xl bg-ink p-4 text-sm" role="note">
+            <p className="font-bold">How to move</p>
+            <p>
+              <b>Keyboard:</b> hold ↑ to go, ↓ to turn round and go back. Tap ← or → to turn left or right at the next junction (or
+              the one you just passed). Hold Shift to sprint.
+            </p>
+            <p>
+              <b>Touch or mouse:</b> tap the map and your hunter walks there along the roads. Hold SPRINT to run or pedal faster.
+            </p>
+            <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
+              Got it
+            </button>
+          </div>
+        )}
+
         {/* Row 3: the hunt (riddle, keys, Search here) */}
         {huntId && <HuntPanel huntId={huntId} actions={huntActions} />}
       </div>
@@ -1227,7 +1265,7 @@ export function GameMap({
         role="status"
         className={`absolute bottom-9 left-3 right-[104px] rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
           hud.alert ? "ring-2 ring-gold" : ""
-        }`}
+        } ${hud.hint ? "" : "invisible"}`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}
       >
         {hud.hint}

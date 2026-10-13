@@ -41,7 +41,14 @@ type Hud = {
   guide: Guide | null;
   /** Other hunters seen nearby (live). */
   hunters: number;
+  /** Radar (while active): seconds left, and which way to the nearest relic and, on a Final Approach, the key. */
+  radar: { secondsLeft: number; relic: Pointer | null; key: Pointer | null } | null;
+  /** It's raining where the hunter is (a Rain Charm); `slowed` if it slows them. */
+  rain: { slowed: boolean } | null;
 };
+
+/** A direction and rough distance (bearing: compass degrees). */
+type Pointer = { bearing: number; metres: number };
 
 /** What a hunter announces to others in the same area, about once a second while moving. */
 type HunterUpdate = {
@@ -139,6 +146,8 @@ export function GameMap({
     walkTo: (vehicle: OwnedVehicle) => void;
     refuel: () => void;
     eat: () => void;
+    /** Use a relic from the bag; resolves to a message for the bag. */
+    useRelic: (id: string) => Promise<string>;
     follow: () => void;
     turn: (dir: -1 | 1) => void;
     /** False when not allowed (a motor vehicle on a one-way street). */
@@ -166,6 +175,8 @@ export function GameMap({
     busy: false,
     guide: null,
     hunters: 0,
+    radar: null,
+    rain: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -612,12 +623,20 @@ export function GameMap({
         const kind = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
         const mine = ownInUse();
         const fuel = mine && mine.kind !== "bicycle" ? mine.fuel : null;
-        traveller.speedFactor = mine && fuel !== null && fuel <= 0 ? movement.MODES.walk.kmh / movement.MODES[mine.kind].kmh : 1;
+        fuelFactor = mine && fuel !== null && fuel <= 0 ? movement.MODES.walk.kmh / movement.MODES[mine.kind].kmh : 1;
+        applySpeed();
         setHud((h) => ({
           ...h,
           mode: traveller.mode,
           vehicle: kind ? { kind, source: rental ? "rented" : "owned", fuel, meter: meterText() } : null,
         }));
+      }
+
+      // What holds the traveller back: an empty tank (pushing) and rain (walkers and bikes).
+      let fuelFactor = 1;
+      let weatherFactor = 1;
+      function applySpeed() {
+        traveller.speedFactor = fuelFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : 1);
       }
 
       function onFuel(fuel: number) {
@@ -1001,15 +1020,19 @@ export function GameMap({
         }
       }
 
-      // Relics count for the bag button.
-      void supabase
-        .from("player_relics")
-        .select("expires_at")
-        .then(({ data }) => {
-          if (disposed || !data) return;
-          const now = Date.now();
-          setHud((h) => ({ ...h, relics: data.filter((r) => new Date(r.expires_at).getTime() > now).length }));
-        });
+      // Relics count for the bag button (relics with uses left).
+      function countRelics() {
+        void supabase
+          .from("player_relics")
+          .select("expires_at")
+          .gt("charges", 0)
+          .then(({ data }) => {
+            if (disposed || !data) return;
+            const now = Date.now();
+            setHud((h) => ({ ...h, relics: data.filter((r) => new Date(r.expires_at).getTime() > now).length }));
+          });
+      }
+      countRelics();
 
       // ---- Player actions --------------------------------------------------
       actions.current = {
@@ -1031,6 +1054,7 @@ export function GameMap({
         eat() {
           if (foodHere) void eatHere(foodHere);
         },
+        useRelic: (id) => useRelic(id),
         turn(dir) {
           // Standing on a junction, or pressed just after going through one: take the turn there.
           if (network && onRoad) {
@@ -1199,6 +1223,98 @@ export function GameMap({
       map.on("error", (e) => {
         if (/style|Failed to fetch/i.test(String(e.error?.message))) say("Couldn't load the map. Check your connection.", true);
       });
+
+      // ---- Relics: using them, radar, and rain ------------------------------
+      let radarUntil = 0;
+      let radarSeen: { relic: Pointer | null; key: Pointer | null } = { relic: null, key: null };
+      let lastRadarPing = 0;
+      let lastEffects = 0;
+      const effectsSeen = new Set<string>(); // effects already explained to the player
+
+      async function useRelic(id: string): Promise<string> {
+        await savePosition(); // rain falls where the server last saw the hunter
+        const { data, error } = await supabase.rpc("use_relic", { p_relic: id });
+        const r = data as { ok: boolean; reason?: string; relic?: RelicId; energy?: number | null; fuel?: number | null; until?: string | null } | null;
+        if (error || !r) return "Couldn't use that relic. Please try again.";
+        countRelics();
+        if (!r.ok) {
+          return (
+            {
+              passive: "Shields work by themselves: the next rain or traffic effect that would slow you uses one up instead.",
+              not_yet: "Fast Pass is for bus waits and check-in queues, which are coming soon. Keep it until then.",
+              no_vehicle: "Jerry Can fills your own motorbike or car. Get on it first (Vehicles), then use the can.",
+              gone: "That relic has no uses left.",
+              position: "Move a little first, then try again.",
+            }[r.reason ?? ""] ?? "Couldn't use that relic."
+          );
+        }
+        if (r.relic === "second_wind") {
+          traveller.energy = Math.min(100, traveller.energy + (r.energy ?? 50));
+          return "Second Wind: +50 energy.";
+        }
+        if (r.relic === "jerry_can" && r.fuel != null) {
+          onFuel(r.fuel);
+          return `Jerry Can: your tank is at ${Math.round(r.fuel)}%.`;
+        }
+        if (r.relic === "radar" && r.until) {
+          radarUntil = new Date(r.until).getTime();
+          lastRadarPing = 0;
+          return "Radar on for 5 minutes: follow the arrow to the nearest relic (and, on a hunt's final approach, to the key).";
+        }
+        if (r.relic === "rain_charm") {
+          lastEffects = 0;
+          return "Rain Charm: rain over 5 km for 10 minutes. Walkers and bikes in it are slowed (Shields protect them).";
+        }
+        return "Used.";
+      }
+
+      async function pingRadar() {
+        const { data } = await supabase.rpc("radar_ping");
+        const p = data as { active: boolean; until?: string; relic?: Pointer | null; key?: Pointer | null } | null;
+        if (!p || disposed) return;
+        if (!p.active) {
+          radarUntil = 0;
+          return;
+        }
+        if (p.until) radarUntil = new Date(p.until).getTime();
+        radarSeen = { relic: p.relic ?? null, key: p.key ?? null };
+      }
+
+      async function checkEffects() {
+        await savePosition();
+        const { data } = await supabase.rpc("my_effects");
+        const effects = (data ?? []) as { id: string; kind: "rain"; endsAt: string; outcome: "slowed" | "shielded" | "limit" | "exempt"; mine: boolean }[];
+        if (disposed) return;
+        const rain = effects.filter((e) => e.kind === "rain");
+        if (rain.some((e) => e.outcome === "shielded" && !effectsSeen.has(e.id))) countRelics(); // a Shield was used up
+        const slowed = rain.some((e) => e.outcome === "slowed");
+        weatherFactor = slowed ? 0.8 : 1;
+        applySpeed();
+        setHud((h) => ({ ...h, rain: rain.length ? { slowed } : null }));
+        for (const e of rain) {
+          if (effectsSeen.has(e.id)) continue;
+          effectsSeen.add(e.id);
+          const minutes = Math.max(1, Math.round((new Date(e.endsAt).getTime() - Date.now()) / 60000));
+          const who = e.mine ? "Your Rain Charm" : "Someone's Rain Charm";
+          if (e.outcome === "slowed") say(`${who}: rain here for ${minutes} more min. Walkers and bikes are 20% slower in it.`, true);
+          else if (e.outcome === "shielded") say(`${who}: rain here, but your Shield kept you at full speed (it's used up).`, true);
+          else if (e.outcome === "limit") say("Rain here, but you've been slowed enough this hour: full speed for you.");
+          else say("Rain here, but effects don't apply near a hunt key: full speed.");
+        }
+      }
+
+      /** Radar and weather, checked now and then. */
+      function relicTick(now: number) {
+        if (radarUntil > Date.now() && now - lastRadarPing > 5000) {
+          lastRadarPing = now;
+          void pingRadar();
+        }
+        if (now - lastEffects > 20000) {
+          lastEffects = now;
+          void checkEffects();
+        }
+      }
+      void pingRadar(); // a radar used earlier may still be running
 
       // ---- Life on the streets ---------------------------------------------
       // Scenery only: a few people walking and vehicles driving on the real roads
@@ -1465,6 +1581,7 @@ export function GameMap({
             traveller.heading = geo.turnTowards(traveller.heading, p.heading, Math.min(1, 8 * dt));
           }
         }
+        relicTick(now);
         if (now - lastGuide > 250) {
           lastGuide = now;
           updateGuide();
@@ -1541,6 +1658,9 @@ export function GameMap({
           lastHud = now;
           const energy = Math.round(traveller.energy);
           const hunters = others.size;
+          const radarLeft = Math.max(0, Math.round((radarUntil - Date.now()) / 1000));
+          const turnTo = (p: Pointer | null) => (p ? { bearing: Math.round(p.bearing - map.getBearing()), metres: p.metres } : null);
+          const radar = radarLeft > 0 ? { secondsLeft: radarLeft, relic: turnTo(radarSeen.relic), key: turnTo(radarSeen.key) } : null;
           const speedKmh = Math.round((traveller.v / movement.TIME_SCALE) * 3.6);
 
           // Point to the closest find, relative to the screen (the camera turns with the hunter).
@@ -1562,9 +1682,10 @@ export function GameMap({
             h.speedKmh === speedKmh &&
             h.nearest?.metres === nearest?.metres &&
             h.nearest?.angle === nearest?.angle &&
-            h.hunters === hunters
+            h.hunters === hunters &&
+            JSON.stringify(h.radar) === JSON.stringify(radar)
               ? h
-              : { ...h, energy, speedKmh, nearest, hunters },
+              : { ...h, energy, speedKmh, nearest, hunters, radar },
           );
         }
       };
@@ -1814,6 +1935,38 @@ export function GameMap({
             <span className="font-bold">{hud.nearest.metres >= 1000 ? `${(hud.nearest.metres / 1000).toFixed(1)} km` : `${hud.nearest.metres} m`}</span>
           </div>
         )}
+        {hud.radar && (
+          <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-[#3B2F0A] px-3 text-sm text-paper ring-1 ring-gold" aria-label="Radar">
+            <span className="font-bold text-gold">Radar</span>
+            {hud.radar.relic ? (
+              <span className="flex items-center gap-1">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="#F4B41A" aria-hidden="true" style={{ transform: `rotate(${hud.radar.relic.bearing}deg)` }}>
+                  <path d="M12 2l6 18-6-4-6 4z" />
+                </svg>
+                relic {hud.radar.relic.metres >= 1000 ? `${(hud.radar.relic.metres / 1000).toFixed(1)} km` : `${hud.radar.relic.metres} m`}
+              </span>
+            ) : (
+              <span className="text-paper/70">no relic within 3 km</span>
+            )}
+            {hud.radar.key && (
+              <span className="flex items-center gap-1">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="#3DD68C" aria-hidden="true" style={{ transform: `rotate(${hud.radar.key.bearing}deg)` }}>
+                  <path d="M12 2l6 18-6-4-6 4z" />
+                </svg>
+                key {hud.radar.key.metres} m
+              </span>
+            )}
+            <span className="text-xs text-paper/70">
+              {Math.floor(hud.radar.secondsLeft / 60)}:{String(hud.radar.secondsLeft % 60).padStart(2, "0")}
+            </span>
+          </div>
+        )}
+        {hud.rain && (
+          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-[#173B5C] px-3 text-sm" aria-label="Rain">
+            <span aria-hidden="true">🌧</span>
+            {hud.rain.slowed ? "Rain: 20% slower on foot or bike" : "Rain"}
+          </div>
+        )}
         {hud.hunters > 0 && (
           <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm" aria-label={`${hud.hunters} other hunters nearby`}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7FB2FF" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
@@ -1916,7 +2069,16 @@ export function GameMap({
         {hud.hint}
       </p>
 
-      {bagOpen && <BagPanel leads={hud.leads} onClose={() => setBagOpen(false)} />}
+      {/* Rain from a Rain Charm: falling streaks over the map, a little darker. */}
+      {hud.rain && <div className="loota-rain pointer-events-none absolute inset-0" aria-hidden="true" />}
+
+      {bagOpen && (
+        <BagPanel
+          leads={hud.leads}
+          onUse={(id) => actions.current?.useRelic(id) ?? Promise.resolve("The map isn't ready yet.")}
+          onClose={() => setBagOpen(false)}
+        />
+      )}
       {garage && (
         <VehiclePanel
           owned={garage}

@@ -26,3 +26,20 @@ body {
   background: var(--color-ink);
   color: var(--color-paper);
 }
+
+/* Rain over the map (Rain Charm): two layers of streaks falling at different speeds. */
+.loota-rain {
+  background-color: rgba(30, 50, 80, 0.18);
+  background-image:
+    repeating-linear-gradient(105deg, transparent 0 18px, rgba(200, 225, 255, 0.35) 18px 19px, transparent 19px 46px),
+    repeating-linear-gradient(100deg, transparent 0 31px, rgba(200, 225, 255, 0.22) 31px 32px, transparent 32px 77px);
+  background-size: 120px 140px, 180px 220px;
+  animation: loota-rain-fall 0.45s linear infinite;
+}
+@keyframes loota-rain-fall {
+  from { background-position: 0 0, 0 0; }
+  to { background-position: -30px 140px, -40px 220px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loota-rain { animation: none; }
+}

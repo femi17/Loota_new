@@ -245,6 +245,78 @@ export function makeNameplate(text: string, background: string) {
   return plate;
 }
 
+// ---------------------------------------------------------------------------
+// Things to find while roaming
+// ---------------------------------------------------------------------------
+const glowMaterials = new Map<string, THREE.MeshLambertMaterial>();
+function glow(color: string) {
+  let m = glowMaterials.get(color);
+  if (!m) {
+    m = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.45 });
+    glowMaterials.set(color, m);
+  }
+  return m;
+}
+
+const ITEM_G = {
+  coin: new THREE.CylinderGeometry(0.35, 0.35, 0.08, 20),
+  chest: new THREE.BoxGeometry(0.8, 0.5, 0.55),
+  chestBand: new THREE.BoxGeometry(0.84, 0.08, 0.59),
+  scroll: new THREE.CylinderGeometry(0.13, 0.13, 0.7, 12),
+  scrollBand: new THREE.CylinderGeometry(0.14, 0.14, 0.08, 12),
+  crystal: new THREE.IcosahedronGeometry(0.32, 0),
+  ring: new THREE.TorusGeometry(0.7, 0.05, 6, 24),
+};
+
+export type ItemModel = { group: THREE.Group; spin: THREE.Group };
+
+/** A coin, a treasure chest (coin cache), an intel scroll or a glowing relic crystal. */
+export function makeItemModel(kind: "coins" | "cache" | "intel" | "relic", relicColour = "#F4B41A"): ItemModel {
+  const group = new THREE.Group();
+  const spin = new THREE.Group();
+  group.add(spin);
+
+  if (kind === "coins") {
+    const coin = new THREE.Mesh(ITEM_G.coin, glow("#F4B41A"));
+    coin.rotation.x = Math.PI / 2;
+    spin.add(coin);
+    spin.position.y = 0.9;
+  } else if (kind === "cache") {
+    spin.add(mesh(ITEM_G.chest, "#7A4A22", 0, 0.25, 0));
+    const band = new THREE.Mesh(ITEM_G.chestBand, glow("#F4B41A"));
+    band.position.y = 0.38;
+    spin.add(band);
+  } else if (kind === "intel") {
+    const scroll = mesh(ITEM_G.scroll, "#F1E3C2");
+    const band = new THREE.Mesh(ITEM_G.scrollBand, glow("#D93B3B"));
+    scroll.rotation.z = band.rotation.z = Math.PI / 2;
+    spin.add(scroll, band);
+    spin.position.y = 0.9;
+  } else {
+    spin.add(new THREE.Mesh(ITEM_G.crystal, glow(relicColour)));
+    spin.position.y = 1.0;
+  }
+
+  const ring = new THREE.Mesh(ITEM_G.ring, new THREE.MeshBasicMaterial({ color: kind === "relic" ? relicColour : "#F4B41A", transparent: true, opacity: 0.45 }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.05;
+  group.add(ring);
+  return { group, spin };
+}
+
+/** Purple beam where an intel scroll says something is hidden. */
+export function makeLeadMarker() {
+  const purple = new THREE.MeshBasicMaterial({ color: 0xc3a6ff, transparent: true, opacity: 0.55 });
+  const group = new THREE.Group();
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.12, 8, 32), purple);
+  halo.rotation.x = Math.PI / 2;
+  halo.position.y = 0.1;
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 40, 8), purple);
+  beam.position.y = 20;
+  group.add(halo, beam);
+  return group;
+}
+
 /** Gold ring and beam marking where the player is heading. */
 export function makeDestinationMarker() {
   const glow = new THREE.MeshBasicMaterial({ color: 0xffd34d, transparent: true, opacity: 0.5 });

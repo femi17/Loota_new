@@ -19,5 +19,12 @@ async function Play() {
   if (!player) redirect("/login?next=/play");
   if (!player.home) redirect("/onboarding");
   const start = player.position ?? player.home;
-  return <GameMap look={player.look} start={{ lng: start.lng, lat: start.lat }} startMode={player.position?.mode ?? "walk"} />;
+  return (
+    <GameMap
+      look={player.look}
+      start={{ lng: start.lng, lat: start.lat }}
+      startMode={player.position?.mode ?? "walk"}
+      initialCoins={player.coins}
+    />
+  );
 }

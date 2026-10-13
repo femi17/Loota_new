@@ -11,6 +11,8 @@ export type MapEntity = {
   heading?: number;
   /** Fixed scale; otherwise the object is enlarged to stay readable at any zoom. */
   scale?: number;
+  /** Multiplies the automatic enlargement (ignored when `scale` is set). */
+  scaleBy?: number;
 };
 
 /**
@@ -89,7 +91,7 @@ export class ThreeMapLayer implements CustomLayerInterface {
       const m = MercatorCoordinate.fromLngLat([e.lng, e.lat], 0);
       e.object.position.set((m.x - origin.x) / metre, 0, (m.y - origin.y) / metre);
       if (e.heading !== undefined) e.object.rotation.y = e.heading;
-      e.object.scale.setScalar(e.scale ?? enlarge);
+      e.object.scale.setScalar(e.scale ?? enlarge * (e.scaleBy ?? 1));
     }
 
     // Face the camera: it looks along the map bearing from above at the map pitch.

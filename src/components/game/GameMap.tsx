@@ -6,6 +6,8 @@ import Link from "next/link";
 import type { AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import type { Mode } from "@/game/movement";
+import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
+import { BagPanel } from "./BagPanel";
 
 /** Free roam follows the roads with no destination; route goes to a tapped place. */
 type Style = "roam" | "route";
@@ -19,6 +21,11 @@ type Hud = {
   following: boolean;
   hint: string;
   alert: boolean;
+  coins: number;
+  relics: number;
+  leads: number;
+  /** Closest find: distance, and arrow angle relative to the screen (0 = straight ahead). */
+  nearest: { metres: number; angle: number } | null;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
@@ -70,7 +77,17 @@ function HoldButton({
  * The live 3D map: the player's hunter, free roam on roads or tap-to-route
  * travel, the chase camera, and saving position to the server.
  */
-export function GameMap({ look, start, startMode }: { look: AvatarLook; start: LngLat; startMode: Mode }) {
+export function GameMap({
+  look,
+  start,
+  startMode,
+  initialCoins,
+}: {
+  look: AvatarLook;
+  start: LngLat;
+  startMode: Mode;
+  initialCoins: number;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false, left: false, right: false });
   const actions = useRef<{ setMode: (m: Mode) => void; setStyle: (s: Style) => void; follow: () => void } | null>(null);
@@ -84,7 +101,12 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
     following: true,
     hint: "Finding the nearest road…",
     alert: false,
+    coins: initialCoins,
+    relics: 0,
+    leads: 0,
+    nearest: null,
   });
+  const [bagOpen, setBagOpen] = useState(false);
 
   const lookKey = JSON.stringify(look);
   const startLng = start.lng;
@@ -233,6 +255,131 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
       };
       document.addEventListener("visibilitychange", saveOnHide);
 
+      // ---- Things to find while roaming ------------------------------------
+      type ItemOnMap = { item: WorldItem; entity: import("@/game/ThreeMapLayer").MapEntity; model: import("@/game/models3d").ItemModel };
+      type PickupResult =
+        | { ok: false; reason: "gone" | "far" | "position"; lng?: number; lat?: number }
+        | { ok: true; kind: "coins" | "cache"; coins: number; balance: number }
+        | { ok: true; kind: "relic"; relic: RelicId }
+        | { ok: true; kind: "intel"; lead: { lng: number; lat: number } | null };
+
+      const onMap = new Map<string, ItemOnMap>();
+      const leadMarkers = new Map<string, import("@/game/ThreeMapLayer").MapEntity>();
+      const picking = new Set<string>();
+      const retryAfter = new Map<string, number>();
+      let lastSync = 0;
+      let syncedAt: LngLat | null = null;
+      let syncing = false;
+
+      const removeItem = (id: string) => {
+        const entry = onMap.get(id);
+        if (entry) layer.remove(entry.entity);
+        onMap.delete(id);
+      };
+      const addLead = (id: string, lng: number, lat: number) => {
+        if (!leadMarkers.has(id)) leadMarkers.set(id, layer.add({ object: models.makeLeadMarker(), lng, lat }));
+      };
+      const showLeadCount = () => setHud((h) => ({ ...h, leads: leadMarkers.size }));
+      const compassWord = (deg: number) =>
+        ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][Math.round((((deg % 360) + 360) % 360) / 45) % 8];
+
+      /** Fetch what's around the player (the server stocks empty squares on the way). */
+      async function syncWorld() {
+        if (syncing) return;
+        syncing = true;
+        try {
+          await savePosition(); // the server looks around where it last saw the player
+          const res = await fetch("/api/world/nearby", { method: "POST" });
+          if (!res.ok || disposed) return;
+          const data = (await res.json()) as { items: WorldItem[]; leads: Lead[]; decoysFound: number };
+          syncedAt = { ...traveller.pos };
+
+          const visible = new Set(data.items.map((i) => i.id));
+          for (const item of data.items) {
+            if (onMap.has(item.id)) continue;
+            const model = models.makeItemModel(item.kind, item.relic ? RELICS[item.relic].colour : undefined);
+            const entity = layer.add({ object: model.group, lng: item.lng, lat: item.lat, scaleBy: 1.7 });
+            onMap.set(item.id, { item, entity, model });
+          }
+          for (const id of [...onMap.keys()]) if (!visible.has(id) && !picking.has(id)) removeItem(id);
+
+          // The server's list of open leads is the truth (it includes ones just found).
+          for (const marker of leadMarkers.values()) layer.remove(marker);
+          leadMarkers.clear();
+          for (const lead of data.leads) addLead(lead.id, lead.lng, lead.lat);
+          showLeadCount();
+          if (data.decoysFound > 0) say("Nothing here. That intel scroll was a decoy.", true);
+        } catch {
+          // Offline or the server is busy: try again on the next sync.
+        } finally {
+          syncing = false;
+        }
+      }
+
+      async function pickUp(id: string) {
+        const entry = onMap.get(id);
+        if (!entry) return;
+        picking.add(id);
+        const { data, error } = await supabase.rpc("pickup_item", {
+          p_item: id,
+          p_lng: traveller.pos.lng,
+          p_lat: traveller.pos.lat,
+          p_mode: traveller.mode,
+        });
+        picking.delete(id);
+        if (disposed) return;
+        if (error || !data) {
+          retryAfter.set(id, performance.now() + 3000);
+          return;
+        }
+        const result = data as PickupResult;
+        if (!result.ok) {
+          if (result.reason === "gone") removeItem(id);
+          else retryAfter.set(id, performance.now() + 3000);
+          return;
+        }
+
+        removeItem(id);
+        saved = { ...traveller.pos }; // a pickup also saves the player's position
+        // An intel lead that pointed here is done.
+        for (const [leadId, marker] of [...leadMarkers]) {
+          if (geo.distanceM([marker.lng, marker.lat], [entry.item.lng, entry.item.lat]) < 5) {
+            layer.remove(marker);
+            leadMarkers.delete(leadId);
+          }
+        }
+        showLeadCount();
+
+        if (result.kind === "coins" || result.kind === "cache") {
+          const balance = result.balance;
+          setHud((h) => ({ ...h, coins: balance }));
+          say(result.kind === "cache" ? `You found a hidden coin cache! +${result.coins} coins.` : `+${result.coins} coins`);
+        } else if (result.kind === "relic") {
+          const relic = RELICS[result.relic];
+          setHud((h) => ({ ...h, relics: h.relics + 1 }));
+          say(`You found a ${relic.name}! ${relic.effect} It's in your bag for 7 days.`, true);
+        } else if (result.kind === "intel" && result.lead) {
+          const { lng, lat } = result.lead;
+          addLead(`new:${id}`, lng, lat);
+          showLeadCount();
+          const metres = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [lng, lat]);
+          const direction = compassWord(geo.compassFromHeading(geo.headingOf([traveller.pos.lng, traveller.pos.lat], [lng, lat])));
+          say(`Intel scroll: something is hidden about ${geo.formatDistance(metres)} ${direction}. Follow the purple beam.`, true);
+        } else {
+          say("This intel scroll is blank.");
+        }
+      }
+
+      // Relics count for the bag button.
+      void supabase
+        .from("player_relics")
+        .select("expires_at")
+        .then(({ data }) => {
+          if (disposed || !data) return;
+          const now = Date.now();
+          setHud((h) => ({ ...h, relics: data.filter((r) => new Date(r.expires_at).getTime() > now).length }));
+        });
+
       // ---- Player actions --------------------------------------------------
       actions.current = {
         setMode(mode) {
@@ -351,6 +498,17 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
         me.heading = traveller.heading;
         marker.halo.scale.setScalar(1 + Math.sin(t * 4) * 0.1);
 
+        // Spin the finds, and pick up anything within reach.
+        for (const [id, { item, model }] of onMap) {
+          model.spin.rotation.y += dt * 2;
+          if (picking.has(id) || (retryAfter.get(id) ?? 0) > now) continue;
+          if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [item.lng, item.lat]) < PICKUP_RADIUS_M) void pickUp(id);
+        }
+        if (now - lastSync > 15000 || (syncedAt && geo.distanceM([syncedAt.lng, syncedAt.lat], [traveller.pos.lng, traveller.pos.lat]) > 200)) {
+          lastSync = now;
+          void syncWorld();
+        }
+
         if (following) {
           // Chase camera: keep the camera behind the hunter.
           const want = geo.compassFromHeading(traveller.heading);
@@ -371,8 +529,30 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
           const energy = Math.round(traveller.energy);
           const speedKmh = Math.round((traveller.v / movement.TIME_SCALE) * 3.6);
           const leftM = traveller.route ? Math.round(traveller.route.total - traveller.s) : null;
+
+          // Point to the closest find, relative to the screen (the camera turns with the hunter).
+          const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+          let nearest: Hud["nearest"] = null;
+          let closest = Infinity;
+          for (const { item } of onMap.values()) {
+            const d = geo.distanceM(here, [item.lng, item.lat]);
+            if (d < closest) {
+              closest = d;
+              const compass = geo.compassFromHeading(geo.headingOf(here, [item.lng, item.lat]));
+              nearest = { metres: Math.round(d), angle: Math.round(compass - map.getBearing()) };
+            }
+          }
+
           // Only re-render the display when something visible changed.
-          setHud((h) => (h.energy === energy && h.speedKmh === speedKmh && h.leftM === leftM ? h : { ...h, energy, speedKmh, leftM }));
+          setHud((h) =>
+            h.energy === energy &&
+            h.speedKmh === speedKmh &&
+            h.leftM === leftM &&
+            h.nearest?.metres === nearest?.metres &&
+            h.nearest?.angle === nearest?.angle
+              ? h
+              : { ...h, energy, speedKmh, leftM, nearest },
+          );
         }
       };
 
@@ -450,13 +630,15 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
         <div ref={container} className="h-full w-full" />
       </div>
 
-      <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-wrap items-center gap-2" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-col gap-2" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+        {/* Row 1: status */}
+        <div className="flex items-center gap-2">
         <Link href="/lobby" aria-label="Back to the lobby" className="pointer-events-auto flex size-11 items-center justify-center rounded-xl bg-ink text-paper">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M15 5l-7 7 7 7" />
           </svg>
         </Link>
-        <div className="pointer-events-auto flex h-11 min-w-0 flex-1 items-center gap-2 rounded-xl bg-ink px-3 sm:max-w-xs" aria-label={`Energy ${hud.energy} of 100`}>
+        <div className="pointer-events-auto flex h-11 min-w-[110px] flex-1 items-center gap-2 rounded-xl bg-ink px-3 sm:max-w-xs" aria-label={`Energy ${hud.energy} of 100`}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="#1E9E62" aria-hidden="true">
             <path d="M13 2L4 14h7l-1 8 9-12h-7z" />
           </svg>
@@ -465,6 +647,27 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
           </div>
           <span className="w-7 text-right text-sm font-bold">{hud.energy}</span>
         </div>
+        <span className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold" aria-label={`${hud.coins} coins`}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F4B41A" strokeWidth="2.4" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+          </svg>
+          {hud.coins.toLocaleString("en-NG")}
+        </span>
+        <button
+          type="button"
+          onClick={() => setBagOpen(true)}
+          className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C3A6FF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2" />
+          </svg>
+          Bag{hud.relics > 0 ? ` · ${hud.relics}` : ""}
+          {hud.leads > 0 && <span className="rounded-md bg-[#C3A6FF] px-1.5 text-xs text-ink">{hud.leads} lead{hud.leads > 1 ? "s" : ""}</span>}
+        </button>
+        </div>
+
+        {/* Row 2: how you travel, and what's nearby */}
+        <div className="flex flex-wrap items-center gap-2">
         <div className="pointer-events-auto flex h-11 rounded-xl bg-ink p-1" role="group" aria-label="Travel style">
           <button type="button" aria-pressed={hud.style === "roam"} onClick={() => actions.current?.setStyle("roam")} className={segment(hud.style === "roam")}>
             Free roam
@@ -486,11 +689,28 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
             <span className="text-muted">to go · {hud.speedKmh} km/h</span>
           </div>
         )}
+        {hud.nearest && (
+          <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm" aria-label={`Nearest find ${hud.nearest.metres} metres away`}>
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="#F4B41A"
+              aria-hidden="true"
+              style={{ transform: `rotate(${hud.nearest.angle}deg)` }}
+            >
+              <path d="M12 2l6 18-6-4-6 4z" />
+            </svg>
+            <span className="text-muted">Nearest find</span>
+            <span className="font-bold">{hud.nearest.metres >= 1000 ? `${(hud.nearest.metres / 1000).toFixed(1)} km` : `${hud.nearest.metres} m`}</span>
+          </div>
+        )}
         {!hud.following && (
           <button type="button" onClick={() => actions.current?.follow()} className="pointer-events-auto h-11 rounded-xl bg-ink px-4 text-sm font-bold">
             Follow me
           </button>
         )}
+        </div>
       </div>
 
       <p
@@ -525,6 +745,8 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
           </HoldButton>
         </div>
       )}
+
+      {bagOpen && <BagPanel leads={hud.leads} onClose={() => setBagOpen(false)} />}
 
       <div className="absolute bottom-9 right-5 flex flex-col items-center gap-3" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
         <HoldButton

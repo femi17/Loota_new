@@ -39,7 +39,25 @@ type Hud = {
   busy: boolean;
   /** Turn-by-turn directions, while the player has a destination. */
   guide: Guide | null;
+  /** Other hunters seen nearby (live). */
+  hunters: number;
 };
+
+/** What a hunter announces to others in the same area, about once a second while moving. */
+type HunterUpdate = {
+  id: string;
+  name: string;
+  look: AvatarLook;
+  lng: number;
+  lat: number;
+  heading: number;
+  mode: Mode;
+  moving: boolean;
+};
+
+/** Areas for live positions (~2.2 km); each hunter listens to theirs and the 8 around it. */
+const LIVE_AREA_DEG = 0.02;
+const liveArea = (lng: number, lat: number) => ({ ax: Math.floor(lng / LIVE_AREA_DEG), ay: Math.floor(lat / LIVE_AREA_DEG) });
 
 /** What the directions banner shows: the next turn, and the trip as a whole. */
 type Guide = {
@@ -95,12 +113,16 @@ function HoldButton({
  * to a chosen place, the chase camera, and saving position to the server.
  */
 export function GameMap({
+  playerId,
+  username,
   look,
   start,
   startMode,
   initialCoins,
   huntId,
 }: {
+  playerId: string;
+  username: string;
   look: AvatarLook;
   start: LngLat;
   startMode: Mode;
@@ -143,6 +165,7 @@ export function GameMap({
     street: null,
     busy: false,
     guide: null,
+    hunters: 0,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -1177,6 +1200,127 @@ export function GameMap({
         if (/style|Failed to fetch/i.test(String(e.error?.message))) say("Couldn't load the map. Check your connection.", true);
       });
 
+      // ---- Other hunters, live --------------------------------------------
+      // Each hunter announces where they are to their area's channel (about
+      // once a second while moving, every 8 s standing still) and listens to
+      // the areas around them. Positions shown here are for display only; the
+      // server still checks every saved move.
+      type OtherHunter = {
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+        avatar: ReturnType<typeof models.buildAvatar>;
+        to: { lng: number; lat: number; heading: number };
+        mode: Mode;
+        moving: boolean;
+        seen: number;
+      };
+      const others = new Map<string, OtherHunter>();
+      const areaChannels = new Map<string, import("@supabase/supabase-js").RealtimeChannel>();
+      let myArea = "";
+      let lastAnnounce = 0;
+      const MAX_SHOWN = 25;
+
+      function joinAreas(ax: number, ay: number) {
+        const want = new Set<string>();
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) want.add(`${ax + dx}_${ay + dy}`);
+        for (const [key, channel] of areaChannels) {
+          if (want.has(key)) continue;
+          void supabase.removeChannel(channel);
+          areaChannels.delete(key);
+        }
+        for (const key of want) {
+          if (areaChannels.has(key)) continue;
+          const channel = supabase.channel(`hunters:${key}`, { config: { broadcast: { self: false } } });
+          channel.on("broadcast", { event: "pos" }, ({ payload }) => seeHunter(payload as HunterUpdate));
+          channel.on("broadcast", { event: "bye" }, ({ payload }) => dropHunter(String((payload as { id: string }).id)));
+          // Once connected, announce straight away (the first announcement may have gone out too early).
+          channel.subscribe((status) => {
+            if (status === "SUBSCRIBED" && key === myArea) lastAnnounce = 0;
+          });
+          areaChannels.set(key, channel);
+        }
+      }
+
+      function seeHunter(u: HunterUpdate) {
+        if (disposed || u.id === playerId || typeof u.lng !== "number" || typeof u.lat !== "number") return;
+        const now = performance.now();
+        const known = others.get(u.id);
+        if (known) {
+          known.to = { lng: u.lng, lat: u.lat, heading: u.heading };
+          known.mode = u.mode;
+          known.moving = u.moving;
+          known.seen = now;
+          return;
+        }
+        if (others.size >= MAX_SHOWN) return;
+        lastAnnounce = 0; // a newcomer: let them see us straight away too
+        const avatar = models.buildAvatar(u.look);
+        avatar.root.add(layer.billboard(models.makeNameplate(String(u.name).slice(0, 20), "#5B6475")));
+        const entity = layer.add({ object: avatar.root, lng: u.lng, lat: u.lat, heading: u.heading });
+        others.set(u.id, { entity, avatar, to: { lng: u.lng, lat: u.lat, heading: u.heading }, mode: u.mode, moving: u.moving, seen: now });
+      }
+
+      function dropHunter(id: string) {
+        const o = others.get(id);
+        if (!o) return;
+        layer.remove(o.entity);
+        others.delete(id);
+      }
+
+      function announce(now: number) {
+        const moving = traveller.v > 0.5;
+        if (now - lastAnnounce < (moving ? 1000 : 8000)) return;
+        lastAnnounce = now;
+        const { ax, ay } = liveArea(traveller.pos.lng, traveller.pos.lat);
+        const key = `${ax}_${ay}`;
+        if (key !== myArea) {
+          myArea = key;
+          joinAreas(ax, ay);
+        }
+        const update: HunterUpdate = {
+          id: playerId,
+          name: username,
+          look: JSON.parse(lookKey) as AvatarLook,
+          lng: traveller.pos.lng,
+          lat: traveller.pos.lat,
+          heading: traveller.heading,
+          mode: traveller.mode,
+          moving,
+        };
+        void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: update });
+      }
+
+      // Closing the tab or leaving the app: tell the others straight away (otherwise
+      // they drop us after 15 s of silence). Coming back re-announces.
+      const sayBye = () => void areaChannels.get(myArea)?.send({ type: "broadcast", event: "bye", payload: { id: playerId } });
+      const leaving = () => {
+        if (document.visibilityState === "hidden") sayBye();
+        else lastAnnounce = 0;
+      };
+      window.addEventListener("pagehide", sayBye);
+      document.addEventListener("visibilitychange", leaving);
+
+      /** Glide other hunters towards their latest announced spot; drop ones gone quiet. */
+      function moveOthers(now: number, dt: number, t: number) {
+        const k = Math.min(1, 3 * dt);
+        for (const [id, o] of others) {
+          if (now - o.seen > 15000) {
+            dropHunter(id);
+            continue;
+          }
+          const before = { lng: o.entity.lng, lat: o.entity.lat };
+          o.entity.lng += (o.to.lng - o.entity.lng) * k;
+          o.entity.lat += (o.to.lat - o.entity.lat) * k;
+          o.entity.heading = geo.turnTowards(o.entity.heading ?? o.to.heading, o.to.heading, Math.min(1, 6 * dt));
+          const moved = geo.distanceM([before.lng, before.lat], [o.entity.lng, o.entity.lat]);
+          models.animateAvatar(
+            o.avatar,
+            { mode: o.mode, phase: "idle", moving: o.moving ? 1 : 0, distance: moved / layer.enlargement() },
+            dt,
+            t,
+          );
+        }
+      }
+
       // ---- Game loop -------------------------------------------------------
       let frame = 0;
       let last = performance.now();
@@ -1307,9 +1451,13 @@ export function GameMap({
           if (rental) showVehicle();
         }
 
+        announce(now);
+        moveOthers(now, dt, t);
+
         if (now - lastHud > 100) {
           lastHud = now;
           const energy = Math.round(traveller.energy);
+          const hunters = others.size;
           const speedKmh = Math.round((traveller.v / movement.TIME_SCALE) * 3.6);
 
           // Point to the closest find, relative to the screen (the camera turns with the hunter).
@@ -1330,9 +1478,10 @@ export function GameMap({
             h.energy === energy &&
             h.speedKmh === speedKmh &&
             h.nearest?.metres === nearest?.metres &&
-            h.nearest?.angle === nearest?.angle
+            h.nearest?.angle === nearest?.angle &&
+            h.hunters === hunters
               ? h
-              : { ...h, energy, speedKmh, nearest },
+              : { ...h, energy, speedKmh, nearest, hunters },
           );
         }
       };
@@ -1430,6 +1579,11 @@ export function GameMap({
         document.removeEventListener("visibilitychange", saveOnHide);
         actions.current = null;
         huntActions.current = null;
+        sayBye();
+        window.removeEventListener("pagehide", sayBye);
+        document.removeEventListener("visibilitychange", leaving);
+        for (const channel of areaChannels.values()) void supabase.removeChannel(channel);
+        areaChannels.clear();
         map.remove();
       };
     })().catch(() => setFailed(true));
@@ -1438,7 +1592,7 @@ export function GameMap({
       disposed = true;
       cleanup();
     };
-  }, [startLng, startLat, startMode, lookKey]);
+  }, [startLng, startLat, startMode, lookKey, playerId, username]);
 
   if (failed) {
     return (
@@ -1575,6 +1729,16 @@ export function GameMap({
             </svg>
             <span className="text-muted">Nearest find</span>
             <span className="font-bold">{hud.nearest.metres >= 1000 ? `${(hud.nearest.metres / 1000).toFixed(1)} km` : `${hud.nearest.metres} m`}</span>
+          </div>
+        )}
+        {hud.hunters > 0 && (
+          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm" aria-label={`${hud.hunters} other hunters nearby`}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7FB2FF" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="9" cy="8" r="3.5" />
+              <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4.5a3.5 3.5 0 0 1 0 7M21 20c0-2.6-1.6-4.8-4-5.6" />
+            </svg>
+            <span className="font-bold">{hud.hunters}</span>
+            <span className="text-muted">nearby</span>
           </div>
         )}
         {hud.turn !== 0 && (

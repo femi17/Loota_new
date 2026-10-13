@@ -24,6 +24,8 @@ async function Play({ searchParams }: { searchParams: Promise<{ hunt?: string | 
   const start = player.position ?? player.home;
   return (
     <GameMap
+      playerId={player.id}
+      username={player.username}
       look={player.look}
       start={{ lng: start.lng, lat: start.lat }}
       startMode={player.position?.mode ?? "walk"}

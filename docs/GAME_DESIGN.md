@@ -579,6 +579,7 @@ Each phase ends with something playable that can be tested.
 | 12 Oct 2026 | Free roam stays on roads and footpaths (no walking through buildings or water). |
 | 12 Oct 2026 | Flat map: no 3D buildings. Chase camera only (first person dropped). Starting zoom 20.5 on phones, 19.5 on larger screens. |
 | 13 Oct 2026 | Owner found the flat map too empty ("like a desert"): buildings return as **low 3D blocks** (capped at ~14 m, warm varied colours) with larger street names. Avatars are near true size at play zoom now, so the earlier "giants among blocks" problem doesn't recur. |
+| 13 Oct 2026 | **Free-roam finds built.** The world is split into ~550 m squares, stocked when a player comes near and restocked every 6 h: 12 coin drops (5–20 coins), 1 intel scroll, 1 hidden find (60% coin cache of 40–100 coins, 40% relic), all on real roads. Hidden finds show only within 40 m or when intel points to them; 1 in 4 intel scrolls is a decoy. Pickups are confirmed by the server (30 m reach, anti-teleport check). Relics last 7 days; using them comes with hunts. The Lockdown Orb is not spawned yet. |
 
 ## 16. Open questions
 

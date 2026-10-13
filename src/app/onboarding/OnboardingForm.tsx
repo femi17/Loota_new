@@ -2,9 +2,9 @@
 
 import { useActionState, useState } from "react";
 import { finishOnboarding } from "./actions";
-import { HunterFigure } from "@/components/HunterFigure";
+import { LookEditor } from "@/components/LookEditor";
 import { FormMessage, primaryButton } from "@/components/FormField";
-import { OUTFIT_COLOURS, SKIN_TONES, type AvatarLook } from "@/lib/avatar";
+import type { AvatarLook } from "@/lib/avatar";
 
 type Place = { status: "idle" | "locating" | "error"; message?: string } | { status: "found"; lng: number; lat: number };
 
@@ -36,50 +36,10 @@ export function OnboardingForm({ username, initialLook }: { username: string; in
     <form action={action} className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="font-display text-3xl font-extrabold">Set up {username}</h1>
-        <p className="text-muted">Choose your look and where your journey starts.</p>
+        <p className="text-muted">Make your hunter yours, then set where your journey starts.</p>
       </div>
 
-      <div className="relative flex h-48 items-end justify-center overflow-hidden rounded-2xl bg-map">
-        <div aria-hidden="true" className="absolute left-[-20px] top-28 h-5 w-[120%] -rotate-6 bg-white" />
-        <div aria-hidden="true" className="absolute bottom-4 h-4 w-28 rounded-[50%] bg-[#cfc6b4]" />
-        <div className="relative mb-6">
-          <HunterFigure look={look} width={96} label="Your hunter preview" />
-        </div>
-      </div>
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="mb-2 text-sm text-muted">Skin tone</legend>
-        <div className="flex flex-wrap gap-3">
-          {SKIN_TONES.map((s) => (
-            <button
-              key={s.color}
-              type="button"
-              aria-label={`Skin tone: ${s.label}`}
-              aria-pressed={look.skin === s.color}
-              onClick={() => setLook({ ...look, skin: s.color })}
-              className={`size-11 rounded-full border-[3px] ${look.skin === s.color ? "border-gold" : "border-ink"}`}
-              style={{ background: s.color }}
-            />
-          ))}
-        </div>
-      </fieldset>
-
-      <fieldset className="flex flex-col gap-2">
-        <legend className="mb-2 text-sm text-muted">Outfit colour</legend>
-        <div className="flex flex-wrap gap-3">
-          {OUTFIT_COLOURS.map((o) => (
-            <button
-              key={o.color}
-              type="button"
-              aria-label={`Outfit colour: ${o.label}`}
-              aria-pressed={look.shirt === o.color}
-              onClick={() => setLook({ ...look, shirt: o.color })}
-              className={`size-11 rounded-xl border-[3px] ${look.shirt === o.color ? "border-gold" : "border-line"}`}
-              style={{ background: o.color }}
-            />
-          ))}
-        </div>
-      </fieldset>
+      <LookEditor look={look} onChange={setLook} />
 
       <div className="flex flex-col gap-3 rounded-2xl border-[1.5px] border-line p-4">
         <div className="flex flex-col gap-1">
@@ -103,8 +63,7 @@ export function OnboardingForm({ username, initialLook }: { username: string; in
         {place.status === "error" && <p role="alert" className="text-sm text-danger-text">{place.message}</p>}
       </div>
 
-      <input type="hidden" name="skin" value={look.skin} />
-      <input type="hidden" name="shirt" value={look.shirt} />
+      <input type="hidden" name="look" value={JSON.stringify(look)} />
       <input type="hidden" name="lng" value={found ? place.lng : ""} />
       <input type="hidden" name="lat" value={found ? place.lat : ""} />
 

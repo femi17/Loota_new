@@ -2,18 +2,15 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { isValidLook } from "@/lib/avatar";
+import { saveLookFromForm } from "@/lib/save-look";
 
 export type OnboardingState = { error?: string } | undefined;
 
 export async function finishOnboarding(_prev: OnboardingState, formData: FormData): Promise<OnboardingState> {
-  const look = { skin: String(formData.get("skin") ?? ""), shirt: String(formData.get("shirt") ?? "") };
   const rawLng = String(formData.get("lng") ?? "");
   const rawLat = String(formData.get("lat") ?? "");
   const lng = Number(rawLng);
   const lat = Number(rawLat);
-
-  if (!isValidLook(look)) return { error: "Pick a skin tone and an outfit colour." };
   if (!rawLng || !rawLat || !Number.isFinite(lng) || !Number.isFinite(lat)) {
     return { error: "Share your location so we know where you start." };
   }
@@ -23,8 +20,8 @@ export async function finishOnboarding(_prev: OnboardingState, formData: FormDat
   const id = auth?.claims?.sub;
   if (!id) redirect("/login?next=/onboarding");
 
-  const { error: lookError } = await supabase.from("profiles").update({ avatar: look }).eq("id", id);
-  if (lookError) return { error: "Couldn't save your hunter. Please try again." };
+  const lookError = await saveLookFromForm(supabase, id, formData);
+  if (lookError) return { error: lookError };
 
   const { error: homeError } = await supabase.rpc("set_home", { lng, lat });
   if (homeError) {

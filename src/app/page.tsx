@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { HunterFigure } from "@/components/HunterFigure";
+import { DEFAULT_LOOK } from "@/lib/avatar";
 
 const steps = [
   { title: "Crack the riddle", text: "Every key hides at a real place. Guess where, but you only find out when you arrive." },
@@ -43,9 +44,9 @@ export default function Home() {
           <div className="relative flex h-80 min-w-0 flex-[1_1_380px] items-end justify-center gap-6 overflow-hidden rounded-[28px] bg-map pb-10">
             <div aria-hidden="true" className="absolute left-[-10%] top-24 h-6 w-[120%] -rotate-6 bg-white" />
             <div aria-hidden="true" className="absolute left-1/2 top-0 h-full w-5 rotate-6 bg-[#ffe7a8]" />
-            <div className="relative"><HunterFigure look={{ skin: "#C68642", shirt: "#E5484D" }} width={56} /></div>
-            <div className="relative"><HunterFigure look={{ skin: "#8D5524", shirt: "#2F6FEB" }} width={80} label="Loota hunters" /></div>
-            <div className="relative"><HunterFigure look={{ skin: "#5C3A1E", shirt: "#1E9E62" }} width={56} /></div>
+            <div className="relative"><HunterFigure look={{ ...DEFAULT_LOOK, skin: "#C68642", hair: "braids", topColour: "#E5484D", bottomsColour: "#3B5B8C" }} width={56} /></div>
+            <div className="relative"><HunterFigure look={{ ...DEFAULT_LOOK, extra: "cap", top: "jersey" }} width={80} label="Loota hunters" /></div>
+            <div className="relative"><HunterFigure look={{ ...DEFAULT_LOOK, skin: "#4A2A14", hair: "afro", top: "hoodie", topColour: "#1E9E62", extra: "headphones" }} width={56} /></div>
           </div>
         </section>
 

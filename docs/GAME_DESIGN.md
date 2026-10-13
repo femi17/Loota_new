@@ -122,7 +122,9 @@ three.js runs as a custom layer inside the Mapbox GL map. It shares the map's We
 
 ### 4.4 Customisation
 
-Players customise their avatar (body shape, skin tone, hair, outfits, accessories) and their owned vehicles (colours, skins).
+Players customise their avatar and their owned vehicles (colours, skins).
+
+**Built (13 Oct 2026):** 8 skin tones × 5 hair styles × 6 hair colours × 3 top styles × 12 top colours × 8 trouser colours × 4 extras = **276,480 looks**. New hunters start with a look derived from their account id (not one shared default), and a "Surprise me" button randomises it. Exact look-alikes can still happen with many players, so identity never depends on the look: every avatar carries its **unique hunter name tag**, and your own avatar is always marked **YOU**. Premium cosmetics (below) widen the range further.
 
 - Basic options are free.
 - Premium cosmetics are sold for coins. They are pure style and never affect speed, energy or keys, so they are a safe source of revenue.

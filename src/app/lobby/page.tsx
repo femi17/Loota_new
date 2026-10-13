@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/Logo";
 import { HunterFigure } from "@/components/HunterFigure";
@@ -63,6 +64,12 @@ async function Lobby() {
               Home set at {player.home.lat.toFixed(3)}, {player.home.lng.toFixed(3)}
             </span>
           </div>
+          <Link
+            href="/look"
+            className="ml-auto inline-flex h-11 items-center rounded-xl border-[1.5px] border-line px-4 text-sm font-bold hover:border-muted"
+          >
+            Change look
+          </Link>
         </section>
 
         <section className="rounded-3xl border-[1.5px] border-dashed border-line p-6">

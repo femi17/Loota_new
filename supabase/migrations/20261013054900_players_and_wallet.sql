@@ -1,5 +1,5 @@
 -- Loota Phase 0: player profiles, home location and the coin wallet.
--- Run once in Supabase: Dashboard > SQL Editor > New query > paste > Run.
+-- Applied with the Supabase MCP or `npm run db:push`.
 
 -- ---------------------------------------------------------------------------
 -- Profiles: one row per player, created automatically on sign-up.

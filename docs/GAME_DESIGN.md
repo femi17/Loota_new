@@ -169,7 +169,8 @@ Because avatars are drawn larger than life, hundreds of players at one key locat
 Designed for one thumb on a phone:
 
 - **Tap the map** on a road or destination: a route along real roads is calculated to that point and shown as a line.
-- **Free roam (no destination):** hold Go to keep moving and steer by tapping the map or with ◀ ▶. Movement stays on roads and footpaths (decided): at junctions the avatar follows the road closest to the steering direction.
+- **Free roam (no destination):** hold Go to keep moving and steer by tapping the map or with ◀ ▶. Movement stays on roads and footpaths (decided): at junctions the avatar follows the road closest to the steering direction. *Built 13 Oct 2026:* the road network comes from the map's own vector tiles around the player (no extra service); walkers may use footpaths but not motorways, bicycles can't use steps; aiming more than 135° away turns the hunter round; a dead end stops them facing back.
+- **Position saving (built 13 Oct 2026):** the player's position is saved every few seconds. The server (`save_position`) rejects any move faster than the travel mode's sprint speed (with a 30% and 30 m margin) and returns the last valid spot, so teleporting is impossible. Players resume from their saved position.
 - **Hold anywhere** to move (walk or pedal). Releasing makes the avatar coast and stop.
 - **Hold the Sprint button** to sprint: it moves you on its own (no need to hold two buttons), faster but draining energy quickly. *(Prototype finding: requiring Go and Sprint together didn't work with a mouse or one thumb.)*
 - **Chase camera:** while moving, the map rotates so the camera stays behind the avatar. Dragging or rotating the map pauses this until the player taps "Follow me".

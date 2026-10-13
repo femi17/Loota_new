@@ -13,6 +13,7 @@ import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
 import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
+import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
 
 type Hud = {
@@ -239,17 +240,66 @@ export function GameMap({
 
       let builtFrom = ""; // what the current network was built from, to skip rebuilding the same thing
 
-      /** (Re)build the roads around the hunter; `ifChanged` skips it when no new map tiles have loaded. */
+      // Our own road squares (exact junctions and street names), loaded around
+      // the hunter. Where there are none (outside the areas we host), the
+      // roads come from the map's drawing tiles instead.
+      const roadSquares = new Map<string, RoadCellData | "loading" | "none">();
+      const ROADS_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/roads/${ROAD_DATA_VERSION}`;
+      const ROAD_REACH_M = 1600; // the network covers 1.5 km around the hunter
+
+      /** The squares within reach of the hunter, loading any not yet asked for. */
+      function squaresAround(): string[] {
+        const { lng, lat } = traveller.pos;
+        const dLat = ROAD_REACH_M / 110574;
+        const dLng = ROAD_REACH_M / (111320 * Math.cos((lat * Math.PI) / 180));
+        const keys: string[] = [];
+        for (let ix = Math.floor((lng - dLng) / ROAD_CELL_DEG); ix <= Math.floor((lng + dLng) / ROAD_CELL_DEG); ix++) {
+          for (let iy = Math.floor((lat - dLat) / ROAD_CELL_DEG); iy <= Math.floor((lat + dLat) / ROAD_CELL_DEG); iy++) {
+            const key = roadCellKey(ix, iy);
+            keys.push(key);
+            if (!roadSquares.has(key)) void loadSquare(key);
+          }
+        }
+        return keys;
+      }
+
+      async function loadSquare(key: string) {
+        roadSquares.set(key, "loading");
+        try {
+          const res = await fetch(`${ROADS_URL}/${key}.json.gz`);
+          if (!res.ok || !res.body) throw new Error(String(res.status));
+          const file = (await new Response(res.body.pipeThrough(new DecompressionStream("gzip"))).json()) as RoadCellFile;
+          roadSquares.set(key, decodeRoadCell(file));
+        } catch {
+          roadSquares.set(key, "none"); // not hosted (or offline): use the drawing tiles here
+        }
+        if (!disposed) lastNetworkCheck = 0; // rebuild with it on the next frame
+      }
+
+      /** (Re)build the roads around the hunter; `ifChanged` skips it when nothing new has loaded. */
       function buildRoads(ifChanged = false) {
-        const features = map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation" });
-        if (!features.length) return false;
-        const source = `${features.length}:${traveller.mode}`;
+        const keys = squaresAround();
+        const states = keys.map((k) => roadSquares.get(k));
+        const own = states.filter((st): st is RoadCellData => typeof st === "object");
+        const waiting = states.includes("loading");
+        let source: string;
+        let features: import("@/game/roads").RoadFeature[] = [];
+        if (own.length && !waiting) source = `own:${keys.join(",")}:${traveller.mode}`;
+        else if (waiting && network && onRoad) return true; // keep the current roads until the squares arrive
+        else {
+          features = map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation" }) as import("@/game/roads").RoadFeature[];
+          if (!features.length) return false;
+          source = `tiles:${features.length}:${traveller.mode}`;
+        }
         const near = network && geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) < 300;
         if (ifChanged && near && onRoad && source === builtFrom) return true;
         builtFrom = source;
+        if (container.current) container.current.dataset.roads = source.split(":")[0]; // "own" or "tiles", for checking
         // Keep facing the way the player chose on the road (e.g. just turned round), not the way the body still points.
         const facing = network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading;
-        network = roads.buildNetwork(features as import("@/game/roads").RoadFeature[], traveller.mode, traveller.pos);
+        network = source.startsWith("own:")
+          ? roads.buildNetworkFromCells(own, traveller.mode, traveller.pos)
+          : roads.buildNetwork(features, traveller.mode, traveller.pos);
         onRoad = roads.snapToNetwork(network, traveller.pos, facing);
         if (!onRoad) return false;
         const p = roads.positionOf(network, onRoad);
@@ -681,7 +731,10 @@ export function GameMap({
        * (so a cross street at a junction doesn't).
        */
       function scanStreet() {
-        let street = streetAt(traveller.pos, network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading);
+        // Our own roads know their names; with the drawing tiles, look the name up nearby.
+        const own = network && onRoad ? roads.streetName(network, onRoad) : undefined;
+        let street =
+          own !== undefined ? own : streetAt(traveller.pos, network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading);
         // Many smaller streets have no name in OpenStreetMap yet.
         if (!street && onRoad) street = "Unnamed road";
         setHud((h) => (h.street === street ? h : { ...h, street }));

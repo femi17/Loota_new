@@ -5,6 +5,7 @@
  */
 import type { Coord, LngLat } from "./geo";
 import type { Mode } from "./movement";
+import { ROAD_FLAGS, type RoadCellData, type RoadClass } from "./roadData";
 
 /** A road line as it comes from the map tiles (OpenMapTiles "transportation" layer). */
 export type RoadFeature = {
@@ -14,7 +15,7 @@ export type RoadFeature = {
 
 type RoadNode = { lng: number; lat: number; edges: number[] };
 /** `level`: 1 on a bridge, −1 in a tunnel, 0 on the ground (roads only meet at the same level). */
-type RoadEdge = { a: number; b: number; length: number; level: number };
+type RoadEdge = { a: number; b: number; length: number; level: number; name?: string | null };
 
 export type RoadNetwork = { nodes: RoadNode[]; edges: RoadEdge[]; centre: LngLat };
 
@@ -601,4 +602,70 @@ export function findPath(net: RoadNetwork, from: RoadPosition, to: LngLat, withi
   }
   path.reverse();
   return [[start.lng, start.lat], ...path, [end.lng, end.lat]];
+}
+
+const OSM_FOOT_ONLY = new Set<RoadClass>(["pedestrian", "footway", "path", "steps", "cycleway", "bridleway"]);
+
+/** Which of our own roads a travel mode may use (see allowed() for the tile version). */
+function allowedRoad(mode: Mode, cls: RoadClass, flags: number) {
+  if (mode === "motorbike" || mode === "car") return !OSM_FOOT_ONLY.has(cls) && !(flags & ROAD_FLAGS.private);
+  if (cls === "motorway" || cls === "motorway_link") return false;
+  if (mode === "bicycle" && cls === "steps") return false;
+  return true;
+}
+
+/**
+ * Build the road graph from our own road squares (src/game/roadData.ts).
+ * Roads that meet share a point id, so junctions are exact: none of the
+ * guesswork the drawing tiles need. Squares overlap by one segment at their
+ * edges; the shared point ids join them up.
+ */
+export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre: LngLat, radiusM = 1500): RoadNetwork {
+  const local = projector(centre);
+  const nodes: RoadNode[] = [];
+  const edges: RoadEdge[] = [];
+  const coords = new Map<number, { lng: number; lat: number }>();
+  for (const cell of cells) for (const p of cell.points) coords.set(p.id, p);
+  const byId = new Map<number, number>();
+  const nodeFor = (id: number) => {
+    let i = byId.get(id);
+    if (i === undefined) {
+      const p = coords.get(id)!;
+      i = nodes.length;
+      nodes.push({ lng: p.lng, lat: p.lat, edges: [] });
+      byId.set(id, i);
+    }
+    return i;
+  };
+  const seen = new Set<string>();
+  for (const cell of cells) {
+    for (const way of cell.ways) {
+      if (!allowedRoad(mode, way.cls, way.flags)) continue;
+      const level = way.flags & ROAD_FLAGS.bridge ? 1 : way.flags & ROAD_FLAGS.tunnel ? -1 : 0;
+      for (let i = 1; i < way.points.length; i++) {
+        const pa = coords.get(way.points[i - 1]);
+        const pb = coords.get(way.points[i]);
+        if (!pa || !pb) continue;
+        const p = local(pa);
+        const q = local(pb);
+        if (Math.min(Math.hypot(p.x, p.y), Math.hypot(q.x, q.y)) > radiusM) continue;
+        const a = nodeFor(way.points[i - 1]);
+        const b = nodeFor(way.points[i]);
+        if (a === b) continue;
+        const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+        if (seen.has(key)) continue; // the same segment from two neighbouring squares
+        seen.add(key);
+        const id = edges.length;
+        edges.push({ a, b, length: Math.max(0.01, Math.hypot(q.x - p.x, q.y - p.y)), level, name: way.name });
+        nodes[a].edges.push(id);
+        nodes[b].edges.push(id);
+      }
+    }
+  }
+  return { nodes, edges, centre };
+}
+
+/** The street name of the road the player is on, if the network knows names (our own roads do). */
+export function streetName(net: RoadNetwork, rp: RoadPosition): string | null | undefined {
+  return net.edges[rp.edge]?.name;
 }

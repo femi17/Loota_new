@@ -15,7 +15,19 @@ export type RoadFeature = {
 
 type RoadNode = { lng: number; lat: number; edges: number[] };
 /** `level`: 1 on a bridge, −1 in a tunnel, 0 on the ground (roads only meet at the same level). */
-type RoadEdge = { a: number; b: number; length: number; level: number; name?: string | null };
+/**
+ * `oneway`: for motorbikes and cars on a one-way street, the only direction
+ * allowed (1 = from a to b, −1 = from b to a). Walkers and cyclists ignore it.
+ */
+type RoadEdge = { a: number; b: number; length: number; level: number; name?: string | null; oneway?: 1 | -1 };
+
+/** May the player travel along this road piece in this direction? */
+const canGo = (e: RoadEdge, dir: 1 | -1) => !e.oneway || e.oneway === dir;
+
+/** Is the player on a one-way street (for their mode)? */
+export function isOneWay(net: RoadNetwork, rp: RoadPosition) {
+  return !!net.edges[rp.edge]?.oneway;
+}
 
 export type RoadNetwork = { nodes: RoadNode[]; edges: RoadEdge[]; centre: LngLat };
 
@@ -375,7 +387,8 @@ export function snapToNetwork(net: RoadNetwork, pos: LngLat, heading: number): R
     }
   }
   if (edge < 0) return null;
-  const dir: 1 | -1 = angleBetween(edgeHeading(net, edge, 1), heading) <= Math.PI / 2 ? 1 : -1;
+  const oneway = net.edges[edge].oneway;
+  const dir: 1 | -1 = oneway ?? (angleBetween(edgeHeading(net, edge, 1), heading) <= Math.PI / 2 ? 1 : -1);
   return { edge, t, dir };
 }
 
@@ -413,6 +426,7 @@ function sideBranch(net: RoadNetwork, node: number, straight: number, turn: -1 |
   const ahead: { id: number; dir: 1 | -1; side: number }[] = [];
   for (const id of net.nodes[node].edges) {
     const d: 1 | -1 = net.edges[id].a === node ? 1 : -1;
+    if (!canGo(net.edges[id], d)) continue; // a one-way street the wrong way
     const h = headingAway(net, node, id);
     // Turning left raises the scene heading, turning right lowers it (see geo.headingOf).
     const side = -turn * Math.atan2(Math.sin(h - straight), Math.cos(h - straight));
@@ -503,7 +517,7 @@ export function advance(
     }
     remaining -= toEnd;
     const node = dir === 1 ? e.b : e.a;
-    const options = net.nodes[node].edges.filter((id) => id !== edge);
+    const options = net.nodes[node].edges.filter((id) => id !== edge && canGo(net.edges[id], net.edges[id].a === node ? 1 : -1));
     if (options.length === 0) {
       return { position: { edge, t: dir === 1 ? 1 : 0, dir }, deadEnd: true, turned, passed };
     }
@@ -552,7 +566,7 @@ export function findPath(net: RoadNetwork, from: RoadPosition, to: LngLat, withi
   if (Math.hypot(off.x, off.y) > withinM) return null; // only part of the map is loaded: that road isn't really near `to`
   const fromEdge = net.edges[from.edge];
   const goalEdge = net.edges[goal.edge];
-  if (from.edge === goal.edge) return [[start.lng, start.lat], [end.lng, end.lat]];
+  if (from.edge === goal.edge && canGo(fromEdge, goal.t >= from.t ? 1 : -1)) return [[start.lng, start.lat], [end.lng, end.lat]];
 
   // Dijkstra from both ends of the player's road piece.
   const dist = new Float64Array(net.nodes.length).fill(Infinity);
@@ -592,20 +606,20 @@ export function findPath(net: RoadNetwork, from: RoadPosition, to: LngLat, withi
       push(d, node);
     }
   };
-  relax(fromEdge.a, from.t * fromEdge.length, -1);
-  relax(fromEdge.b, (1 - from.t) * fromEdge.length, -1);
+  if (canGo(fromEdge, -1)) relax(fromEdge.a, from.t * fromEdge.length, -1);
+  if (canGo(fromEdge, 1)) relax(fromEdge.b, (1 - from.t) * fromEdge.length, -1);
   while (heap.length) {
     const [d, node] = pop();
     if (d > dist[node]) continue;
     for (const id of net.nodes[node].edges) {
       const e = net.edges[id];
-      relax(e.a === node ? e.b : e.a, d + e.length, node);
+      if (canGo(e, e.a === node ? 1 : -1)) relax(e.a === node ? e.b : e.a, d + e.length, node);
     }
   }
 
   // Arrive along the goal's road piece from whichever end is closer overall.
-  const viaA = dist[goalEdge.a] + goal.t * goalEdge.length;
-  const viaB = dist[goalEdge.b] + (1 - goal.t) * goalEdge.length;
+  const viaA = canGo(goalEdge, 1) ? dist[goalEdge.a] + goal.t * goalEdge.length : Infinity;
+  const viaB = canGo(goalEdge, -1) ? dist[goalEdge.b] + (1 - goal.t) * goalEdge.length : Infinity;
   if (!Number.isFinite(Math.min(viaA, viaB))) return null;
   const path: Coord[] = [];
   for (let node = viaA <= viaB ? goalEdge.a : goalEdge.b; node !== -1; node = prev[node]) {
@@ -653,6 +667,14 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
     for (const way of cell.ways) {
       if (!allowedRoad(mode, way.cls, way.flags)) continue;
       const level = way.flags & ROAD_FLAGS.bridge ? 1 : way.flags & ROAD_FLAGS.tunnel ? -1 : 0;
+      const motor = mode === "motorbike" || mode === "car";
+      const oneway: 1 | -1 | undefined = !motor
+        ? undefined
+        : way.flags & ROAD_FLAGS.oneway
+          ? 1
+          : way.flags & ROAD_FLAGS.onewayBackwards
+            ? -1
+            : undefined;
       for (let i = 1; i < way.points.length; i++) {
         const pa = coords.get(way.points[i - 1]);
         const pb = coords.get(way.points[i]);
@@ -667,7 +689,15 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
         if (seen.has(key)) continue; // the same segment from two neighbouring squares
         seen.add(key);
         const id = edges.length;
-        edges.push({ a, b, length: Math.max(0.01, Math.hypot(q.x - p.x, q.y - p.y)), level, name: way.name });
+        // a and b are in the road's own order, so its one-way direction maps straight across.
+        edges.push({
+          a,
+          b,
+          length: Math.max(0.01, Math.hypot(q.x - p.x, q.y - p.y)),
+          level,
+          name: way.name,
+          oneway,
+        });
         nodes[a].edges.push(id);
         nodes[b].edges.push(id);
       }

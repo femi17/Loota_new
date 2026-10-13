@@ -119,7 +119,8 @@ export function GameMap({
     eat: () => void;
     follow: () => void;
     turn: (dir: -1 | 1) => void;
-    turnAround: () => void;
+    /** False when not allowed (a motor vehicle on a one-way street). */
+    turnAround: () => boolean;
     endDirections: () => void;
     where: () => LngLat;
     goTo: (place: Place) => void;
@@ -1023,10 +1024,15 @@ export function GameMap({
           setTurn(pendingTurn === dir ? 0 : dir); // pressing the same way again cancels
         },
         turnAround() {
-          if (!onRoad) return;
+          if (!onRoad) return false;
+          if (network && roads.isOneWay(network, onRoad)) {
+            say("This is a one-way street: you can't turn round here. Take the next turn instead.", true);
+            return false;
+          }
           onRoad = roads.reverse(onRoad);
           justPassed = null;
           setTurn(0);
+          return true;
         },
         endDirections,
         follow() {
@@ -1120,7 +1126,11 @@ export function GameMap({
             actions.current?.turn(dx > 0 ? 1 : -1);
           } else if (!steer.back && dy > 60 && dy > Math.abs(dx)) {
             steer.back = true;
-            actions.current?.turnAround();
+            if (actions.current?.turnAround() === false) {
+              // Not allowed (one-way street in a vehicle): don't carry on forward either.
+              window.clearTimeout(steer.timer);
+              touchGo = false;
+            }
           }
           return;
         }
@@ -1388,9 +1398,10 @@ export function GameMap({
         if (typing(e)) return;
         if (holdKeys[e.code]) {
           e.preventDefault();
+          // ↓ turns round and goes back; if turning round isn't allowed, it doesn't move you forward either.
+          if (backKeys.has(e.code) && !e.repeat && actions.current?.turnAround() === false) return;
+          if (backKeys.has(e.code) && e.repeat && !controls.current.go) return;
           controls.current[holdKeys[e.code]] = true;
-          if (e.repeat) return;
-          if (backKeys.has(e.code)) actions.current?.turnAround();
         } else if (tapKeys[e.code]) {
           e.preventDefault();
           if (!e.repeat) tapKeys[e.code]();

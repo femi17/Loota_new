@@ -7,7 +7,9 @@ import type { AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import type { Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
+import { MEAL_ENERGY, MEAL_PRICE, SERVICE_RADIUS_M, VEHICLES, type VehicleKind } from "@/game/economy";
 import { BagPanel } from "./BagPanel";
+import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 
 /** Free roam follows the roads with no destination; route goes to a tapped place. */
 type Style = "roam" | "route";
@@ -28,6 +30,12 @@ type Hud = {
   nearest: { metres: number; angle: number } | null;
   /** Turn waiting for the next junction: −1 left, +1 right. */
   turn: -1 | 0 | 1;
+  /** What you're riding: fuel (motor vehicles you own) and the rental meter. */
+  vehicle: { kind: VehicleKind; source: "owned" | "rented"; fuel: number | null; meter: string | null } | null;
+  /** Names of the petrol station and place to eat within reach, if any. */
+  services: { fuel: string | null; food: string | null };
+  /** A purchase or vehicle change is on its way to the server. */
+  busy: boolean;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
@@ -92,7 +100,12 @@ export function GameMap({
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false });
   const actions = useRef<{
-    setMode: (m: Mode) => void;
+    vehicles: () => OwnedVehicle[];
+    ride: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
+    getOff: () => void;
+    walkTo: (vehicle: OwnedVehicle) => void;
+    refuel: () => void;
+    eat: () => void;
     setStyle: (s: Style) => void;
     follow: () => void;
     turn: (dir: -1 | 1) => void;
@@ -113,8 +126,12 @@ export function GameMap({
     leads: 0,
     nearest: null,
     turn: 0,
+    vehicle: null,
+    services: { fuel: null, food: null },
+    busy: false,
   });
   const [bagOpen, setBagOpen] = useState(false);
+  const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the Vehicles panel, when open
 
   const lookKey = JSON.stringify(look);
   const startLng = start.lng;
@@ -235,7 +252,7 @@ export function GameMap({
         say(
           fallback
             ? "Routing is unavailable right now, so this is a straight line. Hold GO to move."
-            : `Route ready: ${geo.formatDistance(route.total)} by ${traveller.mode === "walk" ? "foot" : "bicycle"}. Hold GO, or SPRINT to go faster.`,
+            : `Route ready: ${geo.formatDistance(route.total)} by ${traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()}. Hold GO, or SPRINT to go faster.`,
         );
       }
 
@@ -259,22 +276,280 @@ export function GameMap({
         const { data, error } = await supabase.rpc("save_position", { p_lng: sent.lng, p_lat: sent.lat, p_mode: traveller.mode });
         saving = false;
         if (disposed || error || !data) return;
-        const result = data as { ok: boolean; lng: number; lat: number };
+        const result = data as { ok: boolean; lng: number; lat: number; reason?: string; mode?: Mode; fuel?: number | null };
         saved = { lng: result.lng, lat: result.lat };
-        if (!result.ok) {
-          // Moved faster than the game allows: go back to the last accepted spot.
-          traveller.pos = { ...saved };
-          traveller.v = 0;
-          clearRoute();
-          if (style === "roam") buildRoads();
+        if (result.ok) {
+          if (typeof result.fuel === "number") onFuel(result.fuel);
+          return;
+        }
+        // Go back to the last accepted spot.
+        traveller.pos = { ...saved };
+        traveller.v = 0;
+        clearRoute();
+        if (result.reason === "vehicle" && result.mode) {
+          // The server's record of what you're riding wins (e.g. a rental that ended while you were away).
+          traveller.mode = result.mode;
+          await refreshVehicles();
+          say(result.mode === "walk" ? "Your rental has ended, so you're on foot again." : `You're on your ${VEHICLES[result.mode].name.toLowerCase()}.`, true);
+        } else {
           say("Your position was corrected to the last valid spot.", true);
         }
+        if (style === "roam") buildRoads();
       }
 
       const saveOnHide = () => {
         if (document.visibilityState === "hidden") void savePosition();
       };
       document.addEventListener("visibilitychange", saveOnHide);
+
+      // ---- Vehicles: ride, rent or buy; fuel and food ----------------------
+      type VehicleRow = { kind: VehicleKind; fuel: number; lng: number; lat: number; in_use: boolean };
+      let owned: VehicleRow[] = [];
+      let rental: { kind: VehicleKind; startedAt: number; rate: number } | null = null;
+      let busy = false;
+      let fuelWarning: "none" | "low" | "empty" = "none";
+      const parked = new Map<VehicleKind, import("@/game/ThreeMapLayer").MapEntity>();
+
+      const setBusy = (value: boolean) => {
+        busy = value;
+        setHud((h) => ({ ...h, busy: value }));
+      };
+      const vehicleName = (kind: VehicleKind) => VEHICLES[kind].name.toLowerCase();
+      const ownInUse = () => owned.find((v) => v.in_use) ?? null;
+      const meterText = () => {
+        if (!rental) return null;
+        const minutes = Math.max(1, Math.ceil((Date.now() - rental.startedAt) / 60_000));
+        return `${minutes} min · ${minutes * rental.rate} coins`;
+      };
+
+      /** Reflect what the player is riding in the display (and push an empty motorbike at walking pace). */
+      function showVehicle() {
+        const kind = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
+        const mine = ownInUse();
+        const fuel = mine && mine.kind !== "bicycle" ? mine.fuel : null;
+        traveller.speedFactor = mine && fuel !== null && fuel <= 0 ? movement.MODES.walk.kmh / movement.MODES[mine.kind].kmh : 1;
+        setHud((h) => ({
+          ...h,
+          mode: traveller.mode,
+          vehicle: kind ? { kind, source: rental ? "rented" : "owned", fuel, meter: meterText() } : null,
+        }));
+      }
+
+      function onFuel(fuel: number) {
+        const mine = ownInUse();
+        if (!mine) return;
+        mine.fuel = fuel;
+        if (fuel <= 0 && fuelWarning !== "empty") {
+          fuelWarning = "empty";
+          say(`Out of fuel! You're pushing your ${vehicleName(mine.kind)} at walking pace. Find a petrol station.`, true);
+        } else if (fuel > 0 && fuel < 15 && fuelWarning === "none") {
+          fuelWarning = "low";
+          say("Fuel is low. A Refuel button appears when you're at a petrol station.", true);
+        }
+        showVehicle();
+      }
+
+      /** Your own vehicles wait where you left them, with a green tag. */
+      function showParked() {
+        for (const [kind, entity] of [...parked]) {
+          if (!owned.some((v) => v.kind === kind && !v.in_use)) {
+            layer.remove(entity);
+            parked.delete(kind);
+          }
+        }
+        for (const v of owned) {
+          if (v.in_use) continue;
+          let entity = parked.get(v.kind);
+          if (!entity) {
+            const model = models.makeVehicleModel(v.kind);
+            model.add(layer.billboard(models.makeNameplate(`YOUR ${VEHICLES[v.kind].name.toUpperCase()}`, "#1E9E62")));
+            entity = layer.add({ object: model, lng: v.lng, lat: v.lat, heading: 0 });
+            parked.set(v.kind, entity);
+          }
+          entity.lng = v.lng;
+          entity.lat = v.lat;
+        }
+      }
+
+      async function refreshVehicles() {
+        const [{ data: vehicles }, { data: rentals }] = await Promise.all([
+          supabase.from("player_vehicles").select("kind, fuel, lng, lat, in_use"),
+          supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
+        ]);
+        if (disposed) return;
+        owned = (vehicles ?? []) as VehicleRow[];
+        const active = rentals?.[0] as { kind: VehicleKind; started_at: string } | undefined;
+        rental = active ? { kind: active.kind, startedAt: new Date(active.started_at).getTime(), rate: VEHICLES[active.kind].ratePerMinute } : null;
+        showParked();
+        showVehicle();
+      }
+
+      function afterModeChange() {
+        if (style === "roam") buildRoads(); // cars keep off footpaths, bikes off steps
+        else if (traveller.route && target) void planRoute(target);
+      }
+
+      async function chooseVehicle(kind: VehicleKind, how: "own" | "rent" | "buy") {
+        if (busy || traveller.phase !== "idle") return;
+        setBusy(true);
+        try {
+          if (how === "buy") {
+            await savePosition(); // it's parked where the server last saw you
+            const { data } = await supabase.rpc("buy_vehicle", { p_kind: kind });
+            const bought = data as { ok: boolean; reason?: string; balance?: number } | null;
+            if (!bought?.ok) {
+              say(
+                bought?.reason === "coins"
+                  ? `You need ${VEHICLES[kind].price.toLocaleString("en-NG")} coins to buy a ${vehicleName(kind)}.`
+                  : "Couldn't complete the purchase. Please try again.",
+                true,
+              );
+              return;
+            }
+            const balance = bought.balance;
+            if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+            await refreshVehicles();
+          }
+
+          const { data } = await supabase.rpc("start_vehicle", {
+            p_kind: kind,
+            p_lng: traveller.pos.lng,
+            p_lat: traveller.pos.lat,
+            p_rent: how === "rent",
+          });
+          const started = data as { ok: boolean; reason?: string; source?: "owned" | "rented"; balance?: number; lng?: number; lat?: number } | null;
+          if (!started?.ok) {
+            traveller.mode = "walk"; // the server put you on foot
+            await refreshVehicles();
+            if (started?.reason === "far" && started.lng != null && started.lat != null) {
+              headTowards({ lng: started.lng, lat: started.lat });
+              const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [started.lng, started.lat]);
+              say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Walk there to ride it.`, true);
+            } else if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
+            else if (started?.reason === "fuel") say(`Your ${vehicleName(kind)} has no fuel. Rent one, or bring fuel later.`, true);
+            else say("Couldn't get on. Please try again.", true);
+            afterModeChange();
+            return;
+          }
+
+          traveller.mode = kind;
+          saved = { ...traveller.pos };
+          fuelWarning = "none";
+          const balance = started.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          await refreshVehicles();
+          afterModeChange();
+          say(
+            started.source === "rented"
+              ? `You've rented a ${vehicleName(kind)}: ${VEHICLES[kind].ratePerMinute} coins a minute until you get off.`
+              : `You're on your ${vehicleName(kind)}.`,
+          );
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function getOff() {
+        if (busy || traveller.mode === "walk") return;
+        setBusy(true);
+        try {
+          const kind = traveller.mode as VehicleKind;
+          const wasRental = !!rental;
+          const { data } = await supabase.rpc("stop_vehicle", { p_lng: traveller.pos.lng, p_lat: traveller.pos.lat });
+          const stopped = data as { ok: boolean; charged: number; balance: number } | null;
+          if (!stopped?.ok) {
+            say("Couldn't get off. Please try again.", true);
+            return;
+          }
+          traveller.mode = "walk";
+          saved = { ...traveller.pos };
+          setHud((h) => ({ ...h, coins: stopped.balance }));
+          await refreshVehicles();
+          afterModeChange();
+          say(
+            wasRental
+              ? `Rental returned.${stopped.charged > 0 ? ` ${stopped.charged} more coins for the extra minutes.` : ""}`
+              : `You've parked your ${vehicleName(kind)} here. It'll wait for you.`,
+          );
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function refuelHere() {
+        if (busy) return;
+        setBusy(true);
+        try {
+          const { data } = await supabase.rpc("refuel");
+          const r = data as { ok: boolean; reason?: string; fuel?: number; cost?: number; balance?: number } | null;
+          if (!r?.ok) {
+            say(r?.reason === "full" ? "Your tank is already full." : r?.reason === "coins" ? "Not enough coins for fuel." : "Couldn't refuel here.", true);
+            return;
+          }
+          const mine = ownInUse();
+          if (mine && r.fuel != null) mine.fuel = r.fuel;
+          fuelWarning = "none";
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          showVehicle();
+          say(`Filled up for ${r.cost} coins.`);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function eatHere(place: string) {
+        if (busy) return;
+        setBusy(true);
+        try {
+          const { data } = await supabase.rpc("buy_meal");
+          const r = data as { ok: boolean; reason?: string; energy?: number; balance?: number } | null;
+          if (!r?.ok) {
+            say(`A meal costs ${MEAL_PRICE} coins. Pick up coins on the roads, or rest for free.`, true);
+            return;
+          }
+          traveller.energy = Math.min(100, traveller.energy + (r.energy ?? MEAL_ENERGY));
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          say(`You ate at ${place}: +${r.energy ?? MEAL_ENERGY} energy.`);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      let foodHere: string | null = null;
+
+      /** Petrol stations and places to eat within reach, from the map's own points of interest. */
+      function scanServices() {
+        const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        let fuel: string | null = null;
+        let food: string | null = null;
+        let fuelD = SERVICE_RADIUS_M;
+        let foodD = SERVICE_RADIUS_M;
+        for (const f of map.querySourceFeatures("openmaptiles", { sourceLayer: "poi" })) {
+          if (f.geometry.type !== "Point") continue;
+          const cls = String(f.properties?.class ?? "");
+          const isFuel = cls === "fuel";
+          const isFood = cls === "fast_food" || cls === "restaurant" || cls === "cafe";
+          if (!isFuel && !isFood) continue;
+          const [lng, lat] = f.geometry.coordinates as [number, number];
+          const d = geo.distanceM(here, [lng, lat]);
+          const name = f.properties?.name ? String(f.properties.name) : isFuel ? "the petrol station" : "this place";
+          if (isFuel && d < fuelD) {
+            fuelD = d;
+            fuel = name;
+          }
+          if (isFood && d < foodD) {
+            foodD = d;
+            food = name;
+          }
+        }
+        foodHere = food;
+        foodHere = food;
+        setHud((h) => (h.services.fuel === fuel && h.services.food === food ? h : { ...h, services: { fuel, food } }));
+      }
+
+      void refreshVehicles();
 
       // ---- Things to find while roaming ------------------------------------
       type ItemOnMap = { item: WorldItem; entity: import("@/game/ThreeMapLayer").MapEntity; model: import("@/game/models3d").ItemModel };
@@ -403,12 +678,25 @@ export function GameMap({
 
       // ---- Player actions --------------------------------------------------
       actions.current = {
-        setMode(mode) {
-          if (traveller.phase !== "idle" || mode === traveller.mode) return;
-          traveller.mode = mode;
-          setHud((h) => ({ ...h, mode }));
-          if (style === "roam") buildRoads(); // bicycles can't use steps, for example
-          else if (traveller.route && target) void planRoute(target);
+        vehicles: () =>
+          owned.map((v) => ({
+            kind: v.kind,
+            fuel: v.fuel,
+            lng: v.lng,
+            lat: v.lat,
+            inUse: v.in_use,
+            distanceM: geo.distanceM([traveller.pos.lng, traveller.pos.lat], [v.lng, v.lat]),
+          })),
+        ride: (kind, how) => void chooseVehicle(kind, how),
+        getOff: () => void getOff(),
+        walkTo(vehicle) {
+          if (style !== "roam") actions.current?.setStyle("roam");
+          headTowards({ lng: vehicle.lng, lat: vehicle.lat });
+          say(`Walking to your ${vehicleName(vehicle.kind)}: follow the green tag, then open Vehicles and ride it.`);
+        },
+        refuel: () => void refuelHere(),
+        eat() {
+          if (foodHere) void eatHere(foodHere);
         },
         setStyle(next) {
           if (next === style) return;
@@ -458,6 +746,7 @@ export function GameMap({
       let frame = 0;
       let last = performance.now();
       let lastHud = 0;
+      let lastServices = 0;
 
       const loop = (now: number) => {
         frame = requestAnimationFrame(loop);
@@ -562,6 +851,13 @@ export function GameMap({
         if (now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
           void savePosition();
+        }
+
+        // Petrol stations and food within reach, and the rental meter ticking.
+        if (now - lastServices > 2000) {
+          lastServices = now;
+          scanServices();
+          if (rental) showVehicle();
         }
 
         if (now - lastHud > 100) {
@@ -731,12 +1027,48 @@ export function GameMap({
           </button>
         </div>
         <div className="pointer-events-auto flex h-11 rounded-xl bg-ink p-1" role="group" aria-label="Travel mode">
-          {(["walk", "bicycle"] as const).map((m) => (
-            <button key={m} type="button" aria-pressed={hud.mode === m} onClick={() => actions.current?.setMode(m)} className={segment(hud.mode === m)}>
-              {m === "walk" ? "Walk" : "Bicycle"}
-            </button>
-          ))}
+          <button
+            type="button"
+            aria-pressed={hud.mode === "walk"}
+            disabled={hud.busy}
+            onClick={() => actions.current?.getOff()}
+            className={segment(hud.mode === "walk")}
+          >
+            Walk
+          </button>
+          <button
+            type="button"
+            aria-pressed={hud.mode !== "walk"}
+            onClick={() => setGarage(actions.current?.vehicles() ?? [])}
+            className={`${segment(hud.mode !== "walk")} flex items-center gap-1.5`}
+          >
+            {hud.vehicle ? VEHICLES[hud.vehicle.kind].name : "Vehicles"}
+            {hud.vehicle?.fuel != null && (
+              <span className={`text-xs ${hud.vehicle.fuel < 15 ? "text-danger" : ""}`}>⛽ {Math.round(hud.vehicle.fuel)}%</span>
+            )}
+            {hud.vehicle?.meter && <span className="text-xs font-semibold">· {hud.vehicle.meter}</span>}
+          </button>
         </div>
+        {hud.services.fuel && hud.vehicle?.fuel != null && hud.vehicle.fuel < 99 && (
+          <button
+            type="button"
+            disabled={hud.busy}
+            onClick={() => actions.current?.refuel()}
+            className="pointer-events-auto h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
+          >
+            ⛽ Refuel at {hud.services.fuel}
+          </button>
+        )}
+        {hud.services.food && hud.energy < 95 && (
+          <button
+            type="button"
+            disabled={hud.busy}
+            onClick={() => actions.current?.eat()}
+            className="pointer-events-auto h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
+          >
+            Eat at {hud.services.food} · {MEAL_PRICE} coins
+          </button>
+        )}
         {hud.leftM !== null && (
           <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm">
             <span className="font-bold">{hud.leftM >= 1000 ? `${(hud.leftM / 1000).toFixed(1)} km` : `${Math.round(hud.leftM)} m`}</span>
@@ -814,6 +1146,27 @@ export function GameMap({
       )}
 
       {bagOpen && <BagPanel leads={hud.leads} onClose={() => setBagOpen(false)} />}
+      {garage && (
+        <VehiclePanel
+          owned={garage}
+          riding={hud.vehicle ? { kind: hud.vehicle.kind, source: hud.vehicle.source } : null}
+          coins={hud.coins}
+          busy={hud.busy}
+          onRide={(kind, how) => {
+            actions.current?.ride(kind, how);
+            setGarage(null);
+          }}
+          onWalkTo={(vehicle) => {
+            actions.current?.walkTo(vehicle);
+            setGarage(null);
+          }}
+          onGetOff={() => {
+            actions.current?.getOff();
+            setGarage(null);
+          }}
+          onClose={() => setGarage(null)}
+        />
+      )}
 
       <div className="absolute bottom-9 right-5 flex flex-col items-center gap-3" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
         <HoldButton

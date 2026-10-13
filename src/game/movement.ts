@@ -8,11 +8,14 @@ import { headingOf, pointAt, turnTowards, type LngLat, type Route } from "./geo"
 /** Game time runs this many times faster than real time (design doc 5.4). */
 export const TIME_SCALE = 12;
 
-export type Mode = "walk" | "bicycle";
+export type Mode = "walk" | "bicycle" | "motorbike" | "car";
 
-export const MODES: Record<Mode, { label: string; kmh: number; profile: "foot" | "bike"; drain: number }> = {
+/** Speeds match max_travel_speed() in the database. `drain` is energy used per second at full pace. */
+export const MODES: Record<Mode, { label: string; kmh: number; profile: "foot" | "bike" | "car"; drain: number }> = {
   walk: { label: "Walk", kmh: 5, profile: "foot", drain: 1.0 },
   bicycle: { label: "Bicycle", kmh: 16, profile: "bike", drain: 1.4 },
+  motorbike: { label: "Motorbike", kmh: 35, profile: "car", drain: 0.25 },
+  car: { label: "Car", kmh: 45, profile: "car", drain: 0.15 },
 };
 
 const SPRINT_SPEED = 1.6; // sprint is 60% faster…
@@ -40,6 +43,8 @@ export type Traveller = {
   energy: number;
   phase: Phase;
   phaseUntil: number;
+  /** Below 1 when held back, e.g. pushing a motorbike that's out of fuel. */
+  speedFactor: number;
 };
 
 export type Controls = { go: boolean; sprint: boolean };
@@ -51,7 +56,7 @@ export function maxSpeed(mode: Mode): number {
 }
 
 export function createTraveller(pos: LngLat, mode: Mode = "walk"): Traveller {
-  return { pos: { ...pos }, heading: Math.PI, mode, route: null, s: 0, v: 0, energy: 100, phase: "idle", phaseUntil: 0 };
+  return { pos: { ...pos }, heading: Math.PI, mode, route: null, s: 0, v: 0, energy: 100, phase: "idle", phaseUntil: 0, speedFactor: 1 };
 }
 
 /** Full-pace speed for a mode, in on-screen metres per second. */
@@ -90,7 +95,7 @@ export function step(
 
   let target = 0;
   if (t.phase === "idle" && canMove && (controls.go || controls.sprint)) {
-    target = base * (controls.sprint ? SPRINT_SPEED : 1);
+    target = base * (controls.sprint ? SPRINT_SPEED : 1) * t.speedFactor;
     if (t.energy < TIRED_AT) target *= TIRED_SPEED;
   }
   t.v += (target - t.v) * Math.min(1, (target > t.v ? 2.5 : 4) * dt);

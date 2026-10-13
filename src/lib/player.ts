@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { lookForId, normalizeLook, type AvatarLook } from "@/lib/avatar";
+import { MODES, type Mode } from "@/game/movement";
 
 export type Player = {
   id: string;
@@ -11,7 +12,7 @@ export type Player = {
   coins: number;
   home: { lng: number; lat: number } | null;
   /** Where the player last was on the map (null until they first move). */
-  position: { lng: number; lat: number; mode: "walk" | "bicycle" } | null;
+  position: { lng: number; lat: number; mode: Mode } | null;
 };
 
 /** The signed-in player's profile, or null when nobody is signed in. Server only. */
@@ -42,6 +43,6 @@ export async function getPlayer(): Promise<Player | null> {
     lookChosen,
     coins: Number(data.coins),
     home: data.home_lng != null && data.home_lat != null ? { lng: data.home_lng, lat: data.home_lat } : null,
-    position: pos ? { lng: pos.lng, lat: pos.lat, mode: pos.mode === "bicycle" ? "bicycle" : "walk" } : null,
+    position: pos ? { lng: pos.lng, lat: pos.lat, mode: pos.mode in MODES ? (pos.mode as Mode) : "walk" } : null,
   };
 }

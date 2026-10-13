@@ -404,6 +404,20 @@ Rentals, fares, plane tickets, fuel, food, maintenance, towing, hospital bills, 
 - **Add-ons** matter at police checkpoints.
 - They **stay where they were left.** A bicycle parked at Heathrow is still at Heathrow.
 
+**Built (v1, 13 Oct 2026).** Prices are first guesses to tune once real players are spending:
+
+| | Buy | Rent | Fuel |
+|---|---|---|---|
+| Bicycle | 600 coins | 4 coins a minute | None (uses your energy) |
+| Motorbike | 2,500 coins | 10 coins a minute | 0.8% a km |
+| Car | 8,000 coins | 20 coins a minute | 1.2% a km |
+
+- **Renting** is charged per started minute until you get off. The first minute is paid up front. A rental left running with no sign of the player for 3 minutes is ended and charged by the server.
+- **Owned vehicles** are bought once and parked where you get off, with a green "YOUR MOTORBIKE" tag on the map. To ride one you must be within 30 m of it; the game walks you there.
+- **Fuel** costs 2 coins per 1%. The Refuel button appears only within 40 m of a real petrol station on the map. Rentals come fuelled. An owned motorbike or car with an empty tank can only be pushed, at walking pace.
+- **Food:** a meal costs 30 coins and gives +40 energy. The Eat button appears within 40 m of a real restaurant, fast-food place or café. Resting is still free.
+- **The server decides** what you're riding. A saved position in a mode you aren't using is rejected, and fuel is used up by the server from the distance it accepts.
+
 ### 10.4 Will a hunt make money? [PROPOSAL]
 
 For each hunt:
@@ -580,6 +594,8 @@ Each phase ends with something playable that can be tested.
 | 12 Oct 2026 | Flat map: no 3D buildings. Chase camera only (first person dropped). Starting zoom 20.5 on phones, 19.5 on larger screens. |
 | 13 Oct 2026 | Owner found the flat map too empty ("like a desert"): buildings return as **low 3D blocks** (capped at ~14 m, warm varied colours) with larger street names. Avatars are near true size at play zoom now, so the earlier "giants among blocks" problem doesn't recur. |
 | 13 Oct 2026 | **Free-roam finds built.** The world is split into ~550 m squares, stocked when a player comes near and restocked every 6 h: 12 coin drops (5–20 coins), 1 intel scroll, 1 hidden find (60% coin cache of 40–100 coins, 40% relic), all on real roads. Hidden finds show only within 40 m or when intel points to them; 1 in 4 intel scrolls is a decoy. Pickups are confirmed by the server (30 m reach, anti-teleport check). Relics last 7 days; using them comes with hunts. The Lockdown Orb is not spawned yet. |
+| 13 Oct 2026 | **Desktop keyboard controls:** hold ↑ (or W or Space) to move and Shift to sprint. ← and → turn at the next junction, ↓ turns around. Phones get ◀ ↺ ▶ buttons. |
+| 13 Oct 2026 | **Economy v1 built:** rent or buy a bicycle, motorbike or car; fuel; meals at real restaurants; owned vehicles stay parked (see 10.3). Wear, breakdowns, parking fees, add-ons and public transport come later in phase 3. |
 
 ## 16. Open questions
 

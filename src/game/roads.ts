@@ -21,11 +21,14 @@ export type RoadNetwork = { nodes: RoadNode[]; edges: RoadEdge[]; centre: LngLat
 export type RoadPosition = { edge: number; t: number; dir: 1 | -1 };
 
 const NOT_ROADS = new Set(["rail", "transit", "ferry", "raceway", "bus_guideway", "aerialway"]);
+const FOOT_ONLY = new Set(["path", "pedestrian"]);
 
-/** Which roads a travel mode may use. */
+/** Which roads a travel mode may use: motor vehicles stay off footpaths, walkers and bikes off motorways. */
 function allowed(mode: Mode, props: Record<string, unknown> | null) {
   const cls = String(props?.class ?? "");
-  if (!cls || NOT_ROADS.has(cls) || cls === "motorway") return false;
+  if (!cls || NOT_ROADS.has(cls)) return false;
+  if (mode === "motorbike" || mode === "car") return !FOOT_ONLY.has(cls);
+  if (cls === "motorway") return false;
   if (mode === "bicycle" && props?.subclass === "steps") return false;
   return true;
 }

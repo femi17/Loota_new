@@ -76,8 +76,7 @@ export type Avatar3D = {
   legR: THREE.Group;
   armL: THREE.Group;
   armR: THREE.Group;
-  bike: THREE.Group;
-  wheels: THREE.Group[];
+  vehicles: Record<"bicycle" | "motorbike" | "car", Vehicle3D>;
   wt: number;
   amp: number;
 };
@@ -128,21 +127,51 @@ export function buildAvatar(look: AvatarLook): Avatar3D {
   const armL = limb(rig, -0.34, 1.72, arm());
   const armR = limb(rig, 0.34, 1.72, arm());
 
-  // Bicycle, hidden until the hunter rides
-  const bike = new THREE.Group();
-  bike.visible = false;
-  root.add(bike);
-  const wheels: THREE.Group[] = [];
-  for (const z of [-0.95, 0.95]) {
-    const w = new THREE.Group();
-    w.position.set(0, 0.5, z);
-    const tyre = mesh(G.tyre, "#1D1D1D");
-    tyre.rotation.z = Math.PI / 2;
-    w.add(tyre, mesh(G.spoke, "#BBBBBB"));
-    bike.add(w);
-    wheels.push(w);
+  // Vehicles, hidden until the hunter rides one
+  const vehicles = { bicycle: buildBicycle(), motorbike: buildMotorbike(), car: buildCar() };
+  for (const v of Object.values(vehicles)) {
+    v.group.visible = false;
+    root.add(v.group);
   }
-  bike.add(
+
+  return { root, rig, legL, legR, armL, armR, vehicles, wt: Math.random() * 6, amp: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Vehicles (shared by riders and parked vehicles)
+// ---------------------------------------------------------------------------
+type Vehicle3D = { group: THREE.Group; wheels: THREE.Group[]; wheelRadius: number };
+
+const MOTO = "#C1121F";
+const CAR = "#1D7FD6";
+const V_G = {
+  motoBody: new THREE.BoxGeometry(0.45, 0.4, 1.3),
+  motoSeat: new THREE.BoxGeometry(0.4, 0.14, 0.8),
+  motoBar: new THREE.BoxGeometry(0.75, 0.08, 0.08),
+  lamp: new THREE.SphereGeometry(0.13, 8, 8),
+  motoTyre: new THREE.CylinderGeometry(0.42, 0.42, 0.24, 16),
+  carBody: new THREE.BoxGeometry(1.7, 0.55, 3.6),
+  carCabin: new THREE.BoxGeometry(1.5, 0.12, 1.6),
+  carSeat: new THREE.BoxGeometry(1.2, 0.7, 0.2),
+  windscreen: new THREE.BoxGeometry(1.5, 0.7, 0.06),
+  wheelHub: new THREE.TorusGeometry(0.2, 0.03, 8, 16),
+  carTyre: new THREE.CylinderGeometry(0.45, 0.45, 0.3, 16),
+};
+
+function wheel(geo: THREE.BufferGeometry, x: number, y: number, z: number) {
+  const w = new THREE.Group();
+  w.position.set(x, y, z);
+  const tyre = mesh(geo, "#1D1D1D");
+  tyre.rotation.z = Math.PI / 2;
+  w.add(tyre, mesh(G.spoke, "#BBBBBB"));
+  return w;
+}
+
+function buildBicycle(): Vehicle3D {
+  const group = new THREE.Group();
+  const wheels = [wheel(G.tyre, 0, 0.5, -0.95), wheel(G.tyre, 0, 0.5, 0.95)];
+  group.add(
+    ...wheels,
     mesh(G.tube, BIKE, 0, 0.85, 0),
     mesh(G.post, BIKE, 0, 0.75, -0.55),
     mesh(G.fork, BIKE, 0, 0.75, 0.8),
@@ -150,8 +179,41 @@ export function buildAvatar(look: AvatarLook): Avatar3D {
     mesh(G.seat, DARK, 0, 1.05, -0.55),
     mesh(G.guard, BIKE, 0, 1.08, -1.0),
   );
+  return { group, wheels, wheelRadius: 0.5 };
+}
 
-  return { root, rig, legL, legR, armL, armR, bike, wheels, wt: Math.random() * 6, amp: 0 };
+function buildMotorbike(): Vehicle3D {
+  const group = new THREE.Group();
+  const wheels = [wheel(V_G.motoTyre, 0, 0.42, -0.85), wheel(V_G.motoTyre, 0, 0.42, 0.85)];
+  group.add(
+    ...wheels,
+    mesh(V_G.motoBody, MOTO, 0, 0.75, 0),
+    mesh(V_G.motoSeat, DARK, 0, 1.0, -0.25),
+    mesh(V_G.motoBar, DARK, 0, 1.15, 0.62),
+    new THREE.Mesh(V_G.lamp, glow("#FFEE88")),
+  );
+  group.children[group.children.length - 1].position.set(0, 1.05, 0.8);
+  return { group, wheels, wheelRadius: 0.42 };
+}
+
+function buildCar(): Vehicle3D {
+  const group = new THREE.Group();
+  const wheels = [
+    wheel(V_G.carTyre, -0.9, 0.45, -1.1),
+    wheel(V_G.carTyre, 0.9, 0.45, -1.1),
+    wheel(V_G.carTyre, -0.9, 0.45, 1.2),
+    wheel(V_G.carTyre, 0.9, 0.45, 1.2),
+  ];
+  const screen = mesh(V_G.windscreen, "#9FD8FF", 0, 1.25, 0.6);
+  screen.rotation.x = -0.4;
+  group.add(...wheels, mesh(V_G.carBody, CAR, 0, 0.6, 0), mesh(V_G.carSeat, DARK, 0, 1.1, -0.5), screen);
+  return { group, wheels, wheelRadius: 0.45 };
+}
+
+/** A parked vehicle on the map (the player's own, waiting where they left it). */
+export function makeVehicleModel(kind: "bicycle" | "motorbike" | "car") {
+  const v = kind === "bicycle" ? buildBicycle() : kind === "motorbike" ? buildMotorbike() : buildCar();
+  return v.group;
 }
 
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
@@ -168,7 +230,10 @@ export function animateAvatar(
 ) {
   const k = Math.min(1, 10 * dt);
   const { legL, legR, armL, armR, rig } = av;
-  av.bike.visible = state.mode === "bicycle" && state.phase !== "fainted";
+  for (const [kind, v] of Object.entries(av.vehicles)) v.group.visible = state.mode === kind && state.phase !== "fainted";
+  const riding = state.mode === "walk" ? null : av.vehicles[state.mode];
+  if (riding) for (const w of riding.wheels) w.rotation.x += state.distance / riding.wheelRadius;
+  if (state.mode !== "car") rig.position.x = 0;
 
   if (state.phase === "fainted") {
     rig.rotation.x = lerp(rig.rotation.x, -Math.PI / 2, k * 0.5);
@@ -198,9 +263,26 @@ export function animateAvatar(
     armL.rotation.x = armR.rotation.x = -1;
     rig.position.y = 0.25;
     rig.rotation.x = lerp(rig.rotation.x, 0.35, k); // lean over the handlebars
-    for (const w of av.wheels) w.rotation.x += state.distance / 0.5;
     return;
   }
+
+  if (state.mode === "motorbike") {
+    legL.rotation.x = legR.rotation.x = -1.1;
+    armL.rotation.x = armR.rotation.x = -1;
+    rig.position.y = 0.2;
+    rig.rotation.x = lerp(rig.rotation.x, 0.2, k);
+    return;
+  }
+
+  if (state.mode === "car") {
+    // Sitting at the wheel, a little to the left like a driver in Nigeria.
+    legL.rotation.x = legR.rotation.x = -1.4;
+    armL.rotation.x = armR.rotation.x = -0.9;
+    rig.position.set(-0.35, -0.15, 0);
+    rig.rotation.x = lerp(rig.rotation.x, 0, k);
+    return;
+  }
+
 
   rig.rotation.x = lerp(rig.rotation.x, 0, k);
   const moving = state.moving > 0.05;

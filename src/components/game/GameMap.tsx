@@ -26,16 +26,17 @@ type Hud = {
   leads: number;
   /** Closest find: distance, and arrow angle relative to the screen (0 = straight ahead). */
   nearest: { metres: number; angle: number } | null;
+  /** Turn waiting for the next junction: −1 left, +1 right. */
+  turn: -1 | 0 | 1;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
-const STEER_RATE = (110 * Math.PI) / 180; // radians per second while ◀ or ▶ is held
-
-const HINTS: Record<Style, string> = {
-  roam: "Free roam: hold GO to move along the road. Tap the map to aim, or steer with ◀ ▶ at junctions.",
-  route: "Tap the map to choose where to go.",
+const ROAM_HINTS = {
+  keys: "Free roam: hold ↑ to move (Shift to sprint). ← or → turns at the next junction, ↓ turns you around. Click the map to head that way.",
+  touch: "Free roam: hold GO to move. Tap ◀ or ▶ to turn at the next junction, ↺ to turn around, or tap the map to head that way.",
 };
+const ROUTE_HINT = "Tap the map to choose where to go.";
 
 /** A button that reports while it's held down (mouse, touch or pen). */
 function HoldButton({
@@ -89,8 +90,14 @@ export function GameMap({
   initialCoins: number;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const controls = useRef({ go: false, sprint: false, left: false, right: false });
-  const actions = useRef<{ setMode: (m: Mode) => void; setStyle: (s: Style) => void; follow: () => void } | null>(null);
+  const controls = useRef({ go: false, sprint: false });
+  const actions = useRef<{
+    setMode: (m: Mode) => void;
+    setStyle: (s: Style) => void;
+    follow: () => void;
+    turn: (dir: -1 | 1) => void;
+    turnAround: () => void;
+  } | null>(null);
   const [failed, setFailed] = useState(false);
   const [hud, setHud] = useState<Hud>({
     energy: 100,
@@ -105,6 +112,7 @@ export function GameMap({
     relics: 0,
     leads: 0,
     nearest: null,
+    turn: 0,
   });
   const [bagOpen, setBagOpen] = useState(false);
 
@@ -136,6 +144,8 @@ export function GameMap({
 
       const supabase = createClient();
       const small = window.matchMedia("(max-width: 600px)").matches;
+      // Mouse and keyboard, or touch: the hints describe the controls the player has.
+      const roamHint = window.matchMedia("(pointer: fine)").matches ? ROAM_HINTS.keys : ROAM_HINTS.touch;
       const traveller = movement.createTraveller({ lng: startLng, lat: startLat }, startMode);
 
       const map = new MapLibre({
@@ -174,7 +184,10 @@ export function GameMap({
       // ---- Free roam on roads ----------------------------------------------
       let network: import("@/game/roads").RoadNetwork | null = null;
       let onRoad: import("@/game/roads").RoadPosition | null = null;
-      let aim = traveller.heading;
+      // Where the player wants to go: straight on by default, towards a clicked
+      // spot, or a left/right turn waiting for the next junction.
+      let aimTarget: LngLat | null = null;
+      let pendingTurn: -1 | 0 | 1 = 0;
       let lastNetworkCheck = 0;
       let lastDeadEndCheck = 0;
 
@@ -189,9 +202,17 @@ export function GameMap({
         return true;
       }
 
-      function aimAt(heading: number) {
-        aim = heading;
-        if (network && onRoad && roads.wantsUTurn(network, onRoad, aim)) onRoad = roads.reverse(onRoad);
+      const setTurn = (turn: -1 | 0 | 1) => {
+        pendingTurn = turn;
+        setHud((h) => ({ ...h, turn }));
+      };
+
+      /** Head towards a clicked spot (turning round first if it's behind). */
+      function headTowards(point: LngLat) {
+        aimTarget = point;
+        setTurn(0);
+        const heading = geo.headingOf([traveller.pos.lng, traveller.pos.lat], [point.lng, point.lat]);
+        if (network && onRoad && roads.wantsUTurn(network, onRoad, heading)) onRoad = roads.reverse(onRoad);
       }
 
       // ---- Go to a place ---------------------------------------------------
@@ -393,8 +414,21 @@ export function GameMap({
           if (next === style) return;
           style = next;
           clearRoute();
+          aimTarget = null;
+          setTurn(0);
           if (style === "roam") buildRoads();
-          setHud((h) => ({ ...h, style: next, hint: HINTS[next], alert: false }));
+          setHud((h) => ({ ...h, style: next, hint: next === "roam" ? roamHint : ROUTE_HINT, alert: false }));
+        },
+        turn(dir) {
+          if (style !== "roam") return;
+          aimTarget = null;
+          setTurn(pendingTurn === dir ? 0 : dir); // pressing the same way again cancels
+        },
+        turnAround() {
+          if (style !== "roam" || !onRoad) return;
+          onRoad = roads.reverse(onRoad);
+          aimTarget = null;
+          setTurn(0);
         },
         follow() {
           following = true;
@@ -414,7 +448,7 @@ export function GameMap({
       map.on("click", (e) => {
         const tapped = { lng: e.lngLat.lng, lat: e.lngLat.lat };
         if (style === "route") void planRoute(tapped);
-        else aimAt(geo.headingOf([traveller.pos.lng, traveller.pos.lat], [tapped.lng, tapped.lat]));
+        else headTowards(tapped);
       });
       map.on("error", (e) => {
         if (/style|Failed to fetch/i.test(String(e.error?.message))) say("Couldn't load the map. Check your connection.", true);
@@ -442,10 +476,8 @@ export function GameMap({
           if (stale && now - lastNetworkCheck > 1000) {
             lastNetworkCheck = now;
             const hadRoad = !!onRoad;
-            if (buildRoads() && !hadRoad) say(HINTS.roam);
+            if (buildRoads() && !hadRoad) say(roamHint);
           }
-          const steer = (c.left ? 1 : 0) - (c.right ? 1 : 0);
-          if (steer && traveller.phase === "idle") aimAt(aim + steer * STEER_RATE * dt);
         }
 
         const canMove = style === "roam" ? !!onRoad : !!traveller.route;
@@ -456,7 +488,15 @@ export function GameMap({
         }
 
         if (style === "roam" && network && onRoad && distance > 0) {
-          const { position, deadEnd } = roads.advance(network, onRoad, distance, aim);
+          // Straight on, unless heading for a clicked spot (forgotten once reached).
+          let aim = roads.positionOf(network, onRoad).heading;
+          if (aimTarget) {
+            const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+            if (geo.distanceM(here, [aimTarget.lng, aimTarget.lat]) < 25) aimTarget = null;
+            else aim = geo.headingOf(here, [aimTarget.lng, aimTarget.lat]);
+          }
+          const { position, deadEnd, turned } = roads.advance(network, onRoad, distance, aim, pendingTurn);
+          if (turned) setTurn(0);
           onRoad = position;
           const p = roads.positionOf(network, onRoad);
           traveller.pos = { lng: p.lng, lat: p.lat };
@@ -470,8 +510,8 @@ export function GameMap({
               buildRoads();
             } else if (onRoad) {
               onRoad = roads.reverse(onRoad);
-              aim = roads.positionOf(network, onRoad).heading;
-              say("This road ends here. Hold GO to head back, or tap the map to aim somewhere else.");
+              aimTarget = null;
+              say("This road ends here. Keep going to head back, or pick another way.");
             }
           }
         } else if (style === "route" && movement.advanceRoute(traveller, distance, dt, t)) {
@@ -574,23 +614,37 @@ export function GameMap({
         frame = requestAnimationFrame(loop);
       });
 
-      const keys: Record<string, keyof typeof controls.current> = {
+      // Keyboard: hold ↑ (W, Space) to move and Shift to sprint; tap ← → (A, D)
+      // to turn at the next junction and ↓ (S) to turn around.
+      const holdKeys: Record<string, keyof typeof controls.current> = {
+        ArrowUp: "go",
+        KeyW: "go",
         Space: "go",
         ShiftLeft: "sprint",
         ShiftRight: "sprint",
-        ArrowLeft: "left",
-        KeyA: "left",
-        ArrowRight: "right",
-        KeyD: "right",
       };
-      const onKey = (down: boolean) => (e: KeyboardEvent) => {
-        const control = keys[e.code];
-        if (!control) return;
+      const tapKeys: Record<string, () => void> = {
+        ArrowLeft: () => actions.current?.turn(-1),
+        KeyA: () => actions.current?.turn(-1),
+        ArrowRight: () => actions.current?.turn(1),
+        KeyD: () => actions.current?.turn(1),
+        ArrowDown: () => actions.current?.turnAround(),
+        KeyS: () => actions.current?.turnAround(),
+      };
+      const keyDown = (e: KeyboardEvent) => {
+        if (holdKeys[e.code]) {
+          e.preventDefault();
+          controls.current[holdKeys[e.code]] = true;
+        } else if (tapKeys[e.code]) {
+          e.preventDefault();
+          if (!e.repeat) tapKeys[e.code]();
+        }
+      };
+      const keyUp = (e: KeyboardEvent) => {
+        if (!holdKeys[e.code]) return;
         e.preventDefault();
-        controls.current[control] = down;
+        controls.current[holdKeys[e.code]] = false;
       };
-      const keyDown = onKey(true);
-      const keyUp = onKey(false);
       window.addEventListener("keydown", keyDown);
       window.addEventListener("keyup", keyUp);
 
@@ -705,6 +759,18 @@ export function GameMap({
             <span className="font-bold">{hud.nearest.metres >= 1000 ? `${(hud.nearest.metres / 1000).toFixed(1)} km` : `${hud.nearest.metres} m`}</span>
           </div>
         )}
+        {hud.turn !== 0 && (
+          <button
+            type="button"
+            onClick={() => actions.current?.turn(hud.turn as -1 | 1)}
+            className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-gold px-3 text-sm font-bold text-ink"
+            aria-label={`Turning ${hud.turn === -1 ? "left" : "right"} at the next junction. Press to cancel.`}
+          >
+            <span aria-hidden="true">{hud.turn === -1 ? "↰" : "↱"}</span>
+            Next junction: {hud.turn === -1 ? "left" : "right"}
+            <span aria-hidden="true" className="text-ink/70">✕</span>
+          </button>
+        )}
         {!hud.following && (
           <button type="button" onClick={() => actions.current?.follow()} className="pointer-events-auto h-11 rounded-xl bg-ink px-4 text-sm font-bold">
             Follow me
@@ -724,25 +790,26 @@ export function GameMap({
       </p>
 
       {hud.style === "roam" && (
-        <div className="absolute bottom-9 left-3 flex gap-3" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
-          <HoldButton
-            label="Steer left"
-            onHold={(down) => {
-              controls.current.left = down;
-            }}
-            className="size-[64px] rounded-full border-2 border-line bg-ink text-2xl data-[down=true]:border-gold data-[down=true]:bg-gold data-[down=true]:text-ink"
-          >
-            ◀
-          </HoldButton>
-          <HoldButton
-            label="Steer right"
-            onHold={(down) => {
-              controls.current.right = down;
-            }}
-            className="size-[64px] rounded-full border-2 border-line bg-ink text-2xl data-[down=true]:border-gold data-[down=true]:bg-gold data-[down=true]:text-ink"
-          >
-            ▶
-          </HoldButton>
+        <div className="absolute bottom-9 left-3 flex gap-2" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
+          {([
+            { label: "Turn left at the next junction", glyph: "◀", dir: -1 },
+            { label: "Turn around", glyph: "↺", dir: 0 },
+            { label: "Turn right at the next junction", glyph: "▶", dir: 1 },
+          ] as const).map((b) => {
+            const on = b.dir !== 0 && hud.turn === b.dir;
+            return (
+              <button
+                key={b.label}
+                type="button"
+                aria-label={b.label}
+                aria-pressed={b.dir === 0 ? undefined : on}
+                onClick={() => (b.dir === 0 ? actions.current?.turnAround() : actions.current?.turn(b.dir))}
+                className={`size-14 rounded-full border-2 text-2xl ${on ? "border-gold bg-gold text-ink" : "border-line bg-ink text-paper"}`}
+              >
+                {b.glyph}
+              </button>
+            );
+          })}
         </div>
       )}
 

@@ -229,43 +229,64 @@ export function wantsUTurn(net: RoadNetwork, rp: RoadPosition, aim: number) {
   return angleBetween(edgeHeading(net, rp.edge, rp.dir), aim) > U_TURN_ANGLE;
 }
 
+/** A turn is taken only if a road leaves within this angle of the turn direction. */
+const TURN_TOLERANCE = (60 * Math.PI) / 180;
+
 /**
- * Move `distance` metres along the roads. At each junction, take the road whose
- * direction is closest to `aim`. At a dead end, stop at the end of the road
- * (`deadEnd`), still facing it; the caller decides whether to turn round.
+ * Move `distance` metres along the roads. At each real junction (two or more
+ * ways on), take the road closest to `aim`; or, when `turn` is set (−1 left,
+ * +1 right), the road closest to that turn, if one branches that way, and
+ * report `turned`; otherwise carry straight on and keep the turn for later.
+ * At a dead end, stop at the end of the road (`deadEnd`), still facing it.
  */
-export function advance(net: RoadNetwork, rp: RoadPosition, distance: number, aim: number): { position: RoadPosition; deadEnd: boolean } {
+export function advance(
+  net: RoadNetwork,
+  rp: RoadPosition,
+  distance: number,
+  aim: number,
+  turn: -1 | 0 | 1 = 0,
+): { position: RoadPosition; deadEnd: boolean; turned: boolean } {
   let { edge, t, dir } = rp;
   let remaining = distance;
+  let turned = false;
 
   for (let hops = 0; remaining > 0 && hops < 50; hops++) {
     const e = net.edges[edge];
     const toEnd = (dir === 1 ? 1 - t : t) * e.length;
     if (remaining < toEnd) {
       t += (dir * remaining) / (e.length || 1e-9);
-      return { position: { edge, t, dir }, deadEnd: false };
+      return { position: { edge, t, dir }, deadEnd: false, turned };
     }
     remaining -= toEnd;
     const node = dir === 1 ? e.b : e.a;
     const options = net.nodes[node].edges.filter((id) => id !== edge);
     if (options.length === 0) {
-      return { position: { edge, t: dir === 1 ? 1 : 0, dir }, deadEnd: true };
+      return { position: { edge, t: dir === 1 ? 1 : 0, dir }, deadEnd: true, turned };
     }
-    let next = options[0];
-    let nextDir: 1 | -1 = net.edges[next].a === node ? 1 : -1;
-    let bestAngle = Infinity;
-    for (const id of options) {
-      const d: 1 | -1 = net.edges[id].a === node ? 1 : -1;
-      const angle = angleBetween(edgeHeading(net, id, d), aim);
-      if (angle < bestAngle) {
-        bestAngle = angle;
-        next = id;
-        nextDir = d;
+
+    const closestTo = (heading: number) => {
+      let best = { id: options[0], dir: (net.edges[options[0]].a === node ? 1 : -1) as 1 | -1, angle: Infinity };
+      for (const id of options) {
+        const d: 1 | -1 = net.edges[id].a === node ? 1 : -1;
+        const angle = angleBetween(edgeHeading(net, id, d), heading);
+        if (angle < best.angle) best = { id, dir: d, angle };
+      }
+      return best;
+    };
+
+    let choice = closestTo(aim);
+    if (turn !== 0 && !turned && options.length >= 2) {
+      // Turning right lowers the scene heading (see geo.headingOf), turning left raises it.
+      const turnHeading = edgeHeading(net, edge, dir) - (turn * Math.PI) / 2;
+      const branch = closestTo(turnHeading);
+      if (branch.angle <= TURN_TOLERANCE) {
+        choice = branch;
+        turned = true;
       }
     }
-    edge = next;
-    dir = nextDir;
+    edge = choice.id;
+    dir = choice.dir;
     t = dir === 1 ? 0 : 1;
   }
-  return { position: { edge, t, dir }, deadEnd: false };
+  return { position: { edge, t, dir }, deadEnd: false, turned };
 }

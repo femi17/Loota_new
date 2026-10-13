@@ -12,6 +12,8 @@ import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
 import type { SearchResult } from "@/game/hunt";
+import type { Place } from "@/game/places";
+import { PlaceSearch } from "./PlaceSearch";
 
 /** Free roam follows the roads with no destination; route goes to a tapped place. */
 type Style = "roam" | "route";
@@ -22,7 +24,6 @@ type Hud = {
   leftM: number | null;
   mode: Mode;
   style: Style;
-  following: boolean;
   hint: string;
   alert: boolean;
   coins: number;
@@ -46,7 +47,7 @@ type Hud = {
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
-const ROUTE_HINT = "Tap the map to choose where to go.";
+const ROUTE_HINT = "Search for a place or address, or tap the map.";
 
 /** A button that reports while it's held down (mouse, touch or pen). */
 function HoldButton({
@@ -116,6 +117,8 @@ export function GameMap({
     turn: (dir: -1 | 1) => void;
     turnAround: () => void;
     stop: () => void;
+    where: () => LngLat;
+    goTo: (place: Place) => void;
   } | null>(null);
   const huntActions = useRef<HuntActions | null>(null);
   const [failed, setFailed] = useState(false);
@@ -125,7 +128,6 @@ export function GameMap({
     leftM: null,
     mode: startMode,
     style: "roam",
-    following: true,
     hint: "",
     alert: false,
     coins: initialCoins,
@@ -182,6 +184,9 @@ export function GameMap({
         pitch: small ? 55 : 60,
         bearing: geo.compassFromHeading(traveller.heading),
         maxPitch: 70,
+        dragPan: false, // dragging looks around the hunter instead (see "Look around" below)
+        dragRotate: false,
+        touchPitch: false,
         keyboard: false, // the keyboard drives the hunter instead
         attributionControl: { compact: true },
       });
@@ -195,9 +200,10 @@ export function GameMap({
 
       // Messages show for a few seconds, then get out of the way.
       let hintTimer = 0;
-      const say = (hint: string, alert = false) => {
+      const say = (hint: string, alert = false, stay = false) => {
         setHud((h) => ({ ...h, hint, alert }));
         window.clearTimeout(hintTimer);
+        if (stay) return; // e.g. "Finding a route…" until the route arrives
         hintTimer = window.setTimeout(() => setHud((h) => (h.hint === hint ? { ...h, hint: "" } : h)), alert ? 9000 : 5000);
       };
       const showRoute = (coords: [number, number][] | null) => {
@@ -210,8 +216,9 @@ export function GameMap({
       };
 
       let style: Style = "roam";
-      let following = true;
       let camBearing = geo.compassFromHeading(traveller.heading);
+      let lookOffset = 0; // degrees the player has turned the view by dragging
+      let dragging = false;
 
       // ---- Free roam on roads ----------------------------------------------
       let network: import("@/game/roads").RoadNetwork | null = null;
@@ -268,11 +275,23 @@ export function GameMap({
       let target: LngLat | null = null;
       let planId = 0;
 
-      async function planRoute(to: LngLat) {
+      async function planRoute(to: LngLat, placeName?: string) {
         if (traveller.phase !== "idle") return;
         const id = ++planId;
-        say("Finding a route…");
-        const { route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode);
+        // Nearby places: the shortest way along the game's own roads, straight away.
+        let route: import("@/game/geo").Route | null = null;
+        let fallback = false;
+        const fresh = network && geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) < 300;
+        if (!fresh || !onRoad) buildRoads();
+        if (network && onRoad && geo.distanceM([network.centre.lng, network.centre.lat], [to.lng, to.lat]) < 1300) {
+          const path = roads.findPath(network, onRoad, to);
+          if (path) route = geo.buildRoute(path);
+        }
+        // Farther away: the routing service.
+        if (!route) {
+          say("Finding a route…", false, true);
+          ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
+        }
         if (disposed || id !== planId || style !== "route") return;
         movement.setRoute(traveller, route);
         const end = route.coords[route.coords.length - 1];
@@ -284,10 +303,16 @@ export function GameMap({
         say(
           fallback
             ? "Routing is unavailable right now, so this is a straight line."
-            : `On your way: ${geo.formatDistance(route.total)} by ${traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()}.${
-                movement.canSprint(traveller.mode) ? " Hold SPRINT to go faster." : ""
-              }`,
+            : `On your way${placeName ? ` to ${placeName}` : ""}: ${geo.formatDistance(route.total)} by ${
+                traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()
+              }, ${travelTime(route.total)}.${movement.canSprint(traveller.mode) ? " Hold SPRINT to go faster." : ""}`,
         );
+      }
+
+      /** Roughly how long a trip takes at the current mode's normal pace. */
+      function travelTime(metres: number) {
+        const minutes = Math.round(metres / movement.baseSpeed(traveller.mode) / 60);
+        return minutes < 1 ? "under a minute" : minutes === 1 ? "about 1 minute" : `about ${minutes} minutes`;
       }
 
       function clearRoute() {
@@ -814,9 +839,12 @@ export function GameMap({
           say("Stopped.");
         },
         follow() {
-          following = true;
-          camBearing = map.getBearing();
-          setHud((h) => ({ ...h, following: true }));
+          lookOffset = 0;
+        },
+        where: () => ({ ...traveller.pos }),
+        goTo(place) {
+          if (style !== "route") actions.current?.setStyle("route");
+          void planRoute({ lng: place.lng, lat: place.lat }, place.name);
         },
       };
 
@@ -866,15 +894,46 @@ export function GameMap({
         say,
       };
 
-      // The player's own drag or rotate pauses the chase camera.
-      const stopFollowing = (e: { originalEvent?: unknown }) => {
-        if (!e.originalEvent) return;
-        following = false;
-        setHud((h) => ({ ...h, following: false }));
+      // Look around: drag sideways to turn the view around the hunter, up or
+      // down to tilt it. Two fingers pinch to zoom. Moving off brings the view
+      // back behind the hunter. (A short tap still goes to a place.)
+      map.touchZoomRotate.disableRotation();
+      const pointers = new Set<number>();
+      let drag: { x: number; y: number; offset: number; pitch: number; moved: boolean } | null = null;
+      const lookStart = (e: PointerEvent) => {
+        pointers.add(e.pointerId);
+        if (pointers.size > 1 || e.button !== 0) {
+          drag = null;
+          dragging = false;
+          return;
+        }
+        drag = { x: e.clientX, y: e.clientY, offset: lookOffset, pitch: map.getPitch(), moved: false };
       };
-      map.on("dragstart", stopFollowing);
-      map.on("rotatestart", stopFollowing);
+      const lookMove = (e: PointerEvent) => {
+        if (!drag || !pointers.has(e.pointerId)) return;
+        const dx = e.clientX - drag.x;
+        const dy = e.clientY - drag.y;
+        if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+        drag.moved = true;
+        dragging = true;
+        lookOffset = drag.offset - dx * 0.3;
+        map.setPitch(Math.max(25, Math.min(70, drag.pitch - dy * 0.2)));
+      };
+      let lookedAt = 0; // when the last look-around drag ended: the map reports it as a tap too
+      const lookEnd = (e: PointerEvent) => {
+        pointers.delete(e.pointerId);
+        if (pointers.size) return;
+        if (drag?.moved) lookedAt = performance.now();
+        drag = null;
+        dragging = false;
+      };
+      const lookArea = map.getCanvasContainer();
+      lookArea.addEventListener("pointerdown", lookStart);
+      window.addEventListener("pointermove", lookMove);
+      window.addEventListener("pointerup", lookEnd);
+      window.addEventListener("pointercancel", lookEnd);
       map.on("click", (e) => {
+        if (performance.now() - lookedAt < 400) return; // the end of a drag, not a tap
         const tapped = { lng: e.lngLat.lng, lat: e.lngLat.lat };
         if (style === "route") void planRoute(tapped);
         else headTowards(tapped);
@@ -997,15 +1056,16 @@ export function GameMap({
           void syncWorld();
         }
 
-        if (following) {
-          // Chase camera: keep the camera behind the hunter.
-          const want = geo.compassFromHeading(traveller.heading);
-          const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
-          camBearing += diff * Math.min(1, 2.5 * dt);
-          map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing });
-        } else {
-          map.triggerRepaint();
+        // Chase camera: behind the hunter, turned by however far the player has
+        // looked around. Moving off swings it back behind them.
+        if (!dragging && traveller.v > 0.5 && lookOffset !== 0) {
+          lookOffset *= Math.exp(-1.5 * dt);
+          if (Math.abs(lookOffset) < 0.5) lookOffset = 0;
         }
+        const want = geo.compassFromHeading(traveller.heading) + lookOffset;
+        const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
+        camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
+        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing });
 
         if (now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
@@ -1089,7 +1149,10 @@ export function GameMap({
         ArrowRight: () => actions.current?.turn(1),
         KeyD: () => actions.current?.turn(1),
       };
+      const typing = (e: KeyboardEvent) =>
+        e.target instanceof HTMLElement && (e.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName));
       const keyDown = (e: KeyboardEvent) => {
+        if (typing(e)) return;
         if (holdKeys[e.code]) {
           e.preventDefault();
           controls.current[holdKeys[e.code]] = true;
@@ -1103,7 +1166,7 @@ export function GameMap({
       };
       const keyUp = (e: KeyboardEvent) => {
         if (!holdKeys[e.code]) return;
-        e.preventDefault();
+        if (!typing(e)) e.preventDefault();
         controls.current[holdKeys[e.code]] = false;
       };
       window.addEventListener("keydown", keyDown);
@@ -1115,6 +1178,10 @@ export function GameMap({
         window.clearTimeout(hintTimer);
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
+        lookArea.removeEventListener("pointerdown", lookStart);
+        window.removeEventListener("pointermove", lookMove);
+        window.removeEventListener("pointerup", lookEnd);
+        window.removeEventListener("pointercancel", lookEnd);
         document.removeEventListener("visibilitychange", saveOnHide);
         actions.current = null;
         huntActions.current = null;
@@ -1289,12 +1356,11 @@ export function GameMap({
             <span className="rounded-md bg-line px-2 py-0.5 text-xs">Stop ✕</span>
           </button>
         )}
-        {!hud.following && (
-          <button type="button" onClick={() => actions.current?.follow()} className="pointer-events-auto h-11 rounded-xl bg-ink px-4 text-sm font-bold">
-            Follow me
-          </button>
-        )}
         </div>
+
+        {hud.style === "route" && (
+          <PlaceSearch near={() => actions.current?.where() ?? { lng: startLng, lat: startLat }} onPick={(place) => actions.current?.goTo(place)} />
+        )}
 
         {helpOpen && (
           <div className="pointer-events-auto flex max-w-md flex-col gap-2 rounded-2xl bg-ink p-4 text-sm" role="note">

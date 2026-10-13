@@ -522,3 +522,83 @@ export function advance(
   }
   return { position: { edge, t, dir }, deadEnd: false, turned, passed };
 }
+
+/**
+ * The shortest way along the roads from where the player is to the road point
+ * nearest `to`, as a line of [lng, lat] points (starting at the player), or
+ * null if `to` isn't on this network (no loaded road within `withinM` of it)
+ * or can't be reached on it. Used for nearby "Go to a
+ * place" trips, so they follow exactly the roads the hunter walks on.
+ */
+export function findPath(net: RoadNetwork, from: RoadPosition, to: LngLat, withinM = 60): Coord[] | null {
+  const goal = snapToNetwork(net, to, 0);
+  if (!goal) return null;
+  const start = positionOf(net, from);
+  const end = positionOf(net, goal);
+  const local = projector(to);
+  const off = local(end);
+  if (Math.hypot(off.x, off.y) > withinM) return null; // only part of the map is loaded: that road isn't really near `to`
+  const fromEdge = net.edges[from.edge];
+  const goalEdge = net.edges[goal.edge];
+  if (from.edge === goal.edge) return [[start.lng, start.lat], [end.lng, end.lat]];
+
+  // Dijkstra from both ends of the player's road piece.
+  const dist = new Float64Array(net.nodes.length).fill(Infinity);
+  const prev = new Int32Array(net.nodes.length).fill(-1);
+  const heap: [number, number][] = [];
+  const push = (d: number, node: number) => {
+    heap.push([d, node]);
+    for (let i = heap.length - 1; i > 0; ) {
+      const parent = (i - 1) >> 1;
+      if (heap[parent][0] <= heap[i][0]) break;
+      [heap[parent], heap[i]] = [heap[i], heap[parent]];
+      i = parent;
+    }
+  };
+  const pop = () => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      for (let i = 0; ; ) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]];
+        i = m;
+      }
+    }
+    return top;
+  };
+  const relax = (node: number, d: number, from: number) => {
+    if (d < dist[node]) {
+      dist[node] = d;
+      prev[node] = from;
+      push(d, node);
+    }
+  };
+  relax(fromEdge.a, from.t * fromEdge.length, -1);
+  relax(fromEdge.b, (1 - from.t) * fromEdge.length, -1);
+  while (heap.length) {
+    const [d, node] = pop();
+    if (d > dist[node]) continue;
+    for (const id of net.nodes[node].edges) {
+      const e = net.edges[id];
+      relax(e.a === node ? e.b : e.a, d + e.length, node);
+    }
+  }
+
+  // Arrive along the goal's road piece from whichever end is closer overall.
+  const viaA = dist[goalEdge.a] + goal.t * goalEdge.length;
+  const viaB = dist[goalEdge.b] + (1 - goal.t) * goalEdge.length;
+  if (!Number.isFinite(Math.min(viaA, viaB))) return null;
+  const path: Coord[] = [];
+  for (let node = viaA <= viaB ? goalEdge.a : goalEdge.b; node !== -1; node = prev[node]) {
+    path.push([net.nodes[node].lng, net.nodes[node].lat]);
+  }
+  path.reverse();
+  return [[start.lng, start.lat], ...path, [end.lng, end.lat]];
+}

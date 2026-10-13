@@ -409,16 +409,27 @@ const SIDE_MAX = (170 * Math.PI) / 180;
  */
 function sideBranch(net: RoadNetwork, node: number, straight: number, turn: -1 | 1) {
   let best: { id: number; dir: 1 | -1; score: number } | null = null;
+  // Roads ahead (within 60° of straight on), for forks.
+  const ahead: { id: number; dir: 1 | -1; side: number }[] = [];
   for (const id of net.nodes[node].edges) {
     const d: 1 | -1 = net.edges[id].a === node ? 1 : -1;
     const h = headingAway(net, node, id);
     // Turning left raises the scene heading, turning right lowers it (see geo.headingOf).
     const side = -turn * Math.atan2(Math.sin(h - straight), Math.cos(h - straight));
+    if (Math.abs(side) < (60 * Math.PI) / 180) ahead.push({ id, dir: d, side });
     if (side < SIDE_MIN || side > SIDE_MAX) continue;
     const score = Math.abs(side - Math.PI / 2);
     if (!best || score < best.score) best = { id, dir: d, score };
   }
-  return best;
+  if (best) return best;
+  // A fork: the road splits into branches that all go roughly ahead (e.g. both
+  // 10–20° to one side). Left takes the leftmost, right the rightmost, as long
+  // as it is clearly more that way than the other branch.
+  if (ahead.length >= 2) {
+    ahead.sort((x, y) => y.side - x.side);
+    if (ahead[0].side - ahead[1].side > (5 * Math.PI) / 180) return { id: ahead[0].id, dir: ahead[0].dir, score: 0 };
+  }
+  return null;
 }
 
 /**
@@ -668,4 +679,47 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
 /** The street name of the road the player is on, if the network knows names (our own roads do). */
 export function streetName(net: RoadNetwork, rp: RoadPosition): string | null | undefined {
   return net.edges[rp.edge]?.name;
+}
+
+/**
+ * Forks along a path found on this network: places where the road splits into
+ * branches that all go roughly ahead, so the way on is "keep left" or "keep
+ * right" rather than a turn. `index` is the point in `path`; `side` −1 left, +1 right.
+ */
+export function findForks(net: RoadNetwork, path: Coord[]): { index: number; side: -1 | 1 }[] {
+  const key = (lng: number, lat: number) => `${lng.toFixed(7)},${lat.toFixed(7)}`;
+  const junctions = new Map<string, number>();
+  net.nodes.forEach((n, i) => {
+    if (n.edges.length >= 3) junctions.set(key(n.lng, n.lat), i);
+  });
+  const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+  const headingBetween = (a: Coord, b: Coord) => Math.atan2((b[0] - a[0]) * Math.cos((a[1] * Math.PI) / 180), -(b[1] - a[1]));
+  // A point ~10 m before or after path[i], so tiny kinks don't decide the direction.
+  const reach = (i: number, step: -1 | 1) => {
+    let j = i;
+    let gone = 0;
+    while (j + step >= 0 && j + step < path.length && gone < 10) {
+      const a = path[j];
+      const b = path[j + step];
+      gone += Math.hypot((b[0] - a[0]) * 111320 * Math.cos((a[1] * Math.PI) / 180), (b[1] - a[1]) * 110574);
+      j += step;
+    }
+    return path[j];
+  };
+  const forks: { index: number; side: -1 | 1 }[] = [];
+  for (let i = 1; i < path.length - 1; i++) {
+    const node = junctions.get(key(path[i][0], path[i][1]));
+    if (node === undefined) continue;
+    const arrive = headingBetween(reach(i, -1), path[i]);
+    const leave = wrap(headingBetween(path[i], reach(i, 1)) - arrive);
+    if (Math.abs(leave) >= (35 * Math.PI) / 180) continue; // a real turn: announced as one already
+    const ahead = net.nodes[node].edges.map((id) => wrap(headingAway(net, node, id) - arrive)).filter((a) => Math.abs(a) < (60 * Math.PI) / 180);
+    if (ahead.length < 2) continue;
+    const others = ahead.filter((a) => Math.abs(a - leave) > (3 * Math.PI) / 180);
+    if (!others.length) continue;
+    // Positive angles are to the left (see geo.headingOf).
+    if (others.every((a) => leave > a + (5 * Math.PI) / 180)) forks.push({ index: i, side: -1 });
+    else if (others.every((a) => leave < a - (5 * Math.PI) / 180)) forks.push({ index: i, side: 1 });
+  }
+  return forks;
 }

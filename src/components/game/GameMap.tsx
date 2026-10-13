@@ -348,16 +348,23 @@ export function GameMap({
         const id = ++planId;
         // Nearby places on the loaded roads: the shortest way, straight away.
         let route: import("@/game/geo").Route | null = null;
+        let forks: { index: number; side: -1 | 1 }[] = [];
         let fallback = false;
         if (network && onRoad) {
           const path = roads.findPath(network, onRoad, to);
-          if (path) route = geo.buildRoute(path);
+          if (path) {
+            route = geo.buildRoute(path);
+            forks = roads.findForks(network, path);
+          }
         }
         // Farther away: our own roads between here and there.
         if (!route) {
           if (!quiet) say("Finding a route…", false, true);
-          const path = await routeOnOwnRoads(traveller.pos, to);
-          if (path) route = geo.buildRoute(path);
+          const found = await routeOnOwnRoads(traveller.pos, to);
+          if (found) {
+            route = geo.buildRoute(found.path);
+            forks = found.forks;
+          }
         }
         // Very far, or outside the areas we host: the routing service (a straight line if that fails).
         if (!route) ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
@@ -374,7 +381,7 @@ export function GameMap({
           to,
           name,
           route,
-          turns: directions.findManeuvers(route),
+          turns: directions.findManeuvers(route, forks),
           segment: 0,
           offSince: 0,
           straight: fallback,
@@ -402,7 +409,10 @@ export function GameMap({
        * around the hunter: loads the squares between here and there (up to
        * ~25 km across; longer trips are for buses and planes) and searches them.
        */
-      async function routeOnOwnRoads(from: LngLat, to: LngLat): Promise<import("@/game/geo").Coord[] | null> {
+      async function routeOnOwnRoads(
+        from: LngLat,
+        to: LngLat,
+      ): Promise<{ path: import("@/game/geo").Coord[]; forks: { index: number; side: -1 | 1 }[] } | null> {
         const MARGIN = 0.01; // ~1 km around the straight line's box, for roads that bend outward
         const x0 = Math.floor((Math.min(from.lng, to.lng) - MARGIN) / ROAD_CELL_DEG);
         const x1 = Math.floor((Math.max(from.lng, to.lng) + MARGIN) / ROAD_CELL_DEG);
@@ -418,7 +428,8 @@ export function GameMap({
         const centre = { lng: (from.lng + to.lng) / 2, lat: (from.lat + to.lat) / 2 };
         const net = roads.buildNetworkFromCells(cells, traveller.mode, centre, Infinity);
         const start = roads.snapToNetwork(net, from, traveller.heading);
-        return start ? roads.findPath(net, start, to, 300) : null;
+        const path = start ? roads.findPath(net, start, to, 300) : null;
+        return path ? { path, forks: roads.findForks(net, path) } : null;
       }
 
       /** Roughly how long a trip takes at the current mode's normal pace. */
@@ -491,12 +502,20 @@ export function GameMap({
           );
         } else if (next && next.s - at.s < left - 10) {
           if (!trip.streets.has(next.s)) {
-            // The street name just after the turn.
+            // The street name just after the turn: from our own roads when they're
+            // loaded there (exact), otherwise from the map's labels.
             const after = geo.pointAt(trip.route, Math.min(trip.route.total, next.s + 15));
-            trip.streets.set(next.s, streetAt(after, geo.headingOf([next.lng, next.lat], [after.lng, after.lat])));
+            const along = geo.headingOf([next.lng, next.lat], [after.lng, after.lat]);
+            let street: string | null | undefined;
+            const there = network ? roads.snapToNetwork(network, after, along) : null;
+            if (network && there) {
+              const p = roads.positionOf(network, there);
+              if (geo.distanceM([p.lng, p.lat], [after.lng, after.lat]) < 8) street = roads.streetName(network, there);
+            }
+            trip.streets.set(next.s, street !== undefined ? street : streetAt(after, along));
           }
           const street = trip.streets.get(next.s);
-          step = `In ${directions.roundedDistance(next.s - at.s)}, ${directions.turnWords(next.angle)}${street ? ` onto ${street}` : ""}`;
+          step = `In ${directions.roundedDistance(next.s - at.s)}, ${directions.turnWords(next.angle, next.keep)}${street ? ` onto ${street}` : ""}`;
           arrow = Math.round((-next.angle * 180) / Math.PI);
         } else {
           step = cap(`${trip.name} is ${directions.roundedDistance(left)} ahead`);

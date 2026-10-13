@@ -5,16 +5,19 @@
  */
 import { distanceM, headingOf, pointAt, type Coord, type LngLat, type Route } from "./geo";
 
-/** A turn on the route: `s` metres along it; `angle` in radians (positive = left). */
-export type Maneuver = { s: number; angle: number; lng: number; lat: number };
+/**
+ * A turn on the route: `s` metres along it; `angle` in radians (positive =
+ * left). `keep`: a fork, where the way on is "keep left/right" rather than a turn.
+ */
+export type Maneuver = { s: number; angle: number; lng: number; lat: number; keep?: boolean };
 
 const BEND = (35 * Math.PI) / 180; // smaller bends just follow the road
 const LOOK_M = 12; // judge a bend over this far either side, so kinks in the line don't count
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
-/** Where the route turns. */
-export function findManeuvers(route: Route): Maneuver[] {
+/** Where the route turns; `forks` (from roads.findForks) add "keep left/right" steps. */
+export function findManeuvers(route: Route, forks: { index: number; side: -1 | 1 }[] = []): Maneuver[] {
   const found: Maneuver[] = [];
   for (let i = 1; i < route.coords.length - 1; i++) {
     const s = route.cum[i];
@@ -33,7 +36,13 @@ export function findManeuvers(route: Route): Maneuver[] {
     }
     found.push({ s, angle, lng: here[0], lat: here[1] });
   }
-  return found;
+  for (const { index, side } of forks) {
+    const s = route.cum[index];
+    if (found.some((m) => Math.abs(m.s - s) < 15)) continue;
+    const [lng, lat] = route.coords[index];
+    found.push({ s, angle: (-side * 25 * Math.PI) / 180, lng, lat, keep: true });
+  }
+  return found.sort((a, b) => a.s - b.s);
 }
 
 /**
@@ -64,9 +73,10 @@ export function nextManeuver(maneuvers: Maneuver[], s: number): Maneuver | null 
   return maneuvers.find((m) => m.s > s + 3) ?? null;
 }
 
-/** Words for a turn: "turn left", "bear right", "turn sharp left", "make a U-turn". */
-export function turnWords(angle: number): string {
+/** Words for a turn: "turn left", "bear right", "turn sharp left", "make a U-turn", "keep left". */
+export function turnWords(angle: number, keep = false): string {
   const side = angle > 0 ? "left" : "right";
+  if (keep) return `keep ${side}`;
   const a = Math.abs(angle);
   if (a > (160 * Math.PI) / 180) return "make a U-turn";
   if (a > (120 * Math.PI) / 180) return `turn sharp ${side}`;

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type P
 import Link from "next/link";
 import type { AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
-import type { Mode } from "@/game/movement";
+import { canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
 import { MEAL_ENERGY, MEAL_PRICE, SERVICE_RADIUS_M, VEHICLES, type VehicleKind } from "@/game/economy";
 import { BagPanel } from "./BagPanel";
@@ -36,13 +36,15 @@ type Hud = {
   services: { fuel: string | null; food: string | null };
   /** A purchase or vehicle change is on its way to the server. */
   busy: boolean;
+  /** Moving by itself towards a tapped spot or along a route. */
+  auto: boolean;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
 const ROAM_HINTS = {
-  keys: "Free roam: hold ↑ to move (Shift to sprint). ← or → turns at the next junction, ↓ turns you around. Click the map to head that way.",
-  touch: "Free roam: hold GO to move. Tap ◀ or ▶ to turn at the next junction, ↺ to turn around, or tap the map to head that way.",
+  keys: "Free roam: hold ↑ to move and ↓ to go back. ← or → turns at the next junction; Shift runs. Or click the map to walk there.",
+  touch: "Free roam: tap the map to walk there along the roads (tap behind you to go back). Hold SPRINT to run.",
 };
 const ROUTE_HINT = "Tap the map to choose where to go.";
 
@@ -110,6 +112,7 @@ export function GameMap({
     follow: () => void;
     turn: (dir: -1 | 1) => void;
     turnAround: () => void;
+    stop: () => void;
   } | null>(null);
   const [failed, setFailed] = useState(false);
   const [hud, setHud] = useState<Hud>({
@@ -129,6 +132,7 @@ export function GameMap({
     vehicle: null,
     services: { fuel: null, food: null },
     busy: false,
+    auto: false,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the Vehicles panel, when open
@@ -204,6 +208,7 @@ export function GameMap({
       // Where the player wants to go: straight on by default, towards a clicked
       // spot, or a left/right turn waiting for the next junction.
       let aimTarget: LngLat | null = null;
+      let aimClosest = Infinity; // closest the roads have brought the player to aimTarget
       let pendingTurn: -1 | 0 | 1 = 0;
       let lastNetworkCheck = 0;
       let lastDeadEndCheck = 0;
@@ -211,8 +216,10 @@ export function GameMap({
       function buildRoads() {
         const features = map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation" });
         if (!features.length) return false;
+        // Keep facing the way the player chose on the road (e.g. just turned round), not the way the body still points.
+        const facing = network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading;
         network = roads.buildNetwork(features as import("@/game/roads").RoadFeature[], traveller.mode, traveller.pos);
-        onRoad = roads.snapToNetwork(network, traveller.pos, traveller.heading);
+        onRoad = roads.snapToNetwork(network, traveller.pos, facing);
         if (!onRoad) return false;
         const p = roads.positionOf(network, onRoad);
         traveller.pos = { lng: p.lng, lat: p.lat };
@@ -224,9 +231,10 @@ export function GameMap({
         setHud((h) => ({ ...h, turn }));
       };
 
-      /** Head towards a clicked spot (turning round first if it's behind). */
+      /** Walk (or ride) to a tapped spot along the roads, turning round first if it's behind. */
       function headTowards(point: LngLat) {
         aimTarget = point;
+        aimClosest = Infinity;
         setTurn(0);
         const heading = geo.headingOf([traveller.pos.lng, traveller.pos.lat], [point.lng, point.lat]);
         if (network && onRoad && roads.wantsUTurn(network, onRoad, heading)) onRoad = roads.reverse(onRoad);
@@ -251,8 +259,10 @@ export function GameMap({
         showRoute(route.coords);
         say(
           fallback
-            ? "Routing is unavailable right now, so this is a straight line. Hold GO to move."
-            : `Route ready: ${geo.formatDistance(route.total)} by ${traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()}. Hold GO, or SPRINT to go faster.`,
+            ? "Routing is unavailable right now, so this is a straight line."
+            : `On your way: ${geo.formatDistance(route.total)} by ${traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()}.${
+                movement.canSprint(traveller.mode) ? " Hold SPRINT to go faster." : ""
+              }`,
         );
       }
 
@@ -424,7 +434,7 @@ export function GameMap({
             if (started?.reason === "far" && started.lng != null && started.lat != null) {
               headTowards({ lng: started.lng, lat: started.lat });
               const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [started.lng, started.lat]);
-              say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Walk there to ride it.`, true);
+              say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Walking you there; then open Vehicles and ride it.`, true);
             } else if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
             else if (started?.reason === "fuel") say(`Your ${vehicleName(kind)} has no fuel. Rent one, or bring fuel later.`, true);
             else say("Couldn't get on. Please try again.", true);
@@ -692,7 +702,7 @@ export function GameMap({
         walkTo(vehicle) {
           if (style !== "roam") actions.current?.setStyle("roam");
           headTowards({ lng: vehicle.lng, lat: vehicle.lat });
-          say(`Walking to your ${vehicleName(vehicle.kind)}: follow the green tag, then open Vehicles and ride it.`);
+          say(`Walking to your ${vehicleName(vehicle.kind)} (green tag). When you get there, open Vehicles and ride it.`);
         },
         refuel: () => void refuelHere(),
         eat() {
@@ -717,6 +727,11 @@ export function GameMap({
           onRoad = roads.reverse(onRoad);
           aimTarget = null;
           setTurn(0);
+        },
+        stop() {
+          aimTarget = null;
+          if (style === "route") clearRoute();
+          say(style === "roam" ? roamHint : ROUTE_HINT);
         },
         follow() {
           following = true;
@@ -769,39 +784,56 @@ export function GameMap({
           }
         }
 
+        // A tapped spot or a planned route moves the hunter by itself; keys move them in free roam.
         const canMove = style === "roam" ? !!onRoad : !!traveller.route;
-        const { distance, events } = movement.step(traveller, c, dt, t, canMove);
+        const auto = style === "roam" ? !!aimTarget : !!traveller.route;
+        const { distance, events } = movement.step(traveller, { go: c.go || auto, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") say("You fainted from exhaustion! Rest before your energy runs out. (In a hunt: ambulance and hospital bill.)", true);
-          if (event === "recovered") say("Back on your feet. Hold GO to continue.");
+          if (event === "recovered") say("Back on your feet.");
         }
 
-        if (style === "roam" && network && onRoad && distance > 0) {
-          // Straight on, unless heading for a clicked spot (forgotten once reached).
-          let aim = roads.positionOf(network, onRoad).heading;
-          if (aimTarget) {
-            const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
-            if (geo.distanceM(here, [aimTarget.lng, aimTarget.lat]) < 25) aimTarget = null;
-            else aim = geo.headingOf(here, [aimTarget.lng, aimTarget.lat]);
+        if (style === "roam" && network && onRoad && aimTarget) {
+          // Stop on reaching the tapped spot, or once the roads stop bringing the player closer.
+          const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [aimTarget.lng, aimTarget.lat]);
+          aimClosest = Math.min(aimClosest, away);
+          if (away < 25) {
+            aimTarget = null;
+            say("You're there.");
+          } else if (away > aimClosest + 60) {
+            aimTarget = null;
+            say("This is as close as these roads go. Tap another spot to keep going.");
           }
-          const { position, deadEnd, turned } = roads.advance(network, onRoad, distance, aim, pendingTurn);
-          if (turned) setTurn(0);
-          onRoad = position;
-          const p = roads.positionOf(network, onRoad);
-          traveller.pos = { lng: p.lng, lat: p.lat };
-          traveller.heading = geo.turnTowards(traveller.heading, p.heading, Math.min(1, 8 * dt));
-          if (deadEnd) {
-            traveller.v = 0;
-            if (now - lastDeadEndCheck > 2000) {
-              // Often just the edge of what's loaded: reload the roads and keep going if they continue.
-              lastDeadEndCheck = now;
-              lastNetworkCheck = now;
-              buildRoads();
-            } else if (onRoad) {
-              onRoad = roads.reverse(onRoad);
-              aimTarget = null;
-              say("This road ends here. Keep going to head back, or pick another way.");
+        }
+
+        if (style === "roam" && network && onRoad) {
+          const p0 = roads.positionOf(network, onRoad);
+          if (distance > 0) {
+            // Straight on, unless heading for a tapped spot.
+            const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+            const aim = aimTarget ? geo.headingOf(here, [aimTarget.lng, aimTarget.lat]) : p0.heading;
+            const { position, deadEnd, turned } = roads.advance(network, onRoad, distance, aim, pendingTurn);
+            if (turned) setTurn(0);
+            onRoad = position;
+            if (deadEnd) {
+              traveller.v = 0;
+              if (now - lastDeadEndCheck > 2000) {
+                // Often just the edge of what's loaded: reload the roads and keep going if they continue.
+                lastDeadEndCheck = now;
+                lastNetworkCheck = now;
+                buildRoads();
+              } else if (onRoad) {
+                onRoad = roads.reverse(onRoad);
+                aimTarget = null;
+                say("This road ends here. Keep going to head back, or pick another way.");
+              }
             }
+          }
+          if (network && onRoad) {
+            // Face along the road, turning on the spot too (e.g. after ↓).
+            const p = roads.positionOf(network, onRoad);
+            traveller.pos = { lng: p.lng, lat: p.lat };
+            traveller.heading = geo.turnTowards(traveller.heading, p.heading, Math.min(1, 8 * dt));
           }
         } else if (style === "route" && movement.advanceRoute(traveller, distance, dt, t)) {
           showRoute(null);
@@ -885,9 +917,10 @@ export function GameMap({
             h.speedKmh === speedKmh &&
             h.leftM === leftM &&
             h.nearest?.metres === nearest?.metres &&
-            h.nearest?.angle === nearest?.angle
+            h.nearest?.angle === nearest?.angle &&
+            h.auto === auto
               ? h
-              : { ...h, energy, speedKmh, leftM, nearest },
+              : { ...h, energy, speedKmh, leftM, nearest, auto },
           );
         }
       };
@@ -910,27 +943,31 @@ export function GameMap({
         frame = requestAnimationFrame(loop);
       });
 
-      // Keyboard: hold ↑ (W, Space) to move and Shift to sprint; tap ← → (A, D)
-      // to turn at the next junction and ↓ (S) to turn around.
+      // Keyboard: hold ↑ (W, Space) to move and Shift to sprint; hold ↓ (S) to
+      // turn round and go back; tap ← → (A, D) to turn at the next junction.
       const holdKeys: Record<string, keyof typeof controls.current> = {
         ArrowUp: "go",
         KeyW: "go",
         Space: "go",
+        ArrowDown: "go",
+        KeyS: "go",
         ShiftLeft: "sprint",
         ShiftRight: "sprint",
       };
+      const backKeys = new Set(["ArrowDown", "KeyS"]);
       const tapKeys: Record<string, () => void> = {
         ArrowLeft: () => actions.current?.turn(-1),
         KeyA: () => actions.current?.turn(-1),
         ArrowRight: () => actions.current?.turn(1),
         KeyD: () => actions.current?.turn(1),
-        ArrowDown: () => actions.current?.turnAround(),
-        KeyS: () => actions.current?.turnAround(),
       };
       const keyDown = (e: KeyboardEvent) => {
         if (holdKeys[e.code]) {
           e.preventDefault();
           controls.current[holdKeys[e.code]] = true;
+          if (e.repeat) return;
+          if (backKeys.has(e.code)) actions.current?.turnAround();
+          else if (holdKeys[e.code] === "go") aimTarget = null; // steering by keys replaces a tapped spot
         } else if (tapKeys[e.code]) {
           e.preventDefault();
           if (!e.repeat) tapKeys[e.code]();
@@ -1103,6 +1140,16 @@ export function GameMap({
             <span aria-hidden="true" className="text-ink/70">✕</span>
           </button>
         )}
+        {hud.auto && (
+          <button
+            type="button"
+            onClick={() => actions.current?.stop()}
+            className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm font-bold"
+          >
+            {hud.mode === "walk" ? "Walking there" : "On the way"}
+            <span className="rounded-md bg-line px-2 py-0.5 text-xs">Stop ✕</span>
+          </button>
+        )}
         {!hud.following && (
           <button type="button" onClick={() => actions.current?.follow()} className="pointer-events-auto h-11 rounded-xl bg-ink px-4 text-sm font-bold">
             Follow me
@@ -1113,37 +1160,13 @@ export function GameMap({
 
       <p
         role="status"
-        className={`absolute left-3 right-[136px] rounded-2xl bg-ink px-4 py-3 text-sm sm:bottom-36 sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
-          hud.style === "roam" ? "bottom-[116px]" : "bottom-9" // above the ◀ ▶ buttons in free roam
-        } ${hud.alert ? "ring-2 ring-gold" : ""}`}
+        className={`absolute bottom-9 left-3 right-[104px] rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
+          hud.alert ? "ring-2 ring-gold" : ""
+        }`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}
       >
         {hud.hint}
       </p>
-
-      {hud.style === "roam" && (
-        <div className="absolute bottom-9 left-3 flex gap-2" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
-          {([
-            { label: "Turn left at the next junction", glyph: "◀", dir: -1 },
-            { label: "Turn around", glyph: "↺", dir: 0 },
-            { label: "Turn right at the next junction", glyph: "▶", dir: 1 },
-          ] as const).map((b) => {
-            const on = b.dir !== 0 && hud.turn === b.dir;
-            return (
-              <button
-                key={b.label}
-                type="button"
-                aria-label={b.label}
-                aria-pressed={b.dir === 0 ? undefined : on}
-                onClick={() => (b.dir === 0 ? actions.current?.turnAround() : actions.current?.turn(b.dir))}
-                className={`size-14 rounded-full border-2 text-2xl ${on ? "border-gold bg-gold text-ink" : "border-line bg-ink text-paper"}`}
-              >
-                {b.glyph}
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {bagOpen && <BagPanel leads={hud.leads} onClose={() => setBagOpen(false)} />}
       {garage && (
@@ -1168,26 +1191,20 @@ export function GameMap({
         />
       )}
 
-      <div className="absolute bottom-9 right-5 flex flex-col items-center gap-3" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
-        <HoldButton
-          onHold={(down) => {
-            controls.current.sprint = down;
-          }}
-          className="size-[72px] rounded-full border-[3px] border-gold bg-ink text-[13px] font-extrabold tracking-wide data-[down=true]:bg-gold data-[down=true]:text-ink"
-        >
-          SPRINT
-        </HoldButton>
-        <HoldButton
-          onHold={(down) => {
-            controls.current.go = down;
-          }}
-          className="size-[104px] rounded-full bg-gold font-display text-lg font-extrabold leading-tight text-ink data-[down=true]:bg-gold-hover"
-        >
-          HOLD
-          <br />
-          TO GO
-        </HoldButton>
-      </div>
+      {/* Running on foot or pedalling harder; motorbikes and cars have no sprint. */}
+      {canSprint(hud.mode) && (
+        <div className="absolute bottom-9 right-5" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
+          <HoldButton
+            label={hud.mode === "walk" ? "Hold to run" : "Hold to pedal faster"}
+            onHold={(down) => {
+              controls.current.sprint = down;
+            }}
+            className="size-[76px] rounded-full border-[3px] border-gold bg-ink text-[13px] font-extrabold tracking-wide data-[down=true]:bg-gold data-[down=true]:text-ink"
+          >
+            SPRINT
+          </HoldButton>
+        </div>
+      )}
     </div>
   );
 }

@@ -159,7 +159,7 @@ Because avatars are drawn larger than life, hundreds of players at one key locat
 
 | Kind | Modes | Who moves the avatar |
 |---|---|---|
-| **Active** | Walk, bicycle, motorbike, car | The player. Tap the map to choose where to go (the route snaps to real roads), and hold to move. |
+| **Active** | Walk, bicycle, motorbike, car | The player. Tap the map to choose where to go (the route snaps to real roads) and the hunter travels there; on a keyboard, the arrow keys steer. |
 | **Passenger** | Bus, train, plane | The vehicle, on its real route. The player must first get to the stop, station or airport and go through boarding. |
 
 **Example:** a UK player joins a hunt in Lagos. They cycle (active) from home to the airport, park the bike (parking fee if owned) or return it (if rented), check in, board, fly (passenger), land, then take a bus or walk to the riddle location.
@@ -595,6 +595,7 @@ Each phase ends with something playable that can be tested.
 | 13 Oct 2026 | Owner found the flat map too empty ("like a desert"): buildings return as **low 3D blocks** (capped at ~14 m, warm varied colours) with larger street names. Avatars are near true size at play zoom now, so the earlier "giants among blocks" problem doesn't recur. |
 | 13 Oct 2026 | **Free-roam finds built.** The world is split into ~550 m squares, stocked when a player comes near and restocked every 6 h: 12 coin drops (5–20 coins), 1 intel scroll, 1 hidden find (60% coin cache of 40–100 coins, 40% relic), all on real roads. Hidden finds show only within 40 m or when intel points to them; 1 in 4 intel scrolls is a decoy. Pickups are confirmed by the server (30 m reach, anti-teleport check). Relics last 7 days; using them comes with hunts. The Lockdown Orb is not spawned yet. |
 | 13 Oct 2026 | **Desktop keyboard controls:** hold ↑ (or W or Space) to move and Shift to sprint. ← and → turn at the next junction, ↓ turns around. Phones get ◀ ↺ ▶ buttons. |
+| 13 Oct 2026 | **No movement buttons on screen except SPRINT.** Tap or click the map and the hunter walks there along the roads by itself (tap behind to go back; a "Stop" chip cancels). On a keyboard, hold ↓ to turn round and go back. **Sprint is only for walking (running) and the bicycle (pedalling harder).** Motorbikes and cars have no sprint, and the server's speed limit for them dropped to match. |
 | 13 Oct 2026 | **Economy v1 built:** rent or buy a bicycle, motorbike or car; fuel; meals at real restaurants; owned vehicles stay parked (see 10.3). Wear, breakdowns, parking fees, add-ons and public transport come later in phase 3. |
 
 ## 16. Open questions

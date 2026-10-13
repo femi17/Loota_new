@@ -50,9 +50,14 @@ export type Traveller = {
 export type Controls = { go: boolean; sprint: boolean };
 export type StepEvent = "fainted" | "recovered";
 
-/** Fastest a mode can go on screen (sprinting), in m/s; the server allows a margin on top (save_position). */
+/** Sprinting is running on foot or pedalling harder; motorbikes and cars have no sprint. */
+export function canSprint(mode: Mode): boolean {
+  return mode === "walk" || mode === "bicycle";
+}
+
+/** Fastest a mode can go on screen, in m/s; matches max_travel_speed() in the database, which adds a margin (save_position). */
 export function maxSpeed(mode: Mode): number {
-  return baseSpeed(mode) * SPRINT_SPEED;
+  return baseSpeed(mode) * (canSprint(mode) ? SPRINT_SPEED : 1);
 }
 
 export function createTraveller(pos: LngLat, mode: Mode = "walk"): Traveller {
@@ -84,6 +89,7 @@ export function step(
 ): { distance: number; events: StepEvent[] } {
   const events: StepEvent[] = [];
   const base = baseSpeed(t.mode);
+  const sprinting = controls.sprint && canSprint(t.mode);
 
   if (t.phase !== "idle" && now >= t.phaseUntil) {
     if (t.phase === "fainted") {
@@ -95,14 +101,14 @@ export function step(
 
   let target = 0;
   if (t.phase === "idle" && canMove && (controls.go || controls.sprint)) {
-    target = base * (controls.sprint ? SPRINT_SPEED : 1) * t.speedFactor;
+    target = base * (sprinting ? SPRINT_SPEED : 1) * t.speedFactor;
     if (t.energy < TIRED_AT) target *= TIRED_SPEED;
   }
   t.v += (target - t.v) * Math.min(1, (target > t.v ? 2.5 : 4) * dt);
   if (target === 0 && t.v < 0.3) t.v = 0;
 
   if (t.v > 0.5) {
-    t.energy -= MODES[t.mode].drain * (controls.sprint ? SPRINT_DRAIN : 1) * (t.v / base) * dt;
+    t.energy -= MODES[t.mode].drain * (sprinting ? SPRINT_DRAIN : 1) * (t.v / base) * dt;
     if (t.energy <= 0) {
       t.energy = 0;
       t.v = 0;

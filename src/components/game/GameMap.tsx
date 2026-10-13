@@ -15,15 +15,10 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { PlaceSearch } from "./PlaceSearch";
 
-/** Free roam follows the roads with no destination; route goes to a tapped place. */
-type Style = "roam" | "route";
-
 type Hud = {
   energy: number;
   speedKmh: number;
-  leftM: number | null;
   mode: Mode;
-  style: Style;
   hint: string;
   alert: boolean;
   coins: number;
@@ -41,13 +36,22 @@ type Hud = {
   street: string | null;
   /** A purchase or vehicle change is on its way to the server. */
   busy: boolean;
-  /** Moving by itself towards a tapped spot or along a route. */
-  auto: boolean;
+  /** Turn-by-turn directions, while the player has a destination. */
+  guide: Guide | null;
+};
+
+/** What the directions banner shows: the next turn, and the trip as a whole. */
+type Guide = {
+  /** Arrow rotation in degrees (0 = straight on, negative = left). */
+  arrow: number;
+  /** "In 40 m, turn left onto Ricca Street" */
+  step: string;
+  /** "To National Theatre · 1.2 km · about 12 minutes" */
+  trip: string;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
-const ROUTE_HINT = "Search for a place or address, or tap the map.";
 
 /** A button that reports while it's held down (mouse, touch or pen). */
 function HoldButton({
@@ -86,8 +90,8 @@ function HoldButton({
 }
 
 /**
- * The live 3D map: the player's hunter, free roam on roads or tap-to-route
- * travel, the chase camera, and saving position to the server.
+ * The live 3D map: the player's hunter steered along real roads, directions
+ * to a chosen place, the chase camera, and saving position to the server.
  */
 export function GameMap({
   look,
@@ -112,11 +116,10 @@ export function GameMap({
     walkTo: (vehicle: OwnedVehicle) => void;
     refuel: () => void;
     eat: () => void;
-    setStyle: (s: Style) => void;
     follow: () => void;
     turn: (dir: -1 | 1) => void;
     turnAround: () => void;
-    stop: () => void;
+    endDirections: () => void;
     where: () => LngLat;
     goTo: (place: Place) => void;
   } | null>(null);
@@ -125,9 +128,7 @@ export function GameMap({
   const [hud, setHud] = useState<Hud>({
     energy: 100,
     speedKmh: 0,
-    leftM: null,
     mode: startMode,
-    style: "roam",
     hint: "",
     alert: false,
     coins: initialCoins,
@@ -139,10 +140,11 @@ export function GameMap({
     services: { fuel: null, food: null },
     street: null,
     busy: false,
-    auto: false,
+    guide: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the Vehicles panel, when open
 
   const lookKey = JSON.stringify(look);
@@ -155,7 +157,7 @@ export function GameMap({
 
     (async () => {
       // Map and 3D code only ever run in the browser.
-      const [{ Map: MapLibre, setWorkerUrl }, geo, movement, models, roads, { ThreeMapLayer }, { fetchRoute }, { createClient }, { styleMapForGame }] =
+      const [{ Map: MapLibre, setWorkerUrl }, geo, movement, models, roads, { ThreeMapLayer }, { fetchRoute }, { createClient }, { styleMapForGame }, directions] =
         await Promise.all([
           import("maplibre-gl"),
           import("@/game/geo"),
@@ -166,6 +168,7 @@ export function GameMap({
           import("@/game/routing"),
           import("@/lib/supabase/client"),
           import("@/game/mapStyle"),
+          import("@/game/directions"),
         ]);
       if (disposed || !container.current) return;
       // Served from public/ by scripts/copy-map-worker.mjs (the bundler doesn't serve MapLibre's worker).
@@ -187,6 +190,12 @@ export function GameMap({
         dragPan: false, // dragging looks around the hunter instead (see "Look around" below)
         dragRotate: false,
         touchPitch: false,
+        // The chase camera re-centres every frame, which would cancel the map's own
+        // smooth zooming; the wheel is handled below instead.
+        scrollZoom: false,
+        doubleClickZoom: false,
+        minZoom: 14,
+        maxZoom: 21.5,
         keyboard: false, // the keyboard drives the hunter instead
         attributionControl: { compact: true },
       });
@@ -215,18 +224,14 @@ export function GameMap({
         );
       };
 
-      let style: Style = "roam";
       let camBearing = geo.compassFromHeading(traveller.heading);
       let lookOffset = 0; // degrees the player has turned the view by dragging
       let dragging = false;
 
-      // ---- Free roam on roads ----------------------------------------------
+      // ---- Travel on roads (the player always steers) ---------------------
       let network: import("@/game/roads").RoadNetwork | null = null;
       let onRoad: import("@/game/roads").RoadPosition | null = null;
-      // Where the player wants to go: straight on by default, towards a clicked
-      // spot, or a left/right turn waiting for the next junction.
-      let aimTarget: LngLat | null = null;
-      let aimClosest = Infinity; // closest the roads have brought the player to aimTarget
+      // Straight on by default, or a left/right turn waiting for the next junction.
       let pendingTurn: -1 | 0 | 1 = 0;
       let justPassed: import("@/game/roads").PassedJunction | null = null;
       let lastNetworkCheck = 0;
@@ -262,51 +267,71 @@ export function GameMap({
         setHud((h) => ({ ...h, turn }));
       };
 
-      /** Walk (or ride) to a tapped spot along the roads, turning round first if it's behind. */
-      function headTowards(point: LngLat) {
-        aimTarget = point;
-        aimClosest = Infinity;
-        setTurn(0);
-        const heading = geo.headingOf([traveller.pos.lng, traveller.pos.lat], [point.lng, point.lat]);
-        if (network && onRoad && roads.wantsUTurn(network, onRoad, heading)) onRoad = roads.reverse(onRoad);
-      }
-
-      // ---- Go to a place ---------------------------------------------------
-      let target: LngLat | null = null;
+      // ---- Directions: a route to follow, turn by turn ----------------------
+      // The route is only guidance: the player steers (only buses, trains and
+      // planes will carry a player by themselves).
+      type Trip = {
+        to: LngLat;
+        name: string;
+        route: import("@/game/geo").Route;
+        turns: import("@/game/directions").Maneuver[];
+        segment: number; // where on the route the player was last seen (to search near it)
+        offSince: number; // when the player left the route (0 = on it)
+        straight: boolean; // routing was unavailable: just a straight line to the place
+        plannedAt: number;
+        streets: Map<number, string | null>; // street names after each turn, looked up once
+      };
+      let trip: Trip | null = null;
       let planId = 0;
 
-      async function planRoute(to: LngLat, placeName?: string) {
-        if (traveller.phase !== "idle") return;
+      async function planDirections(to: LngLat, name: string, quiet = false) {
         const id = ++planId;
-        // Nearby places: the shortest way along the game's own roads, straight away.
+        // Nearby places on the loaded roads: the shortest way, straight away.
         let route: import("@/game/geo").Route | null = null;
         let fallback = false;
-        const fresh = network && geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) < 300;
-        if (!fresh || !onRoad) buildRoads();
-        if (network && onRoad && geo.distanceM([network.centre.lng, network.centre.lat], [to.lng, to.lat]) < 1300) {
+        if (network && onRoad) {
           const path = roads.findPath(network, onRoad, to);
           if (path) route = geo.buildRoute(path);
         }
         // Farther away: the routing service.
         if (!route) {
-          say("Finding a route…", false, true);
+          if (!quiet) say("Finding a route…", false, true);
           ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
         }
-        if (disposed || id !== planId || style !== "route") return;
-        movement.setRoute(traveller, route);
+        if (disposed || id !== planId) return;
         const end = route.coords[route.coords.length - 1];
-        target = { lng: end[0], lat: end[1] };
+        if (route.total < 30 && geo.distanceM([traveller.pos.lng, traveller.pos.lat], end) < 30) {
+          endDirections();
+          // The spot may be off the roads (inside a block): this road is then the nearest way to it.
+          const Name = `${name[0].toUpperCase()}${name.slice(1)}`;
+          say(geo.distanceM([traveller.pos.lng, traveller.pos.lat], [to.lng, to.lat]) < 30 ? `${Name} is right here.` : `You're as close to ${name} as the roads go.`);
+          return;
+        }
+        trip = {
+          to,
+          name,
+          route,
+          turns: directions.findManeuvers(route),
+          segment: 0,
+          offSince: 0,
+          straight: fallback,
+          plannedAt: performance.now(),
+          streets: new Map(),
+        };
         destination.lng = end[0];
         destination.lat = end[1];
         marker.group.visible = true;
         showRoute(route.coords);
-        say(
-          fallback
-            ? "Routing is unavailable right now, so this is a straight line."
-            : `On your way${placeName ? ` to ${placeName}` : ""}: ${geo.formatDistance(route.total)} by ${
-                traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()
-              }, ${travelTime(route.total)}.${movement.canSprint(traveller.mode) ? " Hold SPRINT to go faster." : ""}`,
-        );
+        if (!quiet) {
+          say(
+            fallback
+              ? `Road directions are unavailable right now. The arrow points to ${name}; steer your own way there.`
+              : `Directions to ${name}: ${geo.formatDistance(route.total)}, ${travelTime(route.total)} by ${
+                  traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()
+                }. Follow the blue line.`,
+          );
+        }
+        updateGuide();
       }
 
       /** Roughly how long a trip takes at the current mode's normal pace. */
@@ -315,12 +340,84 @@ export function GameMap({
         return minutes < 1 ? "under a minute" : minutes === 1 ? "about 1 minute" : `about ${minutes} minutes`;
       }
 
-      function clearRoute() {
+      function endDirections() {
         planId++;
-        movement.setRoute(traveller, null);
-        target = null;
+        trip = null;
         marker.group.visible = false;
         showRoute(null);
+        setHud((h) => (h.guide ? { ...h, guide: null } : h));
+      }
+
+      /** Next turn, distance to it, arrival, and re-planning when the player leaves the route. */
+      function updateGuide() {
+        if (!trip) return;
+        const here = traveller.pos;
+        const at = directions.progressOn(trip.route, here, trip.segment);
+        trip.segment = at.segment;
+        const left = trip.route.total - at.s;
+        const end = trip.route.coords[trip.route.coords.length - 1];
+
+        if (geo.distanceM([here.lng, here.lat], end) < 25 || left < 15) {
+          const name = trip.name;
+          endDirections();
+          void savePosition();
+          say(`You've arrived at ${name}.`, true);
+          return;
+        }
+
+        const now = performance.now();
+        const cap = (text: string) => text[0].toUpperCase() + text.slice(1);
+        const tripLine = `To ${trip.name} · ${geo.formatDistance(left)} · ${travelTime(left)}`;
+
+        // No road route (routing was unavailable): point the way, and try again now and then.
+        if (trip.straight) {
+          if (now - trip.plannedAt > 30_000) {
+            trip.plannedAt = now;
+            void planDirections(trip.to, trip.name, true);
+          }
+          const away = geo.distanceM([here.lng, here.lat], end);
+          const arrow = Math.round(geo.compassFromHeading(geo.headingOf([here.lng, here.lat], end)) - camBearing);
+          const guide: Guide = { arrow, step: cap(`${trip.name} is ${directions.roundedDistance(away)} that way`), trip: tripLine };
+          setHud((h) => (h.guide && h.guide.step === guide.step && h.guide.arrow === guide.arrow ? h : { ...h, guide }));
+          return;
+        }
+
+        // Off the route for a few seconds: plan again from here.
+        if (at.off > 35) {
+          if (!trip.offSince) trip.offSince = now;
+          else if (now - trip.offSince > 3000 && now - trip.plannedAt > 8000) {
+            trip.plannedAt = now;
+            say("You left the route, so the directions have been updated.");
+            void planDirections(trip.to, trip.name, true);
+            return;
+          }
+        } else trip.offSince = 0;
+
+        const next = directions.nextManeuver(trip.turns, at.s);
+        let step: string;
+        let arrow = 0;
+        if (at.off > 35) {
+          step = "Head back to the blue line";
+          arrow = Math.round(
+            geo.compassFromHeading(geo.headingOf([here.lng, here.lat], [trip.route.coords[at.segment][0], trip.route.coords[at.segment][1]])) -
+              camBearing,
+          );
+        } else if (next && next.s - at.s < left - 10) {
+          if (!trip.streets.has(next.s)) {
+            // The street name just after the turn.
+            const after = geo.pointAt(trip.route, Math.min(trip.route.total, next.s + 15));
+            trip.streets.set(next.s, streetAt(after, geo.headingOf([next.lng, next.lat], [after.lng, after.lat])));
+          }
+          const street = trip.streets.get(next.s);
+          step = `In ${directions.roundedDistance(next.s - at.s)}, ${directions.turnWords(next.angle)}${street ? ` onto ${street}` : ""}`;
+          arrow = Math.round((-next.angle * 180) / Math.PI);
+        } else {
+          step = cap(`${trip.name} is ${directions.roundedDistance(left)} ahead`);
+        }
+        const guide: Guide = { arrow, step, trip: tripLine };
+        setHud((h) =>
+          h.guide && h.guide.step === guide.step && h.guide.trip === guide.trip && h.guide.arrow === guide.arrow ? h : { ...h, guide },
+        );
       }
 
       // ---- Saving position (the server rejects impossible moves) -----------
@@ -344,7 +441,6 @@ export function GameMap({
         // Go back to the last accepted spot.
         traveller.pos = { ...saved };
         traveller.v = 0;
-        clearRoute();
         if (result.reason === "vehicle" && result.mode) {
           // The server's record of what you're riding wins (e.g. a rental that ended while you were away).
           traveller.mode = result.mode;
@@ -353,7 +449,7 @@ export function GameMap({
         } else {
           say("Your position was corrected to the last valid spot.", true);
         }
-        if (style === "roam") buildRoads();
+        buildRoads();
       }
 
       const saveOnHide = () => {
@@ -444,8 +540,8 @@ export function GameMap({
       }
 
       function afterModeChange() {
-        if (style === "roam") buildRoads(); // cars keep off footpaths, bikes off steps
-        else if (traveller.route && target) void planRoute(target);
+        buildRoads(); // cars keep off footpaths, bikes off steps
+        if (trip) void planDirections(trip.to, trip.name, true); // and may need a different way there
       }
 
       async function chooseVehicle(kind: VehicleKind, how: "own" | "rent" | "buy") {
@@ -481,9 +577,9 @@ export function GameMap({
             traveller.mode = "walk"; // the server put you on foot
             await refreshVehicles();
             if (started?.reason === "far" && started.lng != null && started.lat != null) {
-              headTowards({ lng: started.lng, lat: started.lat });
               const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [started.lng, started.lat]);
-              say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Walking you there; then open Vehicles and ride it.`, true);
+              void planDirections({ lng: started.lng, lat: started.lat }, `your ${vehicleName(kind)}`, true);
+              say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Follow the blue line to it, then open Vehicles and ride it.`, true);
             } else if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
             else if (started?.reason === "fuel") say(`Your ${vehicleName(kind)} has no fuel. Rent one, or bring fuel later.`, true);
             else say("Couldn't get on. Please try again.", true);
@@ -585,11 +681,18 @@ export function GameMap({
        * (so a cross street at a junction doesn't).
        */
       function scanStreet() {
-        const k = Math.cos((traveller.pos.lat * Math.PI) / 180);
-        const toLocal = ([lng, lat]: number[]) => [(lng - traveller.pos.lng) * 111320 * k, (lat - traveller.pos.lat) * 110574];
+        let street = streetAt(traveller.pos, network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading);
+        // Many smaller streets have no name in OpenStreetMap yet.
+        if (!street && onRoad) street = "Unnamed road";
+        setHud((h) => (h.street === street ? h : { ...h, street }));
+      }
+
+      /** The name of the street at a spot, for a road running along `along` (a scene heading). */
+      function streetAt(pos: LngLat, along: number): string | null {
+        const k = Math.cos((pos.lat * Math.PI) / 180);
+        const toLocal = ([lng, lat]: number[]) => [(lng - pos.lng) * 111320 * k, (lat - pos.lat) * 110574];
         let street: string | null = null;
         let best = 10;
-        const along = network && onRoad ? roads.positionOf(network, onRoad).heading : traveller.heading;
         for (const f of map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation_name" })) {
           const name = f.properties?.name;
           if (!name) continue;
@@ -615,9 +718,7 @@ export function GameMap({
             }
           }
         }
-        // Many smaller streets have no name in OpenStreetMap yet.
-        if (!street && style === "roam" && onRoad) street = "Unnamed road";
-        setHud((h) => (h.street === street ? h : { ...h, street }));
+        return street;
       }
 
       /** Petrol stations and places to eat within reach, from the map's own points of interest. */
@@ -791,27 +892,13 @@ export function GameMap({
         ride: (kind, how) => void chooseVehicle(kind, how),
         getOff: () => void getOff(),
         walkTo(vehicle) {
-          if (style !== "roam") actions.current?.setStyle("roam");
-          headTowards({ lng: vehicle.lng, lat: vehicle.lat });
-          say(`Walking to your ${vehicleName(vehicle.kind)} (green tag). When you get there, open Vehicles and ride it.`);
+          void planDirections({ lng: vehicle.lng, lat: vehicle.lat }, `your ${vehicleName(vehicle.kind)}`);
         },
         refuel: () => void refuelHere(),
         eat() {
           if (foodHere) void eatHere(foodHere);
         },
-        setStyle(next) {
-          if (next === style) return;
-          style = next;
-          clearRoute();
-          aimTarget = null;
-          setTurn(0);
-          if (style === "roam") buildRoads();
-          setHud((h) => ({ ...h, style: next }));
-          if (next === "route") say(ROUTE_HINT);
-        },
         turn(dir) {
-          if (style !== "roam") return;
-          aimTarget = null;
           // Standing on a junction, or pressed just after going through one: take the turn there.
           if (network && onRoad) {
             const turned =
@@ -827,24 +914,18 @@ export function GameMap({
           setTurn(pendingTurn === dir ? 0 : dir); // pressing the same way again cancels
         },
         turnAround() {
-          if (style !== "roam" || !onRoad) return;
+          if (!onRoad) return;
           onRoad = roads.reverse(onRoad);
-          aimTarget = null;
           justPassed = null;
           setTurn(0);
         },
-        stop() {
-          aimTarget = null;
-          if (style === "route") clearRoute();
-          say("Stopped.");
-        },
+        endDirections,
         follow() {
           lookOffset = 0;
         },
         where: () => ({ ...traveller.pos }),
         goTo(place) {
-          if (style !== "route") actions.current?.setStyle("route");
-          void planRoute({ lng: place.lng, lat: place.lat }, place.name);
+          void planDirections({ lng: place.lng, lat: place.lat }, place.name);
         },
       };
 
@@ -856,8 +937,6 @@ export function GameMap({
         traveller.pos = { lng, lat };
         traveller.v = 0;
         saved = { lng, lat };
-        clearRoute();
-        aimTarget = null;
         setTurn(0);
         network = null; // rebuilt around the new spot once its map tiles load
         onRoad = null;
@@ -868,8 +947,6 @@ export function GameMap({
       huntActions.current = {
         async search(hunt) {
           traveller.v = 0;
-          aimTarget = null;
-          if (style === "route") clearRoute();
           const { data, error } = await supabase.rpc("search_here", {
             p_hunt: hunt,
             p_lng: traveller.pos.lng,
@@ -885,31 +962,59 @@ export function GameMap({
         placeAt,
         setFrozen(value) {
           frozen = value;
-          if (value) {
-            traveller.v = 0;
-            aimTarget = null;
-            if (style === "route") clearRoute();
-          }
+          if (value) traveller.v = 0;
         },
         say,
       };
 
       // Look around: drag sideways to turn the view around the hunter, up or
       // down to tilt it. Two fingers pinch to zoom. Moving off brings the view
-      // back behind the hunter. (A short tap still goes to a place.)
+      // back behind the hunter. A short tap gives directions to that spot.
+      //
+      // On touch screens the lower part of the screen steers instead: press and
+      // hold to walk, swipe left or right to turn, swipe down to turn back.
       map.touchZoomRotate.disableRotation();
       const pointers = new Set<number>();
       let drag: { x: number; y: number; offset: number; pitch: number; moved: boolean } | null = null;
+      let steer: { id: number; x: number; y: number; turned: boolean; back: boolean; timer: number } | null = null;
+      let touchGo = false;
+      const STEER_ZONE = 0.55; // touches below this share of the screen height steer
+      const stopSteering = () => {
+        if (steer) window.clearTimeout(steer.timer);
+        steer = null;
+        touchGo = false;
+      };
       const lookStart = (e: PointerEvent) => {
         pointers.add(e.pointerId);
         if (pointers.size > 1 || e.button !== 0) {
           drag = null;
           dragging = false;
+          stopSteering(); // two fingers: pinch to zoom
+          return;
+        }
+        if (e.pointerType === "touch" && e.clientY > window.innerHeight * STEER_ZONE) {
+          // Walk once the press is held (a quick swipe only turns).
+          const timer = window.setTimeout(() => {
+            if (steer) touchGo = true;
+          }, 120);
+          steer = { id: e.pointerId, x: e.clientX, y: e.clientY, turned: false, back: false, timer };
           return;
         }
         drag = { x: e.clientX, y: e.clientY, offset: lookOffset, pitch: map.getPitch(), moved: false };
       };
       const lookMove = (e: PointerEvent) => {
+        if (steer && e.pointerId === steer.id) {
+          const dx = e.clientX - steer.x;
+          const dy = e.clientY - steer.y;
+          if (!steer.turned && Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy)) {
+            steer.turned = true;
+            actions.current?.turn(dx > 0 ? 1 : -1);
+          } else if (!steer.back && dy > 60 && dy > Math.abs(dx)) {
+            steer.back = true;
+            actions.current?.turnAround();
+          }
+          return;
+        }
         if (!drag || !pointers.has(e.pointerId)) return;
         const dx = e.clientX - drag.x;
         const dy = e.clientY - drag.y;
@@ -919,24 +1024,35 @@ export function GameMap({
         lookOffset = drag.offset - dx * 0.3;
         map.setPitch(Math.max(25, Math.min(70, drag.pitch - dy * 0.2)));
       };
-      let lookedAt = 0; // when the last look-around drag ended: the map reports it as a tap too
+      let lookedAt = 0; // when the last drag or steering touch ended: the map reports it as a tap too
       const lookEnd = (e: PointerEvent) => {
         pointers.delete(e.pointerId);
+        if (steer && e.pointerId === steer.id) {
+          stopSteering();
+          lookedAt = performance.now(); // steering touches never set a destination
+        }
         if (pointers.size) return;
         if (drag?.moved) lookedAt = performance.now();
         drag = null;
         dragging = false;
       };
       const lookArea = map.getCanvasContainer();
+      lookArea.style.touchAction = "none"; // swipes steer and look around; the browser must not scroll or cancel them
       lookArea.addEventListener("pointerdown", lookStart);
+      // Zoom with the mouse wheel or trackpad (pinch on touch screens works as usual).
+      let zoomGoal: number | null = null;
+      const wheelZoom = (e: WheelEvent) => {
+        e.preventDefault();
+        const step = e.deltaMode === 1 ? e.deltaY * 0.05 : e.deltaY * 0.0025;
+        zoomGoal = Math.max(14, Math.min(21.5, (zoomGoal ?? map.getZoom()) - step));
+      };
+      lookArea.addEventListener("wheel", wheelZoom, { passive: false });
       window.addEventListener("pointermove", lookMove);
       window.addEventListener("pointerup", lookEnd);
       window.addEventListener("pointercancel", lookEnd);
       map.on("click", (e) => {
         if (performance.now() - lookedAt < 400) return; // the end of a drag, not a tap
-        const tapped = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-        if (style === "route") void planRoute(tapped);
-        else headTowards(tapped);
+        void planDirections({ lng: e.lngLat.lng, lat: e.lngLat.lat }, "the marked spot");
       });
       map.on("error", (e) => {
         if (/style|Failed to fetch/i.test(String(e.error?.message))) say("Couldn't load the map. Check your connection.", true);
@@ -947,6 +1063,7 @@ export function GameMap({
       let last = performance.now();
       let lastHud = 0;
       let lastServices = 0;
+      let lastGuide = 0;
 
       const loop = (now: number) => {
         frame = requestAnimationFrame(loop);
@@ -955,47 +1072,29 @@ export function GameMap({
         const t = now / 1000;
         const c = controls.current;
 
-        if (style === "roam") {
-          // Keep a road network around the player as they travel, and refresh it
-          // as more map tiles load (the first build may only see one tile).
-          const stale =
-            !network ||
-            now - lastNetworkCheck > 5000 ||
-            geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) > 300;
-          if (stale && now - lastNetworkCheck > 1000) {
-            lastNetworkCheck = now;
-            buildRoads(true);
-          }
+        // Keep a road network around the player as they travel, and refresh it
+        // as more map tiles load (the first build may only see one tile).
+        const stale =
+          !network ||
+          now - lastNetworkCheck > 5000 ||
+          geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) > 300;
+        if (stale && now - lastNetworkCheck > 1000) {
+          lastNetworkCheck = now;
+          buildRoads(true);
         }
 
-        // A tapped spot or a planned route moves the hunter by itself; keys move them in free roam.
-        const canMove = !frozen && (style === "roam" ? !!onRoad : !!traveller.route);
-        const auto = style === "roam" ? !!aimTarget : !!traveller.route;
-        const { distance, events } = movement.step(traveller, { go: c.go || auto, sprint: c.sprint }, dt, t, canMove);
+        // The player moves only while holding a key or the screen.
+        const canMove = !frozen && !!onRoad;
+        const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") say("You fainted from exhaustion! Rest before your energy runs out. (In a hunt: ambulance and hospital bill.)", true);
           if (event === "recovered") say("Back on your feet.");
         }
 
-        if (style === "roam" && network && onRoad && aimTarget) {
-          // Stop on reaching the tapped spot, or once the roads stop bringing the player closer.
-          const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [aimTarget.lng, aimTarget.lat]);
-          aimClosest = Math.min(aimClosest, away);
-          if (away < 25) {
-            aimTarget = null;
-            say("You're there.");
-          } else if (away > aimClosest + 60) {
-            aimTarget = null;
-            say("This is as close as these roads go. Tap another spot to keep going.");
-          }
-        }
-
-        if (style === "roam" && network && onRoad) {
-          const p0 = roads.positionOf(network, onRoad);
+        if (network && onRoad) {
           if (distance > 0) {
-            // Straight on, unless heading for a tapped spot.
-            const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
-            const aim = aimTarget ? geo.headingOf(here, [aimTarget.lng, aimTarget.lat]) : p0.heading;
+            // Straight on at junctions, unless the player asked to turn.
+            const aim = roads.positionOf(network, onRoad).heading;
             const { position, deadEnd, turned, passed } = roads.advance(network, onRoad, distance, aim, pendingTurn);
             if (turned) setTurn(0);
             if (passed) justPassed = passed;
@@ -1010,7 +1109,6 @@ export function GameMap({
                 buildRoads();
               } else if (onRoad) {
                 onRoad = roads.reverse(onRoad);
-                aimTarget = null;
                 say("This road ends here. Keep going to head back, or pick another way.");
               }
             }
@@ -1021,13 +1119,11 @@ export function GameMap({
             traveller.pos = { lng: p.lng, lat: p.lat };
             traveller.heading = geo.turnTowards(traveller.heading, p.heading, Math.min(1, 8 * dt));
           }
-        } else if (style === "route" && movement.advanceRoute(traveller, distance, dt, t)) {
-          showRoute(null);
-          target = null;
-          void savePosition();
-          say("You've arrived! Tap the map to go somewhere else.");
         }
-        if (traveller.phase === "idle" && !traveller.route) marker.group.visible = false;
+        if (now - lastGuide > 250) {
+          lastGuide = now;
+          updateGuide();
+        }
 
         models.animateAvatar(
           avatar,
@@ -1065,7 +1161,16 @@ export function GameMap({
         const want = geo.compassFromHeading(traveller.heading) + lookOffset;
         const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
         camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
-        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing });
+        let zoom: number | undefined;
+        if (zoomGoal !== null) {
+          const current = map.getZoom();
+          zoom = current + (zoomGoal - current) * Math.min(1, 10 * dt);
+          if (Math.abs(zoomGoal - zoom) < 0.01) {
+            zoom = zoomGoal;
+            zoomGoal = null;
+          }
+        }
+        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom });
 
         if (now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
@@ -1084,7 +1189,6 @@ export function GameMap({
           lastHud = now;
           const energy = Math.round(traveller.energy);
           const speedKmh = Math.round((traveller.v / movement.TIME_SCALE) * 3.6);
-          const leftM = traveller.route ? Math.round(traveller.route.total - traveller.s) : null;
 
           // Point to the closest find, relative to the screen (the camera turns with the hunter).
           const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
@@ -1103,12 +1207,10 @@ export function GameMap({
           setHud((h) =>
             h.energy === energy &&
             h.speedKmh === speedKmh &&
-            h.leftM === leftM &&
             h.nearest?.metres === nearest?.metres &&
-            h.nearest?.angle === nearest?.angle &&
-            h.auto === auto
+            h.nearest?.angle === nearest?.angle
               ? h
-              : { ...h, energy, speedKmh, leftM, nearest, auto },
+              : { ...h, energy, speedKmh, nearest },
           );
         }
       };
@@ -1116,13 +1218,24 @@ export function GameMap({
       map.on("load", () => {
         map.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         const firstSymbol = map.getStyle().layers.find((l) => l.type === "symbol")?.id;
+        // The route: a blue line with a white edge, so it stands out from yellow main roads and coins.
+        map.addLayer(
+          {
+            id: "route-edge",
+            type: "line",
+            source: "route",
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": "#FFFFFF", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 6, 20, 20] },
+          },
+          firstSymbol,
+        );
         map.addLayer(
           {
             id: "route-line",
             type: "line",
             source: "route",
             layout: { "line-cap": "round", "line-join": "round" },
-            paint: { "line-color": "#F4B41A", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3, 20, 14], "line-opacity": 0.9 },
+            paint: { "line-color": "#2F6FEB", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3.5, 20, 13] },
           },
           firstSymbol,
         );
@@ -1158,7 +1271,6 @@ export function GameMap({
           controls.current[holdKeys[e.code]] = true;
           if (e.repeat) return;
           if (backKeys.has(e.code)) actions.current?.turnAround();
-          else if (holdKeys[e.code] === "go") aimTarget = null; // steering by keys replaces a tapped spot
         } else if (tapKeys[e.code]) {
           e.preventDefault();
           if (!e.repeat) tapKeys[e.code]();
@@ -1179,9 +1291,11 @@ export function GameMap({
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
         lookArea.removeEventListener("pointerdown", lookStart);
+        lookArea.removeEventListener("wheel", wheelZoom);
         window.removeEventListener("pointermove", lookMove);
         window.removeEventListener("pointerup", lookEnd);
         window.removeEventListener("pointercancel", lookEnd);
+        stopSteering();
         document.removeEventListener("visibilitychange", saveOnHide);
         actions.current = null;
         huntActions.current = null;
@@ -1261,14 +1375,18 @@ export function GameMap({
 
         {/* Row 2: how you travel, and what's nearby */}
         <div className="flex flex-wrap items-center gap-2">
-        <div className="pointer-events-auto flex h-11 rounded-xl bg-ink p-1" role="group" aria-label="Travel style">
-          <button type="button" aria-pressed={hud.style === "roam"} onClick={() => actions.current?.setStyle("roam")} className={segment(hud.style === "roam")}>
-            Free roam
-          </button>
-          <button type="button" aria-pressed={hud.style === "route"} onClick={() => actions.current?.setStyle("route")} className={segment(hud.style === "route")}>
-            Go to a place
-          </button>
-        </div>
+        <button
+          type="button"
+          aria-expanded={searchOpen}
+          onClick={() => setSearchOpen((o) => !o)}
+          className={`pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-bold ${searchOpen ? "bg-gold text-ink" : "bg-ink text-paper"}`}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 2l9 9-9 9-9-9z" />
+            <path d="M9 13v-2a1 1 0 0 1 1-1h4M12 8l2 2-2 2" />
+          </svg>
+          Directions
+        </button>
         <div className="pointer-events-auto flex h-11 rounded-xl bg-ink p-1" role="group" aria-label="Travel mode">
           <button
             type="button"
@@ -1312,12 +1430,6 @@ export function GameMap({
             Eat at {hud.services.food} · {MEAL_PRICE} coins
           </button>
         )}
-        {hud.leftM !== null && (
-          <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm">
-            <span className="font-bold">{hud.leftM >= 1000 ? `${(hud.leftM / 1000).toFixed(1)} km` : `${Math.round(hud.leftM)} m`}</span>
-            <span className="text-muted">to go · {hud.speedKmh} km/h</span>
-          </div>
-        )}
         {hud.nearest && (
           <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm" aria-label={`Nearest find ${hud.nearest.metres} metres away`}>
             <svg
@@ -1346,20 +1458,32 @@ export function GameMap({
             <span aria-hidden="true" className="text-ink/70">✕</span>
           </button>
         )}
-        {hud.auto && (
-          <button
-            type="button"
-            onClick={() => actions.current?.stop()}
-            className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm font-bold"
-          >
-            {hud.mode === "walk" ? "Walking there" : "On the way"}
-            <span className="rounded-md bg-line px-2 py-0.5 text-xs">Stop ✕</span>
-          </button>
-        )}
         </div>
 
-        {hud.style === "route" && (
-          <PlaceSearch near={() => actions.current?.where() ?? { lng: startLng, lat: startLat }} onPick={(place) => actions.current?.goTo(place)} />
+        {searchOpen && (
+          <PlaceSearch
+            near={() => actions.current?.where() ?? { lng: startLng, lat: startLat }}
+            onPick={(place) => {
+              actions.current?.goTo(place);
+              setSearchOpen(false);
+            }}
+          />
+        )}
+
+        {/* Directions: the next turn. The player steers; this only guides. */}
+        {hud.guide && (
+          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Directions">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0" style={{ transform: `rotate(${hud.guide.arrow}deg)` }}>
+              <path d="M12 2l7 9h-4.5v11h-5V11H5z" />
+            </svg>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="font-display text-base font-extrabold leading-tight">{hud.guide.step}</span>
+              <span className="truncate text-xs text-paper/80">{hud.guide.trip}</span>
+            </div>
+            <button type="button" onClick={() => actions.current?.endDirections()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
+              End
+            </button>
+          </div>
         )}
 
         {helpOpen && (
@@ -1370,11 +1494,16 @@ export function GameMap({
               the one you just passed). Hold Shift to sprint.
             </p>
             <p>
-              <b>Touch or mouse:</b> tap the map and your hunter walks there along the roads. Hold SPRINT to run or pedal faster.
+              <b>Touch:</b> press and hold the lower part of the screen to walk. Swipe left or right there to turn, and down to turn
+              back. Hold SPRINT to run or pedal faster.
             </p>
             <p>
-              <b>Look around:</b> drag the map left or right to turn the view, up or down to tilt it. Pinch or scroll to zoom. In <b>Go to a
-              place</b>, search for a place or address.
+              <b>Look around:</b> drag the map (the upper part on a phone) left or right to turn the view, up or down to tilt it.
+              Pinch or scroll to zoom.
+            </p>
+            <p>
+              <b>Directions:</b> search a place or address, or tap a spot on the map. A blue line and turn-by-turn directions
+              show the way; you steer.
             </p>
             <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
               Got it

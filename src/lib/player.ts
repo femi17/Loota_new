@@ -10,6 +10,8 @@ export type Player = {
   lookChosen: boolean;
   coins: number;
   home: { lng: number; lat: number } | null;
+  /** Where the player last was on the map (null until they first move). */
+  position: { lng: number; lat: number; mode: "walk" | "bicycle" } | null;
 };
 
 /** The signed-in player's profile, or null when nobody is signed in. Server only. */
@@ -29,6 +31,8 @@ export async function getPlayer(): Promise<Player | null> {
     .single();
   if (!data) return null;
 
+  const { data: pos } = await supabase.from("player_positions").select("lng, lat, mode").eq("user_id", id).maybeSingle();
+
   const lookChosen = !!data.avatar && typeof data.avatar === "object" && "hair" in data.avatar;
 
   return {
@@ -38,5 +42,6 @@ export async function getPlayer(): Promise<Player | null> {
     lookChosen,
     coins: Number(data.coins),
     home: data.home_lng != null && data.home_lat != null ? { lng: data.home_lng, lat: data.home_lat } : null,
+    position: pos ? { lng: pos.lng, lat: pos.lat, mode: pos.mode === "bicycle" ? "bicycle" : "walk" } : null,
   };
 }

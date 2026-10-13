@@ -18,5 +18,6 @@ async function Play() {
   const player = await getPlayer();
   if (!player) redirect("/login?next=/play");
   if (!player.home) redirect("/onboarding");
-  return <GameMap look={player.look} home={player.home} />;
+  const start = player.position ?? player.home;
+  return <GameMap look={player.look} start={{ lng: start.lng, lat: start.lat }} startMode={player.position?.mode ?? "walk"} />;
 }

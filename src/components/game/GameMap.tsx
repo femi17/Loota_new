@@ -7,20 +7,41 @@ import type { AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import type { Mode } from "@/game/movement";
 
+/** Free roam follows the roads with no destination; route goes to a tapped place. */
+type Style = "roam" | "route";
+
 type Hud = {
   energy: number;
   speedKmh: number;
   leftM: number | null;
   mode: Mode;
+  style: Style;
   following: boolean;
   hint: string;
   alert: boolean;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+const SAVE_EVERY_MS = 4000;
+const STEER_RATE = (110 * Math.PI) / 180; // radians per second while ◀ or ▶ is held
 
-/** A button that reports while it's held down (mouse, touch or pen), for GO and SPRINT. */
-function HoldButton({ onHold, className, children }: { onHold: (down: boolean) => void; className: string; children: ReactNode }) {
+const HINTS: Record<Style, string> = {
+  roam: "Free roam: hold GO to move along the road. Tap the map to aim, or steer with ◀ ▶ at junctions.",
+  route: "Tap the map to choose where to go.",
+};
+
+/** A button that reports while it's held down (mouse, touch or pen). */
+function HoldButton({
+  onHold,
+  className,
+  label,
+  children,
+}: {
+  onHold: (down: boolean) => void;
+  className: string;
+  label?: string;
+  children: ReactNode;
+}) {
   const set = (e: ReactPointerEvent<HTMLButtonElement>, down: boolean) => {
     e.currentTarget.dataset.down = String(down);
     onHold(down);
@@ -28,6 +49,7 @@ function HoldButton({ onHold, className, children }: { onHold: (down: boolean) =
   return (
     <button
       type="button"
+      aria-label={label}
       className={`touch-none select-none ${className}`}
       onPointerDown={(e) => {
         e.preventDefault();
@@ -44,67 +66,73 @@ function HoldButton({ onHold, className, children }: { onHold: (down: boolean) =
   );
 }
 
-/** The live 3D map: the player's hunter at home, tap-to-route travel and the chase camera. */
-export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
+/**
+ * The live 3D map: the player's hunter, free roam on roads or tap-to-route
+ * travel, the chase camera, and saving position to the server.
+ */
+export function GameMap({ look, start, startMode }: { look: AvatarLook; start: LngLat; startMode: Mode }) {
   const container = useRef<HTMLDivElement>(null);
-  const controls = useRef({ go: false, sprint: false });
-  const actions = useRef<{ setMode: (m: Mode) => void; follow: () => void } | null>(null);
+  const controls = useRef({ go: false, sprint: false, left: false, right: false });
+  const actions = useRef<{ setMode: (m: Mode) => void; setStyle: (s: Style) => void; follow: () => void } | null>(null);
   const [failed, setFailed] = useState(false);
   const [hud, setHud] = useState<Hud>({
     energy: 100,
     speedKmh: 0,
     leftM: null,
-    mode: "walk",
+    mode: startMode,
+    style: "roam",
     following: true,
-    hint: "Tap the map to choose where to go.",
+    hint: "Finding the nearest road…",
     alert: false,
   });
 
   const lookKey = JSON.stringify(look);
-  const homeLng = home.lng;
-  const homeLat = home.lat;
+  const startLng = start.lng;
+  const startLat = start.lat;
 
   useEffect(() => {
-    const home = { lng: homeLng, lat: homeLat };
     let disposed = false;
     let cleanup = () => {};
 
     (async () => {
       // Map and 3D code only ever run in the browser.
-      const [{ Map: MapLibre, setWorkerUrl }, geo, movement, models, { ThreeMapLayer }, { fetchRoute }] = await Promise.all([
-        import("maplibre-gl"),
-        import("@/game/geo"),
-        import("@/game/movement"),
-        import("@/game/models3d"),
-        import("@/game/ThreeMapLayer"),
-        import("@/game/routing"),
-      ]);
+      const [{ Map: MapLibre, setWorkerUrl }, geo, movement, models, roads, { ThreeMapLayer }, { fetchRoute }, { createClient }] =
+        await Promise.all([
+          import("maplibre-gl"),
+          import("@/game/geo"),
+          import("@/game/movement"),
+          import("@/game/models3d"),
+          import("@/game/roads"),
+          import("@/game/ThreeMapLayer"),
+          import("@/game/routing"),
+          import("@/lib/supabase/client"),
+        ]);
       if (disposed || !container.current) return;
       // Served from public/ by scripts/copy-map-worker.mjs (the bundler doesn't serve MapLibre's worker).
       setWorkerUrl("/maplibre-gl-worker.mjs");
 
+      const supabase = createClient();
       const small = window.matchMedia("(max-width: 600px)").matches;
-      const traveller = movement.createTraveller(home);
-      const lookNow = JSON.parse(lookKey) as AvatarLook;
+      const traveller = movement.createTraveller({ lng: startLng, lat: startLat }, startMode);
 
       const map = new MapLibre({
         container: container.current,
         style: MAP_STYLE,
-        center: [home.lng, home.lat],
+        center: [startLng, startLat],
         zoom: small ? 20.5 : 19.5,
         pitch: small ? 55 : 60,
         bearing: geo.compassFromHeading(traveller.heading),
         maxPitch: 70,
-        keyboard: false, // Space and Shift drive the hunter instead
+        keyboard: false, // the keyboard drives the hunter instead
         attributionControl: { compact: true },
       });
 
       const layer = new ThreeMapLayer(() => traveller.pos, small ? 40 : 32);
-      const avatar = models.buildAvatar(lookNow);
+      const avatar = models.buildAvatar(JSON.parse(lookKey) as AvatarLook);
       avatar.root.add(models.makeNameplate("YOU", "#2F6FEB"));
-      const me = layer.add({ object: avatar.root, lng: home.lng, lat: home.lat, heading: traveller.heading });
+      const me = layer.add({ object: avatar.root, lng: startLng, lat: startLat, heading: traveller.heading });
       const marker = models.makeDestinationMarker();
-      const destination = layer.add({ object: marker.group, lng: home.lng, lat: home.lat });
+      const destination = layer.add({ object: marker.group, lng: startLng, lat: startLat });
 
       const say = (hint: string, alert = false) => setHud((h) => ({ ...h, hint, alert }));
       const showRoute = (coords: [number, number][] | null) => {
@@ -116,8 +144,33 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
         );
       };
 
+      let style: Style = "roam";
       let following = true;
       let camBearing = geo.compassFromHeading(traveller.heading);
+
+      // ---- Free roam on roads ----------------------------------------------
+      let network: import("@/game/roads").RoadNetwork | null = null;
+      let onRoad: import("@/game/roads").RoadPosition | null = null;
+      let aim = traveller.heading;
+      let lastNetworkCheck = 0;
+
+      function buildRoads() {
+        const features = map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation" });
+        if (!features.length) return false;
+        network = roads.buildNetwork(features as import("@/game/roads").RoadFeature[], traveller.mode, traveller.pos);
+        onRoad = roads.snapToNetwork(network, traveller.pos, traveller.heading);
+        if (!onRoad) return false;
+        const p = roads.positionOf(network, onRoad);
+        traveller.pos = { lng: p.lng, lat: p.lat };
+        return true;
+      }
+
+      function aimAt(heading: number) {
+        aim = heading;
+        if (network && onRoad && roads.wantsUTurn(network, onRoad, aim)) onRoad = roads.reverse(onRoad);
+      }
+
+      // ---- Go to a place ---------------------------------------------------
       let target: LngLat | null = null;
       let planId = 0;
 
@@ -126,7 +179,7 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
         const id = ++planId;
         say("Finding a route…");
         const { route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode);
-        if (disposed || id !== planId) return;
+        if (disposed || id !== planId || style !== "route") return;
         movement.setRoute(traveller, route);
         const end = route.coords[route.coords.length - 1];
         target = { lng: end[0], lat: end[1] };
@@ -141,12 +194,58 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
         );
       }
 
+      function clearRoute() {
+        planId++;
+        movement.setRoute(traveller, null);
+        target = null;
+        marker.group.visible = false;
+        showRoute(null);
+      }
+
+      // ---- Saving position (the server rejects impossible moves) -----------
+      let saved = { lng: startLng, lat: startLat };
+      let saving = false;
+      let lastSave = 0;
+
+      async function savePosition() {
+        if (saving || geo.distanceM([saved.lng, saved.lat], [traveller.pos.lng, traveller.pos.lat]) < 5) return;
+        saving = true;
+        const sent = { ...traveller.pos };
+        const { data, error } = await supabase.rpc("save_position", { p_lng: sent.lng, p_lat: sent.lat, p_mode: traveller.mode });
+        saving = false;
+        if (disposed || error || !data) return;
+        const result = data as { ok: boolean; lng: number; lat: number };
+        saved = { lng: result.lng, lat: result.lat };
+        if (!result.ok) {
+          // Moved faster than the game allows: go back to the last accepted spot.
+          traveller.pos = { ...saved };
+          traveller.v = 0;
+          clearRoute();
+          if (style === "roam") buildRoads();
+          say("Your position was corrected to the last valid spot.", true);
+        }
+      }
+
+      const saveOnHide = () => {
+        if (document.visibilityState === "hidden") void savePosition();
+      };
+      document.addEventListener("visibilitychange", saveOnHide);
+
+      // ---- Player actions --------------------------------------------------
       actions.current = {
         setMode(mode) {
           if (traveller.phase !== "idle" || mode === traveller.mode) return;
           traveller.mode = mode;
           setHud((h) => ({ ...h, mode }));
-          if (traveller.route && target) void planRoute(target); // re-route for the new mode
+          if (style === "roam") buildRoads(); // bicycles can't use steps, for example
+          else if (traveller.route && target) void planRoute(target);
+        },
+        setStyle(next) {
+          if (next === style) return;
+          style = next;
+          clearRoute();
+          if (style === "roam") buildRoads();
+          setHud((h) => ({ ...h, style: next, hint: HINTS[next], alert: false }));
         },
         follow() {
           following = true;
@@ -163,11 +262,16 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
       };
       map.on("dragstart", stopFollowing);
       map.on("rotatestart", stopFollowing);
-      map.on("click", (e) => void planRoute({ lng: e.lngLat.lng, lat: e.lngLat.lat }));
+      map.on("click", (e) => {
+        const tapped = { lng: e.lngLat.lng, lat: e.lngLat.lat };
+        if (style === "route") void planRoute(tapped);
+        else aimAt(geo.headingOf([traveller.pos.lng, traveller.pos.lat], [tapped.lng, tapped.lat]));
+      });
       map.on("error", (e) => {
         if (/style|Failed to fetch/i.test(String(e.error?.message))) say("Couldn't load the map. Check your connection.", true);
       });
 
+      // ---- Game loop -------------------------------------------------------
       let frame = 0;
       let last = performance.now();
       let lastHud = 0;
@@ -177,23 +281,58 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
         const dt = Math.min(0.05, (now - last) / 1000);
         last = now;
         const t = now / 1000;
+        const c = controls.current;
 
-        const { distance, events } = movement.step(traveller, controls.current, dt, t);
+        if (style === "roam") {
+          // Keep a road network around the player as they travel, and refresh it
+          // as more map tiles load (the first build may only see one tile).
+          const stale =
+            !network ||
+            now - lastNetworkCheck > 5000 ||
+            geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) > 300;
+          if (stale && now - lastNetworkCheck > 1000) {
+            lastNetworkCheck = now;
+            const hadRoad = !!onRoad;
+            if (buildRoads() && !hadRoad) say(HINTS.roam);
+          }
+          const steer = (c.left ? 1 : 0) - (c.right ? 1 : 0);
+          if (steer && traveller.phase === "idle") aimAt(aim + steer * STEER_RATE * dt);
+        }
+
+        const canMove = style === "roam" ? !!onRoad : !!traveller.route;
+        const { distance, events } = movement.step(traveller, c, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") say("You fainted from exhaustion! Rest before your energy runs out. (In a hunt: ambulance and hospital bill.)", true);
-          if (event === "recovered") say(traveller.route ? "Back on your feet. Hold GO to continue." : "Back on your feet.");
-          if (event === "arrived") {
-            showRoute(null);
-            target = null;
-            say("You've arrived! Tap the map to go somewhere else.");
+          if (event === "recovered") say("Back on your feet. Hold GO to continue.");
+        }
+
+        if (style === "roam" && network && onRoad && distance > 0) {
+          const { position, stopped } = roads.advance(network, onRoad, distance, aim);
+          onRoad = position;
+          const p = roads.positionOf(network, onRoad);
+          traveller.pos = { lng: p.lng, lat: p.lat };
+          traveller.heading = geo.turnTowards(traveller.heading, p.heading, Math.min(1, 8 * dt));
+          if (stopped) {
+            traveller.v = 0;
+            aim = p.heading;
+            say("Dead end. Hold GO to head back.");
           }
+        } else if (style === "route" && movement.advanceRoute(traveller, distance, dt, t)) {
+          showRoute(null);
+          target = null;
+          void savePosition();
+          say("You've arrived! Tap the map to go somewhere else.");
         }
         if (traveller.phase === "idle" && !traveller.route) marker.group.visible = false;
 
-        const base = movement.baseSpeed(traveller.mode);
         models.animateAvatar(
           avatar,
-          { mode: traveller.mode, phase: traveller.phase, moving: traveller.v / base, distance: distance / layer.enlargement() },
+          {
+            mode: traveller.mode,
+            phase: traveller.phase,
+            moving: traveller.v / movement.baseSpeed(traveller.mode),
+            distance: distance / layer.enlargement(),
+          },
           dt,
           t,
         );
@@ -212,14 +351,18 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
           map.triggerRepaint();
         }
 
+        if (now - lastSave > SAVE_EVERY_MS) {
+          lastSave = now;
+          void savePosition();
+        }
+
         if (now - lastHud > 100) {
           lastHud = now;
-          setHud((h) => ({
-            ...h,
-            energy: Math.round(traveller.energy),
-            speedKmh: Math.round(((traveller.v / movement.TIME_SCALE) * 3.6)),
-            leftM: traveller.route ? traveller.route.total - traveller.s : null,
-          }));
+          const energy = Math.round(traveller.energy);
+          const speedKmh = Math.round((traveller.v / movement.TIME_SCALE) * 3.6);
+          const leftM = traveller.route ? Math.round(traveller.route.total - traveller.s) : null;
+          // Only re-render the display when something visible changed.
+          setHud((h) => (h.energy === energy && h.speedKmh === speedKmh && h.leftM === leftM ? h : { ...h, energy, speedKmh, leftM }));
         }
       };
 
@@ -243,7 +386,15 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
         frame = requestAnimationFrame(loop);
       });
 
-      const keys: Record<string, keyof typeof controls.current> = { Space: "go", ShiftLeft: "sprint", ShiftRight: "sprint" };
+      const keys: Record<string, keyof typeof controls.current> = {
+        Space: "go",
+        ShiftLeft: "sprint",
+        ShiftRight: "sprint",
+        ArrowLeft: "left",
+        KeyA: "left",
+        ArrowRight: "right",
+        KeyD: "right",
+      };
       const onKey = (down: boolean) => (e: KeyboardEvent) => {
         const control = keys[e.code];
         if (!control) return;
@@ -256,9 +407,11 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
       window.addEventListener("keyup", keyUp);
 
       cleanup = () => {
+        void savePosition();
         cancelAnimationFrame(frame);
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
+        document.removeEventListener("visibilitychange", saveOnHide);
         actions.current = null;
         map.remove();
       };
@@ -268,7 +421,7 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
       disposed = true;
       cleanup();
     };
-  }, [homeLng, homeLat, lookKey]);
+  }, [startLng, startLat, startMode, lookKey]);
 
   if (failed) {
     return (
@@ -280,6 +433,7 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
   }
 
   const energyColour = hud.energy < 20 ? "bg-danger" : hud.energy < 50 ? "bg-gold" : "bg-[#1E9E62]";
+  const segment = (on: boolean) => `rounded-lg px-3 text-sm font-bold ${on ? "bg-gold text-ink" : "text-paper"}`;
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
@@ -303,15 +457,17 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
           </div>
           <span className="w-7 text-right text-sm font-bold">{hud.energy}</span>
         </div>
+        <div className="pointer-events-auto flex h-11 rounded-xl bg-ink p-1" role="group" aria-label="Travel style">
+          <button type="button" aria-pressed={hud.style === "roam"} onClick={() => actions.current?.setStyle("roam")} className={segment(hud.style === "roam")}>
+            Free roam
+          </button>
+          <button type="button" aria-pressed={hud.style === "route"} onClick={() => actions.current?.setStyle("route")} className={segment(hud.style === "route")}>
+            Go to a place
+          </button>
+        </div>
         <div className="pointer-events-auto flex h-11 rounded-xl bg-ink p-1" role="group" aria-label="Travel mode">
           {(["walk", "bicycle"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={hud.mode === m}
-              onClick={() => actions.current?.setMode(m)}
-              className={`rounded-lg px-3 text-sm font-bold ${hud.mode === m ? "bg-gold text-ink" : "text-paper"}`}
-            >
+            <button key={m} type="button" aria-pressed={hud.mode === m} onClick={() => actions.current?.setMode(m)} className={segment(hud.mode === m)}>
               {m === "walk" ? "Walk" : "Bicycle"}
             </button>
           ))}
@@ -322,24 +478,44 @@ export function GameMap({ look, home }: { look: AvatarLook; home: LngLat }) {
             <span className="text-muted">to go · {hud.speedKmh} km/h</span>
           </div>
         )}
+        {!hud.following && (
+          <button type="button" onClick={() => actions.current?.follow()} className="pointer-events-auto h-11 rounded-xl bg-ink px-4 text-sm font-bold">
+            Follow me
+          </button>
+        )}
       </div>
 
       <p
         role="status"
-        className={`absolute bottom-9 left-3 right-[136px] rounded-2xl bg-ink px-4 py-3 text-sm sm:bottom-36 sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${hud.alert ? "ring-2 ring-gold" : ""}`}
+        className={`absolute left-3 right-[136px] rounded-2xl bg-ink px-4 py-3 text-sm sm:bottom-36 sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
+          hud.style === "roam" ? "bottom-[116px]" : "bottom-9" // above the ◀ ▶ buttons in free roam
+        } ${hud.alert ? "ring-2 ring-gold" : ""}`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}
       >
         {hud.hint}
       </p>
 
-      {!hud.following && (
-        <button
-          type="button"
-          onClick={() => actions.current?.follow()}
-          className="absolute left-3 top-[68px] h-11 rounded-xl bg-ink px-4 text-sm font-bold"
-        >
-          Follow me
-        </button>
+      {hud.style === "roam" && (
+        <div className="absolute bottom-9 left-3 flex gap-3" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
+          <HoldButton
+            label="Steer left"
+            onHold={(down) => {
+              controls.current.left = down;
+            }}
+            className="size-[64px] rounded-full border-2 border-line bg-ink text-2xl data-[down=true]:border-gold data-[down=true]:bg-gold data-[down=true]:text-ink"
+          >
+            ◀
+          </HoldButton>
+          <HoldButton
+            label="Steer right"
+            onHold={(down) => {
+              controls.current.right = down;
+            }}
+            className="size-[64px] rounded-full border-2 border-line bg-ink text-2xl data-[down=true]:border-gold data-[down=true]:bg-gold data-[down=true]:text-ink"
+          >
+            ▶
+          </HoldButton>
+        </div>
       )}
 
       <div className="absolute bottom-9 right-5 flex flex-col items-center gap-3" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>

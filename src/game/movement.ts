@@ -43,7 +43,12 @@ export type Traveller = {
 };
 
 export type Controls = { go: boolean; sprint: boolean };
-export type StepEvent = "fainted" | "recovered" | "arrived";
+export type StepEvent = "fainted" | "recovered";
+
+/** Fastest a mode can go on screen (sprinting), in m/s; the server allows a margin on top (save_position). */
+export function maxSpeed(mode: Mode): number {
+  return baseSpeed(mode) * SPRINT_SPEED;
+}
 
 export function createTraveller(pos: LngLat, mode: Mode = "walk"): Traveller {
   return { pos: { ...pos }, heading: Math.PI, mode, route: null, s: 0, v: 0, energy: 100, phase: "idle", phaseUntil: 0 };
@@ -59,8 +64,19 @@ export function setRoute(t: Traveller, route: Route | null) {
   t.s = 0;
 }
 
-/** Advance the traveller by `dt` seconds. `now` is in seconds. Returns metres moved and anything that happened. */
-export function step(t: Traveller, controls: Controls, dt: number, now: number): { distance: number; events: StepEvent[] } {
+/**
+ * Update speed, energy and fainting for `dt` seconds (`now` in seconds).
+ * `canMove` says whether there's somewhere to go (a route, or a road in free
+ * roam). Returns how far the traveller should move this frame; the caller
+ * moves them along a route (advanceRoute) or the roads (roads.advance).
+ */
+export function step(
+  t: Traveller,
+  controls: Controls,
+  dt: number,
+  now: number,
+  canMove: boolean,
+): { distance: number; events: StepEvent[] } {
   const events: StepEvent[] = [];
   const base = baseSpeed(t.mode);
 
@@ -73,30 +89,12 @@ export function step(t: Traveller, controls: Controls, dt: number, now: number):
   }
 
   let target = 0;
-  if (t.phase === "idle" && t.route && (controls.go || controls.sprint)) {
+  if (t.phase === "idle" && canMove && (controls.go || controls.sprint)) {
     target = base * (controls.sprint ? SPRINT_SPEED : 1);
     if (t.energy < TIRED_AT) target *= TIRED_SPEED;
   }
   t.v += (target - t.v) * Math.min(1, (target > t.v ? 2.5 : 4) * dt);
   if (target === 0 && t.v < 0.3) t.v = 0;
-
-  let distance = 0;
-  if (t.route && t.v > 0) {
-    const before = t.s;
-    t.s = Math.min(t.route.total, t.s + t.v * dt);
-    distance = t.s - before;
-    const p = pointAt(t.route, t.s);
-    t.pos = { lng: p.lng, lat: p.lat };
-    t.heading = turnTowards(t.heading, headingOf(p.a, p.b), Math.min(1, 8 * dt));
-
-    if (t.route.total - t.s < ARRIVE_WITHIN_M) {
-      t.route = null;
-      t.v = 0;
-      t.phase = "celebrate";
-      t.phaseUntil = now + CELEBRATE_SECONDS;
-      events.push("arrived");
-    }
-  }
 
   if (t.v > 0.5) {
     t.energy -= MODES[t.mode].drain * (controls.sprint ? SPRINT_DRAIN : 1) * (t.v / base) * dt;
@@ -111,7 +109,25 @@ export function step(t: Traveller, controls: Controls, dt: number, now: number):
     t.energy = Math.min(100, t.energy + REST_REGEN * dt);
   }
 
-  return { distance, events };
+  return { distance: t.v * dt, events };
+}
+
+/** Move `distance` metres along the planned route. Returns true on arrival. */
+export function advanceRoute(t: Traveller, distance: number, dt: number, now: number): boolean {
+  if (!t.route || distance <= 0) return false;
+  t.s = Math.min(t.route.total, t.s + distance);
+  const p = pointAt(t.route, t.s);
+  t.pos = { lng: p.lng, lat: p.lat };
+  t.heading = turnTowards(t.heading, headingOf(p.a, p.b), Math.min(1, 8 * dt));
+
+  if (t.route.total - t.s < ARRIVE_WITHIN_M) {
+    t.route = null;
+    t.v = 0;
+    t.phase = "celebrate";
+    t.phaseUntil = now + CELEBRATE_SECONDS;
+    return true;
+  }
+  return false;
 }
 
 export function isTired(t: Traveller) {

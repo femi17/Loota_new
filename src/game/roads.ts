@@ -38,7 +38,7 @@ function projector(origin: LngLat) {
 }
 
 /** Build a road graph from tile features within `radiusM` of `centre`. */
-export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat, radiusM = 900): RoadNetwork {
+export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat, radiusM = 1500): RoadNetwork {
   const nodes: RoadNode[] = [];
   const edges: RoadEdge[] = [];
   const byKey = new Map<string, number>();
@@ -81,7 +81,95 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     else if (f.geometry.type === "MultiLineString") (f.geometry.coordinates as Coord[][]).forEach(addLine);
   }
 
+  joinLooseEnds(nodes, edges, local);
   return { nodes, edges, centre };
+}
+
+/**
+ * Map tiles cut roads at their edges and simplify junctions, so a side street
+ * often stops exactly on another road without sharing a point with it. Join
+ * every loose road end to the nearest road within a few metres (splitting that
+ * road where they meet) so these don't look like dead ends.
+ */
+function joinLooseEnds(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: number; lat: number }) => { x: number; y: number }) {
+  const JOIN_M = 4;
+  const CELL_M = 25;
+  const xy = nodes.map((n) => local(n));
+  const grid = new Map<string, number[]>(); // edge ids by grid cell
+
+  const addToGrid = (id: number) => {
+    const a = xy[edges[id].a];
+    const b = xy[edges[id].b];
+    const x0 = Math.floor((Math.min(a.x, b.x) - JOIN_M) / CELL_M);
+    const x1 = Math.floor((Math.max(a.x, b.x) + JOIN_M) / CELL_M);
+    const y0 = Math.floor((Math.min(a.y, b.y) - JOIN_M) / CELL_M);
+    const y1 = Math.floor((Math.max(a.y, b.y) + JOIN_M) / CELL_M);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cy = y0; cy <= y1; cy++) {
+        const key = `${cx},${cy}`;
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(id);
+        else grid.set(key, [id]);
+      }
+    }
+  };
+  edges.forEach((_, id) => addToGrid(id));
+
+  const connect = (a: number, b: number, length: number) => {
+    const id = edges.length;
+    edges.push({ a, b, length: Math.max(length, 0.01) });
+    nodes[a].edges.push(id);
+    nodes[b].edges.push(id);
+    addToGrid(id);
+  };
+
+  const looseEnds = nodes.flatMap((n, i) => (n.edges.length === 1 ? [i] : []));
+  for (const i of looseEnds) {
+    if (nodes[i].edges.length !== 1) continue; // already joined
+    const p = xy[i];
+    let bestEdge = -1;
+    let bestT = 0;
+    let bestD = JOIN_M;
+    for (const id of grid.get(`${Math.floor(p.x / CELL_M)},${Math.floor(p.y / CELL_M)}`) ?? []) {
+      const e = edges[id];
+      if (e.a === i || e.b === i) continue;
+      const a = xy[e.a];
+      const b = xy[e.b];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
+      const d = Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y);
+      if (d < bestD) {
+        bestD = d;
+        bestEdge = id;
+        bestT = t;
+      }
+    }
+    if (bestEdge < 0) continue;
+
+    const e = edges[bestEdge];
+    let target: number;
+    if (bestT * e.length < 0.5) target = e.a;
+    else if ((1 - bestT) * e.length < 0.5) target = e.b;
+    else {
+      // Split the road at the meeting point.
+      target = nodes.length;
+      const a = nodes[e.a];
+      const b = nodes[e.b];
+      nodes.push({ lng: a.lng + (b.lng - a.lng) * bestT, lat: a.lat + (b.lat - a.lat) * bestT, edges: [] });
+      xy.push(local(nodes[target]));
+      const oldB = e.b;
+      const tail = edges.length;
+      edges.push({ a: target, b: oldB, length: e.length * (1 - bestT) });
+      e.b = target;
+      e.length *= bestT;
+      nodes[target].edges.push(bestEdge, tail);
+      const bEdges = nodes[oldB].edges;
+      bEdges[bEdges.indexOf(bestEdge)] = tail;
+      addToGrid(tail);
+    }
+    if (target !== i) connect(i, target, bestD);
+  }
 }
 
 /** Scene heading (see geo.headingOf) of travel along an edge in a direction. */
@@ -143,9 +231,10 @@ export function wantsUTurn(net: RoadNetwork, rp: RoadPosition, aim: number) {
 
 /**
  * Move `distance` metres along the roads. At each junction, take the road whose
- * direction is closest to `aim`; at a dead end, turn round and stop.
+ * direction is closest to `aim`. At a dead end, stop at the end of the road
+ * (`deadEnd`), still facing it; the caller decides whether to turn round.
  */
-export function advance(net: RoadNetwork, rp: RoadPosition, distance: number, aim: number): { position: RoadPosition; stopped: boolean } {
+export function advance(net: RoadNetwork, rp: RoadPosition, distance: number, aim: number): { position: RoadPosition; deadEnd: boolean } {
   let { edge, t, dir } = rp;
   let remaining = distance;
 
@@ -154,14 +243,13 @@ export function advance(net: RoadNetwork, rp: RoadPosition, distance: number, ai
     const toEnd = (dir === 1 ? 1 - t : t) * e.length;
     if (remaining < toEnd) {
       t += (dir * remaining) / (e.length || 1e-9);
-      return { position: { edge, t, dir }, stopped: false };
+      return { position: { edge, t, dir }, deadEnd: false };
     }
     remaining -= toEnd;
     const node = dir === 1 ? e.b : e.a;
     const options = net.nodes[node].edges.filter((id) => id !== edge);
     if (options.length === 0) {
-      // Dead end: stop here, facing back the way you came.
-      return { position: { edge, t: dir === 1 ? 1 : 0, dir: dir === 1 ? -1 : 1 }, stopped: true };
+      return { position: { edge, t: dir === 1 ? 1 : 0, dir }, deadEnd: true };
     }
     let next = options[0];
     let nextDir: 1 | -1 = net.edges[next].a === node ? 1 : -1;
@@ -179,5 +267,5 @@ export function advance(net: RoadNetwork, rp: RoadPosition, distance: number, ai
     dir = nextDir;
     t = dir === 1 ? 0 : 1;
   }
-  return { position: { edge, t, dir }, stopped: false };
+  return { position: { edge, t, dir }, deadEnd: false };
 }

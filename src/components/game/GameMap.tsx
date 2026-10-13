@@ -96,7 +96,7 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
 
     (async () => {
       // Map and 3D code only ever run in the browser.
-      const [{ Map: MapLibre, setWorkerUrl }, geo, movement, models, roads, { ThreeMapLayer }, { fetchRoute }, { createClient }] =
+      const [{ Map: MapLibre, setWorkerUrl }, geo, movement, models, roads, { ThreeMapLayer }, { fetchRoute }, { createClient }, { styleMapForGame }] =
         await Promise.all([
           import("maplibre-gl"),
           import("@/game/geo"),
@@ -106,6 +106,7 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
           import("@/game/ThreeMapLayer"),
           import("@/game/routing"),
           import("@/lib/supabase/client"),
+          import("@/game/mapStyle"),
         ]);
       if (disposed || !container.current) return;
       // Served from public/ by scripts/copy-map-worker.mjs (the bundler doesn't serve MapLibre's worker).
@@ -129,7 +130,7 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
 
       const layer = new ThreeMapLayer(() => traveller.pos, small ? 40 : 32);
       const avatar = models.buildAvatar(JSON.parse(lookKey) as AvatarLook);
-      avatar.root.add(models.makeNameplate("YOU", "#2F6FEB"));
+      avatar.root.add(layer.billboard(models.makeNameplate("YOU", "#2F6FEB")));
       const me = layer.add({ object: avatar.root, lng: startLng, lat: startLat, heading: traveller.heading });
       const marker = models.makeDestinationMarker();
       const destination = layer.add({ object: marker.group, lng: startLng, lat: startLat });
@@ -153,6 +154,7 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
       let onRoad: import("@/game/roads").RoadPosition | null = null;
       let aim = traveller.heading;
       let lastNetworkCheck = 0;
+      let lastDeadEndCheck = 0;
 
       function buildRoads() {
         const features = map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation" });
@@ -307,15 +309,23 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
         }
 
         if (style === "roam" && network && onRoad && distance > 0) {
-          const { position, stopped } = roads.advance(network, onRoad, distance, aim);
+          const { position, deadEnd } = roads.advance(network, onRoad, distance, aim);
           onRoad = position;
           const p = roads.positionOf(network, onRoad);
           traveller.pos = { lng: p.lng, lat: p.lat };
           traveller.heading = geo.turnTowards(traveller.heading, p.heading, Math.min(1, 8 * dt));
-          if (stopped) {
+          if (deadEnd) {
             traveller.v = 0;
-            aim = p.heading;
-            say("Dead end. Hold GO to head back.");
+            if (now - lastDeadEndCheck > 2000) {
+              // Often just the edge of what's loaded: reload the roads and keep going if they continue.
+              lastDeadEndCheck = now;
+              lastNetworkCheck = now;
+              buildRoads();
+            } else if (onRoad) {
+              onRoad = roads.reverse(onRoad);
+              aim = roads.positionOf(network, onRoad).heading;
+              say("This road ends here. Hold GO to head back, or tap the map to aim somewhere else.");
+            }
           }
         } else if (style === "route" && movement.advanceRoute(traveller, distance, dt, t)) {
           showRoute(null);
@@ -379,9 +389,7 @@ export function GameMap({ look, start, startMode }: { look: AvatarLook; start: L
           },
           firstSymbol,
         );
-        // Flat map (design decision): no 3D buildings, footprints at every zoom.
-        if (map.getLayer("building-3d")) map.setLayoutProperty("building-3d", "visibility", "none");
-        if (map.getLayer("building")) map.setLayerZoomRange("building", 13, 24);
+        styleMapForGame(map);
         map.addLayer(layer);
         frame = requestAnimationFrame(loop);
       });

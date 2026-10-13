@@ -25,6 +25,7 @@ export class ThreeMapLayer implements CustomLayerInterface {
 
   readonly scene = new THREE.Scene();
   readonly entities = new Set<MapEntity>();
+  private readonly billboards = new Set<THREE.Object3D>();
   private readonly camera = new THREE.Camera();
   private renderer?: THREE.WebGLRenderer;
   private map?: Map;
@@ -49,6 +50,12 @@ export class ThreeMapLayer implements CustomLayerInterface {
   remove(entity: MapEntity) {
     this.entities.delete(entity);
     this.scene.remove(entity.object);
+  }
+
+  /** Keep a flat object (such as a name tag) turned towards the camera. Its parent should be an entity's object. */
+  billboard(object: THREE.Object3D) {
+    this.billboards.add(object);
+    return object;
   }
 
   /** How much to enlarge avatars so they stay about `avatarPx` tall on screen. */
@@ -83,6 +90,17 @@ export class ThreeMapLayer implements CustomLayerInterface {
       e.object.position.set((m.x - origin.x) / metre, 0, (m.y - origin.y) / metre);
       if (e.heading !== undefined) e.object.rotation.y = e.heading;
       e.object.scale.setScalar(e.scale ?? enlarge);
+    }
+
+    // Face the camera: it looks along the map bearing from above at the map pitch.
+    // In scene terms the camera sits at heading −bearing (see geo.headingOf).
+    if (this.map && this.billboards.size) {
+      const toRad = Math.PI / 180;
+      const tilt = -(90 - this.map.getPitch()) * toRad;
+      const towardsCamera = -this.map.getBearing() * toRad;
+      for (const b of this.billboards) {
+        b.rotation.set(tilt, towardsCamera - (b.parent?.rotation.y ?? 0), 0, "YXZ");
+      }
     }
 
     // Scene metres (x east, y up, z south) -> mercator units -> clip space.

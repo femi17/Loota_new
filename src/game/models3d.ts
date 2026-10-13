@@ -214,7 +214,10 @@ export function animateAvatar(
   rig.position.y = Math.abs(Math.sin(av.wt)) * 0.07 * (av.amp / 0.85);
 }
 
-/** A name tag that floats above an avatar and always faces the camera. */
+/**
+ * A name tag that floats above an avatar. Register it with
+ * ThreeMapLayer.billboard() so it turns to face the camera every frame.
+ */
 export function makeNameplate(text: string, background: string) {
   const canvas = document.createElement("canvas");
   canvas.width = 256;
@@ -231,11 +234,15 @@ export function makeNameplate(text: string, background: string) {
   g.fillText(text.length > 14 ? `${text.slice(0, 13)}…` : text, 128, 34);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
-  sprite.scale.set(2.8, 0.7, 1);
-  sprite.position.y = 3.2;
-  sprite.renderOrder = 10;
-  return sprite;
+  // A flat card rather than a THREE.Sprite: sprites assume a normal camera,
+  // and on the map layer they turned edge-on whenever the hunter faced east or west.
+  const plate = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.8, 0.7),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false, side: THREE.DoubleSide }),
+  );
+  plate.position.y = 3.2;
+  plate.renderOrder = 10;
+  return plate;
 }
 
 /** Gold ring and beam marking where the player is heading. */

@@ -1712,8 +1712,42 @@ export function GameMap({
         );
       }
 
+      // Where the player was really headed (a bus drops them at the stop nearest it), kept per trip
+      // on this device so a reload mid-ride still maps the rest of the way when they get off.
+      const rideNoteKey = (tripId: string) => `loota:ride:${tripId}`;
+      function rememberRide(tripId: string, label: string, then: Place | null) {
+        try {
+          localStorage.setItem(rideNoteKey(tripId), JSON.stringify({ label, then }));
+        } catch {
+          // private window or storage blocked: only a reload mid-ride loses the way on
+        }
+      }
+      function recallRide(tripId: string): { label: string; then: Place | null } | null {
+        try {
+          const note = localStorage.getItem(rideNoteKey(tripId));
+          return note ? (JSON.parse(note) as { label: string; then: Place | null }) : null;
+        } catch {
+          return null;
+        }
+      }
+      function forgetRide(tripId: string) {
+        try {
+          localStorage.removeItem(rideNoteKey(tripId));
+        } catch {
+          // nothing to tidy
+        }
+      }
+
       function startRide(next: TransitTrip, label = next.to, then: Place | null = null) {
         endRide();
+        // Resuming after a reload: what this device remembered about the trip.
+        const note = then ? null : recallRide(next.id);
+        if (note) {
+          label = note.label;
+          then = note.then;
+        } else {
+          rememberRide(next.id, label, then);
+        }
         const at = { lng: next.path[0][0], lat: next.path[0][1] };
         const parts: import("@/game/ThreeMapLayer").MapEntity[] = [];
         let plane: Ride["plane"] = null;
@@ -1991,6 +2025,7 @@ export function GameMap({
       }
 
       function arrive(lng: number, lat: number, name: string, mode: TransitTrip["mode"], then: Place | null) {
+        if (ride) forgetRide(ride.trip.id);
         endRide();
         traveller.pos = { lng, lat };
         traveller.v = 0;

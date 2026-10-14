@@ -2470,7 +2470,7 @@ export function GameMap({
             list.push({ id: "service", label: `🔧 Service your ${vehicleName(motor.kind)} · 60 coins` });
           }
           const broken = parkedNear((v) => !!v.broken_at && !v.repair_ready_at);
-          if (broken) list.push({ id: "mechanic", label: `🔧 Call a mechanic for your ${vehicleName(broken.kind)} · 80 coins` });
+          if (broken) list.push({ id: "mechanic", label: `🔧 Call a mechanic for your ${vehicleName(broken.kind)} · ${broken.kind === "bicycle" ? 30 : 80} coins` });
         }
         setHud((h) => (JSON.stringify(h.actions) === JSON.stringify(list) ? h : { ...h, actions: list }));
       }
@@ -2557,8 +2557,9 @@ export function GameMap({
             clearAdvice("engine");
           } else if (id === "mechanic") {
             await refreshVehicles();
-            say(`A mechanic is on the way: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be running again in about 45 seconds. Then get on it from Vehicles.`);
+            say(`A mechanic is on the way: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be ready again in about 45 seconds. Then get on it from Vehicles.`);
             clearAdvice("engine");
+            clearAdvice("bike");
           }
           showKeg();
         } finally {
@@ -2638,6 +2639,7 @@ export function GameMap({
       };
       let visit: Visit | null = null;
       let fainting = false;
+      let damagedBike: LngLat | null = null; // their own bicycle, damaged where they collapsed
 
       function showCare(icon: string, title: string, status: string) {
         setHud((h) => (h.care?.title === title && h.care.status === status ? h : { ...h, care: { icon, title, status } }));
@@ -2694,11 +2696,26 @@ export function GameMap({
           ({ data } = await supabase.rpc("call_ambulance", { p_hospital: null, p_lng: null, p_lat: null, p_approach: null, p_route: null }));
         }
         if (disposed) return;
-        const r = data as { ok: boolean; reason?: string; visit?: VisitJson } | null;
+        const r = data as {
+          ok: boolean;
+          reason?: string;
+          visit?: VisitJson;
+          rentedLost?: { kind: VehicleKind; paid: number } | null;
+          damaged?: VehicleKind | null;
+        } | null;
         if (r?.ok && r.visit) {
           startVisit(r.visit);
-          const bill = r.visit.bill;
-          setHud((h) => ({ ...h, coins: Math.max(0, h.coins - bill) }));
+          const paid = r.visit.bill + (r.rentedLost?.paid ?? 0);
+          setHud((h) => ({ ...h, coins: Math.max(0, h.coins - paid) }));
+          if (r.rentedLost) {
+            say(
+              `You collapsed on the rented ${vehicleName(r.rentedLost.kind)}: it was damaged in the fall and stolen while you were out, so you've paid ${r.rentedLost.paid} coins for it.`,
+              true,
+            );
+          } else if (r.damaged === "bicycle") {
+            damagedBike = at;
+            say("You collapsed on your bicycle: it's damaged and stays where you fell. A mechanic can repair it there (30 coins).", true);
+          }
         } else if (r?.reason === "not_fainted") {
           traveller.phase = "idle";
         }
@@ -2727,9 +2744,11 @@ export function GameMap({
         traveller.phase = "fainted";
         traveller.phaseUntil = Infinity;
         traveller.v = 0;
+        traveller.mode = "walk"; // off whatever they were riding (the server says so too)
         controls.current.go = false;
         touchGo = false;
         clearAdvice("energy");
+        void refreshVehicles();
         computeActions();
       }
 
@@ -2821,6 +2840,17 @@ export function GameMap({
         await refreshVehicles();
         void refreshSpots();
         say(`Discharged from ${r.hospital ?? vs.v.hospital}. You've got ${Math.round(traveller.energy)} energy: pace yourself, and rest before it runs low.`, true);
+        if (damagedBike) {
+          // Back to the bicycle: it waits, damaged, where they fell.
+          const bike = damagedBike;
+          damagedBike = null;
+          adviceKey = "bike";
+          advicePlace = { name: "your bicycle", lng: bike.lng, lat: bike.lat };
+          setHud((h) => ({
+            ...h,
+            advice: { key: "bike", text: "Your bicycle is damaged where you collapsed. Go back to it and call a mechanic to repair it (30 coins).", place: advicePlace },
+          }));
+        }
       }
 
       /** On loading: energy, the keg, and a faint or hospital visit in progress. */

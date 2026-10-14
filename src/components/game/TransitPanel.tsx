@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { LngLat } from "@/game/geo";
 import type { Place } from "@/game/places";
-import { TRANSIT, clock, type TransitDestination, type TransitMode, type TransitStop } from "@/game/transit";
+import { BUS_RANGE_M, TRANSIT, clock, type TransitDestination, type TransitMode, type TransitStop } from "@/game/transit";
 import { PlaceSearch } from "./PlaceSearch";
 
-/** The stops the player is at, and the nearest of each kind (transit_near). */
-export type TransitNear = { here: TransitStop[]; nearest: Partial<Record<TransitMode, TransitStop>> };
+/**
+ * The stops the player is at, and the nearest of each kind (transit_near); plus
+ * the nearest motor park (long-distance buses) and the nearest station on each
+ * train line around.
+ */
+export type TransitNear = { here: TransitStop[]; nearest: Partial<Record<TransitMode, TransitStop>>; park?: TransitStop | null; lines?: TransitStop[] };
 
 /** A priced trip, ready to pay for and board. */
 export type TransitQuote = {
@@ -31,6 +35,8 @@ export type TransitQuote = {
 export type TransitActions = {
   near: () => Promise<TransitNear | null>;
   destinations: (stop: TransitStop) => Promise<TransitDestination[]>;
+  /** Airports anywhere in the world, by name, city, country or code. */
+  searchAirports: (from: TransitStop, query: string) => Promise<TransitDestination[]>;
   /** A bus from this stop to the stop nearest a place; a message if there's none. */
   quoteBus: (from: TransitStop, place: Place) => Promise<TransitQuote | string>;
   quoteTo: (from: TransitStop, to: TransitDestination) => Promise<TransitQuote | string>;
@@ -46,6 +52,127 @@ export type TransitActions = {
 const distance = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m >= 10_000 ? 0 : 1)} km` : `${Math.round(m)} m`);
 const stopTitle = (s: TransitStop) =>
   s.kind === "plane" ? `${s.name} (${s.code})` : s.kind === "train" ? `${s.name} station · ${s.line}` : s.name;
+
+/** One place a train or plane can take you, with distance, time and fare. */
+function DestinationRow({ d, disabled, onPick }: { d: TransitDestination; disabled: boolean; onPick: () => void }) {
+  const where = [d.city, d.country].filter(Boolean).join(", ");
+  return (
+    <li>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onPick}
+        className="flex w-full items-center justify-between gap-3 rounded-xl bg-ink px-3 py-2.5 text-left text-sm disabled:opacity-50"
+      >
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate font-bold">
+            {d.name}
+            {d.code ? ` (${d.code})` : ""}
+          </span>
+          {where && <span className="truncate text-xs text-muted">{where}</span>}
+        </span>
+        <span className="shrink-0 text-right text-muted">
+          {distance(d.metres)} · {clock(d.seconds)}
+          <br />
+          <span className="font-bold text-gold">{d.fare.toLocaleString("en-NG")} coins</span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
+/** Search the world's airports (a city, a country, an airport name or code). */
+function AirportSearch({
+  from,
+  actions,
+  disabled,
+  onPick,
+}: {
+  from: TransitStop;
+  actions: TransitActions;
+  disabled: boolean;
+  onPick: (d: TransitDestination) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [found, setFound] = useState<TransitDestination[] | "searching" | null>(null);
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) return;
+    let live = true;
+    const timer = window.setTimeout(async () => {
+      setFound("searching");
+      const result = await actions.searchAirports(from, q);
+      if (live) setFound(result);
+    }, 350);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [query, from, actions]);
+  return (
+    <div className="flex flex-col gap-2">
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          if (e.target.value.trim().length < 2) setFound(null);
+        }}
+        placeholder="Fly anywhere: a city, country or airport"
+        aria-label="Search airports anywhere in the world"
+        className="h-11 rounded-xl bg-ink px-3 text-sm text-paper outline-none placeholder:text-muted"
+      />
+      {found === "searching" && <p className="text-xs text-muted">Searching…</p>}
+      {Array.isArray(found) &&
+        (found.length ? (
+          <ul className="flex flex-col gap-1.5">
+            {found.map((d) => (
+              <DestinationRow key={d.id} d={d} disabled={disabled} onPick={() => onPick(d)} />
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-muted">No airport with flights matches that.</p>
+        ))}
+    </div>
+  );
+}
+
+/** A "nearest …" row with directions to it. */
+function NearestRow({
+  title,
+  stop,
+  actions,
+  onClose,
+  children,
+}: {
+  title: string;
+  stop: TransitStop | null | undefined;
+  actions: TransitActions;
+  onClose: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-ink-2 p-4">
+      <div className="min-w-0">
+        <p className="text-sm font-bold">{title}</p>
+        <p className="truncate text-sm text-muted">{stop ? `${stopTitle(stop)} · ${distance(stop.metres)}` : "None within reach"}</p>
+        {children}
+      </div>
+      {stop && (
+        <button
+          type="button"
+          onClick={() => {
+            actions.directionsTo(stop);
+            onClose();
+          }}
+          className="h-11 shrink-0 rounded-xl border-[1.5px] border-gold px-3 text-sm font-bold text-paper"
+        >
+          Directions
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** Take a bus, train or plane: from the stop you're at, or directions to the nearest. */
 export function TransitPanel({ actions, coins, onClose }: { actions: TransitActions; coins: number; onClose: () => void }) {
@@ -125,8 +252,8 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
             {quote.mode === "bus" && (
               <p className="text-sm">
                 Drops you at {quote.to.name}
-                {quote.walkAfter && quote.walkAfter > 30 ? `, about ${distance(quote.walkAfter)} on foot from ${quote.label}` : ""}. It stops
-                at other bus stops on the way.
+                {quote.walkAfter && quote.walkAfter > 30 ? `, about ${distance(quote.walkAfter)} on foot from ${quote.label}` : ""}.{" "}
+                {quote.metres > BUS_RANGE_M ? "A long-distance bus: express, no stops on the way." : "It stops at other bus stops on the way."}
               </p>
             )}
             <p className="text-sm text-muted">
@@ -165,7 +292,11 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
                   </p>
                   {stop.kind === "bus" ? (
                     <>
-                      <p className="text-sm text-muted">Where to? Buses go up to 40 km and drop you at the stop nearest the place.</p>
+                      <p className="text-sm text-muted">
+                        {stop.park
+                          ? "Where to? Long-distance buses leave this motor park for motor parks all over Nigeria; city buses go up to 40 km."
+                          : "Where to? City buses go up to 40 km and drop you at the stop nearest the place. For other cities, take a long-distance bus from a motor park."}
+                      </p>
                       <PlaceSearch inline near={actions.where} onPick={(place) => void run(() => actions.quoteBus(stop, place))} />
                       {heading && (
                         <button
@@ -178,65 +309,54 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
                         </button>
                       )}
                     </>
-                  ) : list === undefined ? (
-                    <button type="button" onClick={() => void showDestinations(stop)} className={`${button} self-start bg-gold text-ink`}>
-                      {stop.kind === "plane" ? "See flights" : "See stations on this line"}
-                    </button>
-                  ) : list === "loading" ? (
-                    <p className="text-sm text-muted">Loading…</p>
                   ) : (
-                    <ul className="flex flex-col gap-1.5">
-                      {list.map((d) => (
-                        <li key={d.id}>
-                          <button
-                            type="button"
-                            disabled={working}
-                            onClick={() => void run(() => actions.quoteTo(stop, d))}
-                            className="flex w-full items-center justify-between gap-3 rounded-xl bg-ink px-3 py-2.5 text-left text-sm disabled:opacity-50"
-                          >
-                            <span className="font-bold">
-                              {d.name}
-                              {d.code ? ` (${d.code})` : ""}
-                            </span>
-                            <span className="shrink-0 text-muted">
-                              {distance(d.metres)} · {clock(d.seconds)} · <span className="font-bold text-gold">{d.fare} coins</span>
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      {stop.kind === "plane" && (
+                        <AirportSearch from={stop} actions={actions} disabled={working} onPick={(d) => void run(() => actions.quoteTo(stop, d))} />
+                      )}
+                      {list === undefined ? (
+                        <button
+                          type="button"
+                          onClick={() => void showDestinations(stop)}
+                          className={`${button} self-start ${stop.kind === "plane" ? "border-[1.5px] border-gold text-paper" : "bg-gold text-ink"}`}
+                        >
+                          {stop.kind === "plane" ? `Flights within ${stop.country ?? "the country"}` : "See stations on this line"}
+                        </button>
+                      ) : list === "loading" ? (
+                        <p className="text-sm text-muted">Loading…</p>
+                      ) : (
+                        <ul className="flex flex-col gap-1.5">
+                          {list.map((d) => (
+                            <DestinationRow key={d.id} d={d} disabled={working} onPick={() => void run(() => actions.quoteTo(stop, d))} />
+                          ))}
+                        </ul>
+                      )}
+                    </>
                   )}
                 </div>
               );
             })}
 
             {/* ---- The nearest of each kind, with directions */}
-            {(["bus", "train", "plane"] as const).map((kind) => {
-              const stop = near.nearest[kind];
-              if (near.here.some((h) => h.kind === kind)) return null;
-              return (
-                <div key={kind} className="flex items-center justify-between gap-3 rounded-2xl bg-ink-2 p-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold">
-                      {TRANSIT[kind].icon} Nearest {kind === "bus" ? "bus stop" : kind === "train" ? "train station" : "airport"}
-                    </p>
-                    <p className="truncate text-sm text-muted">{stop ? `${stopTitle(stop)} · ${distance(stop.metres)}` : "None within reach"}</p>
-                  </div>
-                  {stop && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        actions.directionsTo(stop);
-                        onClose();
-                      }}
-                      className={`${button} shrink-0 border-[1.5px] border-gold text-paper`}
-                    >
-                      Directions
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            {(["bus", "train", "plane"] as const).map((kind) =>
+              near.here.some((h) => h.kind === kind) ? null : (
+                <NearestRow
+                  key={kind}
+                  title={`${TRANSIT[kind].icon} Nearest ${kind === "bus" ? "bus stop" : kind === "train" ? "train station" : "airport"}`}
+                  stop={near.nearest[kind]}
+                  actions={actions}
+                  onClose={onClose}
+                />
+              ),
+            )}
+            {near.park && !near.here.some((h) => h.id === near.park!.id) && (
+              <NearestRow title="🚌 Nearest motor park (buses to other cities)" stop={near.park} actions={actions} onClose={onClose} />
+            )}
+            {(near.lines ?? [])
+              .filter((st) => st.line_id !== near.nearest.train?.line_id && !near.here.some((h) => h.line_id === st.line_id))
+              .map((st) => (
+                <NearestRow key={st.line_id} title={`🚆 ${st.line}`} stop={st} actions={actions} onClose={onClose} />
+              ))}
             {working && <p className="text-sm text-muted">Working out the route…</p>}
           </div>
         )}

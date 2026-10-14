@@ -39,6 +39,11 @@ const LINES: {
   colour: string;
   relation?: number;
   stations?: string[];
+  /**
+   * Named stations at known positions, joined along the nearest track; where the
+   * map's track has a gap between two of them, a straight stretch bridges it.
+   */
+  waypoints?: { name: string; lng: number; lat: number }[];
   nearStations?: boolean;
   /** Stations near the track that belong to another line (e.g. the metro running alongside). */
   notStations?: string[];
@@ -50,6 +55,28 @@ const LINES: {
   { id: "abuja-yellow", name: "Abuja Metro Yellow Line", colour: "#F4B41A", relation: 8441841 },
   { id: "abuja-blue", name: "Abuja Metro Blue Line", colour: "#2F6FEB", relation: 8442723 },
   { id: "warri-itakpe", name: "Warri–Itakpe Train", colour: "#1E9E62", relation: 9285998 },
+  // The old western line, Lagos to Kano (the Nigerian Railway Corporation's long-distance train); no complete route in the map.
+  {
+    id: "lagos-kano",
+    name: "Lagos–Kano Train",
+    colour: "#B8643C",
+    waypoints: [
+      { name: "Lagos (Ebute Metta)", lng: 3.381, lat: 6.483 },
+      { name: "Agege", lng: 3.326, lat: 6.619 },
+      { name: "Ibadan", lng: 3.915, lat: 7.432 },
+      { name: "Iwo", lng: 4.205, lat: 7.557 },
+      { name: "Ede", lng: 4.433, lat: 7.75 },
+      { name: "Osogbo", lng: 4.548, lat: 7.78 },
+      { name: "Offa", lng: 4.727, lat: 8.155 },
+      { name: "Ilorin", lng: 4.5612, lat: 8.4945 },
+      { name: "Jebba", lng: 4.825, lat: 9.129 },
+      { name: "Minna", lng: 6.549, lat: 9.614 },
+      { name: "Kaduna Junction", lng: 7.416, lat: 10.492 },
+      { name: "Kaduna North", lng: 7.426, lat: 10.541 },
+      { name: "Zaria", lng: 7.724, lat: 11.11 },
+      { name: "Kano", lng: 8.539, lat: 11.999 },
+    ],
+  },
   // The Port Harcourt–Kano route; its track is only complete in the map from Kaduna to Kano (the longest unbroken run is used).
   { id: "kaduna-kano", name: "Kaduna–Kano Train", colour: "#7A5A44", relation: 8527053, nearStations: true },
 ];
@@ -420,11 +447,47 @@ for (const spec of LINES) {
     }
     candidates = points as Tagged[];
   }
-  if (!nodes || nodes.length < 2) {
+  let full: Pt[] | null = nodes && nodes.length >= 2 ? nodes.map((n) => coords.get(n)!) : null;
+  if (spec.waypoints) {
+    // Station to station along the track (within 5 km of each), straight across any gap.
+    full = [];
+    const bridged: string[] = [];
+    const ends = spec.waypoints.map((w) => nearestNode(allRail, [w.lng, w.lat], 5000));
+    for (let i = 1; i < spec.waypoints.length; i++) {
+      const [a, b] = [ends[i - 1], ends[i]];
+      const leg = a !== null && b !== null ? pathTo(dijkstra(allRail, a, b).prev, a, b) : null;
+      let pts: Pt[];
+      if (leg) pts = leg.map((n) => coords.get(n)!);
+      else if (a !== null && b !== null) {
+        // The track is broken somewhere between them: follow it from each end as far as it
+        // goes towards the other, and bridge only what's left.
+        const fromA = dijkstra(allRail, a);
+        const target = coords.get(b)!;
+        let x = a;
+        for (const n of fromA.dist.keys()) if (distanceM(coords.get(n)!, target) < distanceM(coords.get(x)!, target)) x = n;
+        const fromB = dijkstra(allRail, b);
+        let y = b;
+        for (const n of fromB.dist.keys()) if (distanceM(coords.get(n)!, coords.get(x)!) < distanceM(coords.get(y)!, coords.get(x)!)) y = n;
+        const head = pathTo(fromA.prev, a, x) ?? [a];
+        const tail = (pathTo(fromB.prev, b, y) ?? [b]).reverse();
+        pts = [...head, ...tail].map((n) => coords.get(n)!);
+        bridged.push(`${spec.waypoints[i - 1].name}–${spec.waypoints[i].name} (${(distanceM(coords.get(x)!, coords.get(y)!) / 1000).toFixed(1)} km)`);
+      } else {
+        pts = [a !== null ? coords.get(a)! : [spec.waypoints[i - 1].lng, spec.waypoints[i - 1].lat], b !== null ? coords.get(b)! : [spec.waypoints[i].lng, spec.waypoints[i].lat]];
+        bridged.push(`${spec.waypoints[i - 1].name}–${spec.waypoints[i].name} (no track near)`);
+      }
+      full.push(...(full.length ? pts.slice(1) : pts));
+    }
+    candidates = spec.waypoints.map((w, i) => {
+      const at = ends[i] !== null ? coords.get(ends[i]!)! : ([w.lng, w.lat] as Pt);
+      return { id: -1 - i, pt: at, tags: { name: w.name } };
+    });
+    if (bridged.length) console.log(`  ${spec.name}: no track between ${bridged.join(", ")} (straight across the gap)`);
+  }
+  if (!full || full.length < 2) {
     console.warn(`! ${spec.name}: no track found; skipped`);
     continue;
   }
-  const full = nodes.map((n) => coords.get(n)!);
   const path = simplify(full, 8);
   let length = 0;
   for (let i = 1; i < path.length; i++) length += distanceM(path[i - 1], path[i]);
@@ -432,7 +495,7 @@ for (const spec of LINES) {
 
   const stops: Line["stops"] = [];
   for (const s of candidates) {
-    const name = stationName(s);
+    const name = spec.waypoints ? s.tags.name : stationName(s);
     const at = project(path, s.pt);
     if (!name || at.off > 400 || spec.notStations?.includes(name)) continue;
     // One stop per station (a route often lists the stop and the platform, both directions).

@@ -15,9 +15,11 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
+import { highwayRoute, loadHighways } from "@/game/highways";
 import { TransitPanel, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
 import {
   BUS_RANGE_M,
+  COACH_RANGE_M,
   TRANSIT,
   TRAIN_CARS,
   alongPath,
@@ -27,7 +29,7 @@ import {
   sliceLine,
   thinPath,
   transitFare,
-  transitSpeed,
+  transitSpeedFor,
   transitWaitS,
   type TransitStop,
   type Trip as TransitTrip,
@@ -318,6 +320,7 @@ export function GameMap({
       const roadSquares = new Map<string, RoadCellData | "loading" | "none">();
       const ROADS_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/roads/${ROAD_DATA_VERSION}`;
       const ROAD_REACH_M = 1600; // the network covers 1.5 km around the hunter
+      let snapReachM = 400; // how far the hunter may be put onto the nearest road (more just after landing)
 
       /** The squares within reach of the hunter, loading any not yet asked for. */
       function squaresAround(): string[] {
@@ -385,12 +388,13 @@ export function GameMap({
         onRoad = roads.snapToNetwork(network, traveller.pos, facing);
         if (!onRoad) return false;
         const p = roads.positionOf(network, onRoad);
-        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > 400) {
+        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > snapReachM) {
           // Only far-away roads loaded so far (e.g. just thrown out of a trial): wait for nearer tiles.
           onRoad = null;
           return false;
         }
         traveller.pos = { lng: p.lng, lat: p.lat };
+        snapReachM = 400;
         return true;
       }
 
@@ -1683,7 +1687,7 @@ export function GameMap({
         controls.current.go = false;
         touchGo = false;
         setHud((h) => (h.stopHere ? { ...h, stopHere: null } : h));
-        if (next.mode === "bus") void planBusStops(ride);
+        if (next.mode === "bus" && next.metres <= BUS_RANGE_M) void planBusStops(ride); // long-distance buses run express
       }
 
       // ---- The bus stops on the way: some passengers get off, others get on.
@@ -1906,7 +1910,7 @@ export function GameMap({
       /** How close the camera is during a trip: as in play for a bus, further back for a train, high above for a flight. */
       function rideZoom() {
         if (!ride || ride.s === 0) return GAME_ZOOM;
-        if (ride.trip.mode === "bus") return GAME_ZOOM;
+        if (ride.trip.mode === "bus") return ride.trip.metres > BUS_RANGE_M ? GAME_ZOOM - 1 : GAME_ZOOM;
         if (ride.trip.mode === "train") return GAME_ZOOM - 1;
         const total = ride.cum[ride.cum.length - 1];
         const k = Math.min(1, Math.min(ride.s, total - ride.s) / 40000);
@@ -1937,6 +1941,7 @@ export function GameMap({
         onRoad = null;
         builtFrom = "";
         lastNetworkCheck = 0;
+        if (mode === "plane") snapReachM = 3000; // the server allows this hop too (save_position)
         buildRoads();
         lastSync = performance.now();
         void syncWorld();
@@ -1983,9 +1988,27 @@ export function GameMap({
         const from = { ...traveller.pos };
         nearAt = performance.now();
         nearFrom = from;
-        const { data } = await supabase.rpc("transit_near", { p_lng: from.lng, p_lat: from.lat });
+        const [{ data }, { data: parks }, { data: stations }] = await Promise.all([
+          supabase.rpc("transit_near", { p_lng: from.lng, p_lat: from.lat }),
+          supabase
+            .from("transit_stops")
+            .select("id, kind, name, lng, lat, line_id, code, park, city, country")
+            .eq("kind", "bus")
+            .eq("park", true)
+            .gte("lng", from.lng - 0.5)
+            .lte("lng", from.lng + 0.5)
+            .gte("lat", from.lat - 0.5)
+            .lte("lat", from.lat + 0.5),
+          supabase.rpc("stops_near", { p_kind: "train", p_lng: from.lng, p_lat: from.lat, p_limit: 20 }),
+        ]);
         if (disposed || !data) return near;
         near = data as TransitNear;
+        const here: [number, number] = [from.lng, from.lat];
+        const withMetres = ((parks ?? []) as Omit<TransitStop, "metres" | "line">[]).map((p) => ({ ...p, line: null, metres: Math.round(geo.distanceM(here, [p.lng, p.lat])) }));
+        near.park = withMetres.sort((a, b) => a.metres - b.metres)[0] ?? null;
+        const lines = new Map<string, TransitStop>();
+        for (const st of (stations ?? []) as TransitStop[]) if (st.line_id && st.metres < 100_000 && !lines.has(st.line_id)) lines.set(st.line_id, st);
+        near.lines = [...lines.values()];
         const at = (["plane", "train", "bus"] as const).map((k) => near!.here.find((st) => st.kind === k)).find(Boolean);
         const stopHere = at ? { icon: TRANSIT[at.kind].icon, label: at.kind === "plane" ? "Fly from here" : `Take a ${at.kind}` } : null;
         setHud((h) => (ride || JSON.stringify(h.stopHere) === JSON.stringify(stopHere) ? h : { ...h, stopHere }));
@@ -2001,23 +2024,64 @@ export function GameMap({
 
       /** A bus from this stop to the bus stop nearest a place, along the roads a car would take. */
       async function quoteBus(from: TransitStop, place: Place): Promise<TransitQuote | string> {
-        const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: place.lng, p_lat: place.lat, p_limit: 1 });
-        const to = (data as TransitStop[] | null)?.[0];
-        if (!to || to.metres > 2000) return `There's no bus stop within 2 km of ${place.name}.`;
+        const far = geo.distanceM([from.lng, from.lat], [place.lng, place.lat]) > BUS_RANGE_M;
+        let to: TransitStop | undefined;
+        if (!far) {
+          const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: place.lng, p_lat: place.lat, p_limit: 1 });
+          to = (data as TransitStop[] | null)?.[0];
+          if (!to || to.metres > 2000) return `There's no bus stop within 2 km of ${place.name}.`;
+        } else {
+          // Another city: a long-distance bus, motor park to motor park.
+          if (!from.park) {
+            const park = near?.park;
+            return `Buses to other cities leave from motor parks.${park ? ` The nearest is ${park.name}, ${geo.formatDistance(park.metres)} away (Directions in this panel).` : ""}`;
+          }
+          const { data } = await supabase
+            .from("transit_stops")
+            .select("id, kind, name, lng, lat, line_id, code, park")
+            .eq("kind", "bus")
+            .eq("park", true)
+            .gte("lng", place.lng - 0.25)
+            .lte("lng", place.lng + 0.25)
+            .gte("lat", place.lat - 0.25)
+            .lte("lat", place.lat + 0.25);
+          to = ((data ?? []) as Omit<TransitStop, "metres" | "line">[])
+            .map((p) => ({ ...p, line: null, metres: Math.round(geo.distanceM([place.lng, place.lat], [p.lng, p.lat])) }))
+            .sort((a, b) => a.metres - b.metres)[0];
+          if (!to) return `There's no motor park within 25 km of ${place.name}, so no long-distance bus goes there.`;
+        }
         const straight = geo.distanceM([from.lng, from.lat], [to.lng, to.lat]);
         if (to.id === from.id || straight < 300) return `${place.name} is within walking distance of this stop.`;
-        if (straight > BUS_RANGE_M) return "Buses go up to 40 km. For further, take a train or a plane.";
-        const own = await routeOnOwnRoads({ lng: from.lng, lat: from.lat }, { lng: to.lng, lat: to.lat }, "car");
-        let path = own?.path ?? null;
+        if (straight > COACH_RANGE_M) return "That's too far for a bus. Take a plane.";
+        // City trips on our own roads, long ones on our main-road network; the routing service if those fail.
+        let path: import("@/game/geo").Coord[] | null = null;
+        if (far) {
+          const highways = await loadHighways(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public`);
+          path = highways ? highwayRoute(highways, [from.lng, from.lat], [to.lng, to.lat]) : null;
+        } else {
+          path = (await routeOnOwnRoads({ lng: from.lng, lat: from.lat }, { lng: to.lng, lat: to.lat }, "car"))?.path ?? null;
+        }
         if (!path) {
           const { route, fallback } = await fetchRoute(from, to, "car");
           if (!fallback) path = route.coords;
         }
         if (!path) return "Couldn't work out the bus's way there just now. Try again in a moment.";
-        const full = thinPath([[from.lng, from.lat], ...path, [to.lng, to.lat]]);
+        const full = thinPath([[from.lng, from.lat], ...path, [to.lng, to.lat]], far ? 25 : 4);
         const metres = Math.max(cumulativeOf(full).at(-1)!, straight);
         const wait = transitWaitS("bus", false);
-        return { mode: "bus", from, to: { id: to.id, name: to.name, code: null }, label: place.name, then: place, walkAfter: to.metres, metres, fare: transitFare("bus", metres), seconds: wait + metres / transitSpeed("bus"), waitSeconds: wait, path: full };
+        return {
+          mode: "bus",
+          from,
+          to: { id: to.id, name: to.name, code: null },
+          label: place.name,
+          then: place,
+          walkAfter: to.metres,
+          metres,
+          fare: transitFare("bus", metres),
+          seconds: wait + metres / transitSpeedFor("bus", metres),
+          waitSeconds: wait,
+          path: full,
+        };
       }
 
       /** A train along the line to another station, or a flight to another airport. */
@@ -2076,6 +2140,10 @@ export function GameMap({
         near: refreshNear,
         destinations: async (stop) => {
           const { data } = await supabase.rpc("transit_destinations", { p_stop: stop.id });
+          return (data ?? []) as import("@/game/transit").TransitDestination[];
+        },
+        searchAirports: async (from, query) => {
+          const { data } = await supabase.rpc("search_airports", { p_query: query, p_from: from.id });
           return (data ?? []) as import("@/game/transit").TransitDestination[];
         },
         quoteBus,

@@ -14,12 +14,18 @@ export const TRANSIT: Record<TransitMode, { label: string; icon: string; kmh: nu
   plane: { label: "Plane", icon: "✈️", kmh: 750, wait: "Check-in and boarding", reachM: 600 },
 };
 
-/** Buses run within a city (up to 40 km). */
+/** City buses run up to 40 km from any stop; long-distance buses go further, between motor parks only. */
 export const BUS_RANGE_M = 40_000;
+export const COACH_RANGE_M = 1_500_000;
 
 /** On-screen metres per second, like the active modes (movement.baseSpeed). */
 export function transitSpeed(mode: TransitMode) {
   return (TRANSIT[mode].kmh / 3.6) * TIME_SCALE;
+}
+
+/** The same for a trip of `metres`: a long-distance bus does 60 km/h on the highway. */
+export function transitSpeedFor(mode: TransitMode, metres: number) {
+  return mode === "bus" && metres > BUS_RANGE_M ? (60 / 3.6) * TIME_SCALE : transitSpeed(mode);
 }
 
 export function transitWaitS(mode: TransitMode, fastPass: boolean) {
@@ -29,7 +35,7 @@ export function transitWaitS(mode: TransitMode, fastPass: boolean) {
 }
 
 export function transitFare(mode: TransitMode, metres: number) {
-  if (mode === "bus") return 3 + Math.ceil(metres / 1000);
+  if (mode === "bus") return metres > BUS_RANGE_M ? 20 + Math.ceil((metres / 1000) * 0.4) : 3 + Math.ceil(metres / 1000);
   if (mode === "train") return 5 + Math.ceil(metres / 2000);
   return 80 + Math.ceil((metres / 1000) * 0.15);
 }
@@ -45,11 +51,25 @@ export type TransitStop = {
   line: string | null;
   code: string | null;
   park: boolean;
+  /** Airports: the city and country they serve. */
+  city?: string | null;
+  country?: string | null;
   metres: number;
 };
 
 /** Somewhere a train or plane can take you from here. */
-export type TransitDestination = { id: number; name: string; code: string | null; lng: number; lat: number; metres: number; fare: number; seconds: number };
+export type TransitDestination = {
+  id: number;
+  name: string;
+  code: string | null;
+  lng: number;
+  lat: number;
+  city?: string | null;
+  country?: string | null;
+  metres: number;
+  fare: number;
+  seconds: number;
+};
 
 /** A trip the player has paid for (my_trip / start_trip). Times are ISO strings; `now` is the server's clock. */
 export type Trip = {
@@ -115,7 +135,10 @@ export function flightPath(from: Coord, to: Coord): Coord[] {
     const x = A * Math.cos(p1) * Math.cos(l1) + B * Math.cos(p2) * Math.cos(l2);
     const y = A * Math.cos(p1) * Math.sin(l1) + B * Math.cos(p2) * Math.sin(l2);
     const z = A * Math.sin(p1) + B * Math.sin(p2);
-    out.push([Math.atan2(y, x) / toRad, Math.atan2(z, Math.hypot(x, y)) / toRad]);
+    let lng = Math.atan2(y, x) / toRad;
+    // Across the date line, keep going (190° rather than −170°) so the way stays continuous.
+    if (out.length) lng += Math.round((out[out.length - 1][0] - lng) / 360) * 360;
+    out.push([lng, Math.atan2(z, Math.hypot(x, y)) / toRad]);
   }
   return out;
 }

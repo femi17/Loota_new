@@ -1,0 +1,930 @@
+[
+  {
+    "name": "National Theatre",
+    "city": "Lagos",
+    "lng": 3.368847,
+    "lat": 6.474784,
+    "radius": 400,
+    "tier": 2,
+    "fact": "The National Theatre at Iganmu was built for FESTAC '77, the Second World Black and African Festival of Arts and Culture.",
+    "questions": [
+      {
+        "q": "The National Theatre was built for which festival held in Lagos in 1977?",
+        "options": [
+          "FESTAC '77",
+          "The All-Africa Games",
+          "The Argungu Festival",
+          "The Eyo Festival"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "The National Theatre's round roof is often said to look like what?",
+        "options": [
+          "A drum",
+          "A military cap",
+          "A calabash",
+          "A crown"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Tafawa Balewa Square",
+    "city": "Lagos",
+    "lng": 3.40151,
+    "lat": 6.447074,
+    "radius": 300,
+    "tier": 1,
+    "fact": "Tafawa Balewa Square was the old Lagos Race Course, where Nigeria's independence was celebrated in 1960.",
+    "questions": [
+      {
+        "q": "Before it was renamed, Tafawa Balewa Square was known as what?",
+        "options": [
+          "Marina Gardens",
+          "Broad Street Prison",
+          "The Race Course",
+          "King's College Field"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "Abubakar Tafawa Balewa, whom the square is named after, was Nigeria's first what?",
+        "options": [
+          "Prime Minister",
+          "President",
+          "Governor-General",
+          "Chief Justice"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "Freedom Park",
+    "city": "Lagos",
+    "lng": 3.396531,
+    "lat": 6.448819,
+    "radius": 250,
+    "tier": 1,
+    "fact": "Freedom Park on Broad Street was Her Majesty's Broad Street Prison in colonial times; it is now a park for art and music.",
+    "questions": [
+      {
+        "q": "Freedom Park on Lagos Island was once a colonial-era what?",
+        "options": [
+          "Market",
+          "Prison",
+          "Racecourse",
+          "Railway station"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Which Nigerian leader was among the people held at Broad Street Prison?",
+        "options": [
+          "Yakubu Gowon",
+          "Obafemi Awolowo",
+          "Shehu Shagari",
+          "Ernest Shonekan"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "National Museum Lagos",
+    "city": "Lagos",
+    "lng": 3.403607,
+    "lat": 6.444393,
+    "radius": 250,
+    "tier": 1,
+    "fact": "The National Museum at Onikan, opened in 1957, displays the car in which General Murtala Muhammed was killed in 1976.",
+    "questions": [
+      {
+        "q": "The National Museum in Onikan displays the car in which which leader was assassinated in 1976?",
+        "options": [
+          "Aguiyi-Ironsi",
+          "Murtala Muhammed",
+          "Sani Abacha",
+          "Tafawa Balewa"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Cathedral Church of Christ",
+    "city": "Lagos",
+    "lng": 3.390209,
+    "lat": 6.45089,
+    "radius": 200,
+    "tier": 1,
+    "fact": "The Cathedral Church of Christ on the Marina is the Anglican cathedral of Lagos.",
+    "questions": [
+      {
+        "q": "The Cathedral Church of Christ on Lagos Marina belongs to which church?",
+        "options": [
+          "The Catholic Church",
+          "The Methodist Church",
+          "The Anglican Church",
+          "The Baptist Church"
+        ],
+        "answer": 2
+      }
+    ]
+  },
+  {
+    "name": "Iga Idunganran",
+    "city": "Lagos",
+    "lng": 3.389682,
+    "lat": 6.459833,
+    "radius": 250,
+    "tier": 1,
+    "fact": "Iga Idunganran in Isale Eko has been the palace of the Oba of Lagos for centuries.",
+    "questions": [
+      {
+        "q": "Iga Idunganran on Lagos Island is the palace of whom?",
+        "options": [
+          "The Ooni of Ife",
+          "The Oba of Lagos",
+          "The Alaafin of Oyo",
+          "The Oba of Benin"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Lekki Conservation Centre",
+    "city": "Lagos",
+    "lng": 3.535578,
+    "lat": 6.436208,
+    "radius": 400,
+    "tier": 2,
+    "fact": "The Lekki Conservation Centre has one of the longest canopy walkways in Africa, high above the forest and swamp.",
+    "questions": [
+      {
+        "q": "The Lekki Conservation Centre is famous for one of Africa's longest what?",
+        "options": [
+          "Zip lines",
+          "Canopy walkways",
+          "Cable cars",
+          "Waterslides"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Which animals are often seen in the trees at the Lekki Conservation Centre?",
+        "options": [
+          "Mona monkeys",
+          "Gorillas",
+          "Koalas",
+          "Lemurs"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "Kalakuta Republic Museum",
+    "city": "Lagos",
+    "lng": 3.351,
+    "lat": 6.602,
+    "radius": 250,
+    "tier": 2,
+    "fact": "The Kalakuta Republic Museum in Ikeja was the home of Fela Anikulapo-Kuti, the father of Afrobeat.",
+    "questions": [
+      {
+        "q": "The Kalakuta Republic Museum was the home of which musician?",
+        "options": [
+          "King Sunny Ade",
+          "Fela Kuti",
+          "Ebenezer Obey",
+          "Victor Olaiya"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Fela Kuti is known as the father of which kind of music?",
+        "options": [
+          "Juju",
+          "Highlife",
+          "Afrobeat",
+          "Fuji"
+        ],
+        "answer": 2
+      }
+    ]
+  },
+  {
+    "name": "Nike Art Gallery",
+    "city": "Lagos",
+    "lng": 3.48189,
+    "lat": 6.431521,
+    "radius": 250,
+    "tier": 1,
+    "fact": "Nike Art Gallery in Lekki, one of the largest art galleries in West Africa, was founded by the artist Nike Davies-Okundaye.",
+    "questions": [
+      {
+        "q": "Nike Art Gallery was founded by which artist?",
+        "options": [
+          "Ben Enwonwu",
+          "Nike Davies-Okundaye",
+          "Bruce Onobrakpeya",
+          "Twins Seven Seven"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Lekki-Ikoyi Link Bridge",
+    "city": "Lagos",
+    "lng": 3.455803,
+    "lat": 6.450273,
+    "radius": 400,
+    "tier": 1,
+    "fact": "The Lekki-Ikoyi Link Bridge, opened in 2013, was the first cable-stayed bridge in Nigeria.",
+    "questions": [
+      {
+        "q": "What kind of bridge is the Lekki-Ikoyi Link Bridge?",
+        "options": [
+          "Suspension",
+          "Cable-stayed",
+          "Arch",
+          "Floating"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "First Storey Building in Nigeria",
+    "city": "Badagry",
+    "lng": 2.886588,
+    "lat": 6.412125,
+    "radius": 300,
+    "tier": 2,
+    "fact": "The First Storey Building in Nigeria was completed in Badagry in 1845 by Christian missionaries.",
+    "questions": [
+      {
+        "q": "In what year was the First Storey Building in Nigeria, at Badagry, completed?",
+        "options": [
+          "1845",
+          "1900",
+          "1914",
+          "1960"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Badagry was a major port in which trade?",
+        "options": [
+          "The cocoa trade",
+          "The trans-Atlantic slave trade",
+          "The oil trade",
+          "The tin trade"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Olumo Rock",
+    "city": "Abeokuta",
+    "lng": 3.342585,
+    "lat": 7.167195,
+    "radius": 400,
+    "tier": 2,
+    "fact": "Olumo Rock sheltered the Egba people during the inter-tribal wars of the 19th century; Abeokuta means 'under the rock'.",
+    "questions": [
+      {
+        "q": "Olumo Rock sheltered which people during 19th-century wars?",
+        "options": [
+          "The Egba",
+          "The Ijebu",
+          "The Ijaw",
+          "The Tiv"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What does the name Abeokuta mean?",
+        "options": [
+          "City of kings",
+          "Under the rock",
+          "Land of rivers",
+          "Market town"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Cocoa House",
+    "city": "Ibadan",
+    "lng": 3.878877,
+    "lat": 7.388052,
+    "radius": 250,
+    "tier": 2,
+    "fact": "Cocoa House in Ibadan, opened in 1965, was the first skyscraper in tropical Africa, paid for with money from cocoa.",
+    "questions": [
+      {
+        "q": "Cocoa House in Ibadan was built with money from the sale of which crop?",
+        "options": [
+          "Groundnuts",
+          "Palm oil",
+          "Cocoa",
+          "Cotton"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "When it opened in 1965, Cocoa House was...",
+        "options": [
+          "The first skyscraper in tropical Africa",
+          "Nigeria's first airport",
+          "A royal palace",
+          "A football stadium"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "University of Ibadan",
+    "city": "Ibadan",
+    "lng": 3.896712,
+    "lat": 7.447724,
+    "radius": 900,
+    "tier": 1,
+    "fact": "The University of Ibadan, founded in 1948 as a college of the University of London, is Nigeria's oldest university.",
+    "questions": [
+      {
+        "q": "The University of Ibadan, founded in 1948, is Nigeria's...",
+        "options": [
+          "Largest university",
+          "Oldest university",
+          "Only federal university",
+          "First private university"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Bower's Tower",
+    "city": "Ibadan",
+    "lng": 3.914,
+    "lat": 7.383,
+    "radius": 300,
+    "tier": 1,
+    "fact": "Bower's Tower on Oke Are hill was built in 1936 in honour of Captain Robert Bower, the colonial Resident; it overlooks all of Ibadan.",
+    "questions": [
+      {
+        "q": "Bower's Tower in Ibadan was built in honour of whom?",
+        "options": [
+          "A colonial Resident",
+          "An Olubadan",
+          "A missionary",
+          "A footballer"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "Osun-Osogbo Sacred Grove",
+    "city": "Osogbo",
+    "lng": 4.549649,
+    "lat": 7.754227,
+    "radius": 700,
+    "tier": 3,
+    "fact": "The Osun-Osogbo Sacred Grove is a UNESCO World Heritage Site; the Austrian artist Susanne Wenger helped restore its shrines.",
+    "questions": [
+      {
+        "q": "The Osun-Osogbo Sacred Grove is dedicated to which goddess?",
+        "options": [
+          "Yemoja",
+          "Oya",
+          "Osun",
+          "Oba"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "Which artist helped restore the shrines of the Osun-Osogbo Sacred Grove?",
+        "options": [
+          "Susanne Wenger",
+          "Ben Enwonwu",
+          "Frida Kahlo",
+          "Yusuf Grillo"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "Erin Ijesha Waterfalls",
+    "city": "Erin-Ijesha",
+    "lng": 4.904019,
+    "lat": 7.565726,
+    "radius": 600,
+    "tier": 3,
+    "fact": "The Erin Ijesha (Olumirin) Waterfalls tumble down several levels in the hills of Osun State.",
+    "questions": [
+      {
+        "q": "The Erin Ijesha Waterfalls are also known as...",
+        "options": [
+          "Olumirin",
+          "Gurara",
+          "Owu",
+          "Awhum"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "Ikogosi Warm Springs",
+    "city": "Ikogosi",
+    "lng": 4.983333,
+    "lat": 7.583333,
+    "radius": 1500,
+    "tier": 3,
+    "fact": "At Ikogosi in Ekiti State a warm spring and a cold spring meet and flow on together.",
+    "questions": [
+      {
+        "q": "What makes the Ikogosi springs famous?",
+        "options": [
+          "They are salty",
+          "A warm spring meets a cold spring",
+          "They glow at night",
+          "They flow uphill"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Idanre Hills",
+    "city": "Idanre",
+    "lng": 5.082583,
+    "lat": 7.099775,
+    "radius": 1500,
+    "tier": 3,
+    "fact": "About 682 steps climb Idanre Hill to the old town of Oke Idanre in Ondo State.",
+    "questions": [
+      {
+        "q": "Roughly how many steps climb Idanre Hill to the old town?",
+        "options": [
+          "About 100",
+          "About 682",
+          "About 2,000",
+          "About 5,000"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Zuma Rock",
+    "city": "Madalla",
+    "lng": 7.234914,
+    "lat": 9.13054,
+    "radius": 1500,
+    "tier": 3,
+    "fact": "Zuma Rock, a huge granite monolith near Madalla, is called the Gateway to Abuja and appears on the 100 naira note.",
+    "questions": [
+      {
+        "q": "Zuma Rock appears on which Nigerian banknote?",
+        "options": [
+          "5 naira",
+          "100 naira",
+          "500 naira",
+          "1000 naira"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Zuma Rock is often called the gateway to which city?",
+        "options": [
+          "Kaduna",
+          "Lagos",
+          "Abuja",
+          "Jos"
+        ],
+        "answer": 2
+      }
+    ]
+  },
+  {
+    "name": "Aso Rock",
+    "city": "Abuja",
+    "lng": 7.536039,
+    "lat": 9.08039,
+    "radius": 1500,
+    "tier": 2,
+    "fact": "Aso Rock rises over Abuja's Three Arms Zone; the President's home and office, Aso Rock Villa, takes its name.",
+    "questions": [
+      {
+        "q": "The Nigerian President's home and office, named after the rock, is called...",
+        "options": [
+          "Dodan Barracks",
+          "Aso Rock Villa",
+          "State House Marina",
+          "Government House"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Abuja National Mosque",
+    "city": "Abuja",
+    "lng": 7.489794,
+    "lat": 9.060195,
+    "radius": 300,
+    "tier": 2,
+    "fact": "The Abuja National Mosque, completed in 1984, has a golden dome and four minarets.",
+    "questions": [
+      {
+        "q": "How many minarets does the Abuja National Mosque have?",
+        "options": [
+          "One",
+          "Two",
+          "Four",
+          "Six"
+        ],
+        "answer": 2
+      }
+    ]
+  },
+  {
+    "name": "Millennium Park",
+    "city": "Abuja",
+    "lng": 7.499467,
+    "lat": 9.071563,
+    "radius": 500,
+    "tier": 1,
+    "fact": "Millennium Park, Abuja's largest public park, was opened by Queen Elizabeth II in 2003.",
+    "questions": [
+      {
+        "q": "Millennium Park in Abuja was opened in 2003 by whom?",
+        "options": [
+          "Queen Elizabeth II",
+          "Nelson Mandela",
+          "Kofi Annan",
+          "Pope John Paul II"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "Kurmi Market",
+    "city": "Kano",
+    "lng": 8.516,
+    "lat": 12.0012,
+    "radius": 400,
+    "tier": 2,
+    "fact": "Kurmi Market in old Kano was founded in the 15th century under Sarkin Kano Muhammad Rumfa and is one of West Africa's oldest markets.",
+    "questions": [
+      {
+        "q": "Kurmi Market in Kano was founded in which century?",
+        "options": [
+          "The 12th",
+          "The 15th",
+          "The 19th",
+          "The 20th"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Dala Hill",
+    "city": "Kano",
+    "lng": 8.506974,
+    "lat": 12.009305,
+    "radius": 400,
+    "tier": 2,
+    "fact": "Dala Hill is where the first settlers of Kano made their home, long before the city walls were built.",
+    "questions": [
+      {
+        "q": "Dala Hill is linked to the founding of which city?",
+        "options": [
+          "Kano",
+          "Zaria",
+          "Katsina",
+          "Sokoto"
+        ],
+        "answer": 0
+      }
+    ]
+  },
+  {
+    "name": "Kajuru Castle",
+    "city": "Kajuru",
+    "lng": 7.679233,
+    "lat": 10.31276,
+    "radius": 500,
+    "tier": 3,
+    "fact": "Kajuru Castle in Kaduna State was built in the 1980s in the style of a medieval German castle.",
+    "questions": [
+      {
+        "q": "Kajuru Castle was built to look like a medieval castle from which country?",
+        "options": [
+          "France",
+          "Germany",
+          "Spain",
+          "Scotland"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Yankari Game Reserve",
+    "city": "Bauchi",
+    "lng": 10.51,
+    "lat": 9.75,
+    "radius": 2000,
+    "tier": 3,
+    "fact": "Yankari, Nigeria's best-known wildlife park, is famous for its elephants and the Wikki Warm Springs.",
+    "questions": [
+      {
+        "q": "Wikki Warm Springs are inside which park?",
+        "options": [
+          "Kainji Lake",
+          "Yankari",
+          "Old Oyo",
+          "Gashaka-Gumti"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Which large animal is Yankari best known for?",
+        "options": [
+          "Giraffes",
+          "Elephants",
+          "Rhinos",
+          "Zebras"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Obudu Mountain Resort",
+    "city": "Obudu",
+    "lng": 9.3747,
+    "lat": 6.386128,
+    "radius": 2000,
+    "tier": 3,
+    "fact": "Obudu Mountain Resort sits about 1,500 m up on the Obudu Plateau in Cross River State and has a long cable car.",
+    "questions": [
+      {
+        "q": "Obudu Mountain Resort is known for one of Africa's longest what?",
+        "options": [
+          "Bridges",
+          "Cable cars",
+          "Railways",
+          "Beaches"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Obudu Mountain Resort is in which state?",
+        "options": [
+          "Plateau",
+          "Cross River",
+          "Taraba",
+          "Enugu"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Calabar Marina Resort",
+    "city": "Calabar",
+    "lng": 8.317225,
+    "lat": 4.964998,
+    "radius": 400,
+    "tier": 2,
+    "fact": "Calabar's Marina Resort holds the Slave History Museum; every December the city hosts the Calabar Carnival.",
+    "questions": [
+      {
+        "q": "In which month is the Calabar Carnival held?",
+        "options": [
+          "April",
+          "August",
+          "October",
+          "December"
+        ],
+        "answer": 3
+      }
+    ]
+  },
+  {
+    "name": "Ogbunike Caves",
+    "city": "Ogbunike",
+    "lng": 6.853808,
+    "lat": 6.186837,
+    "radius": 1500,
+    "tier": 3,
+    "fact": "Visitors to the Ogbunike Caves in Anambra State take their shoes off before going in, as tradition asks.",
+    "questions": [
+      {
+        "q": "By tradition, what must visitors take off before entering the Ogbunike Caves?",
+        "options": [
+          "Hats",
+          "Shoes",
+          "Watches",
+          "Necklaces"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "National War Museum",
+    "city": "Umuahia",
+    "lng": 7.49,
+    "lat": 5.52,
+    "radius": 400,
+    "tier": 2,
+    "fact": "The National War Museum in Umuahia, Abia State, tells the story of the Nigerian Civil War of 1967 to 1970.",
+    "questions": [
+      {
+        "q": "The National War Museum in Umuahia is mainly about which war?",
+        "options": [
+          "The First World War",
+          "The Nigerian Civil War",
+          "The Second World War",
+          "The Aba Women's War"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Umuahia is the capital of which state?",
+        "options": [
+          "Imo",
+          "Enugu",
+          "Abia",
+          "Ebonyi"
+        ],
+        "answer": 2
+      }
+    ]
+  },
+  {
+    "name": "Sukur Cultural Landscape",
+    "city": "Sukur",
+    "lng": 13.58433,
+    "lat": 10.741473,
+    "radius": 2000,
+    "tier": 3,
+    "fact": "Sukur, in the Mandara Mountains of Adamawa State, was the first African cultural landscape on the UNESCO World Heritage List (1999).",
+    "questions": [
+      {
+        "q": "Sukur, a UNESCO World Heritage Site, is in which state?",
+        "options": [
+          "Borno",
+          "Adamawa",
+          "Gombe",
+          "Taraba"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Argungu Fishing Festival grounds",
+    "city": "Argungu",
+    "lng": 4.525,
+    "lat": 12.744,
+    "radius": 1500,
+    "tier": 3,
+    "fact": "Every year thousands of fishermen leap into the river at Argungu, Kebbi State, to catch the biggest fish by hand.",
+    "questions": [
+      {
+        "q": "Argungu in Kebbi State is famous for its annual what?",
+        "options": [
+          "Horse race",
+          "Fishing festival",
+          "Wrestling match",
+          "Boat regatta"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Isaac Boro Park",
+    "city": "Port Harcourt",
+    "lng": 7.005473,
+    "lat": 4.788293,
+    "radius": 400,
+    "tier": 1,
+    "fact": "Isaac Boro Park honours Isaac Adaka Boro, who declared the short-lived Niger Delta Republic in 1966.",
+    "questions": [
+      {
+        "q": "Isaac Boro declared which short-lived republic in 1966?",
+        "options": [
+          "The Republic of Biafra",
+          "The Niger Delta Republic",
+          "The Oduduwa Republic",
+          "The Kalakuta Republic"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Oba's Palace, Benin City",
+    "city": "Benin City",
+    "lng": 5.6201,
+    "lat": 6.331999,
+    "radius": 400,
+    "tier": 2,
+    "fact": "The Oba's Palace in Benin City is a UNESCO-listed royal home; British forces took the Benin Bronzes from the city in 1897.",
+    "questions": [
+      {
+        "q": "In which year did British forces take the Benin Bronzes from Benin City?",
+        "options": [
+          "1807",
+          "1897",
+          "1914",
+          "1960"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Jos Museum",
+    "city": "Jos",
+    "lng": 8.886564,
+    "lat": 9.91372,
+    "radius": 400,
+    "tier": 2,
+    "fact": "The Jos Museum, founded in 1952, is known for terracotta figures from the ancient Nok culture.",
+    "questions": [
+      {
+        "q": "The Jos Museum is known for terracotta figures from which ancient culture?",
+        "options": [
+          "Igbo-Ukwu",
+          "Nok",
+          "Ife",
+          "Benin"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Owu Falls",
+    "city": "Owa-Onire",
+    "lng": 5.03,
+    "lat": 8.4,
+    "radius": 800,
+    "tier": 3,
+    "fact": "Owu Falls in Kwara State drops about 120 m and is often called the highest waterfall in West Africa.",
+    "questions": [
+      {
+        "q": "Owu Falls in Kwara State is often called the highest waterfall in...",
+        "options": [
+          "Nigeria's north",
+          "West Africa",
+          "The world",
+          "Lagos State"
+        ],
+        "answer": 1
+      }
+    ]
+  },
+  {
+    "name": "Gurara Falls",
+    "city": "Gurara",
+    "lng": 7.011429,
+    "lat": 9.320937,
+    "radius": 800,
+    "tier": 3,
+    "fact": "Gurara Falls, on the Gurara River in Niger State, is busiest in the rainy season from July to October.",
+    "questions": [
+      {
+        "q": "Gurara Falls is in which state?",
+        "options": [
+          "Niger",
+          "Kogi",
+          "Nasarawa",
+          "Kwara"
+        ],
+        "answer": 0
+      }
+    ]
+  }
+]

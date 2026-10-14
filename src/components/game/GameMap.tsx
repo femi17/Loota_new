@@ -16,6 +16,7 @@ import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
 import { highwayRoute, loadHighways } from "@/game/highways";
+import { LandmarkPanel, type CheckinQuestion, type CheckinResult, type Landmark, type LandmarkActions } from "./LandmarkPanel";
 import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
 import {
   BUS_RANGE_M,
@@ -82,6 +83,8 @@ type Hud = {
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
+  /** At a landmark (within its check-in area): what checking in would pay. */
+  landmarkHere: { landmark: Landmark; canTry: boolean } | null;
   /** A rental waiting at a bus stop, or a taxi on its way: where, how far, and the button once there. */
   pickup: { icon: string; title: string; status: string; action: string | null } | null;
 };
@@ -241,6 +244,7 @@ export function GameMap({
     care: null,
     keg: null,
     pickup: null,
+    landmarkHere: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -248,6 +252,17 @@ export function GameMap({
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the Vehicles panel, when open
   const [transitOpen, setTransitOpen] = useState(false);
   const [transitActions, setTransitActions] = useState<TransitActions | null>(null); // set once the map is ready
+  const [landmarkActions, setLandmarkActions] = useState<LandmarkActions | null>(null);
+  const [landmarksOpen, setLandmarksOpen] = useState<{ quiz: CheckinQuestion | null; message: string | null } | null>(null);
+  const [checkingIn, setCheckingIn] = useState(false);
+  /** The Check in button: ask the server for a question (once), then show it. */
+  const checkIn = async (landmark: Landmark) => {
+    if (!landmarkActions || checkingIn) return;
+    setCheckingIn(true);
+    const q = await landmarkActions.start(landmark);
+    setCheckingIn(false);
+    setLandmarksOpen(typeof q === "string" ? { quiz: null, message: q } : { quiz: q, message: null });
+  };
 
   const lookKey = JSON.stringify(look);
   const startLng = start.lng;
@@ -3149,6 +3164,92 @@ export function GameMap({
         if (!disposed && data && !pickup) startPickup(data as PickupJson);
       });
 
+      // ---- Landmarks: visit famous places and answer a question for coins and intel ----
+      let landmarks: Landmark[] = [];
+      let landmarksAt = -Infinity;
+      let landmarksFrom: LngLat | null = null;
+      const landmarkMarkers = new Map<number, { entity: import("@/game/ThreeMapLayer").MapEntity; star: import("three").Object3D }>();
+      const LANDMARK_SHOWN_M = 6000;
+
+      async function refreshLandmarks(): Promise<Landmark[]> {
+        const from = { ...traveller.pos };
+        landmarksAt = performance.now();
+        landmarksFrom = from;
+        const { data } = await supabase.rpc("landmarks_near", { p_lng: from.lng, p_lat: from.lat, p_limit: 8 });
+        if (disposed || !data) return landmarks;
+        const now = Date.now();
+        landmarks = (data as Landmark[]).map((l) => ({ ...l, canTry: !(l.nextAt && Date.parse(l.nextAt) > now) }));
+        // A monument with its name at each landmark nearby.
+        const shown = new Set<number>();
+        for (const lm of landmarks) {
+          if (lm.metres > LANDMARK_SHOWN_M) continue;
+          shown.add(lm.id);
+          if (landmarkMarkers.has(lm.id)) continue;
+          const marker = models.makeLandmarkMarker();
+          marker.group.add(layer.billboard(models.makeNameplate(lm.name.toUpperCase(), "#8A5A00")));
+          landmarkMarkers.set(lm.id, { entity: layer.add({ object: marker.group, lng: lm.lng, lat: lm.lat, heading: 0 }), star: marker.star });
+        }
+        for (const [id, m] of landmarkMarkers) {
+          if (shown.has(id)) continue;
+          layer.remove(m.entity);
+          landmarkMarkers.delete(id);
+        }
+        showLandmarkHere();
+        return landmarks;
+      }
+
+      /** At a landmark? Then a Check in button (unless it was tried in the last day). */
+      function showLandmarkHere() {
+        const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        const lm = ride || visit ? null : landmarks.find((l) => geo.distanceM(at, [l.lng, l.lat]) <= l.radiusM) ?? null;
+        const canTry = !!lm && lm.canTry;
+        setHud((h) =>
+          h.landmarkHere?.landmark.id === lm?.id && h.landmarkHere?.canTry === canTry && h.landmarkHere?.landmark.reward === lm?.reward
+            ? h
+            : { ...h, landmarkHere: lm ? { landmark: lm, canTry } : null },
+        );
+      }
+
+      function landmarkTick(now: number, dt: number) {
+        for (const m of landmarkMarkers.values()) m.star.rotation.y += dt * 1.5;
+        if (now - landmarksAt < 5000) return;
+        const moved = landmarksFrom ? geo.distanceM([landmarksFrom.lng, landmarksFrom.lat], [traveller.pos.lng, traveller.pos.lat]) : Infinity;
+        if (moved > 150 || now - landmarksAt > 60000) void refreshLandmarks();
+        else if (now - landmarksAt > 1000) showLandmarkHere();
+      }
+
+      setLandmarkActions({
+        near: refreshLandmarks,
+        start: async (lm) => {
+          await savePosition(); // the server checks the player is there
+          const { data } = await supabase.rpc("start_checkin", { p_landmark: lm.id });
+          const r = data as ({ ok: boolean; reason?: string; nextAt?: string; deadline?: string; now?: string } & Partial<CheckinQuestion>) | null;
+          if (!r?.ok) {
+            if (r?.reason === "far") return `Get to ${lm.name} first: you need to be there to check in.`;
+            if (r?.reason === "tomorrow") return `You've already tried ${lm.name} today. Come back tomorrow.`;
+            return "Couldn't check in just now. Try again.";
+          }
+          // The server's deadline, on this device's clock.
+          const endsAt = Date.now() + (Date.parse(r.deadline!) - Date.parse(r.now!));
+          return { checkinId: r.checkinId!, landmark: r.landmark!, question: r.question!, options: r.options!, seconds: r.seconds!, endsAt };
+        },
+        answer: async (checkinId, choice) => {
+          const { data } = await supabase.rpc("answer_checkin", { p_checkin: checkinId, p_choice: choice });
+          const r = data as ({ ok: boolean; reason?: string; balance?: number | null; lead?: { lng: number; lat: number } | null } & Omit<CheckinResult, "lead">) | null;
+          if (!r?.ok) return "Couldn't send your answer. Try again.";
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          if (r.lead) {
+            lastSync = performance.now();
+            void syncWorld(); // the lead shows on the map
+          }
+          void refreshLandmarks();
+          return { correct: r.correct, late: r.late, answer: r.answer, fact: r.fact, reward: r.reward, first: r.first, lead: !!r.lead };
+        },
+        directionsTo: (lm) => void planDirections({ lng: lm.lng, lat: lm.lat }, lm.name),
+      });
+      void refreshLandmarks();
+
       // ---- Game loop -------------------------------------------------------
       let frame = 0;
       let last = performance.now();
@@ -3286,6 +3387,7 @@ export function GameMap({
         nearTick(now);
         spotsTick(now);
         if (pickup && !ride) pickupTick(now, dt, t);
+        landmarkTick(now, dt);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -3551,6 +3653,26 @@ export function GameMap({
           <span aria-hidden="true">{hud.stopHere?.icon ?? "🚌"}</span>
           {hud.stopHere?.label ?? "Bus · Train · Plane"}
         </button>
+        <button
+          type="button"
+          onClick={() => setLandmarksOpen({ quiz: null, message: null })}
+          className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold text-paper"
+        >
+          <span aria-hidden="true">🏛</span>
+          Landmarks
+        </button>
+        {hud.landmarkHere && !hud.ride && !hud.care && (
+          <button
+            type="button"
+            disabled={!hud.landmarkHere.canTry || checkingIn}
+            onClick={() => void checkIn(hud.landmarkHere!.landmark)}
+            className="pointer-events-auto h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
+          >
+            {hud.landmarkHere.canTry
+              ? `🏛 Check in at ${hud.landmarkHere.landmark.name} · ${hud.landmarkHere.landmark.reward} coins`
+              : `🏛 ${hud.landmarkHere.landmark.name}: back tomorrow`}
+          </button>
+        )}
         {hud.actions.map((a) => (
           <button
             key={a.id}
@@ -3838,6 +3960,10 @@ export function GameMap({
           }}
           onClose={() => setGarage(null)}
         />
+      )}
+
+      {landmarksOpen && landmarkActions && (
+        <LandmarkPanel actions={landmarkActions} quiz={landmarksOpen.quiz} message={landmarksOpen.message} onClose={() => setLandmarksOpen(null)} />
       )}
 
       {transitOpen && transitActions && (

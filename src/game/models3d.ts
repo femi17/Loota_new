@@ -588,3 +588,17 @@ export function makeTaxi() {
   );
   return group;
 }
+
+/** A landmark on the map: a stone plinth with a gold star on a column. */
+export function makeLandmarkMarker() {
+  const group = new THREE.Group();
+  const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.9, 0), glow("#F4B41A"));
+  star.position.y = 5.2;
+  group.add(
+    mesh(new THREE.BoxGeometry(2.4, 0.6, 2.4), "#D8CFC0", 0, 0.3, 0),
+    mesh(new THREE.CylinderGeometry(0.45, 0.6, 3.6, 10), "#EDE6D8", 0, 2.4, 0),
+    mesh(new THREE.BoxGeometry(1.3, 0.3, 1.3), "#D8CFC0", 0, 4.3, 0),
+    star,
+  );
+  return { group, star };
+}

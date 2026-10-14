@@ -3,7 +3,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { lookForId, type AvatarLook } from "@/lib/avatar";
+import type { AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
@@ -1441,88 +1441,6 @@ export function GameMap({
       }
       void pingRadar(); // a radar used earlier may still be running
 
-      // ---- Life on the streets ---------------------------------------------
-      // Scenery only: a few people walking and vehicles driving on the real roads
-      // around the hunter, taking random turns. No name tags, so they're never
-      // mistaken for players; nothing about them is saved or sent anywhere.
-      type Extra = {
-        avatar: ReturnType<typeof models.buildAvatar>;
-        entity: import("@/game/ThreeMapLayer").MapEntity;
-        rp: import("@/game/roads").RoadPosition | null;
-        mode: Mode;
-        speed: number; // on-screen metres per second
-        turn: -1 | 0 | 1;
-        turnUntil: number;
-      };
-      const extras: Extra[] = [];
-      const EXTRA_KINDS: Mode[] = small
-        ? ["walk", "walk", "walk", "walk", "walk", "motorbike", "car", "motorbike"]
-        : ["walk", "walk", "walk", "walk", "walk", "walk", "walk", "walk", "motorbike", "motorbike", "car", "car", "motorbike"];
-      const EXTRA_SPEED: Record<Mode, [number, number]> = { walk: [6, 11], bicycle: [14, 20], motorbike: [26, 36], car: [28, 40] };
-      const EXTRA_RANGE_M = 110; // the close-up camera shows only ~50 m of street
-      let extrasOn: import("@/game/roads").RoadNetwork | null = null;
-
-      /** A random road spot near the hunter (but not right on top of them). */
-      function extraSpot(net: import("@/game/roads").RoadNetwork): import("@/game/roads").RoadPosition | null {
-        for (let attempt = 0; attempt < 40; attempt++) {
-          const id = Math.floor(Math.random() * net.edges.length);
-          const e = net.edges[id];
-          const n = net.nodes[e.a];
-          const d = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [n.lng, n.lat]);
-          if (d < 15 || d > EXTRA_RANGE_M || e.oneway) continue;
-          return { edge: id, t: Math.random(), dir: Math.random() < 0.5 ? 1 : -1 };
-        }
-        return null;
-      }
-
-      function moveExtras(now: number, dt: number, t: number) {
-        if (!network) return;
-        if (extras.length < EXTRA_KINDS.length) {
-          const mode = EXTRA_KINDS[extras.length];
-          const avatar = models.buildAvatar(lookForId(Math.random().toString(36)));
-          const [lo, hi] = EXTRA_SPEED[mode];
-          const entity = layer.add({ object: avatar.root, lng: traveller.pos.lng, lat: traveller.pos.lat, heading: 0 });
-          entity.object.visible = false; // until placed
-          extras.push({ avatar, entity, rp: null, mode, speed: lo + Math.random() * (hi - lo), turn: 0, turnUntil: 0 });
-        }
-        if (network !== extrasOn) {
-          // The roads were rebuilt: put everyone back on them where they stand.
-          for (const x of extras) x.rp = x.rp ? roads.snapToNetwork(network, { lng: x.entity.lng, lat: x.entity.lat }, x.entity.heading ?? 0) : null;
-          extrasOn = network;
-        }
-        const show = map.getZoom() >= 16;
-        for (const x of extras) {
-          const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [x.entity.lng, x.entity.lat]);
-          if (!x.rp || away > EXTRA_RANGE_M + 40) {
-            x.rp = extraSpot(network);
-            if (x.rp) {
-              const p = roads.positionOf(network, x.rp);
-              x.entity.lng = p.lng;
-              x.entity.lat = p.lat;
-              x.entity.heading = p.heading;
-            }
-          }
-          if (!x.rp) {
-            x.entity.object.visible = false;
-            continue;
-          }
-          if (now > x.turnUntil) {
-            x.turn = ([-1, 0, 0, 1] as const)[Math.floor(Math.random() * 4)];
-            x.turnUntil = now + 4000 + Math.random() * 6000;
-          }
-          const step = x.speed * dt;
-          const aim = roads.positionOf(network, x.rp).heading;
-          const { position, deadEnd } = roads.advance(network, x.rp, step, aim, x.turn);
-          x.rp = deadEnd ? roads.reverse(position) : position;
-          const p = roads.positionOf(network, x.rp);
-          x.entity.lng = p.lng;
-          x.entity.lat = p.lat;
-          x.entity.heading = geo.turnTowards(x.entity.heading ?? p.heading, p.heading, Math.min(1, 8 * dt));
-          x.entity.object.visible = show;
-          models.animateAvatar(x.avatar, { mode: x.mode, phase: "idle", moving: 0.8, distance: step / layer.enlargement() }, dt, t);
-        }
-      }
-
       // ---- Other hunters, live --------------------------------------------
       // Each hunter announces where they are to their area's channel (about
       // once a second while moving, every 8 s standing still) and listens to
@@ -1791,7 +1709,6 @@ export function GameMap({
           if (rental) showVehicle();
         }
 
-        moveExtras(now, dt, t);
         announce(now);
         moveOthers(now, dt, t);
 

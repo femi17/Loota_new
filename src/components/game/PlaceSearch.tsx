@@ -10,8 +10,11 @@ const metres = (a: LngLat, b: LngLat) => {
 };
 const distance = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m >= 10_000 ? 0 : 1)} km` : `${Math.round(m)} m`);
 
-/** Type a place or address; pick a result to plot a route there. Places near the hunter come first. */
-export function PlaceSearch({ near, onPick }: { near: () => LngLat; onPick: (place: Place) => void }) {
+/**
+ * Type a place or address; pick a result to plot a route there. Places near the hunter come first.
+ * `inline` lists the results below the box instead of floating over the map (inside a scrolling panel).
+ */
+export function PlaceSearch({ near, onPick, inline = false }: { near: () => LngLat; onPick: (place: Place) => void; inline?: boolean }) {
   const [query, setQuery] = useState("");
   const [places, setPlaces] = useState<(Place & { away: number })[]>([]);
   const [status, setStatus] = useState<"idle" | "searching" | "none" | "error">("idle");
@@ -92,7 +95,11 @@ export function PlaceSearch({ near, onPick }: { near: () => LngLat; onPick: (pla
       </form>
 
       {(open || status === "none" || status === "error") && query.trim().length >= 3 && query !== picked && (
-        <ul className="absolute inset-x-0 top-12 z-10 flex max-h-72 flex-col overflow-y-auto rounded-xl bg-ink p-1 shadow-lg" role="listbox" aria-label="Places found">
+        <ul
+          className={`${inline ? "mt-2" : "absolute inset-x-0 top-12 z-10 shadow-lg"} flex max-h-72 flex-col overflow-y-auto rounded-xl bg-ink p-1`}
+          role="listbox"
+          aria-label="Places found"
+        >
           {status === "none" && <li className="p-3 text-sm text-muted">No places found. Try a street, area or landmark name.</li>}
           {status === "error" && <li className="p-3 text-sm text-muted">Place search isn&apos;t available right now. Tap the map instead.</li>}
           {status !== "error" &&

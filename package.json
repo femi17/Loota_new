@@ -11,7 +11,10 @@
     "lint": "eslint",
     "db:push": "node scripts/db-push.mjs",
     "roads:build": "node --max-old-space-size=4096 scripts/build-roads.mts",
-    "roads:upload": "node scripts/upload-roads.mts"
+    "roads:upload": "node scripts/upload-roads.mts",
+    "transit:build": "node --max-old-space-size=4096 scripts/build-transit.mts",
+    "transit:upload": "node scripts/upload-transit.mts",
+    "transit:roadside": "node scripts/add-roadside-stops.mts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

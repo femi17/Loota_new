@@ -10,7 +10,7 @@ export const RELICS: Record<RelicId, { name: string; colour: string; effect: str
   jerry_can: { name: "Jerry Can", colour: "#E5484D", effect: "Restores 30% fuel.", rarity: "Common" },
   rain_charm: { name: "Rain Charm", colour: "#8FC7E8", effect: "Rain over 5 km for 10 minutes. Slows walkers and bikes.", rarity: "Common" },
   radar: { name: "Radar", colour: "#F4B41A", effect: "Points to the nearest relic for 5 minutes.", rarity: "Rare" },
-  fast_pass: { name: "Fast Pass", colour: "#C3A6FF", effect: "Skip one check-in queue or bus wait.", rarity: "Rare" },
+  fast_pass: { name: "Fast Pass", colour: "#C3A6FF", effect: "Skip the wait for one bus or train, or a plane's check-in queue.", rarity: "Rare" },
   lockdown_orb: {
     name: "Lockdown Orb",
     colour: "#9B5DE5",

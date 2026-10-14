@@ -436,3 +436,103 @@ export function makeDome(radius: number) {
   group.add(shell, lattice, rim);
   return group;
 }
+
+// ---- Public transport (design doc 13.2: generic, unbranded) -----------------
+// Forward is +z, like the other vehicles. Sizes are squashed a little so they
+// read well next to the enlarged avatars.
+
+const T_G = {
+  busBody: new THREE.BoxGeometry(2.4, 2.2, 7.5),
+  busRoof: new THREE.BoxGeometry(2.3, 0.15, 7.2),
+  busWindows: new THREE.BoxGeometry(2.46, 0.7, 6.2),
+  busStripe: new THREE.BoxGeometry(2.47, 0.18, 7.52),
+  busScreen: new THREE.BoxGeometry(2.1, 0.9, 0.06),
+  busTyre: new THREE.CylinderGeometry(0.5, 0.5, 0.35, 14),
+  carriage: new THREE.BoxGeometry(2.6, 2.6, 8.4),
+  carriageRoof: new THREE.BoxGeometry(2.3, 0.3, 8.2),
+  carriageWindows: new THREE.BoxGeometry(2.66, 0.6, 7.4),
+  carriageStripe: new THREE.BoxGeometry(2.67, 0.3, 8.42),
+  nose: new THREE.BoxGeometry(2.6, 1.6, 1.4),
+  noseScreen: new THREE.BoxGeometry(2.2, 0.8, 0.08),
+  bogie: new THREE.BoxGeometry(2.0, 0.5, 2.2),
+  fuselage: new THREE.CylinderGeometry(1.3, 1.3, 13, 16),
+  noseCone: new THREE.SphereGeometry(1.3, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+  tailCone: new THREE.ConeGeometry(1.3, 3.2, 16),
+  wing: new THREE.BoxGeometry(15, 0.25, 2.6),
+  tailWing: new THREE.BoxGeometry(5.6, 0.2, 1.4),
+  fin: new THREE.BoxGeometry(0.25, 3.2, 2.2),
+  engine: new THREE.CylinderGeometry(0.5, 0.5, 2.2, 12),
+  cabinWindows: new THREE.CylinderGeometry(1.32, 1.32, 9, 16, 1, true, -0.35, 0.7),
+};
+
+/** A city bus: yellow, with a black stripe (like a Lagos danfo, but bigger). */
+export function makeBus() {
+  const group = new THREE.Group();
+  const tyre = (x: number, z: number) => {
+    const w = mesh(T_G.busTyre, "#1D1D1D", x, 0.5, z);
+    w.rotation.z = Math.PI / 2;
+    return w;
+  };
+  const screen = mesh(T_G.busScreen, "#9FD8FF", 0, 1.9, 3.76);
+  group.add(
+    mesh(T_G.busBody, "#F4B41A", 0, 1.5, 0),
+    mesh(T_G.busRoof, "#E8E2D0", 0, 2.67, 0),
+    mesh(T_G.busWindows, "#2F4B63", 0, 1.95, -0.3),
+    mesh(T_G.busStripe, "#111111", 0, 1.1, 0),
+    screen,
+    tyre(-1.15, 2.4), tyre(1.15, 2.4), tyre(-1.15, -2.4), tyre(1.15, -2.4),
+  );
+  return group;
+}
+
+/** One train carriage; the lead one has a sloped nose and windscreen. */
+export function makeTrainCar(lead: boolean) {
+  const group = new THREE.Group();
+  group.add(
+    mesh(T_G.carriage, "#F4F1EA", 0, 1.8, 0),
+    mesh(T_G.carriageRoof, "#9A9C9E", 0, 3.2, 0),
+    mesh(T_G.carriageWindows, "#2F4B63", 0, 2.25, 0),
+    mesh(T_G.carriageStripe, "#1E9E62", 0, 1.2, 0),
+    mesh(T_G.bogie, "#333333", 0, 0.35, 2.8),
+    mesh(T_G.bogie, "#333333", 0, 0.35, -2.8),
+  );
+  if (lead) {
+    group.add(mesh(T_G.nose, "#1E9E62", 0, 1.3, 4.9), mesh(T_G.noseScreen, "#9FD8FF", 0, 2.6, 4.25));
+  }
+  return group;
+}
+
+/** Length of a carriage plus the gap to the next, before enlargement. */
+export const TRAIN_CAR_SPACING = 8.9;
+
+/** A passenger plane: white, with a green tail. */
+export function makePlane() {
+  const group = new THREE.Group();
+  const body = new THREE.Group();
+  const fuselage = mesh(T_G.fuselage, "#F7F7F7");
+  fuselage.rotation.x = Math.PI / 2;
+  const windows = new THREE.Mesh(T_G.cabinWindows, material("#2F4B63"));
+  windows.rotation.x = Math.PI / 2;
+  windows.position.z = 0.5;
+  const nose = mesh(T_G.noseCone, "#F7F7F7", 0, 0, 6.5);
+  nose.rotation.x = Math.PI / 2;
+  const tail = mesh(T_G.tailCone, "#F7F7F7", 0, 0, -8.1);
+  tail.rotation.x = -Math.PI / 2;
+  const engineL = mesh(T_G.engine, "#9A9C9E", -3.4, -0.7, 0.8);
+  const engineR = mesh(T_G.engine, "#9A9C9E", 3.4, -0.7, 0.8);
+  engineL.rotation.x = engineR.rotation.x = Math.PI / 2;
+  body.add(
+    fuselage,
+    windows,
+    nose,
+    tail,
+    mesh(T_G.wing, "#DADADA", 0, -0.3, 0),
+    mesh(T_G.tailWing, "#DADADA", 0, 0.3, -8.4),
+    mesh(T_G.fin, "#1E9E62", 0, 1.9, -8.6),
+    engineL,
+    engineR,
+  );
+  body.position.y = 1.6; // wheels-down height on the ground
+  group.add(body);
+  return { group, body };
+}

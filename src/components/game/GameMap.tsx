@@ -15,6 +15,23 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
+import { TransitPanel, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
+import {
+  BUS_RANGE_M,
+  TRANSIT,
+  TRAIN_CARS,
+  alongPath,
+  clock,
+  cumulativeOf,
+  flightPath,
+  sliceLine,
+  thinPath,
+  transitFare,
+  transitSpeed,
+  transitWaitS,
+  type TransitStop,
+  type Trip as TransitTrip,
+} from "@/game/transit";
 
 type Hud = {
   energy: number;
@@ -50,6 +67,10 @@ type Hud = {
    * inside (free to move), and, when they're at its edge outside, the siege.
    */
   dome: { minutesLeft: number; key: number; inside: boolean; mine: boolean; siege: { attackers: number; needed: number } | null } | null;
+  /** On a bus, train or plane (or waiting for one). */
+  ride: { icon: string; title: string; status: string; canCancel: boolean } | null;
+  /** At a bus stop, station or airport: what the Transport button offers. */
+  stopHere: { icon: string; label: string } | null;
 };
 
 /** A direction and rough distance (bearing: compass degrees). */
@@ -164,6 +185,8 @@ export function GameMap({
     endDirections: () => void;
     where: () => LngLat;
     goTo: (place: Place) => void;
+    /** Get off a bus, train or plane that hasn't left yet (fare refunded). */
+    cancelTrip: () => void;
   } | null>(null);
   const huntActions = useRef<HuntActions | null>(null);
   const [failed, setFailed] = useState(false);
@@ -187,11 +210,15 @@ export function GameMap({
     radar: null,
     rain: null,
     dome: null,
+    ride: null,
+    stopHere: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the Vehicles panel, when open
+  const [transitOpen, setTransitOpen] = useState(false);
+  const [transitActions, setTransitActions] = useState<TransitActions | null>(null); // set once the map is ready
 
   const lookKey = JSON.stringify(look);
   const startLng = start.lng;
@@ -457,6 +484,7 @@ export function GameMap({
       async function routeOnOwnRoads(
         from: LngLat,
         to: LngLat,
+        mode: Mode = traveller.mode,
       ): Promise<{ path: import("@/game/geo").Coord[]; forks: { index: number; side: -1 | 1 }[] } | null> {
         const MARGIN = 0.01; // ~1 km around the straight line's box, for roads that bend outward
         const x0 = Math.floor((Math.min(from.lng, to.lng) - MARGIN) / ROAD_CELL_DEG);
@@ -471,7 +499,7 @@ export function GameMap({
         if (!cells.length || disposed) return null;
         await new Promise((r) => setTimeout(r, 30)); // let "Finding a route…" show before the search
         const centre = { lng: (from.lng + to.lng) / 2, lat: (from.lat + to.lat) / 2 };
-        const net = roads.buildNetworkFromCells(cells, traveller.mode, centre, Infinity);
+        const net = roads.buildNetworkFromCells(cells, mode, centre, Infinity);
         const start = roads.snapToNetwork(net, from, traveller.heading);
         const path = start ? roads.findPath(net, start, to, 300) : null;
         return path ? { path, forks: roads.findForks(net, path) } : null;
@@ -600,6 +628,9 @@ export function GameMap({
           traveller.mode = result.mode;
           await refreshVehicles();
           say(result.mode === "walk" ? "Your rental has ended, so you're on foot again." : `You're on your ${VEHICLES[result.mode].name.toLowerCase()}.`, true);
+        } else if (result.reason === "trip") {
+          void resumeTrip();
+          return;
         } else if (result.reason === "dome") {
           say("A Lockdown dome keeps you out of this key area. Attack it with other hunters at its edge to break it.", true);
         } else {
@@ -1102,6 +1133,7 @@ export function GameMap({
           lookOffset = 0;
         },
         where: () => ({ ...traveller.pos }),
+        cancelTrip: () => void cancelTrip(),
         goTo(place) {
           void planDirections({ lng: place.lng, lat: place.lat }, place.name);
         },
@@ -1560,6 +1592,312 @@ export function GameMap({
         }
       }
 
+      // ---- Bus, train and plane --------------------------------------------
+      // A trip is paid for on the server (start_trip), which also decides when it
+      // leaves and arrives. Until it leaves, the hunter waits at the stop (and can
+      // cancel); on the way the vehicle carries them along its path and the player
+      // can't steer; at the end finish_trip puts them at the destination, on foot.
+      type Ride = {
+        trip: TransitTrip;
+        label: string; // where the player asked to go (a bus drops them at the stop nearest it)
+        cum: number[];
+        offset: number; // the server's clock minus this device's, in ms
+        departs: number; // server-clock ms
+        arrives: number;
+        s: number; // metres along the path
+        parts: import("@/game/ThreeMapLayer").MapEntity[]; // the bus, the train's carriages, or the plane
+        plane: ReturnType<typeof models.makePlane> | null;
+        finishing: boolean;
+        lastTry: number;
+      };
+      let ride: Ride | null = null;
+      const TRAIN_SCALE = 0.8;
+      const PLANE_GROUND_SCALE = 0.45; // at the gate and on the runway, next to the hunter
+      const PLANE_AIR_SCALE = 1.4; // at cruising height, seen from far above
+
+      function showRide(status: string, canCancel: boolean) {
+        if (!ride) return;
+        const info = TRANSIT[ride.trip.mode];
+        const title = `${info.label} to ${ride.label}`;
+        setHud((h) =>
+          h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.title === title
+            ? h
+            : { ...h, ride: { icon: info.icon, title, status, canCancel } },
+        );
+      }
+
+      function startRide(next: TransitTrip, label = next.to) {
+        endRide();
+        const at = { lng: next.path[0][0], lat: next.path[0][1] };
+        const parts: import("@/game/ThreeMapLayer").MapEntity[] = [];
+        let plane: Ride["plane"] = null;
+        if (next.mode === "bus") parts.push(layer.add({ object: models.makeBus(), ...at, heading: 0 }));
+        else if (next.mode === "train") {
+          for (let i = 0; i < TRAIN_CARS; i++) parts.push(layer.add({ object: models.makeTrainCar(i === 0), ...at, heading: 0, scaleBy: TRAIN_SCALE }));
+        } else {
+          plane = models.makePlane();
+          parts.push(layer.add({ object: plane.group, ...at, heading: 0, scaleBy: PLANE_GROUND_SCALE }));
+        }
+        for (const p of parts) p.object.visible = false;
+        ride = {
+          trip: next,
+          label,
+          cum: cumulativeOf(next.path),
+          offset: Date.parse(next.now) - Date.now(),
+          departs: Date.parse(next.departsAt),
+          arrives: Date.parse(next.arrivesAt),
+          s: 0,
+          parts,
+          plane,
+          finishing: false,
+          lastTry: 0,
+        };
+        traveller.v = 0;
+        controls.current.go = false;
+        touchGo = false;
+        setHud((h) => (h.stopHere ? { ...h, stopHere: null } : h));
+      }
+
+      function endRide() {
+        if (!ride) return;
+        for (const p of ride.parts) layer.remove(p);
+        ride = null;
+        me.object.visible = true;
+        map.setMinZoom(GAME_ZOOM); // back to the one zoom players play at
+        setHud((h) => ({ ...h, ride: null }));
+      }
+
+      /** Put the vehicle (each carriage of a train) `s` metres along its path. */
+      function placeRide(r: Ride, s: number, dt: number, jump: boolean) {
+        const path = r.trip.path;
+        const spacing = models.TRAIN_CAR_SPACING * layer.enlargement() * TRAIN_SCALE;
+        r.parts.forEach((part, i) => {
+          const { pos, segment } = alongPath(path, r.cum, Math.max(0, s - i * spacing));
+          const heading = geo.headingOf(path[segment - 1], path[segment]);
+          part.lng = pos[0];
+          part.lat = pos[1];
+          part.heading = jump || part.heading === undefined ? heading : geo.turnTowards(part.heading, heading, Math.min(1, 6 * dt));
+        });
+      }
+
+      /** One frame of a trip. True while the vehicle is on its way (the hunter is aboard). */
+      function rideStep(now: number, dt: number) {
+        const r = ride!;
+        const info = TRANSIT[r.trip.mode];
+        const serverNow = Date.now() + r.offset;
+        const total = r.cum[r.cum.length - 1];
+        if (serverNow < r.departs) {
+          // Waiting at the stop (or checking in). The bus or train pulls in for the last few seconds; the plane waits at the gate.
+          const left = (r.departs - serverNow) / 1000;
+          placeRide(r, 0, dt, true);
+          // The bus or train pulls in for the last few seconds; the plane is at the gate for the last 20 (boarding).
+          for (const p of r.parts) p.object.visible = left < (r.trip.mode === "plane" ? 20 : 6);
+          showRide(`${r.trip.mode === "plane" ? "Check-in and boarding" : info.wait} · leaves in ${clock(left)}`, true);
+          return false;
+        }
+        if (r.s === 0) {
+          // Leaving: the camera may pull back for a fast trip (the player still can't zoom), and street names stop.
+          map.setMinZoom(8);
+          setHud((h) => ({ ...h, street: null, services: { fuel: null, food: null } }));
+        }
+        const f = Math.min(1, (serverNow - r.departs) / Math.max(1, r.arrives - r.departs));
+        r.s = Math.max(1e-6, f * total);
+        placeRide(r, r.s, dt, false);
+        for (const p of r.parts) p.object.visible = true;
+        me.object.visible = false;
+        const lead = r.parts[0];
+        traveller.pos = { lng: lead.lng, lat: lead.lat };
+        traveller.heading = lead.heading ?? traveller.heading;
+        if (r.plane) {
+          // Climb after take-off and descend to land, nose up then down.
+          const edge = Math.min(r.s, total - r.s);
+          const height = Math.min(1, edge / 20000);
+          r.plane.body.position.y = 1.6 + 8 * height * height * (3 - 2 * height);
+          // Bigger as the camera pulls back, so it stays easy to see.
+          const k = Math.min(1, edge / 40000);
+          lead.scaleBy = PLANE_GROUND_SCALE + (PLANE_AIR_SCALE - PLANE_GROUND_SCALE) * k * k * (3 - 2 * k);
+          r.plane.body.rotation.x = height < 1 ? (r.s < total / 2 ? -0.12 : 0.1) : 0;
+        }
+        showRide(`${r.trip.mode === "plane" ? "Lands" : "Arrives"} in ${clock((r.arrives - serverNow) / 1000)} · ${geo.formatDistance(total - r.s)} to go`, false);
+        if (f >= 1 && !r.finishing && now - r.lastTry > 2000) void finishRide(now);
+        return true;
+      }
+
+      /** How close the camera is during a trip: as in play for a bus, further back for a train, high above for a flight. */
+      function rideZoom() {
+        if (!ride || ride.s === 0) return GAME_ZOOM;
+        if (ride.trip.mode === "bus") return GAME_ZOOM;
+        if (ride.trip.mode === "train") return GAME_ZOOM - 1;
+        const total = ride.cum[ride.cum.length - 1];
+        const k = Math.min(1, Math.min(ride.s, total - ride.s) / 40000);
+        return GAME_ZOOM - 7 * k * k * (3 - 2 * k);
+      }
+
+      async function finishRide(now: number) {
+        const r = ride;
+        if (!r) return;
+        r.finishing = true;
+        r.lastTry = now;
+        const { data } = await supabase.rpc("finish_trip");
+        if (disposed || ride !== r) return;
+        const result = data as { ok: boolean; reason?: string; lng?: number; lat?: number; name?: string } | null;
+        if (result?.ok) arrive(result.lng!, result.lat!, result.name!, r.trip.mode);
+        else if (result?.reason === "no_trip") arrive(r.trip.toLng, r.trip.toLat, r.trip.to, r.trip.mode); // ended elsewhere (another tab)
+        else r.finishing = false; // not quite yet (clocks differ) or a network hiccup: try again shortly
+      }
+
+      function arrive(lng: number, lat: number, name: string, mode: TransitTrip["mode"]) {
+        endRide();
+        traveller.pos = { lng, lat };
+        traveller.v = 0;
+        saved = { lng, lat };
+        // (The server allows the hop from the stop onto the nearest road: save_position, trip_arrival_hop.)
+        // New surroundings: their roads, finds and stops.
+        network = null;
+        onRoad = null;
+        builtFrom = "";
+        lastNetworkCheck = 0;
+        buildRoads();
+        lastSync = performance.now();
+        void syncWorld();
+        void refreshNear();
+        say(`${mode === "plane" ? "Landed" : "You've arrived"} at ${name}. You're on foot again.`);
+      }
+
+      async function resumeTrip() {
+        const { data } = await supabase.rpc("my_trip");
+        if (!disposed && data && !ride) startRide(data as TransitTrip);
+      }
+      void resumeTrip();
+
+      async function cancelTrip() {
+        if (!ride) return;
+        const { data } = await supabase.rpc("cancel_trip");
+        const result = data as { ok: boolean; reason?: string; balance?: number } | null;
+        if (disposed || !result) return;
+        if (result.ok) {
+          endRide();
+          setHud((h) => ({ ...h, coins: result.balance ?? h.coins }));
+          say("Trip cancelled. Your fare has been refunded.");
+          void refreshNear();
+        } else if (result.reason === "left") {
+          say("Too late: it has already left.");
+        } else if (result.reason === "no_trip") {
+          endRide();
+        }
+      }
+
+      // Stops near the hunter: what the Transport button offers, refreshed as they move.
+      let near: TransitNear | null = null;
+      let nearAt = -Infinity;
+      let nearFrom: LngLat | null = null;
+      async function refreshNear(): Promise<TransitNear | null> {
+        const from = { ...traveller.pos };
+        nearAt = performance.now();
+        nearFrom = from;
+        const { data } = await supabase.rpc("transit_near", { p_lng: from.lng, p_lat: from.lat });
+        if (disposed || !data) return near;
+        near = data as TransitNear;
+        const at = (["plane", "train", "bus"] as const).map((k) => near!.here.find((st) => st.kind === k)).find(Boolean);
+        const stopHere = at ? { icon: TRANSIT[at.kind].icon, label: at.kind === "plane" ? "Fly from here" : `Take a ${at.kind}` } : null;
+        setHud((h) => (ride || JSON.stringify(h.stopHere) === JSON.stringify(stopHere) ? h : { ...h, stopHere }));
+        return near;
+      }
+      function nearTick(now: number) {
+        if (ride || now - nearAt < 3000) return;
+        const moved = nearFrom ? geo.distanceM([nearFrom.lng, nearFrom.lat], [traveller.pos.lng, traveller.pos.lat]) : Infinity;
+        if (moved > 20 || now - nearAt > 30000) void refreshNear();
+      }
+
+      const stopTitle = (st: TransitStop) => (st.kind === "plane" ? `${st.name} (${st.code})` : st.kind === "train" ? `${st.name} station` : st.name);
+
+      /** A bus from this stop to the bus stop nearest a place, along the roads a car would take. */
+      async function quoteBus(from: TransitStop, place: Place): Promise<TransitQuote | string> {
+        const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: place.lng, p_lat: place.lat, p_limit: 1 });
+        const to = (data as TransitStop[] | null)?.[0];
+        if (!to || to.metres > 2000) return `There's no bus stop within 2 km of ${place.name}.`;
+        const straight = geo.distanceM([from.lng, from.lat], [to.lng, to.lat]);
+        if (to.id === from.id || straight < 300) return `${place.name} is within walking distance of this stop.`;
+        if (straight > BUS_RANGE_M) return "Buses go up to 40 km. For further, take a train or a plane.";
+        const own = await routeOnOwnRoads({ lng: from.lng, lat: from.lat }, { lng: to.lng, lat: to.lat }, "car");
+        let path = own?.path ?? null;
+        if (!path) {
+          const { route, fallback } = await fetchRoute(from, to, "car");
+          if (!fallback) path = route.coords;
+        }
+        if (!path) return "Couldn't work out the bus's way there just now. Try again in a moment.";
+        const full = thinPath([[from.lng, from.lat], ...path, [to.lng, to.lat]]);
+        const metres = Math.max(cumulativeOf(full).at(-1)!, straight);
+        const wait = transitWaitS("bus", false);
+        return { mode: "bus", from, to: { id: to.id, name: to.name, code: null }, label: place.name, metres, fare: transitFare("bus", metres), seconds: wait + metres / transitSpeed("bus"), waitSeconds: wait, path: full };
+      }
+
+      /** A train along the line to another station, or a flight to another airport. */
+      async function quoteTo(from: TransitStop, to: import("@/game/transit").TransitDestination): Promise<TransitQuote | string> {
+        let path: import("@/game/geo").Coord[];
+        if (from.kind === "train") {
+          const [{ data: line }, { data: stops }] = await Promise.all([
+            supabase.from("transit_lines").select("path").eq("id", from.line_id ?? "").single(),
+            supabase.from("transit_stops").select("id, along_m").in("id", [from.id, to.id]),
+          ]);
+          const along = new Map(((stops ?? []) as { id: number; along_m: number }[]).map((st) => [st.id, st.along_m]));
+          if (!line || along.size < 2) return "Couldn't load the line just now. Try again in a moment.";
+          path = sliceLine(line.path as import("@/game/geo").Coord[], along.get(from.id)!, along.get(to.id)!);
+        } else {
+          path = flightPath([from.lng, from.lat], [to.lng, to.lat]);
+        }
+        return { mode: from.kind, from, to: { id: to.id, name: to.name, code: to.code }, label: to.name, metres: to.metres, fare: to.fare, seconds: to.seconds, waitSeconds: transitWaitS(from.kind, false), path: thinPath(path, 2) };
+      }
+
+      async function board(quote: TransitQuote, fastPass: boolean): Promise<string | null> {
+        if (ride) return "You're already on a trip.";
+        if (traveller.mode !== "walk") return "Get off your vehicle first (tap Walk), then board.";
+        await savePosition(); // the server checks you're at the stop
+        const { data, error } = await supabase.rpc("start_trip", { p_from: quote.from.id, p_to: quote.to.id, p_path: quote.path, p_fast_pass: fastPass });
+        if (error || !data) return fastPass ? "Your Fast Pass couldn't be used. Try again without it." : "Something went wrong. Try again.";
+        const result = data as { ok: boolean; reason?: string; fare?: number; balance?: number; trip?: TransitTrip };
+        if (!result.ok) {
+          const why: Record<string, string> = {
+            coins: `You need ${result.fare ?? quote.fare} coins for this fare.`,
+            far: `Get to ${stopTitle(quote.from)} first: you need to be at the stop.`,
+            vehicle: "Get off your vehicle first (tap Walk), then board.",
+            dome: "A Lockdown dome covers that stop. Pick somewhere else.",
+            path: "Couldn't plan that route. Try another stop.",
+            route: "Nothing goes there from here.",
+            on_trip: "You're already on a trip.",
+          };
+          return why[result.reason ?? ""] ?? "Couldn't board just now. Try again.";
+        }
+        setHud((h) => ({ ...h, coins: result.balance ?? h.coins }));
+        startRide(result.trip!, quote.label);
+        if (fastPass) countRelics();
+        say(
+          quote.mode === "plane"
+            ? `Ticket booked to ${quote.to.name}. Check-in and boarding take ${clock(transitWaitS("plane", fastPass))}.`
+            : `Fare paid. You're on your way to ${quote.label}; sit back, the ${quote.mode} does the driving.`,
+        );
+        return null;
+      }
+
+      setTransitActions({
+        near: refreshNear,
+        destinations: async (stop) => {
+          const { data } = await supabase.rpc("transit_destinations", { p_stop: stop.id });
+          return (data ?? []) as import("@/game/transit").TransitDestination[];
+        },
+        quoteBus,
+        quoteTo,
+        board,
+        directionsTo: (stop) => void planDirections({ lng: stop.lng, lat: stop.lat }, stopTitle(stop)),
+        heading: () => (trip ? { name: trip.name, detail: "", lng: trip.to.lng, lat: trip.to.lat } : null),
+        fastPasses: async () => {
+          const { data } = await supabase.from("player_relics").select("charges, expires_at").eq("relic", "fast_pass").gt("charges", 0);
+          const now = Date.now();
+          return ((data ?? []) as { charges: number; expires_at: string }[]).filter((r) => Date.parse(r.expires_at) > now).reduce((n, r) => n + r.charges, 0);
+        },
+        where: () => ({ ...traveller.pos }),
+      });
+
       // ---- Game loop -------------------------------------------------------
       let frame = 0;
       let last = performance.now();
@@ -1573,6 +1911,8 @@ export function GameMap({
         last = now;
         const t = now / 1000;
         const c = controls.current;
+        // On a bus, train or plane, the vehicle moves the hunter (and the player can't).
+        const riding = ride ? rideStep(now, dt) : false;
 
         // Keep a road network around the player as they travel, and refresh it
         // as more map tiles load (the first build may only see one tile).
@@ -1580,20 +1920,20 @@ export function GameMap({
           !network ||
           now - lastNetworkCheck > 5000 ||
           geo.distanceM([network.centre.lng, network.centre.lat], [traveller.pos.lng, traveller.pos.lat]) > 300;
-        if (stale && now - lastNetworkCheck > 1000) {
+        if (!riding && stale && now - lastNetworkCheck > 1000) {
           lastNetworkCheck = now;
           buildRoads(true);
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && !!onRoad;
+        const canMove = !frozen && !ride && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") say("You fainted from exhaustion! Rest before your energy runs out. (In a hunt: ambulance and hospital bill.)", true);
           if (event === "recovered") say("Back on your feet.");
         }
 
-        if (network && onRoad) {
+        if (!riding && network && onRoad) {
           if (distance > 0) {
             // Straight on at junctions, unless the player asked to turn.
             const aim = roads.positionOf(network, onRoad).heading;
@@ -1634,7 +1974,7 @@ export function GameMap({
           }
         }
         relicTick(now);
-        if (now - lastGuide > 250) {
+        if (!riding && now - lastGuide > 250) {
           lastGuide = now;
           updateGuide();
         }
@@ -1658,10 +1998,10 @@ export function GameMap({
         // Spin the finds, and pick up anything within reach.
         for (const [id, { item, model }] of onMap) {
           model.spin.rotation.y += dt * 2;
-          if (picking.has(id) || (retryAfter.get(id) ?? 0) > now) continue;
+          if (riding || picking.has(id) || (retryAfter.get(id) ?? 0) > now) continue;
           if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [item.lng, item.lat]) < PICKUP_RADIUS_M) void pickUp(id);
         }
-        if (now - lastSync > 15000 || (syncedAt && geo.distanceM([syncedAt.lng, syncedAt.lat], [traveller.pos.lng, traveller.pos.lat]) > 200)) {
+        if (!riding && (now - lastSync > 15000 || (syncedAt && geo.distanceM([syncedAt.lng, syncedAt.lat], [traveller.pos.lng, traveller.pos.lat]) > 200))) {
           lastSync = now;
           void syncWorld();
         }
@@ -1675,23 +2015,24 @@ export function GameMap({
         const want = geo.compassFromHeading(traveller.heading) + lookOffset;
         const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
         camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
-        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing });
+        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom: ride ? rideZoom() : undefined });
 
-        if (now - lastSave > SAVE_EVERY_MS) {
+        if (!ride && now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
           void savePosition();
         }
 
         // The street you're on, petrol stations and food within reach, and the rental meter ticking.
-        if (now - lastServices > 1000) {
+        if (!riding && now - lastServices > 1000) {
           lastServices = now;
           scanStreet();
           scanServices();
           if (rental) showVehicle();
         }
 
-        announce(now);
+        if (!riding) announce(now); // aboard, others just see the hunter leave (and arrive)
         moveOthers(now, dt, t);
+        nearTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -1707,7 +2048,7 @@ export function GameMap({
           const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
           let nearest: Hud["nearest"] = null;
           let closest = Infinity;
-          for (const { item } of onMap.values()) {
+          for (const { item } of ride ? [] : onMap.values()) {
             const d = geo.distanceM(here, [item.lng, item.lat]);
             if (d < closest) {
               closest = d;
@@ -1940,6 +2281,17 @@ export function GameMap({
             {hud.vehicle?.meter && <span className="text-xs font-semibold">· {hud.vehicle.meter}</span>}
           </button>
         </div>
+        <button
+          type="button"
+          disabled={!!hud.ride}
+          onClick={() => setTransitOpen(true)}
+          className={`pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-bold disabled:opacity-50 ${
+            hud.stopHere ? "bg-gold text-ink" : "bg-ink text-paper"
+          }`}
+        >
+          <span aria-hidden="true">{hud.stopHere?.icon ?? "🚌"}</span>
+          {hud.stopHere?.label ?? "Bus · Train · Plane"}
+        </button>
         {hud.services.fuel && hud.vehicle?.fuel != null && hud.vehicle.fuel < 99 && (
           <button
             type="button"
@@ -2066,6 +2418,24 @@ export function GameMap({
           </div>
         )}
 
+        {/* On a bus, train or plane: where to, and when it leaves or arrives. */}
+        {hud.ride && (
+          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
+            <span className="text-2xl" aria-hidden="true">
+              {hud.ride.icon}
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="font-display text-base font-extrabold leading-tight">{hud.ride.title}</span>
+              <span className="truncate text-xs text-paper/85">{hud.ride.status}</span>
+            </div>
+            {hud.ride.canCancel && (
+              <button type="button" onClick={() => actions.current?.cancelTrip()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
+                Cancel
+              </button>
+            )}
+          </div>
+        )}
+
         {helpOpen && (
           <div className="pointer-events-auto flex max-w-md flex-col gap-2 rounded-2xl bg-ink p-4 text-sm" role="note">
             <p className="font-bold">How to move</p>
@@ -2083,6 +2453,10 @@ export function GameMap({
             <p>
               <b>Directions:</b> search a place or address, or tap a spot on the map. A blue line and turn-by-turn directions
               show the way; you steer.
+            </p>
+            <p>
+              <b>Bus, train or plane:</b> get to a bus stop, train station or airport (the button shows the nearest), pay the fare,
+              and it carries you. Buses stop along main roads.
             </p>
             <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
               Got it
@@ -2149,6 +2523,10 @@ export function GameMap({
         />
       )}
 
+      {transitOpen && transitActions && (
+        <TransitPanel actions={transitActions} coins={hud.coins} onClose={() => setTransitOpen(false)} />
+      )}
+
       {/* The siege: at a dome's edge, hunters attack it together to break it. */}
       {hud.dome?.siege && (
         <button
@@ -2165,7 +2543,7 @@ export function GameMap({
       )}
 
       {/* Running on foot or pedalling harder; motorbikes and cars have no sprint. */}
-      {canSprint(hud.mode) && (
+      {canSprint(hud.mode) && !hud.ride && (
         <div className="absolute bottom-9 right-5" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
           <HoldButton
             label={hud.mode === "walk" ? "Hold to run" : "Hold to pedal faster"}

@@ -113,7 +113,7 @@ export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id:
                       {busy === r.id ? "…" : label}
                     </button>
                   ) : (
-                    <span className="shrink-0 text-xs text-muted">{r.relic === "shield" ? "Works by itself" : "Coming with buses"}</span>
+                    <span className="shrink-0 text-xs text-muted">{r.relic === "shield" ? "Works by itself" : "Tick it when you board"}</span>
                   )}
                 </li>
               );

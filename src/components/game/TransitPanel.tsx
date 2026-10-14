@@ -16,6 +16,10 @@ export type TransitQuote = {
   to: { id: number; name: string; code: string | null };
   /** What the trip is called: the place searched for (a bus), or the station or airport. */
   label: string;
+  /** A bus: the place itself, reached on foot from the stop it drops you at (directions are mapped on arrival). */
+  then?: Place;
+  /** A bus: metres from that stop to the place. */
+  walkAfter?: number;
   metres: number;
   fare: number;
   /** Wait plus ride, in seconds. */
@@ -115,10 +119,16 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
           // ---- The trip, priced: pay and board.
           <div className="flex flex-col gap-3 rounded-2xl bg-ink-2 p-4">
             <p className="text-lg font-bold">
-              {TRANSIT[quote.mode].icon} {TRANSIT[quote.mode].label} to {quote.label}
+              {TRANSIT[quote.mode].icon} {TRANSIT[quote.mode].label} {quote.mode === "bus" ? "towards" : "to"} {quote.label}
               {quote.to.code ? ` (${quote.to.code})` : ""}
             </p>
-            {quote.mode === "bus" && <p className="text-sm">Gets off at {quote.to.name}.</p>}
+            {quote.mode === "bus" && (
+              <p className="text-sm">
+                Drops you at {quote.to.name}
+                {quote.walkAfter && quote.walkAfter > 30 ? `, about ${distance(quote.walkAfter)} on foot from ${quote.label}` : ""}. It stops
+                at other bus stops on the way.
+              </p>
+            )}
             <p className="text-sm text-muted">
               From {stopTitle(quote.from)} · {distance(quote.metres)} · about {clock(quote.seconds)}, including{" "}
               {quote.mode === "plane" ? "check-in and boarding" : "the wait"} ({clock(quote.waitSeconds)})

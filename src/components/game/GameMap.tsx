@@ -3,7 +3,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
-import type { AvatarLook } from "@/lib/avatar";
+import { lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
@@ -1597,9 +1597,33 @@ export function GameMap({
       // leaves and arrives. Until it leaves, the hunter waits at the stop (and can
       // cancel); on the way the vehicle carries them along its path and the player
       // can't steer; at the end finish_trip puts them at the destination, on foot.
+      /** A bus stop the bus passes, and what happens there (seeded by the trip, so a reload plays it the same). */
+      type WayStop = {
+        name: string;
+        s: number; // metres along the path
+        on: number; // passengers getting on
+        off: number; // and off
+        dwell: number; // ms stopped (0: drives straight past)
+        at: number; // ms after leaving when the bus pulls in
+        spawned: boolean;
+      };
+      /** Someone getting on or off at a stop. */
+      type Rider = {
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+        avatar: ReturnType<typeof models.buildAvatar>;
+        from: LngLat;
+        to: LngLat;
+        walkFrom: number; // ms after leaving: walking between these times
+        walkTo: number;
+        gone: number; // removed after this
+        hideAtEnd: boolean; // got on the bus
+      };
       type Ride = {
         trip: TransitTrip;
         label: string; // where the player asked to go (a bus drops them at the stop nearest it)
+        then: Place | null; // where they're headed after getting off: directions are mapped again on arrival
+        way: { stops: WayStop[]; speed: number /* m per ms between stops */ } | null; // a bus's stops, once loaded
+        riders: Rider[];
         cum: number[];
         offset: number; // the server's clock minus this device's, in ms
         departs: number; // server-clock ms
@@ -1618,7 +1642,7 @@ export function GameMap({
       function showRide(status: string, canCancel: boolean) {
         if (!ride) return;
         const info = TRANSIT[ride.trip.mode];
-        const title = `${info.label} to ${ride.label}`;
+        const title = `${info.label} ${ride.trip.mode === "bus" ? "towards" : "to"} ${ride.label}`;
         setHud((h) =>
           h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.title === title
             ? h
@@ -1626,7 +1650,7 @@ export function GameMap({
         );
       }
 
-      function startRide(next: TransitTrip, label = next.to) {
+      function startRide(next: TransitTrip, label = next.to, then: Place | null = null) {
         endRide();
         const at = { lng: next.path[0][0], lat: next.path[0][1] };
         const parts: import("@/game/ThreeMapLayer").MapEntity[] = [];
@@ -1642,6 +1666,9 @@ export function GameMap({
         ride = {
           trip: next,
           label,
+          then,
+          way: null,
+          riders: [],
           cum: cumulativeOf(next.path),
           offset: Date.parse(next.now) - Date.now(),
           departs: Date.parse(next.departsAt),
@@ -1656,11 +1683,154 @@ export function GameMap({
         controls.current.go = false;
         touchGo = false;
         setHud((h) => (h.stopHere ? { ...h, stopHere: null } : h));
+        if (next.mode === "bus") void planBusStops(ride);
+      }
+
+      // ---- The bus stops on the way: some passengers get off, others get on.
+      /** A repeatable random sequence for one trip. */
+      function seededRandom(text: string) {
+        let h = 2166136261;
+        for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+        return () => {
+          h = Math.imul(h ^ (h >>> 15), 2246822507);
+          h = Math.imul(h ^ (h >>> 13), 3266489909);
+          h ^= h >>> 16;
+          return (h >>> 0) / 4294967296;
+        };
+      }
+
+      /** Bus stops within 30 m of the bus's path (not the first or last 150 m), in order. */
+      async function planBusStops(r: Ride) {
+        const path = r.trip.path;
+        const lngs = path.map((p) => p[0]);
+        const lats = path.map((p) => p[1]);
+        const pad = 0.001;
+        const { data } = await supabase
+          .from("transit_stops")
+          .select("name, lng, lat")
+          .eq("kind", "bus")
+          .gte("lng", Math.min(...lngs) - pad)
+          .lte("lng", Math.max(...lngs) + pad)
+          .gte("lat", Math.min(...lats) - pad)
+          .lte("lat", Math.max(...lats) + pad)
+          .limit(2000);
+        if (disposed || ride !== r || !data) return;
+        const total = r.cum[r.cum.length - 1];
+        const k = 111320 * Math.cos((path[0][1] * Math.PI) / 180);
+        const found: { name: string; s: number }[] = [];
+        for (const st of data as { name: string; lng: number; lat: number }[]) {
+          let best = { off: Infinity, s: 0 };
+          for (let i = 1; i < path.length; i++) {
+            const ax = path[i - 1][0] * k, ay = path[i - 1][1] * 110574;
+            const bx = path[i][0] * k, by = path[i][1] * 110574;
+            const px = st.lng * k, py = st.lat * 110574;
+            const len2 = (bx - ax) ** 2 + (by - ay) ** 2 || 1e-9;
+            const f = Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / len2));
+            const off = Math.hypot(ax + f * (bx - ax) - px, ay + f * (by - ay) - py);
+            if (off < best.off) best = { off, s: r.cum[i - 1] + f * (r.cum[i] - r.cum[i - 1]) };
+          }
+          if (best.off < 30 && best.s > 150 && best.s < total - 150) found.push({ name: st.name, s: best.s });
+        }
+        found.sort((a, b) => a.s - b.s);
+        const stops: WayStop[] = [];
+        const random = seededRandom(r.trip.id);
+        const crowd = [0, 0, 1, 1, 1, 2, 2, 3];
+        for (const st of found) {
+          if (stops.length && st.s - stops[stops.length - 1].s < 150) continue; // the same stop on both sides of the road
+          const on = crowd[Math.floor(random() * crowd.length)];
+          const off = crowd[Math.floor(random() * crowd.length)];
+          stops.push({ name: st.name, s: st.s, on, off, dwell: on + off ? 2500 + 700 * (on + off) : 0, at: 0, spawned: false });
+        }
+        // Stopping takes at most a third of the ride (the server fixed when it arrives): skip some stops if needed.
+        const rideMs = r.arrives - r.departs;
+        let stopped = stops.reduce((sum, st) => sum + st.dwell, 0);
+        for (const st of [...stops].sort(() => random() - 0.5)) {
+          if (stopped <= rideMs / 3) break;
+          stopped -= st.dwell;
+          st.dwell = 0;
+          st.on = st.off = 0;
+        }
+        const speed = total / Math.max(1, rideMs - stopped);
+        let waited = 0;
+        for (const st of stops) {
+          st.at = st.s / speed + waited;
+          waited += st.dwell;
+        }
+        r.way = { stops, speed };
+      }
+
+      /** Where the bus is `elapsed` ms after leaving, and the stop it's standing at, if any. */
+      function busAt(r: Ride, elapsed: number): { s: number; at: WayStop | null; next: WayStop | null } {
+        const way = r.way!;
+        const total = r.cum[r.cum.length - 1];
+        let waited = 0;
+        for (const st of way.stops) {
+          if (!st.dwell) continue;
+          if (elapsed < st.at) return { s: Math.min(total, (elapsed - waited) * way.speed), at: null, next: st };
+          if (elapsed < st.at + st.dwell) return { s: st.s, at: st, next: st };
+          waited += st.dwell;
+        }
+        return { s: Math.min(total, (elapsed - waited) * way.speed), at: null, next: null };
+      }
+
+      /** A point `right` metres to the bus's right (the kerb) and `ahead` metres forward of `p`. */
+      function besideBus(p: LngLat, heading: number, right: number, ahead: number): LngLat {
+        const east = -Math.cos(heading) * right + Math.sin(heading) * ahead;
+        const north = -Math.sin(heading) * right - Math.cos(heading) * ahead;
+        return { lng: p.lng + east / (111320 * Math.cos((p.lat * Math.PI) / 180)), lat: p.lat + north / 110574 };
+      }
+
+      /** Passengers waiting at the kerb walk to the door and get on; those getting off walk away. */
+      function moveRiders(r: Ride, elapsed: number, dt: number, t: number) {
+        const way = r.way;
+        if (!way) return;
+        const enlarge = layer.enlargement();
+        const path = r.trip.path;
+        for (const st of way.stops) {
+          if (!st.dwell || st.spawned || elapsed < st.at - 8000) continue;
+          st.spawned = true;
+          const { pos, segment } = alongPath(path, r.cum, st.s);
+          const heading = geo.headingOf(path[segment - 1], path[segment]);
+          const stop = { lng: pos[0], lat: pos[1] };
+          const door = besideBus(stop, heading, 1.6 * enlarge, 1.5 * enlarge);
+          const add = (look: string, from: LngLat, to: LngLat, walkFrom: number, walkTo: number, gone: number, hideAtEnd: boolean) => {
+            const avatar = models.buildAvatar(lookForId(look));
+            const entity = layer.add({ object: avatar.root, lng: from.lng, lat: from.lat, heading: geo.headingOf([from.lng, from.lat], [to.lng, to.lat]) });
+            r.riders.push({ entity, avatar, from, to, walkFrom, walkTo, gone, hideAtEnd });
+          };
+          for (let i = 0; i < st.on; i++) {
+            const kerb = besideBus(stop, heading, (3.2 + 0.9 * (i % 2)) * enlarge, (i - 1) * 1.4 * enlarge);
+            const go = st.at + 300 + i * 500;
+            add(`${r.trip.id}:${st.s}:on${i}`, kerb, door, go, go + Math.min(st.dwell * 0.6, 1800), go + Math.min(st.dwell * 0.6, 1800), true);
+          }
+          for (let i = 0; i < st.off; i++) {
+            const away = besideBus(stop, heading, (5 + 1.2 * i) * enlarge, (i % 2 ? 2.5 : -2.5) * (1 + i) * enlarge);
+            const go = st.at + 400 + i * 450;
+            add(`${r.trip.id}:${st.s}:off${i}`, door, away, go, go + 2600, st.at + st.dwell + 6000, false);
+          }
+        }
+        r.riders = r.riders.filter((rider) => {
+          if (elapsed > rider.gone) {
+            layer.remove(rider.entity);
+            return false;
+          }
+          const f = Math.max(0, Math.min(1, (elapsed - rider.walkFrom) / Math.max(1, rider.walkTo - rider.walkFrom)));
+          const walking = f > 0 && f < 1;
+          const before = { lng: rider.entity.lng, lat: rider.entity.lat };
+          rider.entity.lng = rider.from.lng + (rider.to.lng - rider.from.lng) * f;
+          rider.entity.lat = rider.from.lat + (rider.to.lat - rider.from.lat) * f;
+          // Those getting off only appear as they step out of the door.
+          rider.entity.object.visible = rider.hideAtEnd ? f < 1 : elapsed >= rider.walkFrom;
+          const stepM = geo.distanceM([before.lng, before.lat], [rider.entity.lng, rider.entity.lat]);
+          models.animateAvatar(rider.avatar, { mode: "walk", phase: "idle", moving: walking ? 1 : 0, distance: stepM / enlarge }, dt, t);
+          return true;
+        });
       }
 
       function endRide() {
         if (!ride) return;
         for (const p of ride.parts) layer.remove(p);
+        for (const rider of ride.riders) layer.remove(rider.entity);
         ride = null;
         me.object.visible = true;
         map.setMinZoom(GAME_ZOOM); // back to the one zoom players play at
@@ -1701,7 +1871,9 @@ export function GameMap({
           setHud((h) => ({ ...h, street: null, services: { fuel: null, food: null } }));
         }
         const f = Math.min(1, (serverNow - r.departs) / Math.max(1, r.arrives - r.departs));
-        r.s = Math.max(1e-6, f * total);
+        const bus = r.way ? busAt(r, serverNow - r.departs) : null;
+        r.s = Math.max(1e-6, bus ? bus.s : f * total);
+        if (bus) moveRiders(r, serverNow - r.departs, dt, now / 1000);
         placeRide(r, r.s, dt, false);
         for (const p of r.parts) p.object.visible = true;
         me.object.visible = false;
@@ -1718,7 +1890,15 @@ export function GameMap({
           lead.scaleBy = PLANE_GROUND_SCALE + (PLANE_AIR_SCALE - PLANE_GROUND_SCALE) * k * k * (3 - 2 * k);
           r.plane.body.rotation.x = height < 1 ? (r.s < total / 2 ? -0.12 : 0.1) : 0;
         }
-        showRide(`${r.trip.mode === "plane" ? "Lands" : "Arrives"} in ${clock((r.arrives - serverNow) / 1000)} · ${geo.formatDistance(total - r.s)} to go`, false);
+        const left = clock((r.arrives - serverNow) / 1000);
+        if (bus?.at) {
+          const { name, off, on } = bus.at;
+          showRide(`Stopped at ${name} · ${off} getting off, ${on} getting on`, false);
+        } else if (r.trip.mode === "bus") {
+          showRide(`${bus?.next ? `Next stop: ${bus.next.name} · ` : ""}you get off at ${r.trip.to} in ${left}`, false);
+        } else {
+          showRide(`${r.trip.mode === "plane" ? "Lands" : "Arrives"} in ${left} · ${geo.formatDistance(total - r.s)} to go`, false);
+        }
         if (f >= 1 && !r.finishing && now - r.lastTry > 2000) void finishRide(now);
         return true;
       }
@@ -1741,12 +1921,12 @@ export function GameMap({
         const { data } = await supabase.rpc("finish_trip");
         if (disposed || ride !== r) return;
         const result = data as { ok: boolean; reason?: string; lng?: number; lat?: number; name?: string } | null;
-        if (result?.ok) arrive(result.lng!, result.lat!, result.name!, r.trip.mode);
-        else if (result?.reason === "no_trip") arrive(r.trip.toLng, r.trip.toLat, r.trip.to, r.trip.mode); // ended elsewhere (another tab)
+        if (result?.ok) arrive(result.lng!, result.lat!, result.name!, r.trip.mode, r.then);
+        else if (result?.reason === "no_trip") arrive(r.trip.toLng, r.trip.toLat, r.trip.to, r.trip.mode, r.then); // ended elsewhere (another tab)
         else r.finishing = false; // not quite yet (clocks differ) or a network hiccup: try again shortly
       }
 
-      function arrive(lng: number, lat: number, name: string, mode: TransitTrip["mode"]) {
+      function arrive(lng: number, lat: number, name: string, mode: TransitTrip["mode"], then: Place | null) {
         endRide();
         traveller.pos = { lng, lat };
         traveller.v = 0;
@@ -1761,7 +1941,15 @@ export function GameMap({
         lastSync = performance.now();
         void syncWorld();
         void refreshNear();
-        say(`${mode === "plane" ? "Landed" : "You've arrived"} at ${name}. You're on foot again.`);
+        const getOff = `${mode === "plane" ? "Landed" : mode === "bus" ? "Off the bus" : "You've arrived"} at ${name}.`;
+        const onFoot = then ? geo.distanceM([lng, lat], [then.lng, then.lat]) : 0;
+        if (then && onFoot > 30) {
+          // The rest of the way, on foot: mapped again from here.
+          say(`${getOff} ${then.name} is ${geo.formatDistance(onFoot)} away on foot: follow the blue line.`);
+          void planDirections({ lng: then.lng, lat: then.lat }, then.name, true);
+        } else {
+          say(`${getOff} You're on foot again.`);
+        }
       }
 
       async function resumeTrip() {
@@ -1829,7 +2017,7 @@ export function GameMap({
         const full = thinPath([[from.lng, from.lat], ...path, [to.lng, to.lat]]);
         const metres = Math.max(cumulativeOf(full).at(-1)!, straight);
         const wait = transitWaitS("bus", false);
-        return { mode: "bus", from, to: { id: to.id, name: to.name, code: null }, label: place.name, metres, fare: transitFare("bus", metres), seconds: wait + metres / transitSpeed("bus"), waitSeconds: wait, path: full };
+        return { mode: "bus", from, to: { id: to.id, name: to.name, code: null }, label: place.name, then: place, walkAfter: to.metres, metres, fare: transitFare("bus", metres), seconds: wait + metres / transitSpeed("bus"), waitSeconds: wait, path: full };
       }
 
       /** A train along the line to another station, or a flight to another airport. */
@@ -1869,7 +2057,12 @@ export function GameMap({
           return why[result.reason ?? ""] ?? "Couldn't board just now. Try again.";
         }
         setHud((h) => ({ ...h, coins: result.balance ?? h.coins }));
-        startRide(result.trip!, quote.label);
+        // Where to after getting off: the bus's place, or (a train or plane) wherever the player's directions led,
+        // unless they only led to this station or airport.
+        const fromStop: [number, number] = [quote.from.lng, quote.from.lat];
+        const headed = trip && geo.distanceM(fromStop, [trip.to.lng, trip.to.lat]) > 300 ? { name: trip.name, detail: "", lng: trip.to.lng, lat: trip.to.lat } : null;
+        endDirections(); // the old route is done with: the bus, train or plane takes over
+        startRide(result.trip!, quote.label, quote.then ?? headed);
         if (fastPass) countRelics();
         say(
           quote.mode === "plane"

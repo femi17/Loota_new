@@ -550,23 +550,22 @@ export function advance(
 }
 
 /**
- * The shortest way along the roads from where the player is to the road point
- * nearest `to`, as a line of [lng, lat] points (starting at the player), or
- * null if `to` isn't on this network (no loaded road within `withinM` of it)
- * or can't be reached on it. Used for nearby "Go to a
- * place" trips, so they follow exactly the roads the hunter walks on.
+ * The shortest way along the roads from where the player is to the nearest
+ * point to `to` that the roads can reach, as a line of [lng, lat] points
+ * (starting at the player), or null if no loaded road comes within `withinM`
+ * of `to` or none of those can be reached. The very nearest road may be cut
+ * off (an airport's airside paths, a gated estate), so the goal is the nearest
+ * one that can be reached. Used for "Go to a place" trips, so they follow
+ * exactly the roads the hunter travels on.
  */
 export function findPath(net: RoadNetwork, from: RoadPosition, to: LngLat, withinM = 60): Coord[] | null {
-  const goal = snapToNetwork(net, to, 0);
-  if (!goal) return null;
-  const start = positionOf(net, from);
-  const end = positionOf(net, goal);
   const local = projector(to);
-  const off = local(end);
-  if (Math.hypot(off.x, off.y) > withinM) return null; // only part of the map is loaded: that road isn't really near `to`
+  const nearest = snapToNetwork(net, to, 0);
+  if (!nearest) return null;
+  const off = local(positionOf(net, nearest));
+  if (Math.hypot(off.x, off.y) > withinM) return null; // only part of the map is loaded: no road really near `to`
+  const start = positionOf(net, from);
   const fromEdge = net.edges[from.edge];
-  const goalEdge = net.edges[goal.edge];
-  if (from.edge === goal.edge && canGo(fromEdge, goal.t >= from.t ? 1 : -1)) return [[start.lng, start.lat], [end.lng, end.lat]];
 
   // Dijkstra from both ends of the player's road piece.
   const dist = new Float64Array(net.nodes.length).fill(Infinity);
@@ -617,14 +616,32 @@ export function findPath(net: RoadNetwork, from: RoadPosition, to: LngLat, withi
     }
   }
 
-  // Arrive along the goal's road piece from whichever end is closer overall.
-  const viaA = canGo(goalEdge, 1) ? dist[goalEdge.a] + goal.t * goalEdge.length : Infinity;
-  const viaB = canGo(goalEdge, -1) ? dist[goalEdge.b] + (1 - goal.t) * goalEdge.length : Infinity;
-  if (!Number.isFinite(Math.min(viaA, viaB))) return null;
-  const path: Coord[] = [];
-  for (let node = viaA <= viaB ? goalEdge.a : goalEdge.b; node !== -1; node = prev[node]) {
-    path.push([net.nodes[node].lng, net.nodes[node].lat]);
+  // The goal: the reachable road point nearest `to`, arriving along its piece from the closer end.
+  let goal: { edge: number; t: number; d: number; direct: boolean; viaNode: number } | null = null;
+  for (let i = 0; i < net.edges.length; i++) {
+    const e = net.edges[i];
+    const a = local(net.nodes[e.a]);
+    const b = local(net.nodes[e.b]);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy || 1e-9;
+    const t = Math.max(0, Math.min(1, -(a.x * dx + a.y * dy) / len2));
+    const d = Math.hypot(a.x + dx * t, a.y + dy * t);
+    if (d > withinM || (goal && d >= goal.d)) continue;
+    if (i === from.edge && canGo(e, t >= from.t ? 1 : -1)) {
+      goal = { edge: i, t, d, direct: true, viaNode: -1 };
+      continue;
+    }
+    const viaA = canGo(e, 1) ? dist[e.a] + t * e.length : Infinity;
+    const viaB = canGo(e, -1) ? dist[e.b] + (1 - t) * e.length : Infinity;
+    if (!Number.isFinite(Math.min(viaA, viaB))) continue; // cut off from the player
+    goal = { edge: i, t, d, direct: false, viaNode: viaA <= viaB ? e.a : e.b };
   }
+  if (!goal) return null;
+  const end = positionOf(net, { edge: goal.edge, t: goal.t, dir: 1 });
+  if (goal.direct) return [[start.lng, start.lat], [end.lng, end.lat]];
+  const path: Coord[] = [];
+  for (let node = goal.viaNode; node !== -1; node = prev[node]) path.push([net.nodes[node].lng, net.nodes[node].lat]);
   path.reverse();
   return [[start.lng, start.lat], ...path, [end.lng, end.lat]];
 }

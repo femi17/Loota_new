@@ -2305,16 +2305,78 @@ export function GameMap({
         }
         return best;
       }
-      async function nearestSpot(kinds: Spot["kind"][]) {
-        const { data } = await supabase.rpc("places_near", { p_kinds: kinds, p_lng: traveller.pos.lng, p_lat: traveller.pos.lat, p_limit: 1 });
-        return ((data ?? []) as Spot[])[0] ?? null;
+      /**
+       * The nearest place of these kinds ahead of the hunter (never one they've passed):
+       * along their directions if they have some, otherwise in front of them. `behind`
+       * when nothing is ahead and the nearest one overall is offered instead.
+       */
+      /** How far along a route the point nearest `p` is, and how far `p` is from it (the whole route searched). */
+      function whereOnRoute(route: import("@/game/geo").Route, p: LngLat) {
+        const k = 111320 * Math.cos((p.lat * Math.PI) / 180);
+        let best = { s: 0, off: Infinity };
+        for (let i = 0; i < route.coords.length - 1; i++) {
+          const ax = (route.coords[i][0] - p.lng) * k, ay = (route.coords[i][1] - p.lat) * 110574;
+          const bx = (route.coords[i + 1][0] - p.lng) * k, by = (route.coords[i + 1][1] - p.lat) * 110574;
+          const dx = bx - ax, dy = by - ay;
+          const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1e-9)));
+          const off = Math.hypot(ax + dx * t, ay + dy * t);
+          if (off < best.off) best = { s: route.cum[i] + t * (route.cum[i + 1] - route.cum[i]), off };
+        }
+        return best;
+      }
+
+      async function spotAhead(kinds: Spot["kind"][]): Promise<{ spot: Spot; behind: boolean } | null> {
+        const at = { ...traveller.pos };
+        const route = trip?.route ?? null;
+        const k = 111320 * Math.cos((at.lat * Math.PI) / 180);
+        // Look around the hunter and further on, so places ahead are found even where many lie behind.
+        const forward = { x: Math.sin(traveller.heading), y: -Math.cos(traveller.heading) }; // east, north
+        const nowS = route ? directions.progressOn(route, at, trip!.segment).s : 0;
+        const onAhead = (m: number) => {
+          if (route) {
+            const { pos } = alongPath(route.coords, route.cum, Math.min(route.total, nowS + m));
+            return { lng: pos[0], lat: pos[1] };
+          }
+          return { lng: at.lng + (forward.x * m) / k, lat: at.lat + (forward.y * m) / 110574 };
+        };
+        const searches = [at, onAhead(1000), onAhead(2500)].map((p) =>
+          supabase.rpc("places_near", { p_kinds: kinds, p_lng: p.lng, p_lat: p.lat, p_limit: 20 }).then(({ data }) => (data ?? []) as Spot[]),
+        );
+        const found = new Map<number, Spot>();
+        for (const list of await Promise.all(searches)) for (const sp of list) found.set(sp.id, sp);
+        if (disposed || !found.size) return null;
+        const spots = [...found.values()].map((sp) => ({ ...sp, metres: Math.round(geo.distanceM([at.lng, at.lat], [sp.lng, sp.lat])) }));
+        let best: { spot: Spot; cost: number } | null = null;
+        for (const sp of spots) {
+          let cost: number;
+          if (route) {
+            // Along the way: further on the route, and not far off it (a detour counts double).
+            const on = whereOnRoute(route, sp);
+            if (on.s < nowS + 20 || on.off > 400) continue;
+            cost = on.s - nowS + 2 * on.off;
+          } else {
+            // In front: within 70° of the way the hunter faces.
+            const dx = (sp.lng - at.lng) * k;
+            const dy = (sp.lat - at.lat) * 110574;
+            const len = Math.hypot(dx, dy) || 1;
+            if ((dx * forward.x + dy * forward.y) / len < Math.cos((70 * Math.PI) / 180)) continue;
+            cost = sp.metres;
+          }
+          if (!best || cost < best.cost) best = { spot: sp, cost };
+        }
+        if (best) return { spot: best.spot, behind: false };
+        const nearest = spots.sort((a, b) => a.metres - b.metres)[0];
+        return { spot: nearest, behind: true };
       }
 
       /** Show a warning with directions to the nearest place of these kinds. */
       async function advise(key: string, text: string, kinds: Spot["kind"][] | null) {
-        const spot = kinds ? await nearestSpot(kinds) : null;
+        const found = kinds ? await spotAhead(kinds) : null;
         if (disposed) return;
-        const full = spot ? `${text} Nearest: ${spot.name}, ${geo.formatDistance(spot.metres)}.` : text;
+        const spot = found?.spot ?? null;
+        const full = found
+          ? `${text} ${found.behind ? "None ahead; the nearest is back the way you came" : trip ? "Next on your way" : "Next ahead"}: ${found.spot.name}, ${geo.formatDistance(found.spot.metres)}.`
+          : text;
         adviceKey = key;
         advicePlace = spot ? { name: spot.name, lng: spot.lng, lat: spot.lat } : null;
         setHud((h) => ({ ...h, advice: { key, text: full, place: advicePlace } }));

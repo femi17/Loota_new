@@ -14,6 +14,7 @@ const USE_LABEL: Record<RelicId, string | null> = {
   rain_charm: "Use",
   shield: null,
   fast_pass: null,
+  lockdown_orb: "Raise dome",
 };
 
 /** The player's bag: relics found while roaming, and using them. */

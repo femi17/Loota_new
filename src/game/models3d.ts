@@ -412,3 +412,27 @@ export function makeDestinationMarker() {
   group.visible = false;
   return { group, halo };
 }
+
+/**
+ * A Lockdown dome (design doc 7.2): a translucent purple half-sphere `radius`
+ * metres across its base, with a lighter lattice so its curve reads in 3D.
+ * Drawn at true size (add it to the map with scale 1).
+ */
+export function makeDome(radius: number) {
+  const group = new THREE.Group();
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 48, 24, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x9b5de5, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  const lattice = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xd8b8ff, transparent: true, opacity: 0.35, wireframe: true, depthWrite: false }),
+  );
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(radius, Math.max(2, radius / 250), 6, 96),
+    new THREE.MeshBasicMaterial({ color: 0xc89bff, transparent: true, opacity: 0.7 }),
+  );
+  rim.rotation.x = Math.PI / 2;
+  group.add(shell, lattice, rim);
+  return group;
+}

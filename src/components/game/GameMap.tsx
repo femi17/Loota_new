@@ -45,6 +45,11 @@ type Hud = {
   radar: { secondsLeft: number; relic: Pointer | null; key: Pointer | null } | null;
   /** It's raining where the hunter is (a Rain Charm); `slowed` if it slows them. */
   rain: { slowed: boolean } | null;
+  /**
+   * The Lockdown dome nearest the hunter, if any: minutes left, whether they're
+   * inside (free to move), and, when they're at its edge outside, the siege.
+   */
+  dome: { minutesLeft: number; key: number; inside: boolean; mine: boolean; siege: { attackers: number; needed: number } | null } | null;
 };
 
 /** A direction and rough distance (bearing: compass degrees). */
@@ -148,6 +153,8 @@ export function GameMap({
     eat: () => void;
     /** Use a relic from the bag; resolves to a message for the bag. */
     useRelic: (id: string) => Promise<string>;
+    /** Attack the dome the hunter is standing at the edge of. */
+    attackDome: () => void;
     follow: () => void;
     turn: (dir: -1 | 1) => void;
     /** False when not allowed (a motor vehicle on a one-way street). */
@@ -177,6 +184,7 @@ export function GameMap({
     hunters: 0,
     radar: null,
     rain: null,
+    dome: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -565,6 +573,9 @@ export function GameMap({
       let saved = { lng: startLng, lat: startLat };
       let saving = false;
       let lastSave = 0;
+      // Tell the server where the hunter starts (a new player has no saved spot until they
+      // first move), so domes, rain and radar know where they are straight away.
+      void supabase.rpc("save_position", { p_lng: startLng, p_lat: startLat, p_mode: startMode }).then(() => undefined);
 
       async function savePosition() {
         if (saving || geo.distanceM([saved.lng, saved.lat], [traveller.pos.lng, traveller.pos.lat]) < 5) return;
@@ -587,6 +598,8 @@ export function GameMap({
           traveller.mode = result.mode;
           await refreshVehicles();
           say(result.mode === "walk" ? "Your rental has ended, so you're on foot again." : `You're on your ${VEHICLES[result.mode].name.toLowerCase()}.`, true);
+        } else if (result.reason === "dome") {
+          say("A Lockdown dome keeps you out of this key area. Attack it with other hunters at its edge to break it.", true);
         } else {
           say("Your position was corrected to the last valid spot.", true);
         }
@@ -948,7 +961,7 @@ export function GameMap({
           for (const item of data.items) {
             if (onMap.has(item.id)) continue;
             const model = models.makeItemModel(item.kind, item.relic ? RELICS[item.relic].colour : undefined);
-            const entity = layer.add({ object: model.group, lng: item.lng, lat: item.lat, scaleBy: 1.7 });
+            const entity = layer.add({ object: model.group, lng: item.lng, lat: item.lat, scaleBy: item.relic === "lockdown_orb" ? 3.5 : 1.7 });
             onMap.set(item.id, { item, entity, model });
           }
           for (const id of [...onMap.keys()]) if (!visible.has(id) && !picking.has(id)) removeItem(id);
@@ -1055,6 +1068,7 @@ export function GameMap({
           if (foodHere) void eatHere(foodHere);
         },
         useRelic: (id) => useRelic(id),
+        attackDome: () => void attackDome(),
         turn(dir) {
           // Standing on a junction, or pressed just after going through one: take the turn there.
           if (network && onRoad) {
@@ -1245,8 +1259,15 @@ export function GameMap({
               no_vehicle: "Jerry Can fills your own motorbike or car. Get on it first (Vehicles), then use the can.",
               gone: "That relic has no uses left.",
               position: "Move a little first, then try again.",
+              no_hunt: "The Lockdown Orb works during a live hunt you've joined: it locks the area of your current key.",
+              final_key: "The Lockdown Orb can't be used on a hunt's final key.",
+              dome_up: "A dome is already up in this hunt. Only one at a time.",
             }[r.reason ?? ""] ?? "Couldn't use that relic."
           );
+        }
+        if (r.relic === "lockdown_orb") {
+          lastDomes = 0;
+          return "Dome raised over your key area for 20 minutes! Hunters outside can't get in unless enough of them attack it together. The Orb now hides somewhere new.";
         }
         if (r.relic === "second_wind") {
           traveller.energy = Math.min(100, traveller.energy + (r.energy ?? 50));
@@ -1303,8 +1324,112 @@ export function GameMap({
         }
       }
 
-      /** Radar and weather, checked now and then. */
+      // Lockdown domes near the hunter (fetched every 10 s).
+      type Dome = {
+        id: string;
+        lng: number;
+        lat: number;
+        radiusM: number;
+        endsAt: string;
+        needed: number;
+        key: number;
+        inside: boolean;
+        mine: boolean;
+        attackers: number;
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+      };
+      const domes = new Map<string, Dome>();
+      let lastDomes = 0;
+      let lastDomeWarning = 0;
+      let lastSiegeHit = 0;
+
+      async function refreshDomes() {
+        const { data } = await supabase.rpc("domes_near");
+        const list = (data ?? []) as Omit<Dome, "entity">[];
+        if (disposed) return;
+        if (container.current) container.current.dataset.domes = String(list.length); // for checking
+        const seen = new Set(list.map((d) => d.id));
+        for (const [id, d] of domes) {
+          if (seen.has(id)) continue;
+          layer.remove(d.entity);
+          domes.delete(id);
+          say("A Lockdown dome has come down.");
+        }
+        for (const d of list) {
+          const known = domes.get(d.id);
+          if (known) Object.assign(known, d);
+          else domes.set(d.id, { ...d, entity: layer.add({ object: models.makeDome(d.radiusM), lng: d.lng, lat: d.lat, scale: 1 }) });
+        }
+      }
+
+      /** Would moving from `a` to `b` take an outsider into a dome? */
+      function domeInTheWay(a: LngLat, b: LngLat) {
+        for (const d of domes.values()) {
+          if (d.inside || new Date(d.endsAt).getTime() < Date.now()) continue;
+          const before = geo.distanceM([a.lng, a.lat], [d.lng, d.lat]);
+          const after = geo.distanceM([b.lng, b.lat], [d.lng, d.lat]);
+          if (after <= d.radiusM && before > d.radiusM) return d;
+        }
+        return null;
+      }
+
+      /** The dome the hunter is nearest, for the display: inside it, or close enough to its edge to attack. */
+      function domeStatus(): Hud["dome"] {
+        let best: Dome | null = null;
+        let bestGap = Infinity;
+        for (const d of domes.values()) {
+          const gap = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [d.lng, d.lat]) - d.radiusM;
+          if (gap < bestGap) {
+            bestGap = gap;
+            best = d;
+          }
+        }
+        if (!best || bestGap > 1500) return null;
+        const minutesLeft = Math.max(0, Math.ceil((new Date(best.endsAt).getTime() - Date.now()) / 60000));
+        const atEdge = !best.inside && bestGap > -5 && bestGap <= 200;
+        return {
+          minutesLeft,
+          key: best.key,
+          inside: best.inside,
+          mine: best.mine,
+          siege: atEdge ? { attackers: best.attackers, needed: best.needed } : null,
+        };
+      }
+
+      async function attackDome() {
+        const now = performance.now();
+        if (now - lastSiegeHit < 1000) return;
+        lastSiegeHit = now;
+        let target: Dome | null = null;
+        for (const d of domes.values()) {
+          const gap = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [d.lng, d.lat]) - d.radiusM;
+          if (!d.inside && gap <= 200) target = d;
+        }
+        if (!target) return;
+        await savePosition(); // the server checks the attacker is at the edge
+        const { data } = await supabase.rpc("siege_hit", { p_dome: target.id });
+        const r = data as { ok: boolean; reason?: string; broken?: boolean; attackers?: number; needed?: number } | null;
+        if (!r || disposed) return;
+        if (!r.ok) {
+          say(r.reason === "far" ? "Get to the edge of the dome to attack it." : "That dome is already down.");
+          if (r.reason === "gone") void refreshDomes();
+          return;
+        }
+        target.attackers = r.attackers ?? target.attackers;
+        if (r.broken) {
+          say("The dome is broken! The key area is open again.", true);
+          void refreshDomes();
+        } else {
+          say(`Attacking the dome: ${r.attackers} of ${r.needed} hunters attacking together. Keep at it and call others over!`);
+        }
+      }
+
+      /** Radar, weather and domes, checked now and then. */
       function relicTick(now: number) {
+        if (now - lastDomes > 10000) {
+          lastDomes = now;
+          void refreshDomes();
+        }
         if (radarUntil > Date.now() && now - lastRadarPing > 5000) {
           lastRadarPing = now;
           void pingRadar();
@@ -1556,12 +1681,23 @@ export function GameMap({
           if (distance > 0) {
             // Straight on at junctions, unless the player asked to turn.
             const aim = roads.positionOf(network, onRoad).heading;
+            const before = onRoad;
             const { position, deadEnd, turned, passed } = roads.advance(network, onRoad, distance, aim, pendingTurn);
-            if (turned) setTurn(0);
-            if (passed) justPassed = passed;
-            else if (justPassed) justPassed.metresSince += distance;
-            onRoad = position;
-            if (deadEnd) {
+            const blockedBy = domeInTheWay(traveller.pos, roads.positionOf(network, position));
+            if (blockedBy) {
+              // A Lockdown dome: outsiders stop at its edge.
+              traveller.v = 0;
+              if (now - lastDomeWarning > 6000) {
+                lastDomeWarning = now;
+                const left = Math.max(1, Math.ceil((new Date(blockedBy.endsAt).getTime() - Date.now()) / 60000));
+                say(`A Lockdown dome blocks the way for ${left} more min. Attack it with other hunters to break it, or wait it out.`, true);
+              }
+            }
+            if (turned && !blockedBy) setTurn(0);
+            if (passed && !blockedBy) justPassed = passed;
+            else if (justPassed && !blockedBy) justPassed.metresSince += distance;
+            onRoad = blockedBy ? before : position;
+            if (deadEnd && !blockedBy) {
               traveller.v = 0;
               if (now - lastDeadEndCheck > 2000) {
                 // Often just the edge of what's loaded: reload the roads and keep going if they continue.
@@ -1661,6 +1797,7 @@ export function GameMap({
           const radarLeft = Math.max(0, Math.round((radarUntil - Date.now()) / 1000));
           const turnTo = (p: Pointer | null) => (p ? { bearing: Math.round(p.bearing - map.getBearing()), metres: p.metres } : null);
           const radar = radarLeft > 0 ? { secondsLeft: radarLeft, relic: turnTo(radarSeen.relic), key: turnTo(radarSeen.key) } : null;
+          const dome = domeStatus();
           const speedKmh = Math.round((traveller.v / movement.TIME_SCALE) * 3.6);
 
           // Point to the closest find, relative to the screen (the camera turns with the hunter).
@@ -1683,9 +1820,10 @@ export function GameMap({
             h.nearest?.metres === nearest?.metres &&
             h.nearest?.angle === nearest?.angle &&
             h.hunters === hunters &&
-            JSON.stringify(h.radar) === JSON.stringify(radar)
+            JSON.stringify(h.radar) === JSON.stringify(radar) &&
+            JSON.stringify(h.dome) === JSON.stringify(dome)
               ? h
-              : { ...h, energy, speedKmh, nearest, hunters, radar },
+              : { ...h, energy, speedKmh, nearest, hunters, radar, dome },
           );
         }
       };
@@ -1961,6 +2099,14 @@ export function GameMap({
             </span>
           </div>
         )}
+        {hud.dome && (
+          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-[#3A1E5C] px-3 text-sm ring-1 ring-[#C89BFF]" aria-label="Lockdown dome">
+            <span aria-hidden="true">🔒</span>
+            {hud.dome.inside
+              ? `${hud.dome.mine ? "Your dome" : "Inside a dome"} over Key ${hud.dome.key} · ${hud.dome.minutesLeft} min`
+              : `Dome over Key ${hud.dome.key} · ${hud.dome.minutesLeft} min`}
+          </div>
+        )}
         {hud.rain && (
           <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-[#173B5C] px-3 text-sm" aria-label="Rain">
             <span aria-hidden="true">🌧</span>
@@ -2099,6 +2245,21 @@ export function GameMap({
           }}
           onClose={() => setGarage(null)}
         />
+      )}
+
+      {/* The siege: at a dome's edge, hunters attack it together to break it. */}
+      {hud.dome?.siege && (
+        <button
+          type="button"
+          onClick={() => actions.current?.attackDome()}
+          className="absolute bottom-[160px] left-1/2 flex -translate-x-1/2 flex-col items-center rounded-2xl bg-[#9B5DE5] px-6 py-3 font-display text-lg font-extrabold text-paper shadow-lg active:scale-95"
+          style={{ marginBottom: "env(safe-area-inset-bottom)" }}
+        >
+          ⚔ Attack the dome
+          <span className="text-xs font-semibold text-paper/85">
+            {hud.dome.siege.attackers} of {hud.dome.siege.needed} hunters attacking together
+          </span>
+        </button>
       )}
 
       {/* Running on foot or pedalling harder; motorbikes and cars have no sprint. */}

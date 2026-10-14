@@ -10,21 +10,25 @@ export const TIME_SCALE = 12;
 
 export type Mode = "walk" | "bicycle" | "motorbike" | "car";
 
-/** Speeds match max_travel_speed() in the database. `drain` is energy used per second at full pace. */
+/**
+ * Speeds match max_travel_speed() and base_speed() in the database. `drain` is
+ * energy used per second at full pace (so per metre it's the same at any speed,
+ * as the server counts it: energy_per_m); riding a motor vehicle takes none.
+ */
 export const MODES: Record<Mode, { label: string; kmh: number; profile: "foot" | "bike" | "car"; drain: number }> = {
-  walk: { label: "Walk", kmh: 5, profile: "foot", drain: 1.0 },
-  bicycle: { label: "Bicycle", kmh: 16, profile: "bike", drain: 1.4 },
-  motorbike: { label: "Motorbike", kmh: 35, profile: "car", drain: 0.25 },
-  car: { label: "Car", kmh: 45, profile: "car", drain: 0.15 },
+  walk: { label: "Walk", kmh: 5, profile: "foot", drain: 0.35 },
+  bicycle: { label: "Bicycle", kmh: 16, profile: "bike", drain: 0.5 },
+  motorbike: { label: "Motorbike", kmh: 35, profile: "car", drain: 0 },
+  car: { label: "Car", kmh: 45, profile: "car", drain: 0 },
 };
 
 const SPRINT_SPEED = 1.6; // sprint is 60% faster…
 const SPRINT_DRAIN = 2.5; // …and uses energy 2.5× as fast
-const REST_REGEN = 6; // energy per second while standing still
+/** Energy per second while standing still, and while resting at a chill spot (idle_regen, rest_regen). */
+export const IDLE_REGEN = 0.25;
+export const REST_REGEN = 2;
 const TIRED_AT = 20; // below this, you slow down
 const TIRED_SPEED = 0.6;
-const FAINT_SECONDS = 4;
-const RECOVERED_ENERGY = 35;
 const CELEBRATE_SECONDS = 3.5;
 const ARRIVE_WITHIN_M = 1.5;
 
@@ -43,12 +47,14 @@ export type Traveller = {
   energy: number;
   phase: Phase;
   phaseUntil: number;
-  /** Below 1 when held back, e.g. pushing a motorbike that's out of fuel. */
+  /** Below 1 when held back, e.g. pushing a bicycle with a flat tyre. */
   speedFactor: number;
+  /** Resting at a chill spot: energy comes back fast until the hunter moves. */
+  resting: boolean;
 };
 
 export type Controls = { go: boolean; sprint: boolean };
-export type StepEvent = "fainted" | "recovered";
+export type StepEvent = "fainted";
 
 /** Sprinting is running on foot or pedalling harder; motorbikes and cars have no sprint. */
 export function canSprint(mode: Mode): boolean {
@@ -61,7 +67,7 @@ export function maxSpeed(mode: Mode): number {
 }
 
 export function createTraveller(pos: LngLat, mode: Mode = "walk"): Traveller {
-  return { pos: { ...pos }, heading: Math.PI, mode, route: null, s: 0, v: 0, energy: 100, phase: "idle", phaseUntil: 0, speedFactor: 1 };
+  return { pos: { ...pos }, heading: Math.PI, mode, route: null, s: 0, v: 0, energy: 100, phase: "idle", phaseUntil: 0, speedFactor: 1, resting: false };
 }
 
 /** Full-pace speed for a mode, in on-screen metres per second. */
@@ -91,13 +97,8 @@ export function step(
   const base = baseSpeed(t.mode);
   const sprinting = controls.sprint && canSprint(t.mode);
 
-  if (t.phase !== "idle" && now >= t.phaseUntil) {
-    if (t.phase === "fainted") {
-      t.energy = RECOVERED_ENERGY;
-      events.push("recovered");
-    }
-    t.phase = "idle";
-  }
+  // A celebration ends by itself; fainting lasts until the ambulance has been (the game clears it).
+  if (t.phase === "celebrate" && now >= t.phaseUntil) t.phase = "idle";
 
   let target = 0;
   if (t.phase === "idle" && canMove && (controls.go || controls.sprint)) {
@@ -108,16 +109,17 @@ export function step(
   if (target === 0 && t.v < 0.3) t.v = 0;
 
   if (t.v > 0.5) {
+    t.resting = false;
     t.energy -= MODES[t.mode].drain * (sprinting ? SPRINT_DRAIN : 1) * (t.v / base) * dt;
-    if (t.energy <= 0) {
+    if (t.energy <= 0 && MODES[t.mode].drain > 0) {
       t.energy = 0;
       t.v = 0;
       t.phase = "fainted";
-      t.phaseUntil = now + FAINT_SECONDS;
+      t.phaseUntil = Infinity;
       events.push("fainted");
     }
   } else if (t.phase === "idle") {
-    t.energy = Math.min(100, t.energy + REST_REGEN * dt);
+    t.energy = Math.min(100, t.energy + (t.resting ? REST_REGEN : IDLE_REGEN) * dt);
   }
 
   return { distance: t.v * dt, events };

@@ -7,7 +7,7 @@ import { lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
-import { MEAL_ENERGY, MEAL_PRICE, SERVICE_RADIUS_M, VEHICLES, type VehicleKind } from "@/game/economy";
+import { MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
@@ -48,8 +48,8 @@ type Hud = {
   nearest: { metres: number; angle: number } | null;
   /** Turn waiting for the next junction: −1 left, +1 right. */
   turn: -1 | 0 | 1;
-  /** What you're riding: fuel (motor vehicles you own) and the rental meter. */
-  vehicle: { kind: VehicleKind; source: "owned" | "rented"; fuel: number | null; meter: string | null } | null;
+  /** What you're riding: fuel and engine (motor vehicles you own), tyres (your bicycle), and the rental meter. */
+  vehicle: { kind: VehicleKind; source: "owned" | "rented"; fuel: number | null; tyre: number | null; engine: number | null; meter: string | null } | null;
   /** Names of the petrol station and place to eat within reach, if any. */
   services: { fuel: string | null; food: string | null };
   /** Name of the street the hunter is on, if it has one. */
@@ -73,7 +73,18 @@ type Hud = {
   ride: { icon: string; title: string; status: string; canCancel: boolean } | null;
   /** At a bus stop, station or airport: what the Transport button offers. */
   stopHere: { icon: string; label: string } | null;
+  /** What can be done where the player stands: eat, rest, refuel, kegs, tyres, repairs. */
+  actions: { id: LimitAction; label: string }[];
+  /** A warning that needs acting on (tired, fuel low, soft tyres, a worn engine), with the nearest place that helps. */
+  advice: { key: string; text: string; place: { name: string; lng: number; lat: number } | null } | null;
+  /** Being looked after: the ambulance, the hospital, a mechanic on the way. */
+  care: { icon: string; title: string; status: string } | null;
+  /** The fuel keg the player carries, if any. */
+  keg: { fuel: number; usesLeft: number } | null;
 };
+
+/** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
+type LimitAction = "eat" | "rest" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic";
 
 /** A direction and rough distance (bearing: compass degrees). */
 type Pointer = { bearing: number; metres: number };
@@ -189,6 +200,11 @@ export function GameMap({
     goTo: (place: Place) => void;
     /** Get off a bus, train or plane that hasn't left yet (fare refunded). */
     cancelTrip: () => void;
+    /** Do something where the player stands (eat, rest, refuel, kegs, tyres, repairs). */
+    act: (id: LimitAction) => void;
+    /** Directions to the place a warning points to, or dismiss the warning. */
+    followAdvice: () => void;
+    dismissAdvice: () => void;
   } | null>(null);
   const huntActions = useRef<HuntActions | null>(null);
   const [failed, setFailed] = useState(false);
@@ -214,6 +230,10 @@ export function GameMap({
     dome: null,
     ride: null,
     stopHere: null,
+    actions: [],
+    advice: null,
+    care: null,
+    keg: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -611,17 +631,31 @@ export function GameMap({
       // first move), so domes, rain and radar know where they are straight away.
       void supabase.rpc("save_position", { p_lng: startLng, p_lat: startLat, p_mode: startMode }).then(() => undefined);
 
-      async function savePosition() {
-        if (saving || geo.distanceM([saved.lng, saved.lat], [traveller.pos.lng, traveller.pos.lat]) < 5) return;
+      type SaveResult = {
+        ok: boolean;
+        lng: number;
+        lat: number;
+        reason?: string;
+        mode?: Mode;
+        fuel?: number | null;
+        tyre?: number | null;
+        engine?: number | null;
+        energy?: number;
+        fainted?: boolean;
+        stopped?: "fuel" | "broken" | null;
+      };
+      /** `force`: save even without having moved (e.g. to have the server confirm a faint). */
+      async function savePosition(force = false) {
+        if (saving || (!force && geo.distanceM([saved.lng, saved.lat], [traveller.pos.lng, traveller.pos.lat]) < 5)) return;
         saving = true;
         const sent = { ...traveller.pos };
         const { data, error } = await supabase.rpc("save_position", { p_lng: sent.lng, p_lat: sent.lat, p_mode: traveller.mode });
         saving = false;
         if (disposed || error || !data) return;
-        const result = data as { ok: boolean; lng: number; lat: number; reason?: string; mode?: Mode; fuel?: number | null };
+        const result = data as SaveResult;
         saved = { lng: result.lng, lat: result.lat };
         if (result.ok) {
-          if (typeof result.fuel === "number") onFuel(result.fuel);
+          onSaved(result);
           return;
         }
         // Go back to the last accepted spot.
@@ -634,6 +668,12 @@ export function GameMap({
           say(result.mode === "walk" ? "Your rental has ended, so you're on foot again." : `You're on your ${VEHICLES[result.mode].name.toLowerCase()}.`, true);
         } else if (result.reason === "trip") {
           void resumeTrip();
+          return;
+        } else if (result.reason === "fainted") {
+          faint();
+          return;
+        } else if (result.reason === "hospital") {
+          void loadCondition();
           return;
         } else if (result.reason === "dome") {
           say("A Lockdown dome keeps you out of this key area. Attack it with other hunters at its edge to break it.", true);
@@ -649,11 +689,20 @@ export function GameMap({
       document.addEventListener("visibilitychange", saveOnHide);
 
       // ---- Vehicles: ride, rent or buy; fuel and food ----------------------
-      type VehicleRow = { kind: VehicleKind; fuel: number; lng: number; lat: number; in_use: boolean };
+      type VehicleRow = {
+        kind: VehicleKind;
+        fuel: number;
+        tyre: number;
+        engine: number;
+        broken_at: string | null;
+        repair_ready_at: string | null;
+        lng: number;
+        lat: number;
+        in_use: boolean;
+      };
       let owned: VehicleRow[] = [];
       let rental: { kind: VehicleKind; startedAt: number; rate: number } | null = null;
       let busy = false;
-      let fuelWarning: "none" | "low" | "empty" = "none";
       const parked = new Map<VehicleKind, import("@/game/ThreeMapLayer").MapEntity>();
 
       const setBusy = (value: boolean) => {
@@ -668,38 +717,35 @@ export function GameMap({
         return `${minutes} min · ${minutes * rental.rate} coins`;
       };
 
-      /** Reflect what the player is riding in the display (and push an empty motorbike at walking pace). */
+      /** Reflect what the player is riding in the display (and push a bicycle with a flat at walking pace). */
       function showVehicle() {
         const kind = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
         const mine = ownInUse();
         const fuel = mine && mine.kind !== "bicycle" ? mine.fuel : null;
-        fuelFactor = mine && fuel !== null && fuel <= 0 ? movement.MODES.walk.kmh / movement.MODES[mine.kind].kmh : 1;
+        const tyre = mine && mine.kind === "bicycle" ? mine.tyre : null;
+        const engine = mine && mine.kind !== "bicycle" ? mine.engine : null;
+        // A flat tyre: pushing the bicycle at walking pace; soft tyres: a little slower.
+        vehicleFactor = tyre === null ? 1 : tyre <= 0 ? movement.MODES.walk.kmh / movement.MODES.bicycle.kmh : tyre < 20 ? 0.85 : 1;
         applySpeed();
         setHud((h) => ({
           ...h,
           mode: traveller.mode,
-          vehicle: kind ? { kind, source: rental ? "rented" : "owned", fuel, meter: meterText() } : null,
+          vehicle: kind ? { kind, source: rental ? "rented" : "owned", fuel, tyre, engine, meter: meterText() } : null,
         }));
       }
 
-      // What holds the traveller back: an empty tank (pushing) and rain (walkers and bikes).
-      let fuelFactor = 1;
+      // What holds the traveller back: soft or flat tyres, and rain (walkers and bikes).
+      let vehicleFactor = 1;
       let weatherFactor = 1;
       function applySpeed() {
-        traveller.speedFactor = fuelFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : 1);
+        traveller.speedFactor = vehicleFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : 1);
       }
 
+      /** New fuel for the vehicle the player is on (a save, a refuel, a Jerry Can relic). */
       function onFuel(fuel: number) {
         const mine = ownInUse();
         if (!mine) return;
         mine.fuel = fuel;
-        if (fuel <= 0 && fuelWarning !== "empty") {
-          fuelWarning = "empty";
-          say(`Out of fuel! You're pushing your ${vehicleName(mine.kind)} at walking pace. Find a petrol station.`, true);
-        } else if (fuel > 0 && fuel < 15 && fuelWarning === "none") {
-          fuelWarning = "low";
-          say("Fuel is low. A Refuel button appears when you're at a petrol station.", true);
-        }
         showVehicle();
       }
 
@@ -727,7 +773,7 @@ export function GameMap({
 
       async function refreshVehicles() {
         const [{ data: vehicles }, { data: rentals }] = await Promise.all([
-          supabase.from("player_vehicles").select("kind, fuel, lng, lat, in_use"),
+          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, lng, lat, in_use"),
           supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
         ]);
         if (disposed) return;
@@ -780,7 +826,9 @@ export function GameMap({
               void planDirections({ lng: started.lng, lat: started.lat }, `your ${vehicleName(kind)}`, true);
               say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Follow the blue line to it, then open Vehicles and ride it.`, true);
             } else if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
-            else if (started?.reason === "fuel") say(`Your ${vehicleName(kind)} has no fuel. Rent one, or bring fuel later.`, true);
+            else if (started?.reason === "fuel") say(`Your ${vehicleName(kind)} has no fuel. Bring fuel in a keg from a petrol station and pour it in.`, true);
+            else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the button appears next to it).`, true);
+            else if (started?.reason === "repairing") say(`The mechanic is still working on your ${vehicleName(kind)}. Try again in a moment.`, true);
             else say("Couldn't get on. Please try again.", true);
             afterModeChange();
             return;
@@ -788,7 +836,6 @@ export function GameMap({
 
           traveller.mode = kind;
           saved = { ...traveller.pos };
-          fuelWarning = "none";
           const balance = started.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           await refreshVehicles();
@@ -842,7 +889,7 @@ export function GameMap({
           }
           const mine = ownInUse();
           if (mine && r.fuel != null) mine.fuel = r.fuel;
-          fuelWarning = "none";
+          warned.fuel = 100;
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           showVehicle();
@@ -857,12 +904,12 @@ export function GameMap({
         setBusy(true);
         try {
           const { data } = await supabase.rpc("buy_meal");
-          const r = data as { ok: boolean; reason?: string; energy?: number; balance?: number } | null;
+          const r = data as { ok: boolean; reason?: string; energy?: number; now?: number; balance?: number } | null;
           if (!r?.ok) {
-            say(`A meal costs ${MEAL_PRICE} coins. Pick up coins on the roads, or rest for free.`, true);
+            say(r?.reason === "not_here" ? "Meals are sold at places to eat." : `A meal costs ${MEAL_PRICE} coins. Rest at a chill spot for free instead.`, true);
             return;
           }
-          traveller.energy = Math.min(100, traveller.energy + (r.energy ?? MEAL_ENERGY));
+          traveller.energy = r.now ?? Math.min(100, traveller.energy + (r.energy ?? MEAL_ENERGY));
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           say(`You ate at ${place}: +${r.energy ?? MEAL_ENERGY} energy.`);
@@ -871,7 +918,6 @@ export function GameMap({
         }
       }
 
-      let foodHere: string | null = null;
 
       /**
        * The street the hunter is on, from the map's own street names. The hunter
@@ -924,35 +970,6 @@ export function GameMap({
       }
 
       /** Petrol stations and places to eat within reach, from the map's own points of interest. */
-      function scanServices() {
-        const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
-        let fuel: string | null = null;
-        let food: string | null = null;
-        let fuelD = SERVICE_RADIUS_M;
-        let foodD = SERVICE_RADIUS_M;
-        for (const f of map.querySourceFeatures("openmaptiles", { sourceLayer: "poi" })) {
-          if (f.geometry.type !== "Point") continue;
-          const cls = String(f.properties?.class ?? "");
-          const isFuel = cls === "fuel";
-          const isFood = cls === "fast_food" || cls === "restaurant" || cls === "cafe";
-          if (!isFuel && !isFood) continue;
-          const [lng, lat] = f.geometry.coordinates as [number, number];
-          const d = geo.distanceM(here, [lng, lat]);
-          const name = f.properties?.name ? String(f.properties.name) : isFuel ? "the petrol station" : "this place";
-          if (isFuel && d < fuelD) {
-            fuelD = d;
-            fuel = name;
-          }
-          if (isFood && d < foodD) {
-            foodD = d;
-            food = name;
-          }
-        }
-        foodHere = food;
-        foodHere = food;
-        setHud((h) => (h.services.fuel === fuel && h.services.food === food ? h : { ...h, services: { fuel, food } }));
-      }
-
       void refreshVehicles();
 
       // ---- Things to find while roaming ------------------------------------
@@ -1102,7 +1119,7 @@ export function GameMap({
         },
         refuel: () => void refuelHere(),
         eat() {
-          if (foodHere) void eatHere(foodHere);
+          void act("eat");
         },
         useRelic: (id) => useRelic(id),
         attackDome: () => void attackDome(),
@@ -1138,6 +1155,15 @@ export function GameMap({
         },
         where: () => ({ ...traveller.pos }),
         cancelTrip: () => void cancelTrip(),
+        act: (id) => void act(id),
+        followAdvice: () => {
+          const place = advicePlace;
+          if (place) void planDirections({ lng: place.lng, lat: place.lat }, place.name);
+        },
+        dismissAdvice: () => {
+          advicePlace = null;
+          setHud((h) => ({ ...h, advice: null }));
+        },
         goTo(place) {
           void planDirections({ lng: place.lng, lat: place.lat }, place.name);
         },
@@ -2159,6 +2185,526 @@ export function GameMap({
         where: () => ({ ...traveller.pos }),
       });
 
+      // ---- Limits: energy, fuel, tyres, engines; fainting and the ambulance --------
+      // The server keeps the truth (save_position counts energy and wear; see the
+      // travel_restraints migration). The game warns early, points to the nearest
+      // place that helps, and offers what can be done where the player stands.
+      type Spot = { id: number; kind: "fuel" | "hospital" | "eat" | "rest" | "tyres" | "mechanic"; name: string; lng: number; lat: number; metres: number };
+      const SPOT_HERE_M = 60; // the server allows 80
+      let spots: Spot[] = [];
+      let spotsAt = -Infinity;
+      let spotsFrom: LngLat | null = null;
+      let keg: { fuel: number; usesLeft: number } | null = null;
+      const warned = { energy: 100, fuel: 100, tyre: 100, engine: 100 }; // the level last warned at (100: not warned)
+      let advicePlace: { name: string; lng: number; lat: number } | null = null;
+      let adviceKey = "";
+
+      /** The places around the hunter (for "you're at a petrol station" and the like). */
+      async function refreshSpots() {
+        const from = { ...traveller.pos };
+        spotsAt = performance.now();
+        spotsFrom = from;
+        const { data } = await supabase.rpc("places_near", {
+          p_kinds: ["fuel", "eat", "rest", "tyres", "mechanic", "hospital"],
+          p_lng: from.lng,
+          p_lat: from.lat,
+          p_limit: 20,
+        });
+        if (disposed || !data) return;
+        spots = data as Spot[];
+        computeActions();
+      }
+      function spotsTick(now: number) {
+        if (ride || visit || now - spotsAt < 3000) return;
+        const moved = spotsFrom ? geo.distanceM([spotsFrom.lng, spotsFrom.lat], [traveller.pos.lng, traveller.pos.lat]) : Infinity;
+        if (moved > 25 || now - spotsAt > 30000) void refreshSpots();
+      }
+      /** The place of these kinds the hunter is at, if any. */
+      function spotHere(kinds: Spot["kind"][]) {
+        const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        let best: Spot | null = null;
+        let bestM = SPOT_HERE_M;
+        for (const sp of spots) {
+          if (!kinds.includes(sp.kind)) continue;
+          const m = geo.distanceM(at, [sp.lng, sp.lat]);
+          if (m < bestM) {
+            bestM = m;
+            best = sp;
+          }
+        }
+        return best;
+      }
+      async function nearestSpot(kinds: Spot["kind"][]) {
+        const { data } = await supabase.rpc("places_near", { p_kinds: kinds, p_lng: traveller.pos.lng, p_lat: traveller.pos.lat, p_limit: 1 });
+        return ((data ?? []) as Spot[])[0] ?? null;
+      }
+
+      /** Show a warning with directions to the nearest place of these kinds. */
+      async function advise(key: string, text: string, kinds: Spot["kind"][] | null) {
+        const spot = kinds ? await nearestSpot(kinds) : null;
+        if (disposed) return;
+        const full = spot ? `${text} Nearest: ${spot.name}, ${geo.formatDistance(spot.metres)}.` : text;
+        adviceKey = key;
+        advicePlace = spot ? { name: spot.name, lng: spot.lng, lat: spot.lat } : null;
+        setHud((h) => ({ ...h, advice: { key, text: full, place: advicePlace } }));
+        say(full, true);
+      }
+      function clearAdvice(key: string) {
+        if (adviceKey !== key) return;
+        adviceKey = "";
+        advicePlace = null;
+        setHud((h) => (h.advice?.key === key ? { ...h, advice: null } : h));
+      }
+
+      /** Warnings as energy, fuel, tyres and engines run down (once per level, again after recovering). */
+      function checkLimits() {
+        if (visit || ride) return;
+        const energy = traveller.energy;
+        if (traveller.mode === "walk" || traveller.mode === "bicycle") {
+          if (energy < 25 && warned.energy > 25) {
+            warned.energy = 25;
+            void advise("energy", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park or a place to eat, or have a meal.", ["rest", "eat"]);
+          } else if (energy < 50 && warned.energy > 50) {
+            warned.energy = 50;
+            void advise("energy", "You're getting tired. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.", ["rest", "eat"]);
+          }
+        }
+        if (energy > 60 && warned.energy < 100) {
+          warned.energy = 100;
+          clearAdvice("energy");
+        }
+        const mine = ownInUse();
+        if (mine && mine.kind !== "bicycle") {
+          if (mine.fuel < 10 && warned.fuel > 10) {
+            warned.fuel = 10;
+            void advise("fuel", `Fuel almost gone! If the tank runs dry your ${vehicleName(mine.kind)} stops, and you'll have to carry fuel to it in a keg.`, ["fuel"]);
+          } else if (mine.fuel < 25 && warned.fuel > 25) {
+            warned.fuel = 25;
+            void advise("fuel", "Fuel is getting low. Fill up at a petrol station.", ["fuel"]);
+          }
+          if (mine.fuel > 40 && warned.fuel < 100) {
+            warned.fuel = 100;
+            clearAdvice("fuel");
+          }
+          if (mine.engine < 30 && warned.engine > 30) {
+            warned.engine = 30;
+            void advise("engine", `Your ${vehicleName(mine.kind)}'s engine needs a service: worn engines break down. A mechanic can service it (60 coins).`, ["mechanic"]);
+          }
+          if (mine.engine > 50 && warned.engine < 100) {
+            warned.engine = 100;
+            clearAdvice("engine");
+          }
+        }
+        if (mine?.kind === "bicycle") {
+          if (mine.tyre <= 0 && warned.tyre > 0) {
+            warned.tyre = 0;
+            void advise("tyre", "Flat tyre! You're pushing your bicycle at walking pace. A vulcanizer or petrol station can fix it (20 coins).", ["tyres", "fuel"]);
+          } else if (mine.tyre < 40 && warned.tyre > 40) {
+            warned.tyre = 40;
+            void advise("tyre", "Your tyres are getting soft. Pump them at a vulcanizer or petrol station (5 coins).", ["tyres", "fuel"]);
+          }
+          if (mine.tyre > 60 && warned.tyre < 100) {
+            warned.tyre = 100;
+            clearAdvice("tyre");
+          }
+        }
+      }
+
+      /** What can be done here: by the place the hunter is at, and the vehicles next to them. */
+      function computeActions() {
+        const list: { id: LimitAction; label: string }[] = [];
+        if (!visit && !ride && traveller.phase === "idle") {
+          const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+          const mine = ownInUse();
+          const parkedNear = (want: (v: VehicleRow) => boolean) =>
+            owned.find((v) => !v.in_use && want(v) && geo.distanceM(at, [v.lng, v.lat]) < 30) ?? null;
+          const eatSpot = spotHere(["eat"]);
+          if (eatSpot && traveller.energy < 95) list.push({ id: "eat", label: `🍲 Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
+          const chill = spotHere(["rest", "eat"]);
+          if (chill && traveller.mode === "walk" && traveller.energy < 90 && !traveller.resting) list.push({ id: "rest", label: `🪑 Rest at ${chill.name}` });
+          const station = spotHere(["fuel"]);
+          if (station && mine && mine.kind !== "bicycle" && mine.fuel < 99) list.push({ id: "refuel", label: `⛽ Refuel at ${station.name}` });
+          if (station && !keg && owned.some((v) => v.kind !== "bicycle")) list.push({ id: "buy_keg", label: "🛢 Buy a fuel keg · 25 coins" });
+          if (station && keg && keg.fuel < 30) list.push({ id: "fill_keg", label: `🛢 Fill your keg · ${2 * (30 - Math.floor(keg.fuel))} coins` });
+          const dry = parkedNear((v) => v.kind !== "bicycle" && v.fuel < 100);
+          if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", label: `🛢 Pour the keg into your ${vehicleName(dry.kind)}` });
+          const bike = mine?.kind === "bicycle" ? mine : parkedNear((v) => v.kind === "bicycle");
+          if (spotHere(["tyres", "fuel"]) && bike && bike.tyre < 95) {
+            list.push({ id: "pump", label: bike.tyre <= 0 ? "🛞 Fix the flat · 20 coins" : "🛞 Pump the tyres · 5 coins" });
+          }
+          const motor = mine && mine.kind !== "bicycle" ? mine : parkedNear((v) => v.kind !== "bicycle");
+          if (spotHere(["mechanic"]) && motor && (motor.engine < 90 || motor.broken_at)) {
+            list.push({ id: "service", label: `🔧 Service your ${vehicleName(motor.kind)} · 60 coins` });
+          }
+          const broken = parkedNear((v) => !!v.broken_at && !v.repair_ready_at);
+          if (broken) list.push({ id: "mechanic", label: `🔧 Call a mechanic for your ${vehicleName(broken.kind)} · 80 coins` });
+        }
+        setHud((h) => (JSON.stringify(h.actions) === JSON.stringify(list) ? h : { ...h, actions: list }));
+      }
+
+      const showKeg = () => setHud((h) => ({ ...h, keg: keg ? { ...keg } : null }));
+
+      async function act(id: LimitAction) {
+        if (busy) return;
+        if (id === "eat") {
+          const place = spotHere(["eat"]);
+          if (place) await eatHere(place.name);
+          computeActions();
+          return;
+        }
+        if (id === "refuel") {
+          await refuelHere();
+          computeActions();
+          return;
+        }
+        setBusy(true);
+        try {
+          await savePosition(); // the server checks where the player is
+          const rpc: Record<Exclude<LimitAction, "eat" | "refuel">, string> = {
+            rest: "start_rest",
+            buy_keg: "buy_keg",
+            fill_keg: "fill_keg",
+            pour_keg: "pour_keg",
+            pump: "pump_tyres",
+            service: "service_vehicle",
+            mechanic: "call_mechanic",
+          };
+          const { data } = await supabase.rpc(rpc[id]);
+          const r = data as {
+            ok: boolean;
+            reason?: string;
+            balance?: number;
+            place?: string;
+            fuel?: number;
+            cost?: number;
+            usesLeft?: number;
+            spoilt?: boolean;
+            kind?: VehicleKind;
+          } | null;
+          if (disposed) return;
+          if (!r?.ok) {
+            const why: Record<string, string> = {
+              not_here: "You need to be right at the place for that.",
+              coins: "Not enough coins for that.",
+              have_one: "You already have a keg.",
+              full: "It's already full.",
+              no_vehicle: "Your vehicle needs to be right here.",
+              no_keg: "Buy a keg first.",
+              empty: "Your keg is empty: fill it at a petrol station.",
+            };
+            say(why[r?.reason ?? ""] ?? "Couldn't do that just now.", true);
+            return;
+          }
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          if (id === "rest") {
+            traveller.resting = true;
+            say(`Resting at ${r.place}. Energy comes back fast; walk on when you're ready.`);
+          } else if (id === "buy_keg") {
+            keg = { fuel: 0, usesLeft: r.usesLeft ?? 50 };
+            say("You bought a fuel keg (good for 50 trips). Fill it here, carry it to your vehicle and pour it in.");
+          } else if (id === "fill_keg") {
+            keg = { fuel: r.fuel ?? 30, usesLeft: keg?.usesLeft ?? 50 };
+            say(`Keg filled: ${Math.round(r.fuel ?? 30)}% of a tank for ${r.cost} coins. Carry it to your vehicle and pour it in.`);
+          } else if (id === "pour_keg") {
+            keg = r.spoilt ? null : { fuel: 0, usesLeft: r.usesLeft ?? 0 };
+            await refreshVehicles();
+            const name = r.kind ? vehicleName(r.kind) : "vehicle";
+            say(`Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your keg's last use: it's worn out." : ` Your keg has ${r.usesLeft} uses left.`} Get on it from Vehicles.`);
+            clearAdvice("fuel");
+          } else if (id === "pump") {
+            await refreshVehicles();
+            say(r.cost === 20 ? "Flat fixed: your tyres are as good as new." : "Tyres pumped up.");
+            warned.tyre = 100;
+            clearAdvice("tyre");
+          } else if (id === "service") {
+            await refreshVehicles();
+            say(`Serviced: your ${r.kind ? vehicleName(r.kind) : "vehicle"} runs like new.`);
+            warned.engine = 100;
+            clearAdvice("engine");
+          } else if (id === "mechanic") {
+            await refreshVehicles();
+            say(`A mechanic is on the way: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be running again in about 45 seconds. Then get on it from Vehicles.`);
+            clearAdvice("engine");
+          }
+          showKeg();
+        } finally {
+          setBusy(false);
+          computeActions();
+        }
+      }
+
+      /** After a save: the server's energy, wear, and whether the vehicle stopped or the hunter fainted. */
+      function onSaved(result: SaveResult) {
+        if (typeof result.energy === "number") {
+          traveller.energy = result.energy;
+          if (traveller.phase === "fainted" && !result.fainted && result.energy > 0 && !visit) {
+            traveller.phase = "idle"; // the server counted a little more energy than this device: still on your feet, just
+            say("You're about to collapse: rest now!", true);
+          }
+        }
+        const mine = ownInUse();
+        if (mine) {
+          if (typeof result.fuel === "number") mine.fuel = result.fuel;
+          if (typeof result.tyre === "number") mine.tyre = result.tyre;
+          if (typeof result.engine === "number") mine.engine = result.engine;
+          showVehicle();
+        }
+        if (result.stopped) vehicleStopped(result.stopped);
+        if (result.fainted) faint();
+      }
+
+      /** An empty tank or a breakdown: the vehicle stays where it stopped; the hunter is on foot. */
+      function vehicleStopped(why: "fuel" | "broken") {
+        const kind = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
+        traveller.mode = "walk";
+        traveller.v = 0;
+        void refreshVehicles().then(() => {
+          afterModeChange();
+          computeActions();
+        });
+        const name = kind ? vehicleName(kind) : "vehicle";
+        if (why === "fuel") {
+          void advise(
+            "fuel",
+            `Out of fuel! Your ${name} has stopped and is parked here. Walk to a petrol station, ${keg ? "fill your keg" : "buy a keg (25 coins) and fill it"}, then bring it back and pour it in.`,
+            ["fuel"],
+          );
+        } else {
+          void advise("engine", `Your ${name} has broken down and is parked here. Call a mechanic (80 coins, button below) to get it going.`, null);
+        }
+      }
+
+      // ---- Fainting, the ambulance and the hospital
+      type VisitJson = {
+        hospital: string;
+        lng: number;
+        lat: number;
+        approach: import("@/game/geo").Coord[] | null;
+        route: import("@/game/geo").Coord[] | null;
+        bill: number;
+        calledAt: string;
+        pickedAt: string;
+        arrivesAt: string;
+        dischargedAt: string;
+        now: string;
+      };
+      type Visit = {
+        v: VisitJson;
+        offset: number; // the server's clock minus this device's, in ms
+        called: number;
+        picked: number;
+        arrives: number;
+        discharged: number;
+        approachCum: number[] | null;
+        routeCum: number[] | null;
+        van: import("@/game/ThreeMapLayer").MapEntity;
+        light: import("three").Object3D;
+        leaving: boolean;
+        lastTry: number;
+      };
+      let visit: Visit | null = null;
+      let fainting = false;
+
+      function showCare(icon: string, title: string, status: string) {
+        setHud((h) => (h.care?.title === title && h.care.status === status ? h : { ...h, care: { icon, title, status } }));
+      }
+
+      /** Collapsed: lie down where you are, and call the ambulance (once the server agrees). */
+      function faint() {
+        if (visit || fainting) return;
+        fainting = true;
+        traveller.phase = "fainted";
+        traveller.phaseUntil = Infinity;
+        traveller.v = 0;
+        traveller.energy = 0;
+        traveller.resting = false;
+        controls.current.go = false;
+        touchGo = false;
+        say("You fainted from exhaustion! An ambulance is on its way.", true);
+        void callAmbulance().finally(() => {
+          fainting = false;
+        });
+      }
+
+      /** The nearest hospital (within 15 km) by road; with none, paramedics treat the hunter where they fell. */
+      async function callAmbulance() {
+        const at = { ...traveller.pos };
+        const { data: near } = await supabase.rpc("places_near", { p_kinds: ["hospital"], p_lng: at.lng, p_lat: at.lat, p_limit: 3 });
+        const hospital = ((near ?? []) as Spot[]).find((h) => h.metres <= 15000) ?? null;
+        let route: import("@/game/geo").Coord[] | null = null;
+        let approach: import("@/game/geo").Coord[] | null = null;
+        if (hospital) {
+          const way = (await routeOnOwnRoads(at, hospital, "car"))?.path ?? null;
+          if (way) route = thinPath([[at.lng, at.lat], ...way, [hospital.lng, hospital.lat]]);
+          // The ambulance comes from 1–2 km away, along the roads.
+          for (let i = 0; i < 4 && route && !approach; i++) {
+            const angle = Math.random() * 2 * Math.PI;
+            const m = 1000 + Math.random() * 1000;
+            const start = {
+              lng: at.lng + (Math.sin(angle) * m) / (111320 * Math.cos((at.lat * Math.PI) / 180)),
+              lat: at.lat + (Math.cos(angle) * m) / 110574,
+            };
+            const found = (await routeOnOwnRoads(start, at, "car"))?.path ?? null;
+            if (found && cumulativeOf(found).at(-1)! > 300) approach = thinPath([...found, [at.lng, at.lat]]);
+          }
+        }
+        let { data } = await supabase.rpc("call_ambulance", {
+          p_hospital: hospital?.name ?? null,
+          p_lng: hospital?.lng ?? null,
+          p_lat: hospital?.lat ?? null,
+          p_approach: route ? approach : null,
+          p_route: route,
+        });
+        if ((data as { reason?: string } | null)?.reason === "route") {
+          // The hospital or the way there wasn't accepted: paramedics come instead.
+          ({ data } = await supabase.rpc("call_ambulance", { p_hospital: null, p_lng: null, p_lat: null, p_approach: null, p_route: null }));
+        }
+        if (disposed) return;
+        const r = data as { ok: boolean; reason?: string; visit?: VisitJson } | null;
+        if (r?.ok && r.visit) {
+          startVisit(r.visit);
+          const bill = r.visit.bill;
+          setHud((h) => ({ ...h, coins: Math.max(0, h.coins - bill) }));
+        } else if (r?.reason === "not_fainted") {
+          traveller.phase = "idle";
+        }
+      }
+
+      function startVisit(v: VisitJson) {
+        endVisit();
+        const ambulance = models.makeAmbulance();
+        const first = v.approach?.[0] ?? v.route?.[0] ?? [traveller.pos.lng, traveller.pos.lat];
+        const van = layer.add({ object: ambulance.group, lng: first[0], lat: first[1], heading: 0 });
+        van.object.visible = !!v.approach;
+        visit = {
+          v,
+          offset: Date.parse(v.now) - Date.now(),
+          called: Date.parse(v.calledAt),
+          picked: Date.parse(v.pickedAt),
+          arrives: Date.parse(v.arrivesAt),
+          discharged: Date.parse(v.dischargedAt),
+          approachCum: v.approach ? cumulativeOf(v.approach) : null,
+          routeCum: v.route ? cumulativeOf(v.route) : null,
+          van,
+          light: ambulance.light,
+          leaving: false,
+          lastTry: 0,
+        };
+        traveller.phase = "fainted";
+        traveller.phaseUntil = Infinity;
+        traveller.v = 0;
+        controls.current.go = false;
+        touchGo = false;
+        clearAdvice("energy");
+        computeActions();
+      }
+
+      function endVisit() {
+        if (!visit) return;
+        layer.remove(visit.van);
+        visit = null;
+        me.object.visible = true;
+        setHud((h) => ({ ...h, care: null }));
+      }
+
+      /** Move the ambulance \`f\` (0–1) of the way along a path. */
+      function placeVan(vs: Visit, path: import("@/game/geo").Coord[], cum: number[], f: number, dt: number) {
+        const { pos, segment } = alongPath(path, cum, f * cum[cum.length - 1]);
+        const heading = geo.headingOf(path[segment - 1], path[segment]);
+        vs.van.lng = pos[0];
+        vs.van.lat = pos[1];
+        vs.van.heading = vs.van.heading === undefined ? heading : geo.turnTowards(vs.van.heading, heading, Math.min(1, 6 * dt));
+      }
+
+      /** One frame of a hospital visit. True while the hunter is in the ambulance or the hospital. */
+      function visitStep(now: number, dt: number) {
+        const vs = visit!;
+        const serverNow = Date.now() + vs.offset;
+        vs.light.visible = Math.floor(now / 250) % 2 === 0; // the flashing light
+        const left = (until: number) => clock((until - serverNow) / 1000);
+        if (serverNow < vs.picked) {
+          // Lying where they fell while the ambulance (or the paramedics) come.
+          if (vs.v.approach && vs.approachCum) {
+            vs.van.object.visible = true;
+            placeVan(vs, vs.v.approach, vs.approachCum, Math.max(0, (serverNow - vs.called) / Math.max(1, vs.picked - vs.called)), dt);
+          }
+          showCare("🚑", vs.v.route ? "Ambulance on its way" : "Paramedics on their way", `You fainted. Help arrives in ${left(vs.picked)}`);
+          return false;
+        }
+        if (vs.v.route && vs.routeCum && serverNow < vs.arrives) {
+          // In the ambulance, on the way to hospital.
+          vs.van.object.visible = true;
+          placeVan(vs, vs.v.route, vs.routeCum, (serverNow - vs.picked) / Math.max(1, vs.arrives - vs.picked), dt);
+          me.object.visible = false;
+          traveller.pos = { lng: vs.van.lng, lat: vs.van.lat };
+          traveller.heading = vs.van.heading ?? traveller.heading;
+          setHud((h) => (h.street ? { ...h, street: null } : h)); // no street names from inside the ambulance
+          showCare("🚑", `To ${vs.v.hospital}`, `Arrives in ${left(vs.arrives)}`);
+          return true;
+        }
+        if (serverNow < vs.discharged) {
+          if (vs.v.route) {
+            me.object.visible = false; // inside, being treated
+            traveller.pos = { lng: vs.van.lng, lat: vs.van.lat };
+          } else {
+            vs.van.object.visible = false;
+          }
+          showCare("🏥", vs.v.route ? `Being treated at ${vs.v.hospital}` : "Paramedics are treating you", `Out in ${left(vs.discharged)} · bill ${vs.v.bill} coins`);
+          return !!vs.v.route;
+        }
+        if (!vs.leaving && now - vs.lastTry > 2000) void leaveHospital(now);
+        return !!vs.v.route;
+      }
+
+      async function leaveHospital(now: number) {
+        const vs = visit;
+        if (!vs) return;
+        vs.leaving = true;
+        vs.lastTry = now;
+        const { data } = await supabase.rpc("leave_hospital");
+        if (disposed || visit !== vs) return;
+        const r = data as { ok: boolean; reason?: string; lng?: number; lat?: number; hospital?: string; energy?: number } | null;
+        if (!r?.ok && r?.reason !== "no_visit") {
+          vs.leaving = false; // not quite yet (clocks differ): again shortly
+          return;
+        }
+        const lng = r.lng ?? vs.v.lng;
+        const lat = r.lat ?? vs.v.lat;
+        endVisit();
+        traveller.pos = { lng, lat };
+        traveller.v = 0;
+        traveller.energy = r.energy ?? 70;
+        traveller.phase = "idle";
+        warned.energy = 100;
+        saved = { lng, lat };
+        lastSave = performance.now() + 6000; // a moment before the first save: the hop from the hospital onto the road
+        network = null;
+        onRoad = null;
+        builtFrom = "";
+        lastNetworkCheck = 0;
+        snapReachM = 1500;
+        buildRoads();
+        await refreshVehicles();
+        void refreshSpots();
+        say(`Discharged from ${r.hospital ?? vs.v.hospital}. You've got ${Math.round(traveller.energy)} energy: pace yourself, and rest before it runs low.`, true);
+      }
+
+      /** On loading: energy, the keg, and a faint or hospital visit in progress. */
+      async function loadCondition() {
+        const { data } = await supabase.rpc("my_condition");
+        if (disposed || !data) return;
+        const c = data as { energy: number; fainted: boolean; resting: boolean; keg: { fuel: number; usesLeft: number } | null; hospital: VisitJson | null };
+        traveller.energy = c.energy;
+        traveller.resting = c.resting;
+        keg = c.keg;
+        showKeg();
+        if (c.hospital) startVisit(c.hospital);
+        else if (c.fainted) faint();
+      }
+      void loadCondition();
+      void refreshSpots();
+
       // ---- Game loop -------------------------------------------------------
       let frame = 0;
       let last = performance.now();
@@ -2173,7 +2719,7 @@ export function GameMap({
         const t = now / 1000;
         const c = controls.current;
         // On a bus, train or plane, the vehicle moves the hunter (and the player can't).
-        const riding = ride ? rideStep(now, dt) : false;
+        const riding = ride ? rideStep(now, dt) : visit ? visitStep(now, dt) : false;
 
         // Keep a road network around the player as they travel, and refresh it
         // as more map tiles load (the first build may only see one tile).
@@ -2187,11 +2733,10 @@ export function GameMap({
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && !ride && !!onRoad;
+        const canMove = !frozen && !ride && !visit && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
-          if (event === "fainted") say("You fainted from exhaustion! Rest before your energy runs out. (In a hunt: ambulance and hospital bill.)", true);
-          if (event === "recovered") say("Back on your feet.");
+          if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
         }
 
         if (!riding && network && onRoad) {
@@ -2278,7 +2823,7 @@ export function GameMap({
         camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
         map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom: ride ? rideZoom() : undefined });
 
-        if (!ride && now - lastSave > SAVE_EVERY_MS) {
+        if (!ride && !visit && now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
           void savePosition();
         }
@@ -2287,13 +2832,15 @@ export function GameMap({
         if (!riding && now - lastServices > 1000) {
           lastServices = now;
           scanStreet();
-          scanServices();
           if (rental) showVehicle();
+          checkLimits();
+          computeActions();
         }
 
         if (!riding) announce(now); // aboard, others just see the hunter leave (and arrive)
         moveOthers(now, dt, t);
         nearTick(now);
+        spotsTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -2539,6 +3086,12 @@ export function GameMap({
             {hud.vehicle?.fuel != null && (
               <span className={`text-xs ${hud.vehicle.fuel < 15 ? "text-danger" : ""}`}>⛽ {Math.round(hud.vehicle.fuel)}%</span>
             )}
+            {hud.vehicle?.tyre != null && (
+              <span className={`text-xs ${hud.vehicle.tyre < 40 ? "text-danger" : ""}`}>{hud.vehicle.tyre <= 0 ? "flat tyre" : `🛞 ${Math.round(hud.vehicle.tyre)}%`}</span>
+            )}
+            {hud.vehicle?.engine != null && hud.vehicle.engine < 50 && (
+              <span className={`text-xs ${hud.vehicle.engine < 30 ? "text-danger" : ""}`}>🔧 {Math.round(hud.vehicle.engine)}%</span>
+            )}
             {hud.vehicle?.meter && <span className="text-xs font-semibold">· {hud.vehicle.meter}</span>}
           </button>
         </div>
@@ -2553,25 +3106,23 @@ export function GameMap({
           <span aria-hidden="true">{hud.stopHere?.icon ?? "🚌"}</span>
           {hud.stopHere?.label ?? "Bus · Train · Plane"}
         </button>
-        {hud.services.fuel && hud.vehicle?.fuel != null && hud.vehicle.fuel < 99 && (
+        {hud.actions.map((a) => (
           <button
+            key={a.id}
             type="button"
             disabled={hud.busy}
-            onClick={() => actions.current?.refuel()}
+            onClick={() => actions.current?.act(a.id)}
             className="pointer-events-auto h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
           >
-            ⛽ Refuel at {hud.services.fuel}
+            {a.label}
           </button>
-        )}
-        {hud.services.food && hud.energy < 95 && (
-          <button
-            type="button"
-            disabled={hud.busy}
-            onClick={() => actions.current?.eat()}
-            className="pointer-events-auto h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
-          >
-            Eat at {hud.services.food} · {MEAL_PRICE} coins
-          </button>
+        ))}
+        {hud.keg && (
+          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm" aria-label="Your fuel keg">
+            <span aria-hidden="true">🛢</span>
+            <span className="font-bold">{hud.keg.fuel > 0 ? `Keg ${Math.round(hud.keg.fuel)}%` : "Empty keg"}</span>
+            <span className="text-xs text-muted">{hud.keg.usesLeft} uses left</span>
+          </div>
         )}
         {hud.nearest && (
           <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm" aria-label={`Nearest find ${hud.nearest.metres} metres away`}>
@@ -2675,6 +3226,34 @@ export function GameMap({
             </div>
             <button type="button" onClick={() => actions.current?.endDirections()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
               End
+            </button>
+          </div>
+        )}
+
+        {/* The ambulance, the hospital, a mechanic on the way. */}
+        {hud.care && (
+          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#D62828] p-3 text-paper" role="status" aria-label="Being looked after">
+            <span className="text-2xl" aria-hidden="true">
+              {hud.care.icon}
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="font-display text-base font-extrabold leading-tight">{hud.care.title}</span>
+              <span className="truncate text-xs text-paper/85">{hud.care.status}</span>
+            </div>
+          </div>
+        )}
+
+        {/* A warning: tired, fuel low, soft tyres, a worn engine; and the nearest place that helps. */}
+        {hud.advice && !hud.care && (
+          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#3B2F0A] p-3 text-sm text-paper ring-1 ring-gold" role="alert">
+            <span className="min-w-0 flex-1">{hud.advice.text}</span>
+            {hud.advice.place && (
+              <button type="button" onClick={() => actions.current?.followAdvice()} className="shrink-0 rounded-lg bg-gold px-2 py-1 text-xs font-bold text-ink">
+                Directions
+              </button>
+            )}
+            <button type="button" aria-label="Dismiss" onClick={() => actions.current?.dismissAdvice()} className="shrink-0 rounded-lg px-1 text-xs font-bold text-paper/70">
+              ✕
             </button>
           </div>
         )}
@@ -2804,7 +3383,7 @@ export function GameMap({
       )}
 
       {/* Running on foot or pedalling harder; motorbikes and cars have no sprint. */}
-      {canSprint(hud.mode) && !hud.ride && (
+      {canSprint(hud.mode) && !hud.ride && !hud.care && (
         <div className="absolute bottom-9 right-5" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
           <HoldButton
             label={hud.mode === "walk" ? "Hold to run" : "Hold to pedal faster"}

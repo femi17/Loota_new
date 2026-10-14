@@ -536,3 +536,33 @@ export function makePlane() {
   group.add(body);
   return { group, body };
 }
+
+/** An ambulance: a white van with a red stripe and cross, and a blue light on the roof. */
+export function makeAmbulance() {
+  const group = new THREE.Group();
+  const tyre = (x: number, z: number) => {
+    const w = mesh(T_G.busTyre, "#1D1D1D", x, 0.5, z);
+    w.rotation.z = Math.PI / 2;
+    return w;
+  };
+  const cab = mesh(V_G.carBody, "#F7F7F7", 0, 1.05, 2.1);
+  cab.scale.set(1.25, 1.6, 0.5);
+  const screen = mesh(T_G.busScreen, "#9FD8FF", 0, 1.7, 3.0);
+  screen.scale.set(0.95, 0.75, 1);
+  const crossH = mesh(new THREE.BoxGeometry(0.9, 0.28, 0.06), "#D62828", 0, 1.6, -2.27);
+  const crossV = mesh(new THREE.BoxGeometry(0.28, 0.9, 0.06), "#D62828", 0, 1.6, -2.27);
+  const light = new THREE.Mesh(V_G.lamp, glow("#3D7BFF"));
+  light.position.set(0, 2.75, 1.2);
+  light.scale.setScalar(1.6);
+  group.add(
+    mesh(new THREE.BoxGeometry(2.2, 2.2, 4.4), "#F7F7F7", 0, 1.5, -0.1),
+    mesh(new THREE.BoxGeometry(2.22, 0.3, 4.42), "#D62828", 0, 1.2, -0.1),
+    cab,
+    screen,
+    crossH,
+    crossV,
+    light,
+    tyre(-1.05, 1.9), tyre(1.05, 1.9), tyre(-1.05, -1.6), tyre(1.05, -1.6),
+  );
+  return { group, light };
+}

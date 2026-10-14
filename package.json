@@ -17,7 +17,9 @@
     "transit:roadside": "node scripts/add-roadside-stops.mts",
     "transit:airports": "node scripts/add-world-airports.mts",
     "highways:build": "node --max-old-space-size=4096 scripts/build-highways.mts",
-    "highways:upload": "node scripts/upload-highways.mts"
+    "highways:upload": "node scripts/upload-highways.mts",
+    "places:build": "node --max-old-space-size=4096 scripts/build-places.mts",
+    "places:upload": "node scripts/upload-places.mts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

@@ -43,3 +43,18 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .loota-rain { animation: none; }
 }
+
+/* Broadcast: a hunter's dot and name (gold = leader, purple = in a Key Trial, green = finished). */
+.loota-hunter-marker { display: flex; flex-direction: column; align-items: center; transform: translateY(-8px); pointer-events: none; }
+.loota-hunter-marker .dot {
+  width: 16px; height: 16px; border-radius: 9999px; background: #fff;
+  border: 3px solid #0e1320; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+.loota-hunter-marker[data-kind="leader"] .dot { background: #f4b41a; }
+.loota-hunter-marker[data-kind="trial"] .dot { background: #9b5de5; }
+.loota-hunter-marker[data-kind="finished"] .dot { background: #1e9e62; }
+.loota-hunter-marker[data-followed="true"] .dot { width: 24px; height: 24px; }
+.loota-hunter-marker .name {
+  margin-top: 3px; padding: 1px 8px; border-radius: 8px; background: rgba(14, 19, 32, 0.85);
+  color: #fff; font: 700 13px/1.4 system-ui, sans-serif; white-space: nowrap;
+}

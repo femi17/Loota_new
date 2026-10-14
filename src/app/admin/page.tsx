@@ -131,6 +131,15 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
               </span>
               <h2 className="font-display text-xl font-extrabold">{h.title}</h2>
               <div className="ml-auto flex gap-2">
+                {h.published && (
+                  <Link
+                    href={`/broadcast?hunt=${h.id}`}
+                    target="_blank"
+                    className="flex h-10 items-center rounded-xl bg-danger px-4 text-sm font-bold text-white"
+                  >
+                    ● Broadcast
+                  </Link>
+                )}
                 <form action={setPublished}>
                   <input type="hidden" name="hunt" value={h.id} />
                   <input type="hidden" name="publish" value={String(!h.published)} />

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/proxy";
 
 /** Pages that need a signed-in player. Each page also checks for itself. */
-const PLAYER_ONLY = ["/lobby", "/onboarding", "/look", "/play", "/admin"];
+const PLAYER_ONLY = ["/lobby", "/onboarding", "/look", "/play", "/admin", "/broadcast"];
 
 /** Pages for visitors; signed-in players go straight to the lobby instead. */
 const VISITOR_ONLY = ["/", "/login", "/signup"];

@@ -1541,6 +1541,10 @@ export function GameMap({
       let myArea = "";
       let lastAnnounce = 0;
       const MAX_SHOWN = 25;
+      // Hunters in a hunt also announce on the hunt's own channel, which the live
+      // show's broadcast screen listens to (a hunt covers a whole city: too many areas).
+      const huntChannel = huntId ? supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } }) : null;
+      huntChannel?.subscribe();
 
       function joinAreas(ax: number, ay: number) {
         const want = new Set<string>();
@@ -1610,6 +1614,7 @@ export function GameMap({
           moving,
         };
         void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: update });
+        void huntChannel?.send({ type: "broadcast", event: "pos", payload: update });
       }
 
       // Closing the tab or leaving the app: tell the others straight away (otherwise
@@ -1925,6 +1930,7 @@ export function GameMap({
         window.removeEventListener("pagehide", sayBye);
         document.removeEventListener("visibilitychange", leaving);
         for (const channel of areaChannels.values()) void supabase.removeChannel(channel);
+        if (huntChannel) void supabase.removeChannel(huntChannel);
         areaChannels.clear();
         map.remove();
       };
@@ -1934,7 +1940,7 @@ export function GameMap({
       disposed = true;
       cleanup();
     };
-  }, [startLng, startLat, startMode, lookKey, playerId, username]);
+  }, [startLng, startLat, startMode, lookKey, playerId, username, huntId]);
 
   if (failed) {
     return (

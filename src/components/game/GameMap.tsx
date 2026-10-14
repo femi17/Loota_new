@@ -15,6 +15,7 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
+import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { LandmarkPanel, type CheckinQuestion, type CheckinResult, type Landmark, type LandmarkActions } from "./LandmarkPanel";
 import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
@@ -73,12 +74,12 @@ type Hud = {
   dome: { minutesLeft: number; key: number; inside: boolean; mine: boolean; siege: { attackers: number; needed: number } | null } | null;
   /** On a bus, train or plane (or waiting for one). */
   ride: { icon: string; title: string; status: string; canCancel: boolean } | null;
-  /** At a bus stop, station or airport: what the Transport button offers. */
+  /** At a bus stop, station or airport: what the transport button offers. */
   stopHere: { icon: string; label: string } | null;
   /** What can be done where the player stands: eat, rest, refuel, kegs, tyres, repairs. */
-  actions: { id: LimitAction; label: string }[];
+  actions: { id: LimitAction; icon: string; short: string; label: string }[];
   /** A warning that needs acting on (tired, fuel low, soft tyres, a worn engine), with the nearest place that helps. */
-  advice: { key: string; text: string; place: { name: string; lng: number; lat: number } | null } | null;
+  advice: { key: string; title: string; text: string; where: string | null; place: { name: string; lng: number; lat: number } | null } | null;
   /** Being looked after: the ambulance, the hospital, a mechanic on the way. */
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
@@ -249,12 +250,13 @@ export function GameMap({
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the Vehicles panel, when open
+  const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the vehicle panel, when open
   const [transitOpen, setTransitOpen] = useState(false);
   const [transitActions, setTransitActions] = useState<TransitActions | null>(null); // set once the map is ready
   const [landmarkActions, setLandmarkActions] = useState<LandmarkActions | null>(null);
   const [landmarksOpen, setLandmarksOpen] = useState<{ quiz: CheckinQuestion | null; message: string | null } | null>(null);
   const [checkingIn, setCheckingIn] = useState(false);
+  const [adviceOpen, setAdviceOpen] = useState(false);
   /** The Check in button: ask the server for a question (once), then show it. */
   const checkIn = async (landmark: Landmark) => {
     if (!landmarkActions || checkingIn) return;
@@ -2090,7 +2092,7 @@ export function GameMap({
         }
       }
 
-      // Stops near the hunter: what the Transport button offers, refreshed as they move.
+      // Stops near the hunter: what the transport button offers, refreshed as they move.
       let near: TransitNear | null = null;
       let nearAt = -Infinity;
       let nearFrom: LngLat | null = null;
@@ -2213,7 +2215,7 @@ export function GameMap({
 
       async function board(quote: TransitQuote, fastPass: boolean): Promise<string | null> {
         if (ride) return "You're already on a trip.";
-        if (traveller.mode !== "walk") return "Get off your vehicle first (tap Walk), then board.";
+        if (traveller.mode !== "walk") return "Get off your vehicle first (vehicle button, then Get off and walk), then board.";
         await savePosition(); // the server checks you're at the stop
         const { data, error } = await supabase.rpc("start_trip", { p_from: quote.from.id, p_to: quote.to.id, p_path: quote.path, p_fast_pass: fastPass });
         if (error || !data) return fastPass ? "Your Fast Pass couldn't be used. Try again without it." : "Something went wrong. Try again.";
@@ -2222,7 +2224,7 @@ export function GameMap({
           const why: Record<string, string> = {
             coins: `You need ${result.fare ?? quote.fare} coins for this fare.`,
             far: `Get to ${stopTitle(quote.from)} first: you need to be at the stop.`,
-            vehicle: "Get off your vehicle first (tap Walk), then board.",
+            vehicle: "Get off your vehicle first (vehicle button, then Get off and walk), then board.",
             dome: "A Lockdown dome covers that stop. Pick somewhere else.",
             path: "Couldn't plan that route. Try another stop.",
             route: "Nothing goes there from here.",
@@ -2385,7 +2387,7 @@ export function GameMap({
       }
 
       /** Show a warning with directions to the nearest place of these kinds. */
-      async function advise(key: string, text: string, kinds: Spot["kind"][] | null) {
+      async function advise(key: string, title: string, text: string, kinds: Spot["kind"][] | null) {
         const found = kinds ? await spotAhead(kinds) : null;
         if (disposed) return;
         const spot = found?.spot ?? null;
@@ -2394,7 +2396,8 @@ export function GameMap({
           : text;
         adviceKey = key;
         advicePlace = spot ? { name: spot.name, lng: spot.lng, lat: spot.lat } : null;
-        setHud((h) => ({ ...h, advice: { key, text: full, place: advicePlace } }));
+        const where = found ? `${found.spot.name} · ${geo.formatDistance(found.spot.metres)}${found.behind ? " back" : ""}` : null;
+        setHud((h) => ({ ...h, advice: { key, title, text: full, where, place: advicePlace } }));
         say(full, true);
       }
       function clearAdvice(key: string) {
@@ -2411,10 +2414,10 @@ export function GameMap({
         if (traveller.mode === "walk" || traveller.mode === "bicycle") {
           if (energy < 25 && warned.energy > 25) {
             warned.energy = 25;
-            void advise("energy", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park or a place to eat, or have a meal.", ["rest", "eat"]);
+            void advise("energy", "Exhausted: rest now", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park or a place to eat, or have a meal.", ["rest", "eat"]);
           } else if (energy < 50 && warned.energy > 50) {
             warned.energy = 50;
-            void advise("energy", "You're getting tired. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.", ["rest", "eat"]);
+            void advise("energy", "Getting tired", "You're getting tired. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.", ["rest", "eat"]);
           }
         }
         if (energy > 60 && warned.energy < 100) {
@@ -2425,10 +2428,10 @@ export function GameMap({
         if (mine && mine.kind !== "bicycle") {
           if (mine.fuel < 10 && warned.fuel > 10) {
             warned.fuel = 10;
-            void advise("fuel", `Fuel almost gone! If the tank runs dry your ${vehicleName(mine.kind)} stops, and you'll have to carry fuel to it in a keg.`, ["fuel"]);
+            void advise("fuel", "Fuel almost gone", `Fuel almost gone! If the tank runs dry your ${vehicleName(mine.kind)} stops, and you'll have to carry fuel to it in a keg.`, ["fuel"]);
           } else if (mine.fuel < 25 && warned.fuel > 25) {
             warned.fuel = 25;
-            void advise("fuel", "Fuel is getting low. Fill up at a petrol station.", ["fuel"]);
+            void advise("fuel", "Fuel low", "Fuel is getting low. Fill up at a petrol station.", ["fuel"]);
           }
           if (mine.fuel > 40 && warned.fuel < 100) {
             warned.fuel = 100;
@@ -2436,7 +2439,7 @@ export function GameMap({
           }
           if (mine.engine < 30 && warned.engine > 30) {
             warned.engine = 30;
-            void advise("engine", `Your ${vehicleName(mine.kind)}'s engine needs a service: worn engines break down. A mechanic can service it (60 coins).`, ["mechanic"]);
+            void advise("engine", "Engine needs a service", `Your ${vehicleName(mine.kind)}'s engine needs a service: worn engines break down. A mechanic can service it (60 coins).`, ["mechanic"]);
           }
           if (mine.engine > 50 && warned.engine < 100) {
             warned.engine = 100;
@@ -2446,10 +2449,10 @@ export function GameMap({
         if (mine?.kind === "bicycle") {
           if (mine.tyre <= 0 && warned.tyre > 0) {
             warned.tyre = 0;
-            void advise("tyre", "Flat tyre! You're pushing your bicycle at walking pace. A vulcanizer or petrol station can fix it (20 coins).", ["tyres", "fuel"]);
+            void advise("tyre", "Flat tyre", "Flat tyre! You're pushing your bicycle at walking pace. A vulcanizer or petrol station can fix it (20 coins).", ["tyres", "fuel"]);
           } else if (mine.tyre < 40 && warned.tyre > 40) {
             warned.tyre = 40;
-            void advise("tyre", "Your tyres are getting soft. Pump them at a vulcanizer or petrol station (5 coins).", ["tyres", "fuel"]);
+            void advise("tyre", "Soft tyres", "Your tyres are getting soft. Pump them at a vulcanizer or petrol station (5 coins).", ["tyres", "fuel"]);
           }
           if (mine.tyre > 60 && warned.tyre < 100) {
             warned.tyre = 100;
@@ -2460,32 +2463,35 @@ export function GameMap({
 
       /** What can be done here: by the place the hunter is at, and the vehicles next to them. */
       function computeActions() {
-        const list: { id: LimitAction; label: string }[] = [];
+        const list: { id: LimitAction; icon: string; short: string; label: string }[] = [];
         if (!visit && !ride && traveller.phase === "idle") {
           const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
           const mine = ownInUse();
           const parkedNear = (want: (v: VehicleRow) => boolean) =>
             owned.find((v) => !v.in_use && want(v) && geo.distanceM(at, [v.lng, v.lat]) < 30) ?? null;
           const eatSpot = spotHere(["eat"]);
-          if (eatSpot && traveller.energy < 95) list.push({ id: "eat", label: `🍲 Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
+          if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
           const chill = spotHere(["rest", "eat"]);
-          if (chill && traveller.mode === "walk" && traveller.energy < 90 && !traveller.resting) list.push({ id: "rest", label: `🪑 Rest at ${chill.name}` });
+          if (chill && traveller.mode === "walk" && traveller.energy < 90 && !traveller.resting) list.push({ id: "rest", icon: "🪑", short: "Rest", label: `Rest at ${chill.name}` });
           const station = spotHere(["fuel"]);
-          if (station && mine && mine.kind !== "bicycle" && mine.fuel < 99) list.push({ id: "refuel", label: `⛽ Refuel at ${station.name}` });
-          if (station && !keg && owned.some((v) => v.kind !== "bicycle")) list.push({ id: "buy_keg", label: "🛢 Buy a fuel keg · 25 coins" });
-          if (station && keg && keg.fuel < 30) list.push({ id: "fill_keg", label: `🛢 Fill your keg · ${2 * (30 - Math.floor(keg.fuel))} coins` });
+          if (station && mine && mine.kind !== "bicycle" && mine.fuel < 99) list.push({ id: "refuel", icon: "⛽", short: "Refuel", label: `Refuel at ${station.name}` });
+          if (station && !keg && owned.some((v) => v.kind !== "bicycle")) list.push({ id: "buy_keg", icon: "🛢", short: "Buy keg · 25", label: "Buy a fuel keg · 25 coins" });
+          if (station && keg && keg.fuel < 30) list.push({ id: "fill_keg", icon: "🛢", short: `Fill keg · ${2 * (30 - Math.floor(keg.fuel))}`, label: `Fill your keg · ${2 * (30 - Math.floor(keg.fuel))} coins` });
           const dry = parkedNear((v) => v.kind !== "bicycle" && v.fuel < 100);
-          if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", label: `🛢 Pour the keg into your ${vehicleName(dry.kind)}` });
+          if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour keg", label: `Pour the keg into your ${vehicleName(dry.kind)}` });
           const bike = mine?.kind === "bicycle" ? mine : parkedNear((v) => v.kind === "bicycle");
           if (spotHere(["tyres", "fuel"]) && bike && bike.tyre < 95) {
-            list.push({ id: "pump", label: bike.tyre <= 0 ? "🛞 Fix the flat · 20 coins" : "🛞 Pump the tyres · 5 coins" });
+            list.push(bike.tyre <= 0 ? { id: "pump", icon: "🛞", short: "Fix flat · 20", label: "Fix the flat · 20 coins" } : { id: "pump", icon: "🛞", short: "Pump · 5", label: "Pump the tyres · 5 coins" });
           }
           const motor = mine && mine.kind !== "bicycle" ? mine : parkedNear((v) => v.kind !== "bicycle");
           if (spotHere(["mechanic"]) && motor && (motor.engine < 90 || motor.broken_at)) {
-            list.push({ id: "service", label: `🔧 Service your ${vehicleName(motor.kind)} · 60 coins` });
+            list.push({ id: "service", icon: "🔧", short: "Service · 60", label: `Service your ${vehicleName(motor.kind)} · 60 coins` });
           }
           const broken = parkedNear((v) => !!v.broken_at && !v.repair_ready_at);
-          if (broken) list.push({ id: "mechanic", label: `🔧 Call a mechanic for your ${vehicleName(broken.kind)} · ${broken.kind === "bicycle" ? 30 : 80} coins` });
+          if (broken) {
+            const fee = broken.kind === "bicycle" ? 30 : 80;
+            list.push({ id: "mechanic", icon: "🔧", short: `Mechanic · ${fee}`, label: `Call a mechanic for your ${vehicleName(broken.kind)} · ${fee} coins` });
+          }
         }
         setHud((h) => (JSON.stringify(h.actions) === JSON.stringify(list) ? h : { ...h, actions: list }));
       }
@@ -2558,7 +2564,7 @@ export function GameMap({
             keg = r.spoilt ? null : { fuel: 0, usesLeft: r.usesLeft ?? 0 };
             await refreshVehicles();
             const name = r.kind ? vehicleName(r.kind) : "vehicle";
-            say(`Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your keg's last use: it's worn out." : ` Your keg has ${r.usesLeft} uses left.`} Get on it from Vehicles.`);
+            say(`Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your keg's last use: it's worn out." : ` Your keg has ${r.usesLeft} uses left.`} Get on it with the vehicle button.`);
             clearAdvice("fuel");
           } else if (id === "pump") {
             await refreshVehicles();
@@ -2572,7 +2578,7 @@ export function GameMap({
             clearAdvice("engine");
           } else if (id === "mechanic") {
             await refreshVehicles();
-            say(`A mechanic is on the way: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be ready again in about 45 seconds. Then get on it from Vehicles.`);
+            say(`A mechanic is on the way: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be ready again in about 45 seconds. Then get on it with the vehicle button.`);
             clearAdvice("engine");
             clearAdvice("bike");
           }
@@ -2616,11 +2622,12 @@ export function GameMap({
         if (why === "fuel") {
           void advise(
             "fuel",
+            "Out of fuel",
             `Out of fuel! Your ${name} has stopped and is parked here. Walk to a petrol station, ${keg ? "fill your keg" : "buy a keg (25 coins) and fill it"}, then bring it back and pour it in.`,
             ["fuel"],
           );
         } else {
-          void advise("engine", `Your ${name} has broken down and is parked here. Call a mechanic (80 coins, button below) to get it going.`, null);
+          void advise("engine", "Broken down", `Your ${name} has broken down and is parked here. Call a mechanic (80 coins, the gold button) to get it going.`, null);
         }
       }
 
@@ -2863,7 +2870,7 @@ export function GameMap({
           advicePlace = { name: "your bicycle", lng: bike.lng, lat: bike.lat };
           setHud((h) => ({
             ...h,
-            advice: { key: "bike", text: "Your bicycle is damaged where you collapsed. Go back to it and call a mechanic to repair it (30 coins).", place: advicePlace },
+            advice: { key: "bike", title: "Bicycle damaged", where: "Where you collapsed", text: "Your bicycle is damaged where you collapsed. Go back to it and call a mechanic to repair it (30 coins).", place: advicePlace },
           }));
         }
       }
@@ -3012,7 +3019,7 @@ export function GameMap({
       /** Ask for a bicycle or motorbike: a renter brings one to the nearest bus stop. */
       async function requestBikePickup(kind: "bicycle" | "motorbike") {
         if (traveller.mode !== "walk") {
-          say("Get off first (tap Walk), then ask for a rental.", true);
+          say("Get off first (vehicle button, then Get off and walk), then ask for a rental.", true);
           return;
         }
         await savePosition();
@@ -3024,7 +3031,7 @@ export function GameMap({
         const r = res as { ok: boolean; reason?: string; pickup?: PickupJson } | null;
         if (disposed) return;
         if (!r?.ok || !r.pickup) {
-          say(r?.reason === "vehicle" ? "Get off first (tap Walk), then ask for a rental." : "Couldn't arrange a rental just now. Try again.", true);
+          say(r?.reason === "vehicle" ? "Get off first (vehicle button, then Get off and walk), then ask for a rental." : "Couldn't arrange a rental just now. Try again.", true);
           return;
         }
         startPickup(r.pickup);
@@ -3078,7 +3085,7 @@ export function GameMap({
       }
 
       async function callTaxi(q: TaxiQuote): Promise<string | null> {
-        if (traveller.mode !== "walk") return "Get off your vehicle first (tap Walk), then call a taxi.";
+        if (traveller.mode !== "walk") return "Get off your vehicle first (vehicle button, then Get off and walk), then call a taxi.";
         await savePosition();
         const { data } = await supabase.rpc("request_pickup", {
           p_kind: "taxi",
@@ -3095,7 +3102,7 @@ export function GameMap({
         if (!r?.ok || !r.pickup) {
           const why: Record<string, string> = {
             coins: `You need ${r?.fare ?? q.fare} coins for this taxi.`,
-            vehicle: "Get off your vehicle first (tap Walk), then call a taxi.",
+            vehicle: "Get off your vehicle first (vehicle button, then Get off and walk), then call a taxi.",
             on_trip: "You're already on a trip.",
             route: "Taxis go up to 40 km.",
             far: "That pickup point is too far from you.",
@@ -3545,7 +3552,15 @@ export function GameMap({
   }
 
   const energyColour = hud.energy < 20 ? "bg-danger" : hud.energy < 50 ? "bg-gold" : "bg-[#1E9E62]";
-  const segment = (on: boolean) => `rounded-lg px-3 text-sm font-bold ${on ? "bg-gold text-ink" : "text-paper"}`;
+  /** A square icon button (top bar and the tools on the right). */
+  const tool = "pointer-events-auto flex size-11 shrink-0 items-center justify-center rounded-xl";
+  /** A small count on an icon button's corner. */
+  const badge = "absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-extrabold leading-none";
+  /** A small status chip under the top bar. */
+  const chip = "pointer-events-auto flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold";
+  /** Something to do right here (above the street name). */
+  const here = "pointer-events-auto flex h-10 items-center rounded-full bg-gold px-3.5 text-sm font-bold text-ink shadow-lg disabled:opacity-50";
+  const distanceText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
@@ -3555,352 +3570,343 @@ export function GameMap({
       </div>
 
       <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-col gap-2" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        {/* Row 1: status */}
+        {/* Top bar: back, energy, coins, bag, help */}
         <div className="flex items-center gap-2">
-        <Link href="/lobby" aria-label="Back to the lobby" className="pointer-events-auto flex size-11 items-center justify-center rounded-xl bg-ink text-paper">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M15 5l-7 7 7 7" />
-          </svg>
-        </Link>
-        <div className="pointer-events-auto flex h-11 min-w-[110px] flex-1 items-center gap-2 rounded-xl bg-ink px-3 sm:max-w-xs" aria-label={`Energy ${hud.energy} of 100`}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="#1E9E62" aria-hidden="true">
-            <path d="M13 2L4 14h7l-1 8 9-12h-7z" />
-          </svg>
-          <div className="h-2 flex-1 overflow-hidden rounded bg-line">
-            <div className={`h-full ${energyColour}`} style={{ width: `${hud.energy}%` }} />
-          </div>
-          <span className="w-7 text-right text-sm font-bold">{hud.energy}</span>
-        </div>
-        <span className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold" aria-label={`${hud.coins} coins`}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F4B41A" strokeWidth="2.4" aria-hidden="true">
-            <circle cx="12" cy="12" r="8.5" />
-          </svg>
-          {hud.coins.toLocaleString("en-NG")}
-        </span>
-        <button
-          type="button"
-          onClick={() => setBagOpen(true)}
-          className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C3A6FF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2" />
-          </svg>
-          Bag{hud.relics > 0 ? ` · ${hud.relics}` : ""}
-          {hud.leads > 0 && <span className="rounded-md bg-[#C3A6FF] px-1.5 text-xs text-ink">{hud.leads} lead{hud.leads > 1 ? "s" : ""}</span>}
-        </button>
-        <button
-          type="button"
-          aria-label="How to move"
-          aria-expanded={helpOpen}
-          onClick={() => setHelpOpen((o) => !o)}
-          className="pointer-events-auto flex size-11 shrink-0 items-center justify-center rounded-xl bg-ink text-lg font-extrabold"
-        >
-          ?
-        </button>
-        </div>
-
-        {/* Row 2: how you travel, and what's nearby */}
-        <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          aria-expanded={searchOpen}
-          onClick={() => setSearchOpen((o) => !o)}
-          className={`pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-bold ${searchOpen ? "bg-gold text-ink" : "bg-ink text-paper"}`}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M12 2l9 9-9 9-9-9z" />
-            <path d="M9 13v-2a1 1 0 0 1 1-1h4M12 8l2 2-2 2" />
-          </svg>
-          Directions
-        </button>
-        <div className="pointer-events-auto flex h-11 rounded-xl bg-ink p-1" role="group" aria-label="Travel mode">
-          <button
-            type="button"
-            aria-pressed={hud.mode === "walk"}
-            disabled={hud.busy}
-            onClick={() => actions.current?.getOff()}
-            className={segment(hud.mode === "walk")}
-          >
-            Walk
-          </button>
-          <button
-            type="button"
-            aria-pressed={hud.mode !== "walk"}
-            onClick={() => setGarage(actions.current?.vehicles() ?? [])}
-            className={`${segment(hud.mode !== "walk")} flex items-center gap-1.5`}
-          >
-            {hud.vehicle ? VEHICLES[hud.vehicle.kind].name : "Vehicles"}
-            {hud.vehicle?.fuel != null && (
-              <span className={`text-xs ${hud.vehicle.fuel < 15 ? "text-danger" : ""}`}>⛽ {Math.round(hud.vehicle.fuel)}%</span>
-            )}
-            {hud.vehicle?.tyre != null && (
-              <span className={`text-xs ${hud.vehicle.tyre < 40 ? "text-danger" : ""}`}>{hud.vehicle.tyre <= 0 ? "flat tyre" : `🛞 ${Math.round(hud.vehicle.tyre)}%`}</span>
-            )}
-            {hud.vehicle?.engine != null && hud.vehicle.engine < 50 && (
-              <span className={`text-xs ${hud.vehicle.engine < 30 ? "text-danger" : ""}`}>🔧 {Math.round(hud.vehicle.engine)}%</span>
-            )}
-            {hud.vehicle?.meter && <span className="text-xs font-semibold">· {hud.vehicle.meter}</span>}
-          </button>
-        </div>
-        <button
-          type="button"
-          disabled={!!hud.ride}
-          onClick={() => setTransitOpen(true)}
-          className={`pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-bold disabled:opacity-50 ${
-            hud.stopHere ? "bg-gold text-ink" : "bg-ink text-paper"
-          }`}
-        >
-          <span aria-hidden="true">{hud.stopHere?.icon ?? "🚌"}</span>
-          {hud.stopHere?.label ?? "Bus · Train · Plane"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setLandmarksOpen({ quiz: null, message: null })}
-          className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold text-paper"
-        >
-          <span aria-hidden="true">🏛</span>
-          Landmarks
-        </button>
-        {hud.landmarkHere && !hud.ride && !hud.care && (
-          <button
-            type="button"
-            disabled={!hud.landmarkHere.canTry || checkingIn}
-            onClick={() => void checkIn(hud.landmarkHere!.landmark)}
-            className="pointer-events-auto h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
-          >
-            {hud.landmarkHere.canTry
-              ? `🏛 Check in at ${hud.landmarkHere.landmark.name} · ${hud.landmarkHere.landmark.reward} coins`
-              : `🏛 ${hud.landmarkHere.landmark.name}: back tomorrow`}
-          </button>
-        )}
-        {hud.actions.map((a) => (
-          <button
-            key={a.id}
-            type="button"
-            disabled={hud.busy}
-            onClick={() => actions.current?.act(a.id)}
-            className="pointer-events-auto h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
-          >
-            {a.label}
-          </button>
-        ))}
-        {hud.keg && (
-          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm" aria-label="Your fuel keg">
-            <span aria-hidden="true">🛢</span>
-            <span className="font-bold">{hud.keg.fuel > 0 ? `Keg ${Math.round(hud.keg.fuel)}%` : "Empty keg"}</span>
-            <span className="text-xs text-muted">{hud.keg.usesLeft} uses left</span>
-          </div>
-        )}
-        {hud.nearest && (
-          <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-ink px-3 text-sm" aria-label={`Nearest find ${hud.nearest.metres} metres away`}>
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="#F4B41A"
-              aria-hidden="true"
-              style={{ transform: `rotate(${hud.nearest.angle}deg)` }}
-            >
-              <path d="M12 2l6 18-6-4-6 4z" />
+          <Link href="/lobby" aria-label="Back to the lobby" title="Back to the lobby" className={`${tool} bg-ink text-paper`}>
+            <BackIcon />
+          </Link>
+          <div className="pointer-events-auto flex h-11 min-w-0 flex-1 items-center gap-2 rounded-xl bg-ink px-3 sm:max-w-xs" aria-label={`Energy ${hud.energy} of 100`} title="Energy">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="#1E9E62" aria-hidden="true" className="shrink-0">
+              <path d="M13 2L4 14h7l-1 8 9-12h-7z" />
             </svg>
-            <span className="text-muted">Nearest find</span>
-            <span className="font-bold">{hud.nearest.metres >= 1000 ? `${(hud.nearest.metres / 1000).toFixed(1)} km` : `${hud.nearest.metres} m`}</span>
-          </div>
-        )}
-        {hud.radar && (
-          <div className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-[#3B2F0A] px-3 text-sm text-paper ring-1 ring-gold" aria-label="Radar">
-            <span className="font-bold text-gold">Radar</span>
-            {hud.radar.relic ? (
-              <span className="flex items-center gap-1">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="#F4B41A" aria-hidden="true" style={{ transform: `rotate(${hud.radar.relic.bearing}deg)` }}>
-                  <path d="M12 2l6 18-6-4-6 4z" />
-                </svg>
-                relic {hud.radar.relic.metres >= 1000 ? `${(hud.radar.relic.metres / 1000).toFixed(1)} km` : `${hud.radar.relic.metres} m`}
-              </span>
-            ) : (
-              <span className="text-paper/70">no relic within 3 km</span>
-            )}
-            {hud.radar.key && (
-              <span className="flex items-center gap-1">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="#3DD68C" aria-hidden="true" style={{ transform: `rotate(${hud.radar.key.bearing}deg)` }}>
-                  <path d="M12 2l6 18-6-4-6 4z" />
-                </svg>
-                key {hud.radar.key.metres} m
-              </span>
-            )}
-            <span className="text-xs text-paper/70">
-              {Math.floor(hud.radar.secondsLeft / 60)}:{String(hud.radar.secondsLeft % 60).padStart(2, "0")}
-            </span>
-          </div>
-        )}
-        {hud.dome && (
-          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-[#3A1E5C] px-3 text-sm ring-1 ring-[#C89BFF]" aria-label="Lockdown dome">
-            <span aria-hidden="true">🔒</span>
-            {hud.dome.inside
-              ? `${hud.dome.mine ? "Your dome" : "Inside a dome"} over Key ${hud.dome.key} · ${hud.dome.minutesLeft} min`
-              : `Dome over Key ${hud.dome.key} · ${hud.dome.minutesLeft} min`}
-          </div>
-        )}
-        {hud.rain && (
-          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-[#173B5C] px-3 text-sm" aria-label="Rain">
-            <span aria-hidden="true">🌧</span>
-            {hud.rain.slowed ? "Rain: 20% slower on foot or bike" : "Rain"}
-          </div>
-        )}
-        {hud.hunters > 0 && (
-          <div className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm" aria-label={`${hud.hunters} other hunters nearby`}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7FB2FF" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-              <circle cx="9" cy="8" r="3.5" />
-              <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4.5a3.5 3.5 0 0 1 0 7M21 20c0-2.6-1.6-4.8-4-5.6" />
-            </svg>
-            <span className="font-bold">{hud.hunters}</span>
-            <span className="text-muted">nearby</span>
-          </div>
-        )}
-        {hud.turn !== 0 && (
-          <button
-            type="button"
-            onClick={() => actions.current?.turn(hud.turn as -1 | 1)}
-            className="pointer-events-auto flex h-11 items-center gap-2 rounded-xl bg-gold px-3 text-sm font-bold text-ink"
-            aria-label={`Turning ${hud.turn === -1 ? "left" : "right"} at the next junction. Press to cancel.`}
-          >
-            <span aria-hidden="true">{hud.turn === -1 ? "↰" : "↱"}</span>
-            Next junction: {hud.turn === -1 ? "left" : "right"}
-            <span aria-hidden="true" className="text-ink/70">✕</span>
-          </button>
-        )}
-        </div>
-
-        {searchOpen && (
-          <PlaceSearch
-            near={() => actions.current?.where() ?? { lng: startLng, lat: startLat }}
-            onPick={(place) => {
-              actions.current?.goTo(place);
-              setSearchOpen(false);
-            }}
-          />
-        )}
-
-        {/* Directions: the next turn. The player steers; this only guides. */}
-        {hud.guide && (
-          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Directions">
-            <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0" style={{ transform: `rotate(${hud.guide.arrow}deg)` }}>
-              <path d="M12 2l7 9h-4.5v11h-5V11H5z" />
-            </svg>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="font-display text-base font-extrabold leading-tight">{hud.guide.step}</span>
-              <span className="truncate text-xs text-paper/80">{hud.guide.trip}</span>
+            <div className="h-2 flex-1 overflow-hidden rounded bg-line">
+              <div className={`h-full ${energyColour}`} style={{ width: `${hud.energy}%` }} />
             </div>
-            <button type="button" onClick={() => actions.current?.endDirections()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
-              End
-            </button>
+            <span className="w-7 text-right text-sm font-bold">{hud.energy}</span>
           </div>
-        )}
+          <span className="pointer-events-auto flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold" aria-label={`${hud.coins} coins`} title="Coins">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F4B41A" strokeWidth="2.4" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" />
+            </svg>
+            {hud.coins.toLocaleString("en-NG")}
+          </span>
+          <button
+            type="button"
+            onClick={() => setBagOpen(true)}
+            aria-label={`Bag${hud.relics > 0 ? `: ${hud.relics} relics` : ""}${hud.leads > 0 ? `, ${hud.leads} leads` : ""}`}
+            title="Bag"
+            className={`${tool} relative bg-ink text-[#C3A6FF]`}
+          >
+            <BagIcon />
+            {hud.relics > 0 && <span className={`${badge} bg-paper text-ink`}>{hud.relics}</span>}
+            {hud.leads > 0 && <span className="absolute -bottom-1 -right-1 size-3 rounded-full bg-[#C3A6FF] ring-2 ring-ink" aria-hidden="true" />}
+          </button>
+          <button
+            type="button"
+            aria-label="Help"
+            title="Help"
+            aria-expanded={helpOpen}
+            onClick={() => setHelpOpen((o) => !o)}
+            className={`${tool} text-lg font-extrabold ${helpOpen ? "bg-gold text-ink" : "bg-ink"}`}
+          >
+            ?
+          </button>
+        </div>
 
-        {/* The ambulance, the hospital, a mechanic on the way. */}
-        {hud.care && (
-          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#D62828] p-3 text-paper" role="status" aria-label="Being looked after">
-            <span className="text-2xl" aria-hidden="true">
-              {hud.care.icon}
-            </span>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="font-display text-base font-extrabold leading-tight">{hud.care.title}</span>
-              <span className="truncate text-xs text-paper/85">{hud.care.status}</span>
-            </div>
-          </div>
-        )}
-
-        {/* A rental waiting at a bus stop, or a taxi on its way. */}
-        {hud.pickup && !hud.ride && !hud.care && (
-          <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Your pickup">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl" aria-hidden="true">
-                {hud.pickup.icon}
-              </span>
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="font-display text-base font-extrabold leading-tight">{hud.pickup.title}</span>
-                <span className="truncate text-xs text-paper/85">{hud.pickup.status}</span>
+        <div className="flex items-start gap-2">
+          {/* Left: what's going on (small chips), then the cards */}
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            {(hud.vehicle || hud.keg || hud.nearest || hud.radar || hud.dome || hud.rain || hud.hunters > 0 || hud.turn !== 0) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {hud.turn !== 0 && (
+                  <button
+                    type="button"
+                    onClick={() => actions.current?.turn(hud.turn as -1 | 1)}
+                    className={`${chip} bg-gold text-ink`}
+                    aria-label={`Turning ${hud.turn === -1 ? "left" : "right"} at the next junction. Press to cancel.`}
+                  >
+                    <span aria-hidden="true" className="text-base">{hud.turn === -1 ? "↰" : "↱"}</span>
+                    {hud.turn === -1 ? "Left" : "Right"}
+                    <CloseIcon size={12} />
+                  </button>
+                )}
+                {hud.vehicle && (hud.vehicle.fuel != null || hud.vehicle.tyre != null || hud.vehicle.meter) && (
+                  <div className={`${chip} bg-ink`} aria-label={`Your ${VEHICLES[hud.vehicle.kind].name.toLowerCase()}`}>
+                    {hud.vehicle.fuel != null && (
+                      <span className={hud.vehicle.fuel < 15 ? "text-danger" : ""} title="Fuel">⛽ {Math.round(hud.vehicle.fuel)}%</span>
+                    )}
+                    {hud.vehicle.tyre != null && (
+                      <span className={hud.vehicle.tyre < 40 ? "text-danger" : ""} title="Tyres">{hud.vehicle.tyre <= 0 ? "🛞 flat" : `🛞 ${Math.round(hud.vehicle.tyre)}%`}</span>
+                    )}
+                    {hud.vehicle.engine != null && hud.vehicle.engine < 50 && (
+                      <span className={hud.vehicle.engine < 30 ? "text-danger" : ""} title="Engine">🔧 {Math.round(hud.vehicle.engine)}%</span>
+                    )}
+                    {hud.vehicle.meter && <span className="font-semibold text-muted" title="Rental meter">{hud.vehicle.meter}</span>}
+                  </div>
+                )}
+                {hud.keg && (
+                  <div className={`${chip} bg-ink`} aria-label={`Fuel keg ${Math.round(hud.keg.fuel)}%, ${hud.keg.usesLeft} uses left`} title={`Fuel keg · ${hud.keg.usesLeft} uses left`}>
+                    <span aria-hidden="true">🛢</span>
+                    {hud.keg.fuel > 0 ? `${Math.round(hud.keg.fuel)}%` : "empty"}
+                  </div>
+                )}
+                {hud.nearest && (
+                  <div className={`${chip} bg-ink`} aria-label={`Nearest find ${hud.nearest.metres} metres away`} title="Nearest find">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="#F4B41A" aria-hidden="true" style={{ transform: `rotate(${hud.nearest.angle}deg)` }}>
+                      <path d="M12 2l6 18-6-4-6 4z" />
+                    </svg>
+                    {distanceText(hud.nearest.metres)}
+                  </div>
+                )}
+                {hud.radar && (
+                  <div className={`${chip} bg-[#3B2F0A] text-paper ring-1 ring-gold`} aria-label="Radar">
+                    <span className="text-gold">Radar</span>
+                    {hud.radar.relic ? (
+                      <span className="flex items-center gap-1">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="#F4B41A" aria-hidden="true" style={{ transform: `rotate(${hud.radar.relic.bearing}deg)` }}>
+                          <path d="M12 2l6 18-6-4-6 4z" />
+                        </svg>
+                        relic {distanceText(hud.radar.relic.metres)}
+                      </span>
+                    ) : (
+                      <span className="font-semibold text-paper/70">no relic within 3 km</span>
+                    )}
+                    {hud.radar.key && (
+                      <span className="flex items-center gap-1">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="#3DD68C" aria-hidden="true" style={{ transform: `rotate(${hud.radar.key.bearing}deg)` }}>
+                          <path d="M12 2l6 18-6-4-6 4z" />
+                        </svg>
+                        key {hud.radar.key.metres} m
+                      </span>
+                    )}
+                    <span className="font-semibold text-paper/70">
+                      {Math.floor(hud.radar.secondsLeft / 60)}:{String(hud.radar.secondsLeft % 60).padStart(2, "0")}
+                    </span>
+                  </div>
+                )}
+                {hud.dome && (
+                  <div
+                    className={`${chip} bg-[#3A1E5C] ring-1 ring-[#C89BFF]`}
+                    aria-label="Lockdown dome"
+                    title={hud.dome.inside ? (hud.dome.mine ? "Your dome" : "Inside a dome") : "A dome nearby"}
+                  >
+                    <span aria-hidden="true">🔒</span>
+                    Key {hud.dome.key} · {hud.dome.minutesLeft} min
+                  </div>
+                )}
+                {hud.rain && (
+                  <div className={`${chip} bg-[#173B5C]`} aria-label="Rain" title={hud.rain.slowed ? "Rain: 20% slower on foot or bike" : "Rain"}>
+                    <span aria-hidden="true">🌧</span>
+                    {hud.rain.slowed ? "−20%" : "Rain"}
+                  </div>
+                )}
+                {hud.hunters > 0 && (
+                  <div className={`${chip} bg-ink`} aria-label={`${hud.hunters} other hunters nearby`} title="Hunters nearby">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7FB2FF" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                      <circle cx="9" cy="8" r="3.5" />
+                      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4.5a3.5 3.5 0 0 1 0 7M21 20c0-2.6-1.6-4.8-4-5.6" />
+                    </svg>
+                    {hud.hunters}
+                  </div>
+                )}
               </div>
-              <button type="button" onClick={() => actions.current?.cancelPickup()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
-                Cancel
-              </button>
-            </div>
-            {hud.pickup.action && (
-              <button
-                type="button"
-                disabled={hud.busy}
-                onClick={() => actions.current?.pickupAction()}
-                className="h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
-              >
-                {hud.pickup.action}
-              </button>
             )}
-          </div>
-        )}
 
-        {/* A warning: tired, fuel low, soft tyres, a worn engine; and the nearest place that helps. */}
-        {hud.advice && !hud.care && (
-          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#3B2F0A] p-3 text-sm text-paper ring-1 ring-gold" role="alert">
-            <span className="min-w-0 flex-1">{hud.advice.text}</span>
-            {hud.advice.place && (
-              <button type="button" onClick={() => actions.current?.followAdvice()} className="shrink-0 rounded-lg bg-gold px-2 py-1 text-xs font-bold text-ink">
-                Directions
-              </button>
+            {searchOpen && (
+              <PlaceSearch
+                near={() => actions.current?.where() ?? { lng: startLng, lat: startLat }}
+                onPick={(place) => {
+                  actions.current?.goTo(place);
+                  setSearchOpen(false);
+                }}
+              />
             )}
-            <button type="button" aria-label="Dismiss" onClick={() => actions.current?.dismissAdvice()} className="shrink-0 rounded-lg px-1 text-xs font-bold text-paper/70">
-              ✕
+
+            {/* Directions: the next turn. The player steers; this only guides. */}
+            {hud.guide && (
+              <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Directions">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0" style={{ transform: `rotate(${hud.guide.arrow}deg)` }}>
+                  <path d="M12 2l7 9h-4.5v11h-5V11H5z" />
+                </svg>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-display text-base font-extrabold leading-tight">{hud.guide.step}</span>
+                  <span className="truncate text-xs text-paper/80">{hud.guide.trip}</span>
+                </div>
+                <button type="button" onClick={() => actions.current?.endDirections()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
+                  End
+                </button>
+              </div>
+            )}
+
+            {/* The ambulance, the hospital, a mechanic on the way. */}
+            {hud.care && (
+              <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#D62828] p-3 text-paper" role="status" aria-label="Being looked after">
+                <span className="text-2xl" aria-hidden="true">
+                  {hud.care.icon}
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-display text-base font-extrabold leading-tight">{hud.care.title}</span>
+                  <span className="truncate text-xs text-paper/85">{hud.care.status}</span>
+                </div>
+              </div>
+            )}
+
+            {/* A rental waiting at a bus stop, or a taxi on its way. */}
+            {hud.pickup && !hud.ride && !hud.care && (
+              <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Your pickup">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl" aria-hidden="true">
+                    {hud.pickup.icon}
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="font-display text-base font-extrabold leading-tight">{hud.pickup.title}</span>
+                    <span className="truncate text-xs text-paper/85">{hud.pickup.status}</span>
+                  </div>
+                  <button type="button" onClick={() => actions.current?.cancelPickup()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
+                    Cancel
+                  </button>
+                </div>
+                {hud.pickup.action && (
+                  <button
+                    type="button"
+                    disabled={hud.busy}
+                    onClick={() => actions.current?.pickupAction()}
+                    className="h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
+                  >
+                    {hud.pickup.action}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* A warning: tired, fuel low, soft tyres, a worn engine; and the nearest place that helps. Tap for the whole story. */}
+            {hud.advice && !hud.care && (
+              <div className="pointer-events-auto flex w-full max-w-md items-start gap-2 rounded-2xl bg-[#3B2F0A] p-2.5 text-sm text-paper ring-1 ring-gold" role="alert">
+                <button type="button" onClick={() => setAdviceOpen((o) => !o)} aria-expanded={adviceOpen} className="flex min-w-0 flex-1 flex-col text-left">
+                  <span className="font-bold text-gold">⚠ {hud.advice.title}</span>
+                  {adviceOpen ? (
+                    <span className="text-xs">{hud.advice.text}</span>
+                  ) : (
+                    hud.advice.where && <span className="truncate text-xs text-paper/80">{hud.advice.where}</span>
+                  )}
+                </button>
+                {hud.advice.place && (
+                  <button
+                    type="button"
+                    onClick={() => actions.current?.followAdvice()}
+                    aria-label={`Directions to ${hud.advice.place.name}`}
+                    title={`Directions to ${hud.advice.place.name}`}
+                    className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-gold text-ink"
+                  >
+                    <DirectionsIcon />
+                  </button>
+                )}
+                <button type="button" aria-label="Dismiss" onClick={() => actions.current?.dismissAdvice()} className="flex size-9 shrink-0 items-center justify-center rounded-lg text-paper/70">
+                  <CloseIcon />
+                </button>
+              </div>
+            )}
+
+            {/* On a bus, train or plane: where to, and when it leaves or arrives. */}
+            {hud.ride && (
+              <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
+                <span className="text-2xl" aria-hidden="true">
+                  {hud.ride.icon}
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-display text-base font-extrabold leading-tight">{hud.ride.title}</span>
+                  <span className="truncate text-xs text-paper/85">{hud.ride.status}</span>
+                </div>
+                {hud.ride.canCancel && (
+                  <button type="button" onClick={() => actions.current?.cancelTrip()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
+                    Cancel
+                  </button>
+                )}
+              </div>
+            )}
+
+            {helpOpen && (
+              <div className="pointer-events-auto flex max-h-[60dvh] max-w-md flex-col gap-2 overflow-y-auto rounded-2xl bg-ink p-4 text-sm" role="note">
+                <p className="font-bold">The buttons</p>
+                <ul className="flex flex-col gap-1.5">
+                  <li className="flex items-center gap-2"><span className="text-paper"><DirectionsIcon /></span> Directions: search a place or tap the map</li>
+                  <li className="flex items-center gap-2"><span className="text-paper"><VehicleIcon kind={hud.vehicle?.kind ?? null} /></span> Walk, or ride a bicycle, motorbike or car</li>
+                  <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
+                  <li className="flex items-center gap-2"><span className="text-paper"><LandmarkIcon /></span> Landmarks: check in for coins</li>
+                  <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Your bag: relics and leads</li>
+                </ul>
+                <p className="mt-1 font-bold">How to move</p>
+                <p>
+                  <b>Keyboard:</b> hold ↑ to go, ↓ to turn round and go back. Tap ← or → to turn left or right at the next junction (or
+                  the one you just passed). Hold Shift to sprint.
+                </p>
+                <p>
+                  <b>Touch:</b> press and hold the lower part of the screen to walk. Swipe left or right there to turn, and down to turn
+                  back. Hold SPRINT to run or pedal faster.
+                </p>
+                <p>
+                  <b>Look around:</b> drag the map (the upper part on a phone) left or right to turn the view, up or down to tilt it.
+                </p>
+                <p>
+                  Things you can do where you stand (eat, rest, refuel, check in) appear as gold buttons above the street name.
+                </p>
+                <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
+                  Got it
+                </button>
+              </div>
+            )}
+
+            {/* The hunt (riddle, keys, Search here) */}
+            {huntId && <HuntPanel huntId={huntId} actions={huntActions} />}
+          </div>
+
+          {/* Right: the tools, as icons */}
+          <nav className="flex shrink-0 flex-col gap-2" aria-label="Tools">
+            <button
+              type="button"
+              data-tool="directions"
+              aria-label="Get directions"
+              title="Directions"
+              aria-expanded={searchOpen}
+              onClick={() => setSearchOpen((o) => !o)}
+              className={`${tool} ${searchOpen ? "bg-gold text-ink" : "bg-ink text-paper"}`}
+            >
+              <DirectionsIcon />
             </button>
-          </div>
-        )}
-
-        {/* On a bus, train or plane: where to, and when it leaves or arrives. */}
-        {hud.ride && (
-          <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
-            <span className="text-2xl" aria-hidden="true">
-              {hud.ride.icon}
-            </span>
-            <div className="flex min-w-0 flex-1 flex-col">
-              <span className="font-display text-base font-extrabold leading-tight">{hud.ride.title}</span>
-              <span className="truncate text-xs text-paper/85">{hud.ride.status}</span>
-            </div>
-            {hud.ride.canCancel && (
-              <button type="button" onClick={() => actions.current?.cancelTrip()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
-                Cancel
-              </button>
-            )}
-          </div>
-        )}
-
-        {helpOpen && (
-          <div className="pointer-events-auto flex max-w-md flex-col gap-2 rounded-2xl bg-ink p-4 text-sm" role="note">
-            <p className="font-bold">How to move</p>
-            <p>
-              <b>Keyboard:</b> hold ↑ to go, ↓ to turn round and go back. Tap ← or → to turn left or right at the next junction (or
-              the one you just passed). Hold Shift to sprint.
-            </p>
-            <p>
-              <b>Touch:</b> press and hold the lower part of the screen to walk. Swipe left or right there to turn, and down to turn
-              back. Hold SPRINT to run or pedal faster.
-            </p>
-            <p>
-              <b>Look around:</b> drag the map (the upper part on a phone) left or right to turn the view, up or down to tilt it.
-            </p>
-            <p>
-              <b>Directions:</b> search a place or address, or tap a spot on the map. A blue line and turn-by-turn directions
-              show the way; you steer.
-            </p>
-            <p>
-              <b>Bus, train or plane:</b> get to a bus stop, train station or airport (the button shows the nearest), pay the fare,
-              and it carries you. Buses stop along main roads.
-            </p>
-            <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
-              Got it
+            <button
+              type="button"
+              data-tool="travel"
+              aria-label={hud.vehicle ? `Travelling by ${VEHICLES[hud.vehicle.kind].name.toLowerCase()}: change` : "Walking: get a vehicle"}
+              title={hud.vehicle ? VEHICLES[hud.vehicle.kind].name : "Walking · Vehicles"}
+              onClick={() => setGarage(actions.current?.vehicles() ?? [])}
+              className={`${tool} ${hud.vehicle ? "bg-gold text-ink" : "bg-ink text-paper"}`}
+            >
+              <VehicleIcon kind={hud.vehicle?.kind ?? null} />
             </button>
-          </div>
-        )}
-
-        {/* Row 3: the hunt (riddle, keys, Search here) */}
-        {huntId && <HuntPanel huntId={huntId} actions={huntActions} />}
+            <button
+              type="button"
+              data-tool="transit"
+              aria-label={hud.stopHere?.label ?? "Bus, train, plane or taxi"}
+              title={hud.stopHere?.label ?? "Bus · Train · Plane · Taxi"}
+              disabled={!!hud.ride}
+              onClick={() => setTransitOpen(true)}
+              className={`${tool} relative disabled:opacity-50 ${hud.stopHere ? "bg-gold text-ink" : "bg-ink text-paper"}`}
+            >
+              <BusIcon />
+              {hud.stopHere && <span className={`${badge} bg-ink text-paper`} aria-hidden="true">{hud.stopHere.icon}</span>}
+            </button>
+            <button
+              type="button"
+              data-tool="landmarks"
+              aria-label="Landmarks"
+              title="Landmarks"
+              onClick={() => setLandmarksOpen({ quiz: null, message: null })}
+              className={`${tool} relative ${hud.landmarkHere?.canTry ? "bg-gold text-ink" : "bg-ink text-paper"}`}
+            >
+              <LandmarkIcon />
+            </button>
+          </nav>
+        </div>
       </div>
 
       {hud.street && (
@@ -3970,19 +3976,44 @@ export function GameMap({
         <TransitPanel actions={transitActions} coins={hud.coins} onClose={() => setTransitOpen(false)} />
       )}
 
-      {/* The siege: at a dome's edge, hunters attack it together to break it. */}
-      {hud.dome?.siege && (
-        <button
-          type="button"
-          onClick={() => actions.current?.attackDome()}
-          className="absolute bottom-[160px] left-1/2 flex -translate-x-1/2 flex-col items-center rounded-2xl bg-[#9B5DE5] px-6 py-3 font-display text-lg font-extrabold text-paper shadow-lg active:scale-95"
+      {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
+      {(hud.dome?.siege || hud.actions.length > 0 || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+        <div
+          className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
         >
-          ⚔ Attack the dome
-          <span className="text-xs font-semibold text-paper/85">
-            {hud.dome.siege.attackers} of {hud.dome.siege.needed} hunters attacking together
-          </span>
-        </button>
+          {hud.dome?.siege && (
+            <button
+              type="button"
+              onClick={() => actions.current?.attackDome()}
+              className="pointer-events-auto flex w-full max-w-xs flex-col items-center rounded-2xl bg-[#9B5DE5] px-6 py-3 font-display text-lg font-extrabold text-paper shadow-lg active:scale-95"
+            >
+              ⚔ Attack the dome
+              <span className="text-xs font-semibold text-paper/85">
+                {hud.dome.siege.attackers} of {hud.dome.siege.needed} hunters attacking together
+              </span>
+            </button>
+          )}
+          {hud.landmarkHere?.canTry && !hud.ride && !hud.care && (
+            <button
+              type="button"
+              disabled={checkingIn}
+              onClick={() => void checkIn(hud.landmarkHere!.landmark)}
+              aria-label={`Check in at ${hud.landmarkHere.landmark.name} for ${hud.landmarkHere.landmark.reward} coins`}
+              title={`Check in at ${hud.landmarkHere.landmark.name}`}
+              className={`${here} gap-1.5`}
+            >
+              <LandmarkIcon size={18} />
+              Check in · +{hud.landmarkHere.landmark.reward}
+            </button>
+          )}
+          {hud.actions.map((a) => (
+            <button key={a.id} type="button" disabled={hud.busy} onClick={() => actions.current?.act(a.id)} aria-label={a.label} title={a.label} className={`${here} gap-1`}>
+              <span aria-hidden="true">{a.icon}</span>
+              {a.short}
+            </button>
+          ))}
+        </div>
       )}
 
       {/* Running on foot or pedalling harder; motorbikes and cars have no sprint. */}

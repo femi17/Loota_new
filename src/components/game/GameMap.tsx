@@ -238,7 +238,7 @@ export function GameMap({
         // smooth zooming; the wheel is handled below instead.
         scrollZoom: false,
         doubleClickZoom: false,
-        minZoom: 14,
+        minZoom: 15,
         maxZoom: 21.5,
         keyboard: false, // the keyboard drives the hunter instead
         attributionControl: { compact: true },
@@ -1224,7 +1224,7 @@ export function GameMap({
       const wheelZoom = (e: WheelEvent) => {
         e.preventDefault();
         const step = e.deltaMode === 1 ? e.deltaY * 0.05 : e.deltaY * 0.0025;
-        zoomGoal = Math.max(14, Math.min(21.5, (zoomGoal ?? map.getZoom()) - step));
+        zoomGoal = Math.max(15, Math.min(21.5, (zoomGoal ?? map.getZoom()) - step));
       };
       lookArea.addEventListener("wheel", wheelZoom, { passive: false });
       window.addEventListener("pointermove", lookMove);

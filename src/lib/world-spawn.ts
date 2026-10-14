@@ -1,8 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CELL_DEG, RELIC_WEIGHTS, type ItemKind, type RelicId } from "@/game/items";
 
-/** What one square of the world (about 550 m) holds after stocking. */
-const COIN_DROPS = 12;
+/** How long a square's finds last before it can be restocked. (No loose coin drops: owner's call, 14 Oct 2026.) */
 const LIFETIME_HOURS = 6;
 
 const randomInt = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1));
@@ -32,8 +31,8 @@ async function snapToRoad(lng: number, lat: number): Promise<[number, number] | 
 }
 
 /**
- * Stock one square with coin drops, an intel scroll, one hidden find (a coin
- * cache or a relic) and a decoy spot, all on real roads. Only the caller that
+ * Stock one square with an intel scroll, one hidden find (a coin cache or a
+ * relic) and a decoy spot, all on real roads. Only the caller that
  * wins `claim_cell` stocks it, so two players arriving together can't double it.
  */
 export async function stockCell(admin: SupabaseClient, cell: string): Promise<boolean> {
@@ -44,7 +43,6 @@ export async function stockCell(admin: SupabaseClient, cell: string): Promise<bo
   const randomPoint = () => snapToRoad((x + Math.random()) * CELL_DEG, (y + Math.random()) * CELL_DEG);
 
   const plan: { kind: ItemKind | "decoy"; coins?: number; relic?: RelicId; hidden?: boolean }[] = [
-    ...Array.from({ length: COIN_DROPS }, () => ({ kind: "coins" as const, coins: randomInt(5, 20) })),
     { kind: "intel" },
     Math.random() < 0.6 ? { kind: "cache", coins: randomInt(40, 100), hidden: true } : { kind: "relic", relic: randomRelic(), hidden: true },
     { kind: "decoy" },

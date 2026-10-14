@@ -16,10 +16,11 @@ import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
 import { highwayRoute, loadHighways } from "@/game/highways";
-import { TransitPanel, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
+import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
 import {
   BUS_RANGE_M,
   COACH_RANGE_M,
+  DRIVER_SPEED,
   TRANSIT,
   TRAIN_CARS,
   alongPath,
@@ -81,6 +82,8 @@ type Hud = {
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
+  /** A rental waiting at a bus stop, or a taxi on its way: where, how far, and the button once there. */
+  pickup: { icon: string; title: string; status: string; action: string | null } | null;
 };
 
 /** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
@@ -205,6 +208,9 @@ export function GameMap({
     /** Directions to the place a warning points to, or dismiss the warning. */
     followAdvice: () => void;
     dismissAdvice: () => void;
+    /** Get in the taxi, or ride off on the rented bike, once there. */
+    pickupAction: () => void;
+    cancelPickup: () => void;
   } | null>(null);
   const huntActions = useRef<HuntActions | null>(null);
   const [failed, setFailed] = useState(false);
@@ -234,6 +240,7 @@ export function GameMap({
     advice: null,
     care: null,
     keg: null,
+    pickup: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -791,6 +798,22 @@ export function GameMap({
 
       async function chooseVehicle(kind: VehicleKind, how: "own" | "rent" | "buy") {
         if (busy || traveller.phase !== "idle") return;
+        if (how === "rent") {
+          if (kind === "car") {
+            setTransitOpen(true); // cars come as taxis
+            return;
+          }
+          // Rent only where the renter is waiting; until then, ask for one.
+          const waiting = pickup && pickup.p.kind === kind;
+          if (!waiting) {
+            await requestBikePickup(kind);
+            return;
+          }
+          if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [pickup!.p.lng, pickup!.p.lat]) > PICKUP_AT_M) {
+            say(`Walk to the renter at ${pickup!.p.name} first (the blue line).`, true);
+            return;
+          }
+        }
         setBusy(true);
         try {
           if (how === "buy") {
@@ -827,6 +850,9 @@ export function GameMap({
               say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Follow the blue line to it, then open Vehicles and ride it.`, true);
             } else if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
             else if (started?.reason === "fuel") say(`Your ${vehicleName(kind)} has no fuel. Bring fuel in a keg from a petrol station and pour it in.`, true);
+            else if (started?.reason === "far_pickup") say("Walk to the renter first: they're waiting at the bus stop.", true);
+            else if (started?.reason === "pickup") say(`Ask for a ${vehicleName(kind)} first (Rent in Vehicles): a renter brings one to a bus stop near you.`, true);
+            else if (started?.reason === "taxi") say("Cars come as taxis: call one from Taxi, bus, train or plane.", true);
             else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the button appears next to it).`, true);
             else if (started?.reason === "repairing") say(`The mechanic is still working on your ${vehicleName(kind)}. Try again in a moment.`, true);
             else say("Couldn't get on. Please try again.", true);
@@ -836,6 +862,10 @@ export function GameMap({
 
           traveller.mode = kind;
           saved = { ...traveller.pos };
+          if (started.source === "rented") {
+            endPickup();
+            endDirections();
+          }
           const balance = started.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           await refreshVehicles();
@@ -1160,6 +1190,8 @@ export function GameMap({
           const place = advicePlace;
           if (place) void planDirections({ lng: place.lng, lat: place.lat }, place.name);
         },
+        pickupAction: () => void pickupAction(),
+        cancelPickup: () => void cancelPickup(),
         dismissAdvice: () => {
           advicePlace = null;
           setHud((h) => ({ ...h, advice: null }));
@@ -1686,6 +1718,7 @@ export function GameMap({
         const parts: import("@/game/ThreeMapLayer").MapEntity[] = [];
         let plane: Ride["plane"] = null;
         if (next.mode === "bus") parts.push(layer.add({ object: models.makeBus(), ...at, heading: 0 }));
+        else if (next.mode === "taxi") parts.push(layer.add({ object: models.makeTaxi(), ...at, heading: 0 }));
         else if (next.mode === "train") {
           for (let i = 0; i < TRAIN_CARS; i++) parts.push(layer.add({ object: models.makeTrainCar(i === 0), ...at, heading: 0, scaleBy: TRAIN_SCALE }));
         } else {
@@ -1937,6 +1970,7 @@ export function GameMap({
       function rideZoom() {
         if (!ride || ride.s === 0) return GAME_ZOOM;
         if (ride.trip.mode === "bus") return ride.trip.metres > BUS_RANGE_M ? GAME_ZOOM - 1 : GAME_ZOOM;
+        if (ride.trip.mode === "taxi") return GAME_ZOOM;
         if (ride.trip.mode === "train") return GAME_ZOOM - 1;
         const total = ride.cum[ride.cum.length - 1];
         const k = Math.min(1, Math.min(ride.s, total - ride.s) / 40000);
@@ -2172,6 +2206,8 @@ export function GameMap({
           const { data } = await supabase.rpc("search_airports", { p_query: query, p_from: from.id });
           return (data ?? []) as import("@/game/transit").TransitDestination[];
         },
+        quoteTaxi,
+        callTaxi,
         quoteBus,
         quoteTo,
         board,
@@ -2705,6 +2741,287 @@ export function GameMap({
       void loadCondition();
       void refreshSpots();
 
+      // ---- Rentals and taxis come to the player --------------------------------
+      // A bicycle or motorbike renter waits at the nearest bus stop with the bike;
+      // a taxi driver drives to a pickup point on the nearest road and waits there.
+      // The server times it all (request_pickup, board_taxi, start_vehicle).
+      type PickupJson = {
+        kind: "bicycle" | "motorbike" | "taxi";
+        name: string;
+        lng: number;
+        lat: number;
+        driverPath: import("@/game/geo").Coord[] | null;
+        toName: string | null;
+        fare: number | null;
+        tripMetres: number | null;
+        requestedAt: string;
+        readyAt: string;
+        expiresAt: string;
+        now: string;
+      };
+      type Pickup = {
+        p: PickupJson;
+        offset: number; // the server's clock minus this device's, in ms
+        requested: number;
+        ready: number;
+        expires: number;
+        cum: number[] | null;
+        entities: import("@/game/ThreeMapLayer").MapEntity[];
+        renter: ReturnType<typeof models.buildAvatar> | null;
+        car: import("@/game/ThreeMapLayer").MapEntity | null;
+        then: Place | null; // a taxi: where the player asked to go
+      };
+      let pickup: Pickup | null = null;
+      const PICKUP_AT_M = 30; // the server allows 35
+
+      function showPickup(icon: string, title: string, status: string, action: string | null) {
+        setHud((h) =>
+          h.pickup?.title === title && h.pickup.status === status && h.pickup.action === action
+            ? h
+            : { ...h, pickup: { icon, title, status, action } },
+        );
+      }
+
+      function startPickup(p: PickupJson, then: Place | null = null) {
+        endPickup();
+        const entities: import("@/game/ThreeMapLayer").MapEntity[] = [];
+        let renter: Pickup["renter"] = null;
+        let car: Pickup["car"] = null;
+        if (p.kind === "taxi") {
+          const first = p.driverPath?.[0] ?? [p.lng, p.lat];
+          car = layer.add({ object: models.makeTaxi(), lng: first[0], lat: first[1], heading: 0 });
+          entities.push(car);
+        } else {
+          renter = models.buildAvatar(lookForId(`renter:${p.requestedAt}`));
+          renter.root.add(layer.billboard(models.makeNameplate(p.kind === "bicycle" ? "BICYCLE HIRE" : "OKADA HIRE", "#1E9E62")));
+          entities.push(layer.add({ object: renter.root, lng: p.lng, lat: p.lat, heading: 0 }));
+          // The bike stands beside the renter.
+          const k = 1.6 * layer.enlargement();
+          entities.push(layer.add({ object: models.makeVehicleModel(p.kind), lng: p.lng + k / (111320 * Math.cos((p.lat * Math.PI) / 180)), lat: p.lat, heading: 0 }));
+        }
+        pickup = {
+          p,
+          offset: Date.parse(p.now) - Date.now(),
+          requested: Date.parse(p.requestedAt),
+          ready: Date.parse(p.readyAt),
+          expires: Date.parse(p.expiresAt),
+          cum: p.driverPath ? cumulativeOf(p.driverPath) : null,
+          entities,
+          renter,
+          car,
+          then,
+        };
+      }
+
+      function endPickup() {
+        if (!pickup) return;
+        for (const e of pickup.entities) layer.remove(e);
+        pickup = null;
+        setHud((h) => (h.pickup ? { ...h, pickup: null } : h));
+      }
+
+      /** One frame: the taxi drives in, the renter waits; the banner says how far the player has to go. */
+      function pickupTick(now: number, dt: number, t: number) {
+        const pk = pickup!;
+        const serverNow = Date.now() + pk.offset;
+        if (serverNow > pk.expires) {
+          void supabase.rpc("cancel_pickup");
+          const who = pk.p.kind === "taxi" ? "The taxi driver" : "The renter";
+          endPickup();
+          say(`${who} waited 15 minutes and left.`, true);
+          return;
+        }
+        const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [pk.p.lng, pk.p.lat]);
+        const there = away <= PICKUP_AT_M;
+        const far = there ? "you're there" : `${geo.formatDistance(away)} away: walk there`;
+        if (pk.p.kind === "taxi") {
+          if (pk.car && pk.p.driverPath && pk.cum) {
+            const f = Math.max(0, Math.min(1, (serverNow - pk.requested) / Math.max(1, pk.ready - pk.requested)));
+            const { pos, segment } = alongPath(pk.p.driverPath, pk.cum, f * pk.cum[pk.cum.length - 1]);
+            const heading = geo.headingOf(pk.p.driverPath[segment - 1], pk.p.driverPath[segment]);
+            pk.car.lng = pos[0];
+            pk.car.lat = pos[1];
+            pk.car.heading = pk.car.heading === undefined ? heading : geo.turnTowards(pk.car.heading, heading, Math.min(1, 6 * dt));
+          }
+          const arrived = serverNow >= pk.ready;
+          showPickup(
+            "🚕",
+            `Taxi to ${pk.p.toName} · ${pk.p.fare} coins`,
+            arrived ? (there ? "Your taxi is here" : `Your taxi is waiting at the pickup point, ${geo.formatDistance(away)} away`) : `Arrives in ${clock((pk.ready - serverNow) / 1000)} · ${far}`,
+            arrived && there ? `Get in · ${pk.p.fare} coins` : null,
+          );
+        } else {
+          if (pk.renter) {
+            // The renter turns to watch the player come.
+            const e = pk.entities[0];
+            e.heading = geo.headingOf([e.lng, e.lat], [traveller.pos.lng, traveller.pos.lat]);
+            models.animateAvatar(pk.renter, { mode: "walk", phase: "idle", moving: 0, distance: 0 }, dt, t);
+          }
+          const kind = pk.p.kind as VehicleKind;
+          showPickup(
+            kind === "bicycle" ? "🚲" : "🏍",
+            `${VEHICLES[kind].name} hire at ${pk.p.name}`,
+            there ? "The renter is here with your ride" : far,
+            there ? `Rent it · ${VEHICLES[kind].ratePerMinute} coins a minute` : null,
+          );
+        }
+      }
+
+      /** Ask for a bicycle or motorbike: a renter brings one to the nearest bus stop. */
+      async function requestBikePickup(kind: "bicycle" | "motorbike") {
+        if (traveller.mode !== "walk") {
+          say("Get off first (tap Walk), then ask for a rental.", true);
+          return;
+        }
+        await savePosition();
+        const at = { ...traveller.pos };
+        const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: at.lng, p_lat: at.lat, p_limit: 1 });
+        const stop = (data as TransitStop[] | null)?.[0];
+        const spot = stop && stop.metres <= 2000 ? { name: stop.name, lng: stop.lng, lat: stop.lat, metres: stop.metres } : { name: "where you are", ...at, metres: 0 };
+        const { data: res } = await supabase.rpc("request_pickup", { p_kind: kind, p_lng: spot.lng, p_lat: spot.lat, p_name: spot.name });
+        const r = res as { ok: boolean; reason?: string; pickup?: PickupJson } | null;
+        if (disposed) return;
+        if (!r?.ok || !r.pickup) {
+          say(r?.reason === "vehicle" ? "Get off first (tap Walk), then ask for a rental." : "Couldn't arrange a rental just now. Try again.", true);
+          return;
+        }
+        startPickup(r.pickup);
+        if (spot.metres > PICKUP_AT_M) void planDirections({ lng: spot.lng, lat: spot.lat }, spot.name, true);
+        say(
+          spot.metres > PICKUP_AT_M
+            ? `A ${vehicleName(kind)} renter will meet you at ${spot.name}, ${geo.formatDistance(spot.metres)} away. Walk there: the meter starts when you ride off.`
+            : `The ${vehicleName(kind)} renter is right here.`,
+        );
+      }
+
+      /** A random point `m` metres from `p`. */
+      const somewhereNear = (p: LngLat, m: number) => {
+        const angle = Math.random() * 2 * Math.PI;
+        return { lng: p.lng + (Math.sin(angle) * m) / (111320 * Math.cos((p.lat * Math.PI) / 180)), lat: p.lat + (Math.cos(angle) * m) / 110574 };
+      };
+
+      /** A taxi to a place: the driver's way to the nearest road a car can reach, and the trip from there. */
+      async function quoteTaxi(place: Place): Promise<TaxiQuote | string> {
+        const at = { ...traveller.pos };
+        if (geo.distanceM([at.lng, at.lat], [place.lng, place.lat]) > BUS_RANGE_M) return "Taxis go up to 40 km. For further, take a long-distance bus or a plane.";
+        let driverPath: import("@/game/geo").Coord[] | null = null;
+        for (let i = 0; i < 5 && !driverPath; i++) {
+          const found = (await routeOnOwnRoads(somewhereNear(at, 1200 + Math.random() * 1300), at, "car"))?.path ?? null;
+          if (found && cumulativeOf(found).at(-1)! > 300) driverPath = thinPath(found);
+        }
+        if (!driverPath) return "No taxi can reach you here just now. Try from a bigger road.";
+        const kerb = driverPath[driverPath.length - 1];
+        const pickupAt = { lng: kerb[0], lat: kerb[1] };
+        let trip = (await routeOnOwnRoads(pickupAt, place, "car"))?.path ?? null;
+        if (!trip) {
+          const { route, fallback } = await fetchRoute(pickupAt, place, "car");
+          if (!fallback) trip = [[pickupAt.lng, pickupAt.lat], ...route.coords];
+        }
+        if (!trip) return "Couldn't work out the way there just now. Try again in a moment.";
+        const tripPath = thinPath(trip);
+        const end = tripPath[tripPath.length - 1];
+        const metres = Math.max(cumulativeOf(tripPath).at(-1)!, geo.distanceM(kerb, end));
+        if (metres < 300) return `${place.name} is within walking distance.`;
+        return {
+          place,
+          pickup: { name: "the pickup point", lng: pickupAt.lng, lat: pickupAt.lat, walkM: geo.distanceM([at.lng, at.lat], kerb) },
+          driverPath,
+          tripPath,
+          to: { lng: end[0], lat: end[1] },
+          metres,
+          fare: transitFare("taxi", metres),
+          driverSeconds: Math.max(15, cumulativeOf(driverPath).at(-1)! / DRIVER_SPEED),
+          rideSeconds: metres / transitSpeedFor("taxi", metres),
+        };
+      }
+
+      async function callTaxi(q: TaxiQuote): Promise<string | null> {
+        if (traveller.mode !== "walk") return "Get off your vehicle first (tap Walk), then call a taxi.";
+        await savePosition();
+        const { data } = await supabase.rpc("request_pickup", {
+          p_kind: "taxi",
+          p_lng: q.pickup.lng,
+          p_lat: q.pickup.lat,
+          p_name: "Pickup point",
+          p_driver_path: q.driverPath,
+          p_trip_path: q.tripPath,
+          p_to_name: q.place.name,
+          p_to_lng: q.to.lng,
+          p_to_lat: q.to.lat,
+        });
+        const r = data as { ok: boolean; reason?: string; fare?: number; pickup?: PickupJson } | null;
+        if (!r?.ok || !r.pickup) {
+          const why: Record<string, string> = {
+            coins: `You need ${r?.fare ?? q.fare} coins for this taxi.`,
+            vehicle: "Get off your vehicle first (tap Walk), then call a taxi.",
+            on_trip: "You're already on a trip.",
+            route: "Taxis go up to 40 km.",
+            far: "That pickup point is too far from you.",
+            path: "Couldn't plan that taxi ride. Try again.",
+          };
+          return why[r?.reason ?? ""] ?? "Couldn't call a taxi just now. Try again.";
+        }
+        startPickup(r.pickup, q.place);
+        if (q.pickup.walkM > PICKUP_AT_M) void planDirections({ lng: q.pickup.lng, lat: q.pickup.lat }, "the pickup point", true);
+        say(
+          q.pickup.walkM > PICKUP_AT_M
+            ? `Taxi called. Walk to the pickup point (${geo.formatDistance(q.pickup.walkM)}, blue line); the driver will be there in about ${clock(q.driverSeconds)}.`
+            : `Taxi called: the driver will be here in about ${clock(q.driverSeconds)}.`,
+        );
+        return null;
+      }
+
+      /** The banner's button: get in the taxi, or ride off on the rented bike. */
+      async function pickupAction() {
+        const pk = pickup;
+        if (!pk || busy) return;
+        if (pk.p.kind !== "taxi") {
+          await chooseVehicle(pk.p.kind, "rent");
+          return;
+        }
+        setBusy(true);
+        try {
+          await savePosition();
+          const { data } = await supabase.rpc("board_taxi");
+          const r = data as { ok: boolean; reason?: string; fare?: number; balance?: number; trip?: TransitTrip } | null;
+          if (disposed) return;
+          if (!r?.ok || !r.trip) {
+            const why: Record<string, string> = {
+              far_pickup: "Walk to the taxi first: it's at the pickup point.",
+              not_ready: "The taxi isn't there yet.",
+              coins: `You need ${r?.fare ?? pk.p.fare} coins for the fare.`,
+              dome: "A Lockdown dome covers that place.",
+              pickup: "The taxi has gone.",
+            };
+            say(why[r?.reason ?? ""] ?? "Couldn't get in just now. Try again.", true);
+            if (r?.reason === "pickup") endPickup();
+            return;
+          }
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          const then = pk.then;
+          endPickup();
+          endDirections();
+          startRide(r.trip, pk.p.toName ?? r.trip.to, then);
+          say(`You're in. The taxi takes you to ${pk.p.toName}.`);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function cancelPickup() {
+        const pk = pickup;
+        if (!pk) return;
+        await supabase.rpc("cancel_pickup");
+        endPickup();
+        endDirections();
+        say(pk.p.kind === "taxi" ? "Taxi cancelled: nothing to pay." : "Rental cancelled.");
+      }
+
+      void supabase.rpc("my_pickup").then(({ data }) => {
+        if (!disposed && data && !pickup) startPickup(data as PickupJson);
+      });
+
       // ---- Game loop -------------------------------------------------------
       let frame = 0;
       let last = performance.now();
@@ -2841,6 +3158,7 @@ export function GameMap({
         moveOthers(now, dt, t);
         nearTick(now);
         spotsTick(now);
+        if (pickup && !ride) pickupTick(now, dt, t);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -3243,6 +3561,34 @@ export function GameMap({
           </div>
         )}
 
+        {/* A rental waiting at a bus stop, or a taxi on its way. */}
+        {hud.pickup && !hud.ride && !hud.care && (
+          <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Your pickup">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl" aria-hidden="true">
+                {hud.pickup.icon}
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="font-display text-base font-extrabold leading-tight">{hud.pickup.title}</span>
+                <span className="truncate text-xs text-paper/85">{hud.pickup.status}</span>
+              </div>
+              <button type="button" onClick={() => actions.current?.cancelPickup()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
+                Cancel
+              </button>
+            </div>
+            {hud.pickup.action && (
+              <button
+                type="button"
+                disabled={hud.busy}
+                onClick={() => actions.current?.pickupAction()}
+                className="h-11 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
+              >
+                {hud.pickup.action}
+              </button>
+            )}
+          </div>
+        )}
+
         {/* A warning: tired, fuel low, soft tyres, a worn engine; and the nearest place that helps. */}
         {hud.advice && !hud.care && (
           <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#3B2F0A] p-3 text-sm text-paper ring-1 ring-gold" role="alert">
@@ -3358,6 +3704,10 @@ export function GameMap({
           onGetOff={() => {
             actions.current?.getOff();
             setGarage(null);
+          }}
+          onTaxi={() => {
+            setGarage(null);
+            setTransitOpen(true);
           }}
           onClose={() => setGarage(null)}
         />

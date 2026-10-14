@@ -566,3 +566,25 @@ export function makeAmbulance() {
   );
   return { group, light };
 }
+
+/** A taxi: a yellow car with a black stripe and a sign on the roof. */
+export function makeTaxi() {
+  const group = new THREE.Group();
+  const tyre = (x: number, z: number) => {
+    const w = mesh(V_G.carTyre, "#1D1D1D", x, 0.45, z);
+    w.rotation.z = Math.PI / 2;
+    return w;
+  };
+  const screen = mesh(V_G.windscreen, "#9FD8FF", 0, 1.25, 0.6);
+  screen.rotation.x = -0.4;
+  group.add(
+    mesh(V_G.carBody, "#F4B41A", 0, 0.6, 0),
+    mesh(new THREE.BoxGeometry(1.72, 0.12, 3.62), "#111111", 0, 0.62, 0),
+    mesh(V_G.carSeat, DARK, 0, 1.1, -0.5),
+    screen,
+    mesh(new THREE.BoxGeometry(0.7, 0.3, 0.35), "#111111", 0, 1.55, -0.3),
+    mesh(new THREE.BoxGeometry(0.6, 0.2, 0.37), "#F4F1EA", 0, 1.58, -0.3),
+    tyre(-0.9, -1.1), tyre(0.9, -1.1), tyre(-0.9, 1.2), tyre(0.9, 1.2),
+  );
+  return group;
+}

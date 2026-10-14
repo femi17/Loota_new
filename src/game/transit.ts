@@ -6,13 +6,17 @@
 import { TIME_SCALE } from "./movement";
 import { distanceM, type Coord } from "./geo";
 
-export type TransitMode = "bus" | "train" | "plane";
+export type TransitMode = "bus" | "train" | "plane" | "taxi";
 
 export const TRANSIT: Record<TransitMode, { label: string; icon: string; kmh: number; wait: string; reachM: number }> = {
   bus: { label: "Bus", icon: "🚌", kmh: 25, wait: "Wait for the bus", reachM: 40 },
   train: { label: "Train", icon: "🚆", kmh: 70, wait: "Wait for the train", reachM: 150 },
   plane: { label: "Plane", icon: "✈️", kmh: 750, wait: "Check-in and boarding", reachM: 600 },
+  taxi: { label: "Taxi", icon: "🚕", kmh: 45, wait: "Your taxi is on its way", reachM: 35 },
 };
+
+/** A taxi driver fetching the player drives at 30 km/h in town (driver_speed in the database). */
+export const DRIVER_SPEED = (30 / 3.6) * TIME_SCALE;
 
 /** City buses run up to 40 km from any stop; long-distance buses go further, between motor parks only. */
 export const BUS_RANGE_M = 40_000;
@@ -31,12 +35,14 @@ export function transitSpeedFor(mode: TransitMode, metres: number) {
 export function transitWaitS(mode: TransitMode, fastPass: boolean) {
   if (mode === "bus") return fastPass ? 0 : 35;
   if (mode === "train") return fastPass ? 0 : 50;
+  if (mode === "taxi") return 0;
   return fastPass ? 150 : 450;
 }
 
 export function transitFare(mode: TransitMode, metres: number) {
   if (mode === "bus") return metres > BUS_RANGE_M ? 20 + Math.ceil((metres / 1000) * 0.4) : 3 + Math.ceil(metres / 1000);
   if (mode === "train") return 5 + Math.ceil(metres / 2000);
+  if (mode === "taxi") return 8 + Math.ceil((metres / 1000) * 2);
   return 80 + Math.ceil((metres / 1000) * 0.15);
 }
 

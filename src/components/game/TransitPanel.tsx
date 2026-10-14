@@ -32,7 +32,24 @@ export type TransitQuote = {
   path: [number, number][];
 };
 
+/** A taxi, priced: where it picks the player up, the driver's way there, and the trip. */
+export type TaxiQuote = {
+  place: Place;
+  pickup: { name: string; lng: number; lat: number; walkM: number };
+  driverPath: [number, number][];
+  tripPath: [number, number][];
+  to: { lng: number; lat: number };
+  metres: number;
+  fare: number;
+  driverSeconds: number;
+  rideSeconds: number;
+};
+
 export type TransitActions = {
+  /** A taxi to a place (within 40 km), picking the player up nearby; a message if there's none. */
+  quoteTaxi: (place: Place) => Promise<TaxiQuote | string>;
+  /** Call it; a message if that didn't work. */
+  callTaxi: (quote: TaxiQuote) => Promise<string | null>;
   near: () => Promise<TransitNear | null>;
   destinations: (stop: TransitStop) => Promise<TransitDestination[]>;
   /** Airports anywhere in the world, by name, city, country or code. */
@@ -179,6 +196,7 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
   const [near, setNear] = useState<TransitNear | null | "loading">("loading");
   const [lists, setLists] = useState<Record<number, TransitDestination[] | "loading">>({});
   const [quote, setQuote] = useState<TransitQuote | null>(null);
+  const [taxi, setTaxi] = useState<TaxiQuote | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [passes, setPasses] = useState(0);
@@ -208,6 +226,24 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
     setLists((l) => ({ ...l, [stop.id]: found }));
   };
 
+  const quoteTaxi = async (place: Place) => {
+    setWorking(true);
+    setMessage(null);
+    const result = await actions.quoteTaxi(place);
+    setWorking(false);
+    if (typeof result === "string") setMessage(result);
+    else setTaxi(result);
+  };
+
+  const callTaxi = async () => {
+    if (!taxi) return;
+    setWorking(true);
+    const problem = await actions.callTaxi(taxi);
+    setWorking(false);
+    if (problem) setMessage(problem);
+    else onClose();
+  };
+
   const board = async () => {
     if (!quote) return;
     setWorking(true);
@@ -230,7 +266,7 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
       >
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-2xl font-extrabold">Bus, train or plane</h2>
+            <h2 className="font-display text-2xl font-extrabold">Taxi, bus, train or plane</h2>
             <p className="text-sm text-muted">They take you there while you sit back. You have {coins.toLocaleString("en-NG")} coins.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-ink-2">
@@ -242,7 +278,29 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
 
         {message && <p className="mb-3 rounded-xl bg-ink-2 p-3 text-sm ring-1 ring-gold">{message}</p>}
 
-        {quote ? (
+        {taxi ? (
+          // ---- A taxi, priced: call it.
+          <div className="flex flex-col gap-3 rounded-2xl bg-ink-2 p-4">
+            <p className="text-lg font-bold">🚕 Taxi to {taxi.place.name}</p>
+            <p className="text-sm text-muted">
+              Pickup: {taxi.pickup.name}
+              {taxi.pickup.walkM > 15 ? `, ${distance(taxi.pickup.walkM)} from you` : ", where you are"}. The driver gets there in about{" "}
+              {clock(taxi.driverSeconds)}.
+            </p>
+            <p className="text-sm text-muted">
+              {distance(taxi.metres)} · about {clock(taxi.rideSeconds)} in the taxi. You pay when you get in.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={working || coins < taxi.fare} onClick={callTaxi} className={`${button} bg-gold text-ink`}>
+                Call the taxi · {taxi.fare} coins
+              </button>
+              <button type="button" disabled={working} onClick={() => setTaxi(null)} className={`${button} border-[1.5px] border-line text-paper`}>
+                Back
+              </button>
+            </div>
+            {coins < taxi.fare && <p className="text-xs text-danger">You need {taxi.fare - coins} more coins.</p>}
+          </div>
+        ) : quote ? (
           // ---- The trip, priced: pay and board.
           <div className="flex flex-col gap-3 rounded-2xl bg-ink-2 p-4">
             <p className="text-lg font-bold">
@@ -336,6 +394,18 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
                 </div>
               );
             })}
+
+            {/* ---- A taxi, from anywhere */}
+            <div className="flex flex-col gap-3 rounded-2xl bg-ink-2 p-4">
+              <p className="font-bold">🚕 Taxi</p>
+              <p className="text-sm text-muted">A driver picks you up nearby and takes you anywhere within 40 km. Where to?</p>
+              <PlaceSearch inline near={actions.where} onPick={(place) => void quoteTaxi(place)} />
+              {heading && (
+                <button type="button" disabled={working} onClick={() => void quoteTaxi(heading)} className={`${button} self-start border-[1.5px] border-gold text-paper`}>
+                  Towards {heading.name}
+                </button>
+              )}
+            </div>
 
             {/* ---- The nearest of each kind, with directions */}
             {(["bus", "train", "plane"] as const).map((kind) =>

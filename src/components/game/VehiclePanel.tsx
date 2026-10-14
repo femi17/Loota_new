@@ -14,6 +14,7 @@ export function VehiclePanel({
   onRide,
   onWalkTo,
   onGetOff,
+  onTaxi,
   onClose,
 }: {
   owned: OwnedVehicle[];
@@ -23,6 +24,8 @@ export function VehiclePanel({
   onRide: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
   onWalkTo: (vehicle: OwnedVehicle) => void;
   onGetOff: () => void;
+  /** Cars aren't rented: a taxi is called instead. */
+  onTaxi: () => void;
   onClose: () => void;
 }) {
   const metres = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
@@ -94,9 +97,15 @@ export function VehiclePanel({
                         Buy · {info.price.toLocaleString("en-NG")} coins
                       </button>
                     )}
-                    <button type="button" disabled={busy || coins < info.ratePerMinute} onClick={() => onRide(kind, "rent")} className={`${button} border-[1.5px] border-line text-paper`}>
-                      Rent · {info.ratePerMinute} coins a minute
-                    </button>
+                    {kind === "car" ? (
+                      <button type="button" disabled={busy} onClick={onTaxi} className={`${button} border-[1.5px] border-line text-paper`}>
+                        🚕 Call a taxi
+                      </button>
+                    ) : (
+                      <button type="button" disabled={busy || coins < info.ratePerMinute} onClick={() => onRide(kind, "rent")} className={`${button} border-[1.5px] border-line text-paper`}>
+                        Rent · {info.ratePerMinute} coins a minute
+                      </button>
+                    )}
                   </div>
                 )}
               </li>
@@ -104,8 +113,9 @@ export function VehiclePanel({
           })}
         </ul>
         <p className="mt-4 text-xs text-muted">
-          Rentals are charged per started minute until you get off. Your own vehicles stay parked where you leave them; motorbikes and
-          cars need fuel from a petrol station.
+          To rent a bicycle or motorbike, walk to the renter waiting at a nearby bus stop; the meter starts when you ride off, per
+          started minute until you get off. Cars come as taxis: the driver picks you up and takes you there. Your own vehicles stay
+          parked where you leave them; motorbikes and cars need fuel from a petrol station.
         </p>
       </div>
     </div>

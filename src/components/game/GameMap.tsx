@@ -83,6 +83,8 @@ type Guide = {
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
+/** The one zoom level the game is played at (a few streets around the hunter); players can't change it. */
+const GAME_ZOOM = 17;
 
 /** A button that reports while it's held down (mouse, touch or pen). */
 function HoldButton({
@@ -227,19 +229,19 @@ export function GameMap({
         container: container.current,
         style: MAP_STYLE,
         center: [startLng, startLat],
-        zoom: 20.5,
+        zoom: GAME_ZOOM,
         pitch: small ? 55 : 60,
         bearing: geo.compassFromHeading(traveller.heading),
         maxPitch: 70,
         dragPan: false, // dragging looks around the hunter instead (see "Look around" below)
         dragRotate: false,
         touchPitch: false,
-        // The chase camera re-centres every frame, which would cancel the map's own
-        // smooth zooming; the wheel is handled below instead.
+        // Everyone plays at the same zoom: no wheel, double-click or pinch zooming.
         scrollZoom: false,
         doubleClickZoom: false,
-        minZoom: 15,
-        maxZoom: 21.5,
+        touchZoomRotate: false,
+        minZoom: GAME_ZOOM,
+        maxZoom: GAME_ZOOM,
         keyboard: false, // the keyboard drives the hunter instead
         attributionControl: { compact: true },
       });
@@ -1144,12 +1146,11 @@ export function GameMap({
       };
 
       // Look around: drag sideways to turn the view around the hunter, up or
-      // down to tilt it. Two fingers pinch to zoom. Moving off brings the view
+      // down to tilt it. Moving off brings the view
       // back behind the hunter. A short tap gives directions to that spot.
       //
       // On touch screens the lower part of the screen steers instead: press and
       // hold to walk, swipe left or right to turn, swipe down to turn back.
-      map.touchZoomRotate.disableRotation();
       const pointers = new Set<number>();
       let drag: { x: number; y: number; offset: number; pitch: number; moved: boolean } | null = null;
       let steer: { id: number; x: number; y: number; turned: boolean; back: boolean; timer: number } | null = null;
@@ -1165,7 +1166,7 @@ export function GameMap({
         if (pointers.size > 1 || e.button !== 0) {
           drag = null;
           dragging = false;
-          stopSteering(); // two fingers: pinch to zoom
+          stopSteering(); // two fingers: not a steer or a look
           return;
         }
         if (e.pointerType === "touch" && e.clientY > window.innerHeight * STEER_ZONE) {
@@ -1219,14 +1220,6 @@ export function GameMap({
       const lookArea = map.getCanvasContainer();
       lookArea.style.touchAction = "none"; // swipes steer and look around; the browser must not scroll or cancel them
       lookArea.addEventListener("pointerdown", lookStart);
-      // Zoom with the mouse wheel or trackpad (pinch on touch screens works as usual).
-      let zoomGoal: number | null = null;
-      const wheelZoom = (e: WheelEvent) => {
-        e.preventDefault();
-        const step = e.deltaMode === 1 ? e.deltaY * 0.05 : e.deltaY * 0.0025;
-        zoomGoal = Math.max(15, Math.min(21.5, (zoomGoal ?? map.getZoom()) - step));
-      };
-      lookArea.addEventListener("wheel", wheelZoom, { passive: false });
       window.addEventListener("pointermove", lookMove);
       window.addEventListener("pointerup", lookEnd);
       window.addEventListener("pointercancel", lookEnd);
@@ -1662,11 +1655,8 @@ export function GameMap({
         me.heading = traveller.heading;
         marker.halo.scale.setScalar(1 + Math.sin(t * 4) * 0.1);
 
-        // Spin the finds, and pick up anything within reach. Zoomed far out they
-        // would crowd the map (they keep their size on screen), so they hide.
-        const showFinds = map.getZoom() >= 17;
+        // Spin the finds, and pick up anything within reach.
         for (const [id, { item, model }] of onMap) {
-          model.group.visible = showFinds;
           model.spin.rotation.y += dt * 2;
           if (picking.has(id) || (retryAfter.get(id) ?? 0) > now) continue;
           if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [item.lng, item.lat]) < PICKUP_RADIUS_M) void pickUp(id);
@@ -1685,16 +1675,7 @@ export function GameMap({
         const want = geo.compassFromHeading(traveller.heading) + lookOffset;
         const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
         camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
-        let zoom: number | undefined;
-        if (zoomGoal !== null) {
-          const current = map.getZoom();
-          zoom = current + (zoomGoal - current) * Math.min(1, 10 * dt);
-          if (Math.abs(zoomGoal - zoom) < 0.01) {
-            zoom = zoomGoal;
-            zoomGoal = null;
-          }
-        }
-        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom });
+        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing });
 
         if (now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
@@ -1835,7 +1816,6 @@ export function GameMap({
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
         lookArea.removeEventListener("pointerdown", lookStart);
-        lookArea.removeEventListener("wheel", wheelZoom);
         window.removeEventListener("pointermove", lookMove);
         window.removeEventListener("pointerup", lookEnd);
         window.removeEventListener("pointercancel", lookEnd);
@@ -2099,7 +2079,6 @@ export function GameMap({
             </p>
             <p>
               <b>Look around:</b> drag the map (the upper part on a phone) left or right to turn the view, up or down to tilt it.
-              Pinch or scroll to zoom.
             </p>
             <p>
               <b>Directions:</b> search a place or address, or tap a spot on the map. A blue line and turn-by-turn directions

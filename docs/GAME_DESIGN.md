@@ -323,6 +323,97 @@ A car must not be won in an hour. A grand hunt spreads its keys across cities an
 
 **Intel scrolls** are found on the road and in the world. Each one points to a relic, a coin cache or a shortcut. **About 1 in 4 is a decoy** that leads somewhere empty and possibly far away. Better intel (from informant characters at landmarks, or from completed tasks) has a lower chance of being a decoy.
 
+### 7.4 The Lamp [BUILT 15 Oct 2026]
+
+Nothing hidden lies openly on the map any more. Intel scrolls, relic and coin finds, intel leads and the "nearest find" arrow are taken off the map. Hidden things now reach the player through one icon in the tools column on the right: **an old brass oil lamp**.
+
+- **Dull:** nothing waiting.
+- **Glowing gold:** a Detour is waiting (7.5).
+- **Smoking purple, shaking:** the Djinn is calling (7.6).
+- A badge counts what's waiting. Inside the lamp: the offers, and any directions already earned, each with its own countdown.
+- **Directions are only drawn when the player asks:** they tap the lamp, then "Show me the way". Until then the route stays hidden.
+- What still shows on the map: other hunters, landmarks, stops and stations, taxis and renters, the player's own route.
+
+### 7.5 Detours (the lamp glows gold) [BUILT 15 Oct 2026]
+
+Small, frequent offers close by. Everyone in the same area gets the same Detour at the same moment, so they race each other.
+
+| Kind | How it works | Example |
+|---|---|---|
+| Flash | Gone after a set time (15–45 minutes). | "A merchant's mule dropped a pouch at Balogun Market. It will be swept away in 20 minutes." |
+| Rush | Only the first N to arrive get it; the lamp shows a live count ("143 / 200 claimed"). | "The first 200 hunters to touch the old lighthouse get a Fast Pass." |
+| Flash Rush | Both: the first N within the time. Bigger reward. | "The first 50 within the hour get a Radar." |
+
+- Places are real, 0.5–5 km away, on roads.
+- On arrival there's a quick puzzle (about a minute) before the reward.
+- Rewards: coins, common and rare relics.
+- Intel leads (landmark check-ins, intel scrolls) also arrive through the lamp as personal Detours.
+
+### 7.6 The Djinn's Wager (the lamp smokes purple) [PLAN]
+
+The big event. **Once a week at a surprise moment, lasting 3 days, never while a hunt is live.** Every player is summoned at the same moment, and the Djinn reveals which Wonder (7.7) is at stake. **There is one treasure and one winner.**
+
+1. **The summons.** The lamp shakes and smokes. Opening it shows an old djinn rising from the smoke, e.g.:
+   > *"Three hundred years I slept in this lamp… and you are the one who woke me? Small hands. But I know where the Sultan's Last Chest lies: gold that has not seen sun since the caravans stopped. Prove your mind is sharper than your boots, and I will show you the way."*
+2. **The gate puzzle.** One movie-style puzzle, the same for everyone that week (a cipher wheel, torches lit in order, a star map to align, safe stones across a cursed floor, the scales of an idol…). Answers are checked by the server. **How well it's solved earns the Djinn's favour.**
+3. **The eight seals.** The djinn unrolls a burnt map with 8 wax seals: 8 places anywhere in the world (Tikal in Guatemala, Petra, Kyoto…), the same 8 for everyone. **Only one is real; the other seven are decoys.**
+   - Each seal shows a cryptic verse about its place, not its name.
+   - The djinn gives one riddle that fits only the real place, but each part of it fits several seals, so it takes thought.
+   - **Favour burns decoys away:** a perfect gate puzzle burns 2 decoys before the player chooses, a good one 1. At least 6 seals always remain.
+   - The player breaks **one** seal. The place is revealed and the choice is final for the week.
+4. **The way there.** The directions are saved in the lamp with a countdown to the end of the 3 days, and drawn only when the player taps the lamp. The journey planner (7.8) works out how to get there.
+5. **The approach.** Within about 1 km of the place:
+   - **Hidden traps** along the roads, unseen until stepped on: quicksand (stuck for a while), a snake pit (energy lost), a collapsing bridge (fall back a few hundred metres), a dart wall (time lost).
+   - Other hunters heading for the same place show on the map, and there are notices when one is near ("A hunter is 2 km from the temple").
+6. **The chamber.** Arriving isn't enough: a multi-stage puzzle with a timer, several rooms in a row (a cipher door, then torches, then the idol's weight…).
+   - **Win at the real place, first:** the Wonder (7.7). Every lamp in the world shows who took it, and the Wager ends.
+   - **Win at a decoy:** the vault is empty and the djinn laughs.
+   - **Lose:** a whirlwind lifts the player off the map and drops them far away (tens of km in a random direction), with a dramatic animation. They can come back and face a new chamber as often as they like until the treasure is claimed or the 3 days end.
+7. **Unclaimed after 3 days:** the treasure sinks back into the Djinn's vault, and next week he offers two Wonders at once.
+
+### 7.7 The Djinn's Wonders [PLAN]
+
+The prize is never real money. It is a **Wonder**: a relic so strong that every player wishes they held it (the *Ready Player One* layer: one player's orb wipes out everyone, another's extra life brings them back).
+
+| Wonder | What it does |
+|---|---|
+| The Cataclysm Orb | During a live hunt, wipes out every hunter: all keys gone, everyone (the holder too) thrown back to where they started. A few seconds' warning: the ground shakes, the screen goes white. |
+| The Djinn's Coin (the extra life) | Survives any wipe: after a Cataclysm, Oblivion or Return, the holder respawns where they were with their keys. Also saves them from one whirlwind or trial throw-back. Revealed only when it saves someone. |
+| The Orb of Oblivion | Every other hunter loses all their keys in the current hunt. Positions stay. |
+| The Orb of Return | Every hunter, the holder too, is sent back to their original start point. Keys stay. |
+| The Eye of the Djinn | For 10 minutes, see every hunter on the map and the area of the key each is chasing. |
+| The Hourglass of Ages | Freezes every other hunter in place for 3 minutes. |
+| The Master Key | Opens one key without its trial (the place must still be found and reached). |
+| The Phantom Cloak | For a whole hunt: invisible on the map, the broadcast and radar, and untouched by every orb except the Cataclysm. |
+| The Carpet of Kings | One instant flight to anywhere in the world. |
+| The Thief's Hand | Takes the latest key from every hunter within 1 km and keeps one of them. |
+| The Djinn's Bargain | Swap places on the map with the hunter in the lead. |
+| The Sandstorm Crown | A sandstorm over a whole country for 30 minutes: everyone there (planes too) moves at half speed, except the holder. |
+| The Mirror of Many | Three copies of the holder appear on the map and the broadcast for a hunt; nobody knows which is real. |
+| The Seer's Seal | At the next Djinn's Wager, every decoy is burned: the holder sees the real place. |
+
+**Rules for Wonders** (owner's decisions, 15 Oct 2026):
+- **Each Wonder exists once in the world.** It can't be traded.
+- **Holders are secret.** Nobody knows who holds what until it's used (the Djinn's Coin shows itself when it saves someone).
+- **Usable any time during a live hunt**, including the final stretch. Each is used once, then returns to the Djinn's vault as a future prize. Unused, it fades back to the vault after 30 days.
+- Every use is announced to all players and on the broadcast.
+- **Wonders override the limits in 2 and 7.2** (area effects only, at most 2 effects per hour, nothing within 500 m of a key). That is their point. The Cataclysm and the Orb of Return hit their holder too.
+- The Lockdown Orb stays as it is (one in the world), but is now found through the lamp instead of lying on the map.
+
+### 7.8 The journey planner [PLAN]
+
+Going far isn't just a line on the map: the game works out how to get there and shows the journey as steps, each with its time and fare. Only the current step is drawn on the map.
+
+- **Within a city (under about 40 km):** walk, ride, taxi or city bus.
+- **By road** (within Nigeria, or to a neighbour reachable by road such as Accra or Cotonou): a long-distance bus from a motor park, or the player's own vehicle. A road connection is checked first.
+- **Across seas or continents:**
+  1. getting to the departure airport (taxi, bus or walk),
+  2. the flight (with a connection when the airport nearest the place is small),
+  3. from the arrival airport to the place (taxi or bus there).
+- Places used by the Djinn are chosen within taxi or bus reach of an airport.
+
+**Build order:** (1) the Lamp, taking finds off the map, and Detours; (2) the journey planner; (3) the Djinn's summons, gate puzzle and seals; (4) traps, chambers, the whirlwind and the Djinn's relics.
+
 ---
 
 ## 8. Things to do along the route
@@ -628,3 +719,5 @@ Each phase ends with something playable that can be tested.
 | 15 Oct 2026 | **Rest where you are:** chill spots are only suggested when close enough to reach (under 40% of what the player's energy would carry them, and at most 800 m on foot or 2 km by bicycle). Otherwise the warning says to rest where you are, and a **Rest here** button (shown whenever energy is under 60 and no chill spot is at hand) sits the player down by the road: energy comes back at 1 a second, half the chill-spot rate (2) and four times standing still (0.25). Moving on ends the rest. |
 | 15 Oct 2026 | **Night and day** follow the real sun where the player is. At night the ground darkens and the roads stay lit; the 3D figures darken. A clock chip shows local time (moon at night). After dark taxis charge 30% more and city buses wait three times as long. |
 | 15 Oct 2026 | **Traffic:** weekdays are busy 6:30–10 am and 4–8:30 pm (most at the evening rush), a little at midday, quiet at night; Saturdays moderately, Sundays little. Jams form on main roads in built-up areas (how built-up: roads per map square). Each stretch of road jams or clears every 15 minutes, the same for every player. Red = standstill, orange = slow. In a car you crawl (15% / 45% of speed); on a motorbike you weave through (50% / 80%); walkers and cyclists aren't held up. Taxis and city buses take up to 1.8× as long at rush hour. Rules in src/game/clock.ts and the database (rest_traffic_night), kept in step by a test. |
+| 15 Oct 2026 | **The Lamp and Detours built (7.4, 7.5).** Finds no longer lie openly: they show only within 40 m, or within 150 m once a whisper points to them; intel scrolls are no longer placed; the "nearest find" arrow and lead beams are gone. The lamp (tools column) holds the area's Detours (two at a time per 11 km square, a new one at most every 8 minutes, at real named places 0.5–4 km away), whispers (one every 30 minutes when none is open; 1 in 4 is a lie) and the Lockdown Orb when it surfaces. It glows while it holds something new; routes are drawn only on "Show me the way". At a Detour's place a gold Claim button asks one question (30 seconds); rushes count claims live and the last place goes to the first right answer. |
+| 15 Oct 2026 | **The Djinn's Wager decided (7.6, 7.7):** once a week at a surprise moment, 3 days, never during a hunt; 8 seals, one real place; one treasure and one winner; unlimited chamber retries until it's claimed or closed; the prize is a Wonder (14 listed), each one in the world, held in secret, usable any time in a live hunt, overriding the usual relic limits. |

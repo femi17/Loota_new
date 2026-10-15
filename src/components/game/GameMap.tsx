@@ -15,7 +15,8 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
-import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
+import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
+import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
 import { LandmarkPanel, type CheckinQuestion, type CheckinResult, type Landmark, type LandmarkActions } from "./LandmarkPanel";
@@ -48,8 +49,6 @@ type Hud = {
   coins: number;
   relics: number;
   leads: number;
-  /** Closest find: distance, and arrow angle relative to the screen (0 = straight ahead). */
-  nearest: { metres: number; angle: number } | null;
   /** Turn waiting for the next junction: −1 left, +1 right. */
   turn: -1 | 0 | 1;
   /** What you're riding: fuel and engine (motor vehicles you own), tyres (your bicycle), and the rental meter. */
@@ -85,6 +84,10 @@ type Hud = {
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
+  /** The lamp: how many things it holds, and how many the player hasn't looked at yet (it glows). */
+  lamp: { count: number; unseen: number };
+  /** At a Detour's place, not yet tried: the Claim button. */
+  detourHere: LampDetour | null;
   /** The local time where the player is, whether it's night, and whether it's rush hour. */
   clock: { text: string; night: boolean; rush: boolean } | null;
   /** On a motorbike or in a car in a traffic jam: 1 slow, 2 at a standstill. */
@@ -232,7 +235,6 @@ export function GameMap({
     coins: initialCoins,
     relics: 0,
     leads: 0,
-    nearest: null,
     turn: 0,
     vehicle: null,
     services: { fuel: null, food: null },
@@ -253,6 +255,8 @@ export function GameMap({
     landmarkHere: null,
     clock: null,
     jam: 0,
+    lamp: { count: 0, unseen: 0 },
+    detourHere: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -263,6 +267,16 @@ export function GameMap({
   const [landmarkActions, setLandmarkActions] = useState<LandmarkActions | null>(null);
   const [landmarksOpen, setLandmarksOpen] = useState<{ quiz: CheckinQuestion | null; message: string | null } | null>(null);
   const [checkingIn, setCheckingIn] = useState(false);
+  const [lampActions, setLampActions] = useState<LampActions | null>(null);
+  const [lampOpen, setLampOpen] = useState<{ quiz: LampQuestion | string | null } | null>(null);
+  /** The Claim button at a Detour's place: ask the question (once), then open the lamp on it. */
+  const claimDetour = async (detour: LampDetour) => {
+    if (!lampActions || checkingIn) return;
+    setCheckingIn(true);
+    const q = await lampActions.start(detour);
+    setCheckingIn(false);
+    setLampOpen({ quiz: q });
+  };
   const [adviceOpen, setAdviceOpen] = useState(false);
   /** The Check in button: ask the server for a question (once), then show it. */
   const checkIn = async (landmark: Landmark) => {
@@ -1039,7 +1053,8 @@ export function GameMap({
         | { ok: true; kind: "intel"; lead: { lng: number; lat: number } | null };
 
       const onMap = new Map<string, ItemOnMap>();
-      const leadMarkers = new Map<string, import("@/game/ThreeMapLayer").MapEntity>();
+      const leadMarkers = new Map<string, { lng: number; lat: number }>(); // open leads (shown in the lamp, not on the map)
+      let lampStale = false; // the lamp should look again (a whisper found, or proved a lie)
       const picking = new Set<string>();
       const retryAfter = new Map<string, number>();
       let lastSync = 0;
@@ -1052,7 +1067,7 @@ export function GameMap({
         onMap.delete(id);
       };
       const addLead = (id: string, lng: number, lat: number) => {
-        if (!leadMarkers.has(id)) leadMarkers.set(id, layer.add({ object: models.makeLeadMarker(), lng, lat }));
+        if (!leadMarkers.has(id)) leadMarkers.set(id, { lng, lat });
       };
       const showLeadCount = () => setHud((h) => ({ ...h, leads: leadMarkers.size }));
       const compassWord = (deg: number) =>
@@ -1079,11 +1094,13 @@ export function GameMap({
           for (const id of [...onMap.keys()]) if (!visible.has(id) && !picking.has(id)) removeItem(id);
 
           // The server's list of open leads is the truth (it includes ones just found).
-          for (const marker of leadMarkers.values()) layer.remove(marker);
           leadMarkers.clear();
           for (const lead of data.leads) addLead(lead.id, lead.lng, lead.lat);
           showLeadCount();
-          if (data.decoysFound > 0) say("Nothing here. That intel scroll was a decoy.", true);
+          if (data.decoysFound > 0) {
+            say("Nothing here. The whisper was a lie.", true);
+            lampStale = true;
+          }
         } catch {
           // Offline or the server is busy: try again on the next sync.
         } finally {
@@ -1118,10 +1135,7 @@ export function GameMap({
         saved = { ...traveller.pos }; // a pickup also saves the player's position
         // An intel lead that pointed here is done.
         for (const [leadId, marker] of [...leadMarkers]) {
-          if (geo.distanceM([marker.lng, marker.lat], [entry.item.lng, entry.item.lat]) < 5) {
-            layer.remove(marker);
-            leadMarkers.delete(leadId);
-          }
+          if (geo.distanceM([marker.lng, marker.lat], [entry.item.lng, entry.item.lat]) < 5) leadMarkers.delete(leadId);
         }
         showLeadCount();
 
@@ -1139,7 +1153,8 @@ export function GameMap({
           showLeadCount();
           const metres = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [lng, lat]);
           const direction = compassWord(geo.compassFromHeading(geo.headingOf([traveller.pos.lng, traveller.pos.lat], [lng, lat])));
-          say(`Intel scroll: something is hidden about ${geo.formatDistance(metres)} ${direction}. Follow the purple beam.`, true);
+          say(`Intel scroll: a whisper about something hidden ${geo.formatDistance(metres)} ${direction}. It's in your lamp.`, true);
+          lampStale = true;
         } else {
           say("This intel scroll is blank.");
         }
@@ -3343,6 +3358,142 @@ export function GameMap({
         }
       }
 
+      // ---- The lamp: Detours, whispers and the Orb (design doc 7.4, 7.5) -------
+      // Nothing hidden is drawn on the map; the lamp holds it, with the way there
+      // drawn only when the player asks. It glows while it holds something new.
+      let lamp: LampState | null = null;
+      let lampAt = -Infinity;
+      let lampShownAt = -Infinity;
+      const LAMP_SEEN_KEY = "loota:lamp-seen";
+      const seenLamp = new Set<string>();
+      try {
+        for (const id of JSON.parse(localStorage.getItem(LAMP_SEEN_KEY) ?? "[]") as string[]) seenLamp.add(id);
+      } catch {
+        // Private browsing: everything counts as new this visit.
+      }
+      /** What's in the lamp that still wants doing (not Detours already tried, all claimed or over). */
+      const lampIds = (s: LampState) => [
+        ...s.detours.filter((d) => !d.mine && d.endsAt > Date.now() && !(d.capacity !== null && d.claimed >= d.capacity)).map((d) => d.id),
+        ...s.whispers.map((w) => w.id),
+        ...(s.orb ? [`orb:${s.orb.lng.toFixed(4)},${s.orb.lat.toFixed(4)}`] : []),
+      ];
+
+      async function refreshLamp(): Promise<LampState> {
+        lampAt = performance.now();
+        await savePosition(); // the lamp looks around where the server last saw the player
+        const { data } = await supabase.rpc("lamp_state");
+        type Raw = {
+          now: string;
+          detours: (Omit<LampDetour, "endsAt"> & { endsAt: string })[];
+          whispers: { id: string; lng: number; lat: number; metres: number }[];
+          orb: { lng: number; lat: number; metres: number; endsAt: string } | null;
+        };
+        const raw = data as Raw | null;
+        if (disposed || !raw) return lamp ?? { detours: [], whispers: [], orb: null };
+        const skew = Date.now() - Date.parse(raw.now);
+        const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        const before = lamp ? new Set(lampIds(lamp)) : null;
+        lamp = {
+          detours: raw.detours.map((d) => ({ ...d, endsAt: Date.parse(d.endsAt) + skew })),
+          whispers: raw.whispers.map((w) => ({
+            ...w,
+            direction: compassWord(geo.compassFromHeading(geo.headingOf(here, [w.lng, w.lat]))),
+          })),
+          orb: raw.orb ? { ...raw.orb, endsAt: Date.parse(raw.orb.endsAt) + skew } : null,
+        };
+        // Something new: say so (the lamp glows too).
+        if (before) {
+          const fresh = raw.detours.find((d) => !before.has(d.id) && !d.mine);
+          if (fresh) say(`🪔 The lamp glows: ${fresh.title}. Open it to see.`);
+          else if (raw.whispers.some((w) => !before.has(w.id))) say("🪔 The lamp whispers: something is hidden nearby.");
+        }
+        showLamp();
+        return lamp;
+      }
+
+      function showLamp() {
+        if (!lamp) return;
+        const ids = lampIds(lamp);
+        const unseen = ids.filter((id) => !seenLamp.has(id)).length;
+        const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        const now = Date.now();
+        const detourHere =
+          ride || visit
+            ? null
+            : (lamp.detours.find(
+                (d) => !d.mine && d.endsAt > now && !(d.capacity !== null && d.claimed >= d.capacity) && geo.distanceM(at, [d.lng, d.lat]) <= DETOUR_REACH_M,
+              ) ?? null);
+        setHud((h) =>
+          h.lamp.count === ids.length && h.lamp.unseen === unseen && h.detourHere?.id === detourHere?.id
+            ? h
+            : { ...h, lamp: { count: ids.length, unseen }, detourHere },
+        );
+      }
+
+      function lampSeen() {
+        if (!lamp) return;
+        for (const id of lampIds(lamp)) seenLamp.add(id);
+        try {
+          localStorage.setItem(LAMP_SEEN_KEY, JSON.stringify([...seenLamp].slice(-300)));
+        } catch {
+          // Not saved: fine.
+        }
+        showLamp();
+      }
+
+      function lampTick(now: number) {
+        if (lampStale || now - lampAt > 30_000) {
+          lampStale = false;
+          void refreshLamp();
+        }
+        else if (now - lampShownAt > 1000) {
+          lampShownAt = now;
+          showLamp();
+        }
+      }
+
+      setLampActions({
+        refresh: async () => {
+          const s = await refreshLamp();
+          lampSeen();
+          return s;
+        },
+        start: async (d) => {
+          await savePosition(); // the server checks the player is there
+          const { data } = await supabase.rpc("start_detour", { p_detour: d.id });
+          const r = data as { ok: boolean; reason?: string; title?: string; question?: string; options?: string[]; seconds?: number; deadline?: string; now?: string } | null;
+          if (!r?.ok) {
+            const why: Record<string, string> = {
+              far: `Get to ${d.place} first: you need to be right there.`,
+              full: "Too late: others claimed them all.",
+              over: "This one's gone.",
+              tried: "You've already tried this one.",
+            };
+            return why[r?.reason ?? ""] ?? "Couldn't claim it just now. Try again.";
+          }
+          return {
+            detourId: d.id,
+            title: r.title!,
+            question: r.question!,
+            options: r.options!,
+            seconds: r.seconds!,
+            endsAt: Date.now() + (Date.parse(r.deadline!) - Date.parse(r.now!)),
+          };
+        },
+        answer: async (detourId, choice) => {
+          const { data } = await supabase.rpc("answer_detour", { p_detour: detourId, p_choice: choice });
+          const r = data as ({ ok: boolean; balance?: number | null } & LampResult) | null;
+          if (!r?.ok) return "Couldn't send your answer. Try again.";
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          if (r.outcome === "won" && r.relic) countRelics();
+          void refreshLamp();
+          return { outcome: r.outcome, answer: r.answer, coins: r.coins, relic: r.relic };
+        },
+        showWay: (to) => void planDirections({ lng: to.lng, lat: to.lat }, to.name),
+      });
+      void refreshLamp();
+
       // ---- Landmarks: visit famous places and answer a question for coins and intel ----
       let landmarks: Landmark[] = [];
       let landmarksAt = -Infinity;
@@ -3568,6 +3719,7 @@ export function GameMap({
         if (pickup && !ride) pickupTick(now, dt, t);
         landmarkTick(now, dt);
         skyAndTrafficTick(now);
+        lampTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -3579,30 +3731,15 @@ export function GameMap({
           const dome = domeStatus();
           const speedKmh = Math.round((traveller.v / movement.TIME_SCALE) * 3.6);
 
-          // Point to the closest find, relative to the screen (the camera turns with the hunter).
-          const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
-          let nearest: Hud["nearest"] = null;
-          let closest = Infinity;
-          for (const { item } of ride ? [] : onMap.values()) {
-            const d = geo.distanceM(here, [item.lng, item.lat]);
-            if (d < closest) {
-              closest = d;
-              const compass = geo.compassFromHeading(geo.headingOf(here, [item.lng, item.lat]));
-              nearest = { metres: Math.round(d), angle: Math.round(compass - map.getBearing()) };
-            }
-          }
-
           // Only re-render the display when something visible changed.
           setHud((h) =>
             h.energy === energy &&
             h.speedKmh === speedKmh &&
-            h.nearest?.metres === nearest?.metres &&
-            h.nearest?.angle === nearest?.angle &&
             h.hunters === hunters &&
             JSON.stringify(h.radar) === JSON.stringify(radar) &&
             JSON.stringify(h.dome) === JSON.stringify(dome)
               ? h
-              : { ...h, energy, speedKmh, nearest, hunters, radar, dome },
+              : { ...h, energy, speedKmh, hunters, radar, dome },
           );
         }
       };
@@ -3794,13 +3931,12 @@ export function GameMap({
           <button
             type="button"
             onClick={() => setBagOpen(true)}
-            aria-label={`Bag${hud.relics > 0 ? `: ${hud.relics} relics` : ""}${hud.leads > 0 ? `, ${hud.leads} leads` : ""}`}
+            aria-label={`Bag${hud.relics > 0 ? `: ${hud.relics} relics` : ""}`}
             title="Bag"
             className={`${tool} relative bg-ink text-[#C3A6FF]`}
           >
             <BagIcon />
             {hud.relics > 0 && <span className={`${badge} bg-paper text-ink`}>{hud.relics}</span>}
-            {hud.leads > 0 && <span className="absolute -bottom-1 -right-1 size-3 rounded-full bg-[#C3A6FF] ring-2 ring-ink" aria-hidden="true" />}
           </button>
           <button
             type="button"
@@ -3817,7 +3953,7 @@ export function GameMap({
         <div className="flex items-start gap-2">
           {/* Left: what's going on (small chips), then the cards */}
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            {(hud.clock || hud.vehicle || hud.keg || hud.nearest || hud.radar || hud.dome || hud.rain || hud.hunters > 0 || hud.turn !== 0) && (
+            {(hud.clock || hud.vehicle || hud.keg || hud.radar || hud.dome || hud.rain || hud.hunters > 0 || hud.turn !== 0) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {hud.clock && (
                   <div
@@ -3870,14 +4006,6 @@ export function GameMap({
                   <div className={`${chip} bg-ink`} aria-label={`Fuel keg ${Math.round(hud.keg.fuel)}%, ${hud.keg.usesLeft} uses left`} title={`Fuel keg · ${hud.keg.usesLeft} uses left`}>
                     <span aria-hidden="true">🛢</span>
                     {hud.keg.fuel > 0 ? `${Math.round(hud.keg.fuel)}%` : "empty"}
-                  </div>
-                )}
-                {hud.nearest && (
-                  <div className={`${chip} bg-ink`} aria-label={`Nearest find ${hud.nearest.metres} metres away`} title="Nearest find">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="#F4B41A" aria-hidden="true" style={{ transform: `rotate(${hud.nearest.angle}deg)` }}>
-                      <path d="M12 2l6 18-6-4-6 4z" />
-                    </svg>
-                    {distanceText(hud.nearest.metres)}
                   </div>
                 )}
                 {hud.radar && (
@@ -4055,7 +4183,8 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><VehicleIcon kind={hud.vehicle?.kind ?? null} /></span> Walk, or ride a bicycle, motorbike or car</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><LandmarkIcon /></span> Landmarks: check in for coins</li>
-                  <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Your bag: relics and leads</li>
+                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours, whispers and rare finds (it glows when something stirs)</li>
+                  <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Your bag: relics</li>
                 </ul>
                 <p className="mt-1 font-bold">How to move</p>
                 <p>
@@ -4132,6 +4261,17 @@ export function GameMap({
             >
               <LandmarkIcon />
             </button>
+            <button
+              type="button"
+              data-tool="lamp"
+              aria-label={`The lamp${hud.lamp.count ? `: ${hud.lamp.count} waiting${hud.lamp.unseen ? `, ${hud.lamp.unseen} new` : ""}` : ""}`}
+              title="The lamp"
+              onClick={() => setLampOpen({ quiz: null })}
+              className={`${tool} relative ${hud.lamp.unseen ? "loota-lamp-glow bg-gold text-ink" : hud.lamp.count ? "bg-ink text-gold" : "bg-ink text-paper/60"}`}
+            >
+              <LampIcon />
+              {hud.lamp.count > 0 && <span className={`${badge} ${hud.lamp.unseen ? "bg-ink text-gold" : "bg-gold text-ink"}`}>{hud.lamp.count}</span>}
+            </button>
           </nav>
         </div>
       </div>
@@ -4195,6 +4335,8 @@ export function GameMap({
         />
       )}
 
+      {lampOpen && lampActions && <LampPanel actions={lampActions} initial={null} quiz={lampOpen.quiz} onClose={() => setLampOpen(null)} />}
+
       {landmarksOpen && landmarkActions && (
         <LandmarkPanel actions={landmarkActions} quiz={landmarksOpen.quiz} message={landmarksOpen.message} onClose={() => setLandmarksOpen(null)} />
       )}
@@ -4204,7 +4346,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {(hud.dome?.siege || hud.actions.length > 0 || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -4219,6 +4361,19 @@ export function GameMap({
               <span className="text-xs font-semibold text-paper/85">
                 {hud.dome.siege.attackers} of {hud.dome.siege.needed} hunters attacking together
               </span>
+            </button>
+          )}
+          {hud.detourHere && (
+            <button
+              type="button"
+              disabled={checkingIn}
+              onClick={() => void claimDetour(hud.detourHere!)}
+              aria-label={`Claim ${hud.detourHere.title}`}
+              title={hud.detourHere.title}
+              className={`${here} gap-1.5`}
+            >
+              <LampIcon size={18} />
+              Claim · {hud.detourHere.relic ? RELICS[hud.detourHere.relic].name : `+${hud.detourHere.coins}`}
             </button>
           )}
           {hud.landmarkHere?.canTry && !hud.ride && !hud.care && (

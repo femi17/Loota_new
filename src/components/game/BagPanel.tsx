@@ -71,7 +71,7 @@ export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id:
             <span className="font-bold text-[#C3A6FF]">
               {leads} intel lead{leads > 1 ? "s" : ""}
             </span>{" "}
-            on the map: follow the purple beams. About 1 in 4 scrolls is a decoy.
+            in your lamp, as whispers. About 1 in 4 is a lie.
           </p>
         )}
 

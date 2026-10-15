@@ -68,6 +68,15 @@ export const LandmarkIcon = ({ size }: { size?: number }) => (
   </Svg>
 );
 
+/** An old oil lamp with a flame: the lamp (design doc 7.4). */
+export const LampIcon = ({ size }: { size?: number }) => (
+  <Svg size={size}>
+    <path d="M2.5 12.5c0 2.5 2.5 4 5.5 4h6c3 0 5.5-2.5 6.5-6l1-2.5-3 1.5c-1 .6-2 .8-3 .8H8c-3 0-5.5 1-5.5 2.2z" />
+    <path d="M9 16.5L8 20h8l-1-3.5" />
+    <path d="M12 3c1.3 1.6 1.3 3.2 0 4.6-1.3-1.4-1.3-3 0-4.6z" />
+  </Svg>
+);
+
 export const BagIcon = () => (
   <Svg>
     <path d="M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2" />

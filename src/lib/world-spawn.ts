@@ -31,8 +31,9 @@ async function snapToRoad(lng: number, lat: number): Promise<[number, number] | 
 }
 
 /**
- * Stock one square with an intel scroll, one hidden find (a coin cache or a
- * relic) and a decoy spot, all on real roads. Only the caller that
+ * Stock one square with one hidden find (a coin cache or a relic) and a decoy
+ * spot, on real roads. Nothing lies openly: whispers in the lamp point to them
+ * (design doc 7.4; intel scrolls no longer lie on the map). Only the caller that
  * wins `claim_cell` stocks it, so two players arriving together can't double it.
  */
 export async function stockCell(admin: SupabaseClient, cell: string): Promise<boolean> {
@@ -43,7 +44,6 @@ export async function stockCell(admin: SupabaseClient, cell: string): Promise<bo
   const randomPoint = () => snapToRoad((x + Math.random()) * CELL_DEG, (y + Math.random()) * CELL_DEG);
 
   const plan: { kind: ItemKind | "decoy"; coins?: number; relic?: RelicId; hidden?: boolean }[] = [
-    { kind: "intel" },
     Math.random() < 0.6 ? { kind: "cache", coins: randomInt(40, 100), hidden: true } : { kind: "relic", relic: randomRelic(), hidden: true },
     { kind: "decoy" },
   ];

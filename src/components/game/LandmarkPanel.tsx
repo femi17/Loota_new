@@ -128,7 +128,7 @@ export function LandmarkPanel({
               </p>
               {!result.correct && <p className="text-sm">The answer: <b>{result.answer}</b></p>}
               <p className="text-sm text-muted">{result.fact}</p>
-              {result.lead && <p className="text-sm text-gold">🔎 Intel: there&apos;s a lead to a hidden find nearby. It&apos;s marked on your map.</p>}
+              {result.lead && <p className="text-sm text-gold">🔎 Intel: a whisper about a hidden find nearby. It&apos;s in your lamp.</p>}
               {!result.correct && <p className="text-xs text-muted">You can try this landmark again tomorrow.</p>}
               <button type="button" onClick={onClose} className={`${button} self-start bg-gold text-ink`}>
                 Done

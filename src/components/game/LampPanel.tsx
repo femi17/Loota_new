@@ -22,13 +22,15 @@ export type LampDetour = {
   mine: "asked" | "won" | "wrong" | "late" | "full" | null;
 };
 
-/** A whisper: a lead to a hidden find nearby (sometimes a lie). */
-export type LampWhisper = { id: string; lng: number; lat: number; metres: number; direction: string };
+/** A whisper: a lead to a hidden find nearby (sometimes a lie); it fades after a while. */
+export type LampWhisper = { id: string; lng: number; lat: number; metres: number; direction: string; endsAt: number };
 
 /** The Lockdown Orb, when it's lying somewhere in the world. */
-export type LampOrb = { lng: number; lat: number; metres: number; endsAt: number };
+export type LampOrb = { id: string; lng: number; lat: number; metres: number; endsAt: number };
 
-export type LampState = { detours: LampDetour[]; whispers: LampWhisper[]; orb: LampOrb | null };
+/** The lamp holds one thing at a time (owner's call, 15 Oct 2026). */
+export type LampItem = ({ type: "detour" } & LampDetour) | ({ type: "whisper" } & LampWhisper) | ({ type: "orb" } & LampOrb);
+export type LampState = { current: LampItem | null };
 
 export type LampQuestion = { detourId: string; title: string; question: string; options: string[]; seconds: number; endsAt: number };
 export type LampResult = { outcome: "won" | "wrong" | "late" | "full"; answer: string; coins: number; relic: RelicId | null };
@@ -39,6 +41,8 @@ export type LampActions = {
   answer: (detourId: string, choice: number) => Promise<LampResult | string>;
   /** Draw the way there (only now: the lamp keeps routes hidden until asked). */
   showWay: (to: { lng: number; lat: number; name: string }) => void;
+  /** Pass on this one: the lamp moves on to the next. */
+  dismiss: (item: LampItem) => Promise<LampState>;
 };
 
 /** Close enough to claim (start_detour allows 40 m). */
@@ -52,28 +56,24 @@ const countdown = (ms: number) => {
   return h ? `${h} h ${m} min` : `${m}:${String(s % 60).padStart(2, "0")}`;
 };
 const KIND = {
-  flash: { badge: "⚡ Flash", note: "Gone when the time runs out" },
-  rush: { badge: "🏃 Rush", note: "Only the first to arrive" },
-  flash_rush: { badge: "🔥 Flash rush", note: "The first few, before time runs out" },
+  flash: "⚡ Flash: gone when the time runs out",
+  rush: "🏃 Rush: only the first to arrive",
+  flash_rush: "🔥 Flash rush: the first few, before time runs out",
 } as const;
-/** Tried, all claimed, or over: listed after the open ones. */
-const closed = (d: LampDetour, now: number) => !!d.mine || (d.capacity !== null && d.claimed >= d.capacity) || (now > 0 && d.endsAt <= now);
 const rewardText = (coins: number, relic: RelicId | null) => (relic ? `${RELICS[relic].name} (${RELICS[relic].rarity.toLowerCase()} relic)` : `${coins} coins`);
 
-/** The lamp (design doc 7.4): Detours, whispers and the Orb, each with the way there on request. */
+/** The lamp (design doc 7.4): one thing at a time (a Detour, a whisper or the Orb), with the way there on request. */
 export function LampPanel({
   actions,
-  initial,
   quiz: firstQuiz,
   onClose,
 }: {
   actions: LampActions;
-  initial: LampState | null;
   /** Opened by the Claim button at a Detour's place: the question already asked. */
   quiz: LampQuestion | string | null;
   onClose: () => void;
 }) {
-  const [state, setState] = useState<LampState | null>(initial);
+  const [state, setState] = useState<LampState | null>(null);
   const [quiz, setQuiz] = useState<LampQuestion | null>(typeof firstQuiz === "object" ? firstQuiz : null);
   const [message, setMessage] = useState<string | null>(typeof firstQuiz === "string" ? firstQuiz : null);
   const [result, setResult] = useState<LampResult | null>(null);
@@ -114,10 +114,7 @@ export function LampPanel({
     const r = await actions.answer(quiz.detourId, choice);
     setWorking(false);
     if (typeof r === "string") setMessage(r);
-    else {
-      setResult(r);
-      void actions.refresh().then(setState);
-    }
+    else setResult(r);
   };
 
   const way = (to: { lng: number; lat: number; name: string }) => {
@@ -125,9 +122,25 @@ export function LampPanel({
     onClose();
   };
 
+  const letGo = async (item: LampItem) => {
+    setWorking(true);
+    setState(await actions.dismiss(item));
+    setWorking(false);
+  };
+
   const button = "h-10 rounded-xl px-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40";
   const left = quiz ? Math.max(0, Math.ceil((quiz.endsAt - now) / 1000)) : 0;
-  const empty = state && !state.detours.length && !state.whispers.length && !state.orb;
+  const item = state?.current ?? null;
+  const ends = item && now > 0 ? (
+    <span className="text-xs font-bold text-paper/80" aria-label="Time left">
+      ⏳ {item.endsAt > now ? countdown(item.endsAt - now) : "over"}
+    </span>
+  ) : null;
+  const letGoButton = item && (
+    <button type="button" disabled={working} onClick={() => void letGo(item)} className="self-start text-xs font-bold text-muted underline disabled:opacity-40">
+      Let it go
+    </button>
+  );
 
   return (
     <div className="absolute inset-0 z-10 flex items-end justify-center bg-ink/60 sm:items-center" onClick={quiz && !result ? undefined : onClose}>
@@ -140,7 +153,7 @@ export function LampPanel({
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-2xl font-extrabold">{quiz ? quiz.title : "🪔 The lamp"}</h2>
-            <p className="text-sm text-muted">{quiz ? "Answer before the time runs out." : "What the lamp knows: things to chase, and where."}</p>
+            <p className="text-sm text-muted">{quiz ? "Answer before the time runs out." : "One thing at a time: chase it, or let it go."}</p>
           </div>
           {(!quiz || result) && (
             <button type="button" onClick={onClose} aria-label="Close" className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-ink-2">
@@ -200,77 +213,72 @@ export function LampPanel({
           )
         ) : !state ? (
           <p className="text-sm text-muted">The lamp flickers…</p>
-        ) : empty ? (
+        ) : !item ? (
           <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">The lamp is quiet. Keep roaming: it glows when something stirs nearby.</p>
+        ) : item.type === "orb" ? (
+          <div className="flex flex-col gap-2 rounded-2xl bg-[#2A1747] p-4 ring-2 ring-[#9B5DE5]">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-bold">🔮 The Lockdown Orb has surfaced</p>
+              {ends}
+            </div>
+            <p className="text-sm text-paper/85">
+              One in the world, and only one hand can hold it. It raises a dome over a key that nobody outside can enter. It lies {distance(item.metres)} from
+              you.
+            </p>
+            <button type="button" onClick={() => way({ lng: item.lng, lat: item.lat, name: "the Lockdown Orb" })} className={`${button} self-start bg-[#9B5DE5] text-paper`}>
+              Show me the way
+            </button>
+            {letGoButton}
+          </div>
+        ) : item.type === "whisper" ? (
+          <div className="flex flex-col gap-2 rounded-2xl bg-ink-2 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-bold">🌬 A whisper</p>
+              {ends}
+            </div>
+            <p className="text-sm text-paper/85">
+              &ldquo;Something lies hidden about {distance(item.metres)} {item.direction} of here…&rdquo; Whispers are sometimes lies, and they fade.
+            </p>
+            <button type="button" onClick={() => way({ lng: item.lng, lat: item.lat, name: "the whisper" })} className={`${button} self-start border-[1.5px] border-gold text-paper`}>
+              Show me the way
+            </button>
+            {letGoButton}
+          </div>
         ) : (
-          <ul className="flex flex-col gap-3">
-            {state.orb && (
-              <li className="flex flex-col gap-2 rounded-2xl bg-[#2A1747] p-4 ring-2 ring-[#9B5DE5]">
-                <p className="font-bold">🔮 The Lockdown Orb has surfaced</p>
-                <p className="text-sm text-paper/85">
-                  One in the world, and only one hand can hold it. It raises a dome over a key that nobody outside can enter. It lies{" "}
-                  {distance(state.orb.metres)} from you.
-                </p>
-                <p className="text-xs text-paper/70">Sinks out of reach in {countdown(state.orb.endsAt - now)}</p>
-                <button type="button" onClick={() => way({ lng: state.orb!.lng, lat: state.orb!.lat, name: "the Lockdown Orb" })} className={`${button} self-start bg-[#9B5DE5] text-paper`}>
-                  Show me the way
-                </button>
-              </li>
-            )}
-            {[...state.detours].sort((x, y) => Number(closed(x, now)) - Number(closed(y, now))).map((d) => {
-              const here = d.metres <= DETOUR_REACH_M;
-              const full = d.capacity !== null && d.claimed >= d.capacity;
-              const over = d.endsAt <= now && now > 0;
-              const done = d.mine && d.mine !== "asked";
-              return (
-                <li key={d.id} className={`flex flex-col gap-2 rounded-2xl bg-ink-2 p-4 ${here && !done ? "ring-2 ring-gold" : ""}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="rounded-md bg-gold/15 px-2 py-0.5 text-xs font-bold text-gold">{KIND[d.kind].badge}</span>
-                    <span className="text-xs font-bold text-paper/80" aria-label="Time left">
-                      ⏳ {over ? "over" : countdown(d.endsAt - now)}
-                    </span>
-                  </div>
-                  <p className="font-bold">{d.title}</p>
-                  <p className="text-sm text-paper/85">{d.story}</p>
-                  <p className="text-xs text-muted">
-                    {d.place} · {here ? "you're here" : distance(d.metres)} · <span className="font-bold text-gold">{rewardText(d.coins, d.relic)}</span>
-                    {d.capacity !== null && (
-                      <>
-                        {" "}
-                        · <b className={full ? "text-danger" : "text-paper"}>{d.claimed} / {d.capacity} claimed</b>
-                      </>
-                    )}
-                  </p>
-                  {done ? (
-                    <p className={`text-sm font-bold ${d.mine === "won" ? "text-[#3DD68C]" : "text-muted"}`}>
-                      {d.mine === "won" ? "✓ You claimed this one" : "You tried this one"}
-                    </p>
-                  ) : full || over ? (
-                    <p className="text-sm text-muted">{full ? "All claimed." : "Gone."}</p>
-                  ) : here ? (
-                    <button type="button" disabled={working} onClick={() => void claim(d)} className={`${button} self-start bg-gold text-ink`}>
-                      Claim it
-                    </button>
-                  ) : (
-                    <button type="button" onClick={() => way({ lng: d.lng, lat: d.lat, name: d.place })} className={`${button} self-start border-[1.5px] border-gold text-paper`}>
-                      Show me the way
-                    </button>
+          (() => {
+            const d = item;
+            const here = d.metres <= DETOUR_REACH_M;
+            const full = d.capacity !== null && d.claimed >= d.capacity;
+            return (
+              <div className={`flex flex-col gap-2 rounded-2xl bg-ink-2 p-4 ${here ? "ring-2 ring-gold" : ""}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="rounded-md bg-gold/15 px-2 py-0.5 text-xs font-bold text-gold">{KIND[d.kind]}</span>
+                  {ends}
+                </div>
+                <p className="font-bold">{d.title}</p>
+                <p className="text-sm text-paper/85">{d.story}</p>
+                <p className="text-xs text-muted">
+                  {d.place} · {here ? "you're here" : distance(d.metres)} · <span className="font-bold text-gold">{rewardText(d.coins, d.relic)}</span>
+                  {d.capacity !== null && (
+                    <>
+                      {" "}
+                      · <b className={full ? "text-danger" : "text-paper"}>{d.claimed} / {d.capacity} claimed</b>
+                    </>
                   )}
-                </li>
-              );
-            })}
-            {state.whispers.map((w) => (
-              <li key={w.id} className="flex flex-col gap-2 rounded-2xl bg-ink-2 p-4">
-                <p className="font-bold">🌬 A whisper</p>
-                <p className="text-sm text-paper/85">
-                  &ldquo;Something lies hidden about {distance(w.metres)} {w.direction} of here…&rdquo; Whispers are sometimes lies.
                 </p>
-                <button type="button" onClick={() => way({ lng: w.lng, lat: w.lat, name: "the whisper" })} className={`${button} self-start border-[1.5px] border-gold text-paper`}>
-                  Show me the way
-                </button>
-              </li>
-            ))}
-          </ul>
+                {here ? (
+                  <button type="button" disabled={working || full} onClick={() => void claim(d)} className={`${button} self-start bg-gold text-ink`}>
+                    Claim it
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => way({ lng: d.lng, lat: d.lat, name: d.place })} className={`${button} self-start border-[1.5px] border-gold text-paper`}>
+                    Show me the way
+                  </button>
+                )}
+                {letGoButton}
+              </div>
+            );
+          })()
         )}
       </div>
     </div>

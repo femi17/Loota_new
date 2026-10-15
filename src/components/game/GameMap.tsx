@@ -16,6 +16,8 @@ import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
 import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
+import { JourneyPanel, legText } from "./JourneyPanel";
+import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, rideLeg, type Journey } from "@/game/journey";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
@@ -84,6 +86,8 @@ type Hud = {
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
+  /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
+  journey: { place: string; step: number; total: number; text: string; board: string | null } | null;
   /** The lamp: how many things it holds, and how many the player hasn't looked at yet (it glows). */
   lamp: { count: number; unseen: number };
   /** At a Detour's place, not yet tried: the Claim button. */
@@ -213,6 +217,11 @@ export function GameMap({
     endDirections: () => void;
     where: () => LngLat;
     goTo: (place: Place) => void;
+    /** The journey planner: go the chosen way, just the road, board at a stop, or give up the journey. */
+    chooseJourney: (journey: Journey) => void;
+    roadOnly: (place: Place) => void;
+    boardJourney: () => void;
+    endJourney: () => void;
     /** Get off a bus, train or plane that hasn't left yet (fare refunded). */
     cancelTrip: () => void;
     /** Do something where the player stands (eat, rest, refuel, kegs, tyres, repairs). */
@@ -257,10 +266,12 @@ export function GameMap({
     jam: 0,
     lamp: { count: 0, unseen: 0 },
     detourHere: null,
+    journey: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [journeyPlan, setJourneyPlan] = useState<{ place: Place; options: Journey[] | null; message: string | null } | null>(null);
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the vehicle panel, when open
   const [transitOpen, setTransitOpen] = useState(false);
   const [transitActions, setTransitActions] = useState<TransitActions | null>(null); // set once the map is ready
@@ -1240,8 +1251,18 @@ export function GameMap({
           setHud((h) => ({ ...h, advice: null }));
         },
         goTo(place) {
+          void routeTo(place);
+        },
+        chooseJourney: (j) => {
+          setJourneyPlan(null);
+          startJourney(j);
+        },
+        roadOnly: (place) => {
+          setJourneyPlan(null);
           void planDirections({ lng: place.lng, lat: place.lat }, place.name);
         },
+        boardJourney: () => void boardJourney(),
+        endJourney: () => endJourney(),
       };
 
       // ---- Hunts: searching where you stand, trials and being thrown out ----
@@ -3113,7 +3134,13 @@ export function GameMap({
         if (geo.distanceM([at.lng, at.lat], [place.lng, place.lat]) > BUS_RANGE_M) return "Taxis go up to 40 km. For further, take a long-distance bus or a plane.";
         let driverPath: import("@/game/geo").Coord[] | null = null;
         for (let i = 0; i < 5 && !driverPath; i++) {
-          const found = (await routeOnOwnRoads(somewhereNear(at, 1200 + Math.random() * 1300), at, "car"))?.path ?? null;
+          const start = somewhereNear(at, 1200 + Math.random() * 1300);
+          let found = (await routeOnOwnRoads(start, at, "car"))?.path ?? null;
+          if (!found) {
+            // Off our own roads (abroad): the routing service.
+            const { route, fallback } = await fetchRoute(start, at, "car");
+            if (!fallback) found = route.coords;
+          }
           // The server takes drivers 200 m to 8 km away by road. A start across a lagoon or a rail line
           // can wind further: then the driver is already on the last 6 km of that way.
           const driven = found ? cumulativeOf(found).at(-1)! : 0;
@@ -3358,6 +3385,223 @@ export function GameMap({
         }
       }
 
+      // ---- The journey planner (design doc 7.8) ---------------------------
+      // A place more than a city away: work out the ways there (fly, a long-distance
+      // bus, a train, driving) as steps, then guide the player through them, drawing
+      // only the current step. The journey is kept on this device across reloads.
+      type ActiveJourney = { journey: Journey; step: number };
+      const JOURNEY_KEY = "loota:journey";
+      let journey: ActiveJourney | null = null;
+      let journeyResumed = false;
+      let lastJourneyTick = -Infinity;
+      try {
+        const saved = localStorage.getItem(JOURNEY_KEY);
+        if (saved) journey = JSON.parse(saved) as ActiveJourney;
+      } catch {
+        journey = null;
+      }
+      const saveJourney = () => {
+        try {
+          if (journey) localStorage.setItem(JOURNEY_KEY, JSON.stringify(journey));
+          else localStorage.removeItem(JOURNEY_KEY);
+        } catch {
+          // Not kept: fine.
+        }
+      };
+
+      async function nearestStop(kind: "bus" | "train" | "plane", p: { lng: number; lat: number }) {
+        const { data } = await supabase.rpc("stops_near", { p_kind: kind, p_lng: p.lng, p_lat: p.lat, p_limit: 1 });
+        return ((data ?? []) as TransitStop[])[0] ?? null;
+      }
+      /** The motor park nearest a point, within `deg` degrees (long-distance buses leave from these). */
+      async function nearestPark(p: { lng: number; lat: number }, deg: number) {
+        const { data } = await supabase
+          .from("transit_stops")
+          .select("id, kind, name, lng, lat, line_id, code, park")
+          .eq("kind", "bus")
+          .eq("park", true)
+          .gte("lng", p.lng - deg)
+          .lte("lng", p.lng + deg)
+          .gte("lat", p.lat - deg)
+          .lte("lat", p.lat + deg);
+        return (
+          ((data ?? []) as Omit<TransitStop, "metres" | "line">[])
+            .map((s) => ({ ...s, line: null, metres: Math.round(geo.distanceM([p.lng, p.lat], [s.lng, s.lat])) }))
+            .sort((a, b) => a.metres - b.metres)[0] ?? null
+        );
+      }
+
+      /** The ways to a far place, fastest first; null when it's near enough to just go. */
+      async function journeyOptions(place: Place): Promise<Journey[] | null> {
+        const from = { ...traveller.pos };
+        if (geo.distanceM([from.lng, from.lat], [place.lng, place.lat]) <= LOCAL_M) return null;
+        const options: Journey[] = [];
+        const tries: Promise<void>[] = [];
+        if (flyingMakesSense(from, place)) {
+          tries.push(
+            (async () => {
+              const [a, b] = await Promise.all([nearestStop("plane", from), nearestStop("plane", place)]);
+              if (!a || !b || a.id === b.id) return;
+              const after = goLeg(b, place);
+              options.push(
+                journeyOf("fly", place, [goLeg(from, a), rideLeg("plane", a, b), after],
+                  after.metres > 40_000 ? `The nearest airport is ${geo.formatDistance(after.metres)} from ${place.name} by road: a long way after landing.` : undefined),
+              );
+            })(),
+          );
+        }
+        if (coachPossible(from, place)) {
+          tries.push(
+            (async () => {
+              const [a, b] = await Promise.all([nearestPark(from, 0.6), nearestPark(place, 0.25)]);
+              if (!a || !b || a.id === b.id) return;
+              options.push(journeyOf("coach", place, [goLeg(from, a), rideLeg("bus", a, b), goLeg(b, place)]));
+            })(),
+          );
+        }
+        if (inNigeria(from) && inNigeria(place)) {
+          tries.push(
+            (async () => {
+              const [a, b] = await Promise.all([nearestStop("train", from), nearestStop("train", place)]);
+              if (!a || !b || a.id === b.id || !a.line_id || a.line_id !== b.line_id || a.metres > 40_000 || b.metres > 40_000) return;
+              const { data } = await supabase.from("transit_stops").select("id, along_m").in("id", [a.id, b.id]);
+              const along = new Map(((data ?? []) as { id: number; along_m: number }[]).map((s) => [s.id, s.along_m]));
+              if (along.size < 2) return;
+              options.push(journeyOf("train", place, [goLeg(from, a), rideLeg("train", a, b, Math.abs(along.get(a.id)! - along.get(b.id)!)), goLeg(b, place)]));
+            })(),
+          );
+        }
+        await Promise.all(tries);
+        // Driving: your own motorbike or car, by road within Nigeria.
+        const motor = owned.find((v) => v.kind !== "bicycle" && !v.broken_at);
+        if (motor && coachPossible(from, place)) {
+          const metres = Math.round(geo.distanceM([from.lng, from.lat], [place.lng, place.lat]) * 1.3);
+          const fuel = (metres / 1000) * VEHICLES[motor.kind].fuelPerKm;
+          options.push(
+            journeyOf("drive", place, [{ kind: "go", to: place, metres, seconds: metres / movement.baseSpeed(motor.kind), fare: null, how: `Drive your ${vehicleName(motor.kind)}` }],
+              fuel > motor.fuel ? `Needs about ${Math.round(fuel)}% of a tank: fill up on the way (you have ${Math.round(motor.fuel)}%).` : undefined),
+          );
+        }
+        return options.sort((a, b) => a.seconds - b.seconds);
+      }
+
+      /** Directions to a place: straight there if it's near, otherwise the ways there to choose from. */
+      async function routeTo(place: Place) {
+        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [place.lng, place.lat]) <= LOCAL_M) {
+          void planDirections({ lng: place.lng, lat: place.lat }, place.name);
+          return;
+        }
+        setJourneyPlan({ place, options: null, message: null });
+        const options = await journeyOptions(place);
+        if (disposed) return;
+        if (!options) {
+          setJourneyPlan(null);
+          void planDirections({ lng: place.lng, lat: place.lat }, place.name);
+          return;
+        }
+        setJourneyPlan({
+          place,
+          options,
+          message: options.length ? null : "No bus, train or plane goes there from here. You can still take the road.",
+        });
+      }
+
+      function startJourney(j: Journey) {
+        journey = { journey: j, step: 0 };
+        saveJourney();
+        say(`Journey to ${j.place.name}: ${j.legs.length} steps. First: ${legText(j.legs[0])}.`, true);
+        beginStep();
+      }
+
+      /** Draw the current step (only a step you go yourself has a route; a ride starts at its stop). */
+      function beginStep() {
+        if (!journey) return;
+        const leg = journey.journey.legs[journey.step];
+        if (leg.kind === "go") {
+          const already = trip && geo.distanceM([trip.to.lng, trip.to.lat], [leg.to.lng, leg.to.lat]) < 60;
+          if (!already) void planDirections({ lng: leg.to.lng, lat: leg.to.lat }, leg.to.name);
+        }
+        showJourney();
+      }
+
+      function endJourney(done = false) {
+        if (!journey) return;
+        if (done) say(`🧭 You've made it to ${journey.journey.place.name}. Journey complete!`, true);
+        journey = null;
+        saveJourney();
+        showJourney();
+      }
+
+      function showJourney() {
+        if (!journey) {
+          setHud((h) => (h.journey ? { ...h, journey: null } : h));
+          return;
+        }
+        const { legs } = journey.journey;
+        const leg = legs[journey.step];
+        const atStop = leg.kind === "ride" && !ride && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [leg.from.lng, leg.from.lat]) <= TRANSIT[leg.mode].reachM;
+        const view = {
+          place: journey.journey.place.name,
+          step: journey.step + 1,
+          total: legs.length,
+          text: leg.kind === "ride" && !atStop && !ride ? `Get to ${leg.from.name} to board` : legText(leg),
+          board: atStop && leg.kind === "ride" ? `Board ${TRANSIT[leg.mode].icon} · about ${leg.fare.toLocaleString("en-NG")} coins` : null,
+        };
+        setHud((h) => (JSON.stringify(h.journey) === JSON.stringify(view) ? h : { ...h, journey: view }));
+      }
+
+      /** At the stop: price the ride exactly and board, with the place itself as where to go after. */
+      async function boardJourney() {
+        if (!journey) return;
+        const leg = journey.journey.legs[journey.step];
+        if (leg.kind !== "ride") return;
+        const place = journey.journey.place;
+        const quote =
+          leg.mode === "bus"
+            ? await quoteBus(leg.from, place)
+            : await quoteTo(leg.from, { id: leg.to.id, name: leg.to.name, code: leg.to.code, lng: leg.to.lng, lat: leg.to.lat, metres: leg.metres, fare: leg.fare, seconds: leg.seconds });
+        if (typeof quote === "string") {
+          say(quote, true);
+          return;
+        }
+        const problem = await board({ ...quote, then: place }, false);
+        if (problem) say(problem, true);
+        showJourney();
+      }
+
+      /** Move the journey on as the player gets places. */
+      function journeyTick(now: number) {
+        if (!journey || now - lastJourneyTick < 1000) return;
+        lastJourneyTick = now;
+        if (!journeyResumed) {
+          journeyResumed = true;
+          if (!ride) beginStep(); // after a reload: draw the current step again
+        }
+        const { legs } = journey.journey;
+        const leg = legs[journey.step];
+        const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        if (leg.kind === "go") {
+          const next = legs[journey.step + 1];
+          const reach = next?.kind === "ride" ? TRANSIT[next.mode].reachM + 20 : 60;
+          if (geo.distanceM(here, [leg.to.lng, leg.to.lat]) <= reach) {
+            if (!next) return endJourney(true);
+            journey.step++;
+            saveJourney();
+            say(`🧭 Step ${journey.step + 1} of ${legs.length}: you're at ${next.kind === "ride" ? next.from.name : leg.to.name}. ${next.kind === "ride" ? "Board when you're ready." : ""}`, true);
+            beginStep();
+            return;
+          }
+        } else if (!ride && geo.distanceM(here, [leg.to.lng, leg.to.lat]) <= 5000 && geo.distanceM(here, [leg.from.lng, leg.from.lat]) > 5000) {
+          // Off the bus, train or plane at the far end: on to the last step (the ride already mapped it).
+          journey.step++;
+          saveJourney();
+          if (journey.step >= legs.length) return endJourney(true);
+          beginStep();
+          return;
+        }
+        showJourney();
+      }
+
       // ---- The lamp: Detours, whispers and the Orb (design doc 7.4, 7.5) -------
       // Nothing hidden is drawn on the map; the lamp holds it, with the way there
       // drawn only when the player asks. It glows while it holds something new.
@@ -3490,7 +3734,7 @@ export function GameMap({
           void refreshLamp();
           return { outcome: r.outcome, answer: r.answer, coins: r.coins, relic: r.relic };
         },
-        showWay: (to) => void planDirections({ lng: to.lng, lat: to.lat }, to.name),
+        showWay: (to) => void routeTo({ name: to.name, detail: "", lng: to.lng, lat: to.lat }),
       });
       void refreshLamp();
 
@@ -3720,6 +3964,7 @@ export function GameMap({
         landmarkTick(now, dt);
         skyAndTrafficTick(now);
         lampTick(now);
+        journeyTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -4072,6 +4317,31 @@ export function GameMap({
               />
             )}
 
+            {/* A journey under way: which step, and the Board button at the stop. */}
+            {hud.journey && !hud.ride && !hud.care && (
+              <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#14324A] p-3 text-paper ring-1 ring-[#5FA8E6]" role="status" aria-label="Your journey">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl" aria-hidden="true">
+                    🧭
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-sm font-extrabold">
+                      Step {hud.journey.step} of {hud.journey.total} · to {hud.journey.place}
+                    </span>
+                    <span className="truncate text-xs text-paper/85">{hud.journey.text}</span>
+                  </div>
+                  <button type="button" aria-label="End the journey" onClick={() => actions.current?.endJourney()} className="flex size-8 shrink-0 items-center justify-center rounded-lg text-paper/70">
+                    <CloseIcon />
+                  </button>
+                </div>
+                {hud.journey.board && (
+                  <button type="button" disabled={hud.busy} onClick={() => actions.current?.boardJourney()} className="h-10 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50">
+                    {hud.journey.board}
+                  </button>
+                )}
+              </div>
+            )}
+
             {/* Directions: the next turn. The player steers; this only guides. */}
             {hud.guide && (
               <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Directions">
@@ -4332,6 +4602,17 @@ export function GameMap({
             setTransitOpen(true);
           }}
           onClose={() => setGarage(null)}
+        />
+      )}
+
+      {journeyPlan && (
+        <JourneyPanel
+          place={journeyPlan.place}
+          options={journeyPlan.options}
+          message={journeyPlan.message}
+          onChoose={(j) => actions.current?.chooseJourney(j)}
+          onRoadOnly={() => actions.current?.roadOnly(journeyPlan.place)}
+          onClose={() => setJourneyPlan(null)}
         />
       )}
 

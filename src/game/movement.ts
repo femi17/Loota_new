@@ -24,9 +24,10 @@ export const MODES: Record<Mode, { label: string; kmh: number; profile: "foot" |
 
 const SPRINT_SPEED = 1.6; // sprint is 60% faster…
 const SPRINT_DRAIN = 2.5; // …and uses energy 2.5× as fast
-/** Energy per second while standing still, and while resting at a chill spot (idle_regen, rest_regen). */
+/** Energy per second while standing still, resting at a chill spot, and resting by the road (idle_regen, rest_regen, roadside_regen). */
 export const IDLE_REGEN = 0.25;
 export const REST_REGEN = 2;
+export const ROADSIDE_REGEN = 1;
 const TIRED_AT = 20; // below this, you slow down
 const TIRED_SPEED = 0.6;
 const CELEBRATE_SECONDS = 3.5;
@@ -49,8 +50,10 @@ export type Traveller = {
   phaseUntil: number;
   /** Below 1 when held back, e.g. pushing a bicycle with a flat tyre. */
   speedFactor: number;
-  /** Resting at a chill spot: energy comes back fast until the hunter moves. */
+  /** Resting at a chill spot or by the road: energy comes back faster until the hunter moves. */
   resting: boolean;
+  /** Energy per second while resting: REST_REGEN at a chill spot, ROADSIDE_REGEN by the road. */
+  restRate: number;
 };
 
 export type Controls = { go: boolean; sprint: boolean };
@@ -67,7 +70,7 @@ export function maxSpeed(mode: Mode): number {
 }
 
 export function createTraveller(pos: LngLat, mode: Mode = "walk"): Traveller {
-  return { pos: { ...pos }, heading: Math.PI, mode, route: null, s: 0, v: 0, energy: 100, phase: "idle", phaseUntil: 0, speedFactor: 1, resting: false };
+  return { pos: { ...pos }, heading: Math.PI, mode, route: null, s: 0, v: 0, energy: 100, phase: "idle", phaseUntil: 0, speedFactor: 1, resting: false, restRate: REST_REGEN };
 }
 
 /** Full-pace speed for a mode, in on-screen metres per second. */
@@ -119,7 +122,7 @@ export function step(
       events.push("fainted");
     }
   } else if (t.phase === "idle") {
-    t.energy = Math.min(100, t.energy + (t.resting ? REST_REGEN : IDLE_REGEN) * dt);
+    t.energy = Math.min(100, t.energy + (t.resting ? t.restRate : IDLE_REGEN) * dt);
   }
 
   return { distance: t.v * dt, events };

@@ -37,10 +37,20 @@ export class ThreeMapLayer implements CustomLayerInterface {
     /** Target on-screen height of an avatar, in CSS pixels. */
     private readonly avatarPx: number,
   ) {
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x667755, 2.2));
-    const sun = new THREE.DirectionalLight(0xfff2d0, 1.6);
-    sun.position.set(30, 80, 20);
-    this.scene.add(sun);
+    this.scene.add(this.sky);
+    this.sun.position.set(30, 80, 20);
+    this.scene.add(this.sun);
+  }
+
+  private readonly sky = new THREE.HemisphereLight(0xffffff, 0x667755, 2.2);
+  private readonly sun = new THREE.DirectionalLight(0xfff2d0, 1.6);
+
+  /** Daylight from 1 (day) to 0 (night): figures and vehicles darken at night, bluish under the moon. */
+  setDaylight(light: number) {
+    this.sky.intensity = 0.9 + 1.3 * light;
+    this.sky.color.setRGB(0.75 + 0.25 * light, 0.8 + 0.2 * light, 1);
+    this.sun.intensity = 0.25 + 1.35 * light;
+    this.map?.triggerRepaint();
   }
 
   add(entity: MapEntity) {

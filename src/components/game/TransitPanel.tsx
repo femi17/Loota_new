@@ -29,6 +29,8 @@ export type TransitQuote = {
   /** Wait plus ride, in seconds. */
   seconds: number;
   waitSeconds: number;
+  /** Night or rush hour, when it changes the wait, the time or the fare. */
+  note?: string;
   path: [number, number][];
 };
 
@@ -43,6 +45,8 @@ export type TaxiQuote = {
   fare: number;
   driverSeconds: number;
   rideSeconds: number;
+  /** A night fare, or rush-hour traffic. */
+  note?: string;
 };
 
 export type TransitActions = {
@@ -290,6 +294,7 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
             <p className="text-sm text-muted">
               {distance(taxi.metres)} · about {clock(taxi.rideSeconds)} in the taxi. You pay when you get in.
             </p>
+            {taxi.note && <p className="text-xs font-bold text-gold">{taxi.note}</p>}
             <div className="flex flex-wrap gap-2">
               <button type="button" disabled={working || coins < taxi.fare} onClick={callTaxi} className={`${button} bg-gold text-ink`}>
                 Call the taxi · {taxi.fare} coins
@@ -318,6 +323,7 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
               From {stopTitle(quote.from)} · {distance(quote.metres)} · about {clock(quote.seconds)}, including{" "}
               {quote.mode === "plane" ? "check-in and boarding" : "the wait"} ({clock(quote.waitSeconds)})
             </p>
+            {quote.note && <p className="text-xs font-bold text-gold">{quote.note}</p>}
             {passes > 0 && (
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={useFastPass} onChange={(e) => setUseFastPass(e.target.checked)} className="size-5 accent-[#C3A6FF]" />

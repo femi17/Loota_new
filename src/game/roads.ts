@@ -19,7 +19,31 @@ type RoadNode = { lng: number; lat: number; edges: number[] };
  * `oneway`: for motorbikes and cars on a one-way street, the only direction
  * allowed (1 = from a to b, −1 = from b to a). Walkers and cyclists ignore it.
  */
-type RoadEdge = { a: number; b: number; length: number; level: number; name?: string | null; oneway?: 1 | -1 };
+/**
+ * `cls`, `stretch` and `urban` (our own roads only) decide traffic jams: the kind of road,
+ * which stretch of it (the same on every device), and how built-up the area is (src/game/clock.ts).
+ */
+type RoadEdge = {
+  a: number;
+  b: number;
+  length: number;
+  level: number;
+  name?: string | null;
+  oneway?: 1 | -1;
+  cls?: RoadClass;
+  stretch?: number;
+  urban?: number;
+};
+
+/** How built-up a road square is, 0 (countryside) to 1 (a city), from how many roads it has. */
+export function cellUrban(cell: RoadCellData) {
+  return Math.max(0, Math.min(1, (cell.ways.length - 300) / 1500));
+}
+
+/** A stretch of road for traffic: about 25 points of one road in one square (segment i runs from point i − 1 to i). */
+export function jamStretch(way: RoadCellData["ways"][number], i: number) {
+  return way.points[0] * 64 + Math.floor((i - 1) / 25);
+}
 
 /** May the player travel along this road piece in this direction? */
 const canGo = (e: RoadEdge, dir: 1 | -1) => !e.oneway || e.oneway === dir;
@@ -681,6 +705,7 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
   };
   const seen = new Set<string>();
   for (const cell of cells) {
+    const urban = cellUrban(cell);
     for (const way of cell.ways) {
       if (!allowedRoad(mode, way.cls, way.flags)) continue;
       const level = way.flags & ROAD_FLAGS.bridge ? 1 : way.flags & ROAD_FLAGS.tunnel ? -1 : 0;
@@ -714,6 +739,9 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
           level,
           name: way.name,
           oneway,
+          cls: way.cls,
+          stretch: jamStretch(way, i),
+          urban,
         });
         nodes[a].edges.push(id);
         nodes[b].edges.push(id);
@@ -721,6 +749,12 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
     }
   }
   return { nodes, edges, centre };
+}
+
+/** The road the player is on, for traffic: its kind, stretch and how built-up the area is (our own roads only). */
+export function roadHere(net: RoadNetwork, rp: RoadPosition) {
+  const e = net.edges[rp.edge];
+  return e?.cls !== undefined ? { cls: e.cls, stretch: e.stretch ?? 0, urban: e.urban ?? 0 } : null;
 }
 
 /** The street name of the road the player is on, if the network knows names (our own roads do). */

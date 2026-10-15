@@ -17,6 +17,7 @@ import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type Roa
 import { PlaceSearch } from "./PlaceSearch";
 import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
 import { highwayRoute, loadHighways } from "@/game/highways";
+import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
 import { LandmarkPanel, type CheckinQuestion, type CheckinResult, type Landmark, type LandmarkActions } from "./LandmarkPanel";
 import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
 import {
@@ -84,6 +85,10 @@ type Hud = {
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
+  /** The local time where the player is, whether it's night, and whether it's rush hour. */
+  clock: { text: string; night: boolean; rush: boolean } | null;
+  /** On a motorbike or in a car in a traffic jam: 1 slow, 2 at a standstill. */
+  jam: Jam;
   /** At a landmark (within its check-in area): what checking in would pay. */
   landmarkHere: { landmark: Landmark; canTry: boolean } | null;
   /** A rental waiting at a bus stop, or a taxi on its way: where, how far, and the button once there. */
@@ -91,7 +96,7 @@ type Hud = {
 };
 
 /** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
-type LimitAction = "eat" | "rest" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic";
+type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic";
 
 /** A direction and rough distance (bearing: compass degrees). */
 type Pointer = { bearing: number; metres: number };
@@ -246,6 +251,8 @@ export function GameMap({
     keg: null,
     pickup: null,
     landmarkHere: null,
+    clock: null,
+    jam: 0,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -402,7 +409,10 @@ export function GameMap({
         } catch {
           roadSquares.set(key, "none"); // not hosted (or offline): use the drawing tiles here
         }
-        if (!disposed) lastNetworkCheck = 0; // rebuild with it on the next frame
+        if (!disposed) {
+          lastNetworkCheck = 0; // rebuild with it on the next frame
+          lastSky = -Infinity; // and draw its traffic
+        }
       }
 
       /** (Re)build the roads around the hunter; `ifChanged` skips it when nothing new has loaded. */
@@ -761,8 +771,9 @@ export function GameMap({
       // What holds the traveller back: soft or flat tyres, and rain (walkers and bikes).
       let vehicleFactor = 1;
       let weatherFactor = 1;
+      let trafficSpeed = 1; // in a jam: cars crawl, motorbikes weave through (src/game/clock.ts)
       function applySpeed() {
-        traveller.speedFactor = vehicleFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : 1);
+        traveller.speedFactor = vehicleFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : trafficSpeed);
       }
 
       /** New fuel for the vehicle the player is on (a save, a refuel, a Jerry Can relic). */
@@ -2180,7 +2191,9 @@ export function GameMap({
         if (!path) return "Couldn't work out the bus's way there just now. Try again in a moment.";
         const full = thinPath([[from.lng, from.lat], ...path, [to.lng, to.lat]], far ? 25 : 4);
         const metres = Math.max(cumulativeOf(full).at(-1)!, straight);
-        const wait = transitWaitS("bus", false);
+        const night = isNight(Date.now(), from.lng, from.lat);
+        const wait = transitWaitS("bus", false) * (night ? NIGHT_BUS_WAIT : 1);
+        const slow = metres <= BUS_RANGE_M ? trafficFactor(Date.now(), from.lng, from.lat) : 1;
         return {
           mode: "bus",
           from,
@@ -2190,9 +2203,10 @@ export function GameMap({
           walkAfter: to.metres,
           metres,
           fare: transitFare("bus", metres),
-          seconds: wait + metres / transitSpeedFor("bus", metres),
+          seconds: wait + (metres / transitSpeedFor("bus", metres)) * slow,
           waitSeconds: wait,
           path: full,
+          note: [night ? "🌙 Night: buses come less often." : "", slow >= 1.5 ? "🚦 Rush hour: the bus is slow in traffic." : ""].filter(Boolean).join(" ") || undefined,
         };
       }
 
@@ -2387,16 +2401,20 @@ export function GameMap({
       }
 
       /** Show a warning with directions to the nearest place of these kinds. */
-      async function advise(key: string, title: string, text: string, kinds: Spot["kind"][] | null) {
-        const found = kinds ? await spotAhead(kinds) : null;
+      /**
+       * `none`: what to say instead when no such place is within `maxM` (e.g. "rest where you are").
+       */
+      async function advise(key: string, title: string, text: string, kinds: Spot["kind"][] | null, maxM = Infinity, none?: { text: string; where: string }) {
+        let found = kinds ? await spotAhead(kinds) : null;
         if (disposed) return;
+        if (found && found.spot.metres > maxM) found = null;
         const spot = found?.spot ?? null;
         const full = found
           ? `${text} ${found.behind ? "None ahead; the nearest is back the way you came" : trip ? "Next on your way" : "Next ahead"}: ${found.spot.name}, ${geo.formatDistance(found.spot.metres)}.`
-          : text;
+          : none?.text ?? text;
         adviceKey = key;
         advicePlace = spot ? { name: spot.name, lng: spot.lng, lat: spot.lat } : null;
-        const where = found ? `${found.spot.name} · ${geo.formatDistance(found.spot.metres)}${found.behind ? " back" : ""}` : null;
+        const where = found ? `${found.spot.name} · ${geo.formatDistance(found.spot.metres)}${found.behind ? " back" : ""}` : (none?.where ?? null);
         setHud((h) => ({ ...h, advice: { key, title, text: full, where, place: advicePlace } }));
         say(full, true);
       }
@@ -2407,6 +2425,16 @@ export function GameMap({
         setHud((h) => (h.advice?.key === key ? { ...h, advice: null } : h));
       }
 
+      /**
+       * How far it's worth going for a chill spot: under 40% of what the hunter's
+       * energy would carry them, and no more than 800 m on foot (2 km by bicycle).
+       */
+      function chillReachM() {
+        const perMetre = movement.MODES[traveller.mode].drain / movement.baseSpeed(traveller.mode);
+        const cap = traveller.mode === "bicycle" ? 2000 : 800;
+        return perMetre > 0 ? Math.min(cap, (0.4 * traveller.energy) / perMetre) : cap;
+      }
+
       /** Warnings as energy, fuel, tyres and engines run down (once per level, again after recovering). */
       function checkLimits() {
         if (visit || ride) return;
@@ -2414,10 +2442,16 @@ export function GameMap({
         if (traveller.mode === "walk" || traveller.mode === "bicycle") {
           if (energy < 25 && warned.energy > 25) {
             warned.energy = 25;
-            void advise("energy", "Exhausted: rest now", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park or a place to eat, or have a meal.", ["rest", "eat"]);
+            void advise("energy", "Exhausted: rest now", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park or a place to eat, or have a meal.", ["rest", "eat"], chillReachM(), {
+              text: "You're exhausted! There's no chill spot close by: sit down and rest right where you are (Rest here), or you'll faint and need an ambulance.",
+              where: "No chill spot near: rest here",
+            });
           } else if (energy < 50 && warned.energy > 50) {
             warned.energy = 50;
-            void advise("energy", "Getting tired", "You're getting tired. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.", ["rest", "eat"]);
+            void advise("energy", "Getting tired", "You're getting tired. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.", ["rest", "eat"], chillReachM(), {
+              text: "You're getting tired, and there's no chill spot close by. Take a break right where you are (Rest here): energy comes back while you sit.",
+              where: "No chill spot near: rest here",
+            });
           }
         }
         if (energy > 60 && warned.energy < 100) {
@@ -2473,6 +2507,9 @@ export function GameMap({
           if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
           const chill = spotHere(["rest", "eat"]);
           if (chill && traveller.mode === "walk" && traveller.energy < 90 && !traveller.resting) list.push({ id: "rest", icon: "🪑", short: "Rest", label: `Rest at ${chill.name}` });
+          if (!chill && (traveller.mode === "walk" || traveller.mode === "bicycle") && traveller.energy < 60 && !traveller.resting) {
+            list.push({ id: "rest_here", icon: "🧘", short: "Rest here", label: "Sit down and rest right here (slower than at a chill spot)" });
+          }
           const station = spotHere(["fuel"]);
           if (station && mine && mine.kind !== "bicycle" && mine.fuel < 99) list.push({ id: "refuel", icon: "⛽", short: "Refuel", label: `Refuel at ${station.name}` });
           if (station && !keg && owned.some((v) => v.kind !== "bicycle")) list.push({ id: "buy_keg", icon: "🛢", short: "Buy keg · 25", label: "Buy a fuel keg · 25 coins" });
@@ -2516,6 +2553,7 @@ export function GameMap({
           await savePosition(); // the server checks where the player is
           const rpc: Record<Exclude<LimitAction, "eat" | "refuel">, string> = {
             rest: "start_rest",
+            rest_here: "rest_here",
             buy_keg: "buy_keg",
             fill_keg: "fill_keg",
             pour_keg: "pour_keg",
@@ -2553,7 +2591,12 @@ export function GameMap({
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           if (id === "rest") {
             traveller.resting = true;
+            traveller.restRate = movement.REST_REGEN;
             say(`Resting at ${r.place}. Energy comes back fast; walk on when you're ready.`);
+          } else if (id === "rest_here") {
+            traveller.resting = true;
+            traveller.restRate = movement.ROADSIDE_REGEN;
+            say(`You sit down ${traveller.mode === "bicycle" ? "by your bicycle" : "by the road"}. Energy comes back while you rest (faster at a park or a place to eat); move on when you're ready.`);
           } else if (id === "buy_keg") {
             keg = { fuel: 0, usesLeft: r.usesLeft ?? 50 };
             say("You bought a fuel keg (good for 50 trips). Fill it here, carry it to your vehicle and pour it in.");
@@ -3056,7 +3099,10 @@ export function GameMap({
         let driverPath: import("@/game/geo").Coord[] | null = null;
         for (let i = 0; i < 5 && !driverPath; i++) {
           const found = (await routeOnOwnRoads(somewhereNear(at, 1200 + Math.random() * 1300), at, "car"))?.path ?? null;
-          if (found && cumulativeOf(found).at(-1)! > 300) driverPath = thinPath(found);
+          // The server takes drivers 200 m to 8 km away by road. A start across a lagoon or a rail line
+          // can wind further: then the driver is already on the last 6 km of that way.
+          const driven = found ? cumulativeOf(found).at(-1)! : 0;
+          if (found && driven > 300) driverPath = thinPath(driven > 6000 ? sliceLine(found, driven - 6000, driven) : found);
         }
         if (!driverPath) return "No taxi can reach you here just now. Try from a bigger road.";
         const kerb = driverPath[driverPath.length - 1];
@@ -3071,6 +3117,8 @@ export function GameMap({
         const end = tripPath[tripPath.length - 1];
         const metres = Math.max(cumulativeOf(tripPath).at(-1)!, geo.distanceM(kerb, end));
         if (metres < 300) return `${place.name} is within walking distance.`;
+        const night = isNight(Date.now(), pickupAt.lng, pickupAt.lat);
+        const slow = trafficFactor(Date.now(), pickupAt.lng, pickupAt.lat);
         return {
           place,
           pickup: { name: "the pickup point", lng: pickupAt.lng, lat: pickupAt.lat, walkM: geo.distanceM([at.lng, at.lat], kerb) },
@@ -3078,9 +3126,10 @@ export function GameMap({
           tripPath,
           to: { lng: end[0], lat: end[1] },
           metres,
-          fare: transitFare("taxi", metres),
-          driverSeconds: Math.max(15, cumulativeOf(driverPath).at(-1)! / DRIVER_SPEED),
-          rideSeconds: metres / transitSpeedFor("taxi", metres),
+          fare: Math.ceil(transitFare("taxi", metres) * (night ? NIGHT_TAXI_FARE : 1)),
+          driverSeconds: Math.max(15, (cumulativeOf(driverPath).at(-1)! / DRIVER_SPEED) * slow),
+          rideSeconds: (metres / transitSpeedFor("taxi", metres)) * slow,
+          note: [night ? "🌙 Night fare (+30%)." : "", slow >= 1.5 ? "🚦 Rush hour: traffic makes it slower." : ""].filter(Boolean).join(" ") || undefined,
         };
       }
 
@@ -3170,6 +3219,129 @@ export function GameMap({
       void supabase.rpc("my_pickup").then(({ data }) => {
         if (!disposed && data && !pickup) startPickup(data as PickupJson);
       });
+
+      // ---- Traffic and night and day (src/game/clock.ts) ----------------------
+      // Jams build up on main roads in town at rush hour; they're the same for
+      // every player (a stretch of road and a 15-minute window decide). Cars
+      // crawl through them, motorbikes weave. Day and night follow the real sun.
+      let lastTraffic = -Infinity;
+      let lastSky = -Infinity;
+      let jamHere: Jam = 0;
+      let wasNight: boolean | null = null;
+      let jamWarnedAt = -Infinity;
+      const pointsOf = new WeakMap<RoadCellData, Map<number, { lng: number; lat: number }>>();
+      const JAM_SHOWN_M = 2500;
+
+      /** The jammed stretches around the hunter, drawn on the map (red: standstill, orange: slow). */
+      function drawTraffic(now: number) {
+        const src = map.getSource("traffic") as import("maplibre-gl").GeoJSONSource | undefined;
+        if (!src) return;
+        const { lng, lat } = traveller.pos;
+        const level = trafficLevel(now, lng, lat);
+        const features: GeoJSON.Feature[] = [];
+        if (level > 0) {
+          for (const key of squaresAround()) {
+            const cell = roadSquares.get(key);
+            if (typeof cell !== "object") continue;
+            const urban = roads.cellUrban(cell);
+            if (urban <= 0) continue;
+            let pts = pointsOf.get(cell);
+            if (!pts) {
+              pts = new Map(cell.points.map((p) => [p.id, p]));
+              pointsOf.set(cell, pts);
+            }
+            for (const way of cell.ways) {
+              let line: [number, number][] = [];
+              let lineJam: Jam = 0;
+              const flush = () => {
+                if (lineJam && line.length > 1) features.push({ type: "Feature", properties: { jam: lineJam }, geometry: { type: "LineString", coordinates: line } });
+                line = [];
+              };
+              for (let i = 1; i < way.points.length; i++) {
+                const jam = jamOn(way.cls, roads.jamStretch(way, i), urban, level, now);
+                const a = pts.get(way.points[i - 1]);
+                const b = pts.get(way.points[i]);
+                if (!a || !b) continue;
+                if (jam !== lineJam || !line.length) {
+                  flush();
+                  lineJam = jam;
+                  if (jam && geo.distanceM([lng, lat], [a.lng, a.lat]) > JAM_SHOWN_M) lineJam = 0;
+                  line = [[a.lng, a.lat]];
+                }
+                line.push([b.lng, b.lat]);
+              }
+              flush();
+            }
+          }
+        }
+        src.setData({ type: "FeatureCollection", features });
+      }
+
+      /** The jam (if any) where the hunter is: slows motorbikes and cars. */
+      function trafficHere(now: number) {
+        const here = network && onRoad ? roads.roadHere(network, onRoad) : null;
+        const { lng, lat } = traveller.pos;
+        const jam = here ? jamOn(here.cls, here.stretch, here.urban, trafficLevel(now, lng, lat), now) : 0;
+        const motor = traveller.mode === "car" || traveller.mode === "motorbike";
+        const speed = jamSpeed(traveller.mode, jam);
+        if (speed !== trafficSpeed) {
+          trafficSpeed = speed;
+          applySpeed();
+        }
+        const shown: Jam = motor && !ride ? jam : 0;
+        if (shown !== jamHere) {
+          if (shown > jamHere && now - jamWarnedAt > 60_000) {
+            jamWarnedAt = now;
+            say(
+              traveller.mode === "car"
+                ? shown === 2
+                  ? "Go-slow! The traffic has stopped: you're crawling. Side streets may be faster."
+                  : "Slow traffic on this road."
+                : shown === 2
+                  ? "Go-slow! You weave your motorbike through the jam, slowly."
+                  : "Slow traffic: you weave through on your motorbike.",
+            );
+          }
+          jamHere = shown;
+          setHud((h) => ({ ...h, jam: shown }));
+        }
+      }
+
+      /** Light and dark: the map darkens at dusk (lit roads stay bright), the 3D figures too. */
+      function updateSky(now: number) {
+        const { lng, lat } = traveller.pos;
+        const light = daylight(now, lng, lat);
+        const dark = 1 - light;
+        if (map.getLayer("night-ground")) {
+          // Dusk and dawn are a deep purple; full night a dark blue.
+          const tint = light > 0.15 ? "#2B2450" : "#0B1630";
+          map.setPaintProperty("night-ground", "fill-color", tint);
+          map.setPaintProperty("night-ground", "fill-opacity", 0.62 * dark);
+          map.setPaintProperty("night-dim", "fill-opacity", 0.22 * dark);
+        }
+        layer.setDaylight(light);
+        const night = isNight(now, lng, lat);
+        const rush = trafficLevel(now, lng, lat) >= 0.8;
+        const clock = { text: clockText(now, lng, lat), night, rush };
+        setHud((h) => (JSON.stringify(h.clock) === JSON.stringify(clock) ? h : { ...h, clock }));
+        if (wasNight !== null && night !== wasNight) {
+          say(night ? "Night has fallen. Taxis charge a night fare and buses come less often." : "The sun is up. A new day!");
+        }
+        wasNight = night;
+      }
+
+      function skyAndTrafficTick(now: number) {
+        const wall = Date.now();
+        if (now - lastSky > 30_000) {
+          lastSky = now;
+          updateSky(wall);
+          drawTraffic(wall);
+        }
+        if (now - lastTraffic > 1000) {
+          lastTraffic = now;
+          trafficHere(wall);
+        }
+      }
 
       // ---- Landmarks: visit famous places and answer a question for coins and intel ----
       let landmarks: Landmark[] = [];
@@ -3395,6 +3567,7 @@ export function GameMap({
         spotsTick(now);
         if (pickup && !ride) pickupTick(now, dt, t);
         landmarkTick(now, dt);
+        skyAndTrafficTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -3445,6 +3618,34 @@ export function GameMap({
           if (l.type === "line" && /^(road|bridge|tunnel)_/.test(l.id)) lastRoad = i;
         });
         const firstSymbol = styleLayers.slice(lastRoad + 1).find((l) => l.type === "symbol")?.id;
+        // Night: the ground darkens under the roads (they stay lit), and everything a little over them.
+        // Buildings go under the roads first, so the dark covers them too.
+        const firstRoad = styleLayers.find((l) => l.type === "line" && /^(road|bridge|tunnel)_/.test(l.id))?.id;
+        if (firstRoad && map.getLayer("building")) map.moveLayer("building", firstRoad);
+        const world: GeoJSON.Feature = {
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Polygon", coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] },
+        };
+        map.addSource("night", { type: "geojson", data: world });
+        map.addLayer({ id: "night-ground", type: "fill", source: "night", paint: { "fill-color": "#0B1630", "fill-opacity": 0 } }, firstRoad);
+        map.addLayer({ id: "night-dim", type: "fill", source: "night", paint: { "fill-color": "#0B1630", "fill-opacity": 0 } }, firstSymbol);
+        // Traffic jams, over the roads and under the route.
+        map.addSource("traffic", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        map.addLayer(
+          {
+            id: "traffic",
+            type: "line",
+            source: "traffic",
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": ["match", ["get", "jam"], 2, "#D62828", "#F28C28"],
+              "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2, 17, 6, 20, 14],
+              "line-opacity": 0.8,
+            },
+          },
+          firstSymbol,
+        );
         // The route: a blue line with a white edge, so it stands out from yellow main roads and coins.
         map.addLayer(
           {
@@ -3616,8 +3817,29 @@ export function GameMap({
         <div className="flex items-start gap-2">
           {/* Left: what's going on (small chips), then the cards */}
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            {(hud.vehicle || hud.keg || hud.nearest || hud.radar || hud.dome || hud.rain || hud.hunters > 0 || hud.turn !== 0) && (
+            {(hud.clock || hud.vehicle || hud.keg || hud.nearest || hud.radar || hud.dome || hud.rain || hud.hunters > 0 || hud.turn !== 0) && (
               <div className="flex flex-wrap items-center gap-1.5">
+                {hud.clock && (
+                  <div
+                    className={`${chip} ${hud.clock.night ? "bg-[#0B1630] text-[#C9D6FF]" : "bg-ink"}`}
+                    aria-label={`${hud.clock.text}${hud.clock.night ? ", night" : ""}${hud.clock.rush ? ", rush hour" : ""}`}
+                    title={hud.clock.night ? "Night: taxis charge a night fare, buses come less often" : "Local time"}
+                  >
+                    <span aria-hidden="true">{hud.clock.night ? "🌙" : "☀️"}</span>
+                    {hud.clock.text}
+                    {hud.clock.rush && <span className="text-[#F28C28]">· rush hour</span>}
+                  </div>
+                )}
+                {hud.jam > 0 && (
+                  <div
+                    className={`${chip} ${hud.jam === 2 ? "bg-danger" : "bg-[#F28C28] text-ink"}`}
+                    aria-label={hud.jam === 2 ? "Traffic jam: at a standstill" : "Slow traffic"}
+                    title={hud.jam === 2 ? "Go-slow: traffic at a standstill" : "Slow traffic"}
+                  >
+                    <span aria-hidden="true">🚦</span>
+                    {hud.jam === 2 ? "Go-slow" : "Slow traffic"}
+                  </div>
+                )}
                 {hud.turn !== 0 && (
                   <button
                     type="button"
@@ -3849,6 +4071,11 @@ export function GameMap({
                 </p>
                 <p>
                   Things you can do where you stand (eat, rest, refuel, check in) appear as gold buttons above the street name.
+                </p>
+                <p>
+                  <b>Night and day</b> follow the real sun where you are. At night taxis charge more and buses come less often.{" "}
+                  <b>Traffic:</b> at rush hour main roads in town jam (red: standstill, orange: slow). Cars crawl, motorbikes weave
+                  through; walkers and cyclists aren&apos;t held up.
                 </p>
                 <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
                   Got it

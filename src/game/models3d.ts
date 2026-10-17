@@ -604,6 +604,37 @@ export function makeTaxi() {
 }
 
 /** A landmark on the map: a stone plinth with a gold star on a column. */
+/**
+ * A hunt key's chest (the metal detector found it): wood with gold bands, the lid ajar and gold light inside, a
+ * glowing ring on the ground. `body` rises out of the ground (its y from −1.6 to 0) and turns slowly.
+ */
+export function makeChest() {
+  const group = new THREE.Group();
+  const body = new THREE.Group();
+  const lid = new THREE.Group();
+  lid.position.set(0, 1.1, -0.6);
+  lid.rotation.x = -0.5; // ajar
+  lid.add(
+    mesh(new THREE.BoxGeometry(1.9, 0.45, 1.2), "#7A4B22", 0, 0.22, 0.6),
+    mesh(new THREE.BoxGeometry(1.95, 0.12, 0.14), "#F4B41A", 0, 0.3, 1.18),
+  );
+  const light = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.9), glow("#FFD45C"));
+  light.position.y = 1.1;
+  body.add(
+    mesh(new THREE.BoxGeometry(1.9, 1.1, 1.2), "#7A4B22", 0, 0.55, 0),
+    mesh(new THREE.BoxGeometry(1.95, 0.14, 1.25), "#F4B41A", 0, 0.2, 0),
+    mesh(new THREE.BoxGeometry(1.95, 0.14, 1.25), "#F4B41A", 0, 0.9, 0),
+    mesh(new THREE.BoxGeometry(0.3, 0.36, 0.08), "#F4B41A", 0, 0.75, 0.62),
+    light,
+    lid,
+  );
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.9, 0.12, 6, 28), glow("#F4B41A"));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.05;
+  group.add(body, ring);
+  return { group, body, ring };
+}
+
 export function makeLandmarkMarker() {
   const group = new THREE.Group();
   const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.9, 0), glow("#F4B41A"));

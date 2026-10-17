@@ -132,6 +132,8 @@ type Hud = {
   pickup: { icon: string; title: string; status: string; action: string | null } | null;
   /** At a repair shop the player's vehicle is booked into: the "Enter" button. */
   repairHere: RepairJob | null;
+  /** The metal detector in a hunt (key_pulse): in the key's area, how hot (0–1), warmer or colder; the chest within reach. */
+  heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean } | null;
   /**
    * The Djinn's Wonders at work (design doc 7.7): seconds left frozen by an Hourglass, in someone's sandstorm,
    * and with your Eye open (the hunters it sees: bearing relative to the view); under your Cloak; mirrored.
@@ -334,6 +336,7 @@ export function GameMap({
     wonders: { frozen: null, sand: null, eye: null, cloaked: false, mirrored: false },
     repairHere: null,
     rush: null,
+    heat: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -371,6 +374,8 @@ export function GameMap({
   const [wonderBanner, setWonderBanner] = useState<{ n: number; icon: string; text: string; hit: boolean; flash: boolean } | null>(null);
   /** The Carpet of Kings is ready: asking where to fly. */
   const [carpetFor, setCarpetFor] = useState<string | null>(null);
+  /** A key just won: it flies into the bag (the time it set off, so each one animates). */
+  const [keyFly, setKeyFly] = useState<number | null>(null);
   /** "Enter the chamber" at the chosen place: ask for the rooms (once), then open the Djinn on them. */
   const enterChamber = async () => {
     if (!djinnActions || checkingIn) return;
@@ -4784,6 +4789,113 @@ export function GameMap({
       });
       void refreshLandmarks();
 
+      // ---- The metal detector (a live hunt): feel for the key's heat; its chest rises out of the ground within 60 m ----
+      type Pulse = { ok: boolean; reason?: string; inArea?: boolean; key?: number; heat?: number; spot?: LngLat | null };
+      let pulseAt = -Infinity;
+      let pulseEvery = 6000;
+      let pulsing = false;
+      let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady" } | null = null;
+      let chest: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number } | null = null;
+      let chestHere = false;
+      let lastBeat = 0;
+      const pulseSoon = () => {
+        pulseAt = -Infinity;
+      };
+      const keyWon = () => {
+        hideChest();
+        heat = null;
+        showHeat();
+        setKeyFly(Date.now());
+        window.setTimeout(() => setKeyFly(null), 1500);
+      };
+      window.addEventListener("loota:hunt-changed", pulseSoon);
+      window.addEventListener("loota:key-earned", keyWon);
+
+      function showHeat() {
+        const view: Hud["heat"] = heat ? { level: heat.level, trend: heat.trend, chest: chestHere } : null;
+        setHud((h) => (JSON.stringify(h.heat) === JSON.stringify(view) ? h : { ...h, heat: view }));
+      }
+
+      function showChest(spot: LngLat, key: number) {
+        if (chest && chest.key === key) return;
+        hideChest();
+        const model = models.makeChest();
+        model.body.position.y = -1.6;
+        chest = { entity: layer.add({ object: model.group, lng: spot.lng, lat: spot.lat, heading: 0 }), body: model.body, ring: model.ring, spot, key, born: performance.now() };
+        say("✨ Something glints in the ground… the key's chest rises! Get to it.", true);
+      }
+
+      function hideChest() {
+        if (!chest) return;
+        layer.remove(chest.entity);
+        chest = null;
+        chestHere = false;
+      }
+
+      async function pulse(now: number) {
+        if (!huntId) return;
+        pulsing = true;
+        pulseAt = now;
+        const { data } = await supabase.rpc("key_pulse", { p_hunt: huntId, p_lng: traveller.pos.lng, p_lat: traveller.pos.lat, p_mode: traveller.mode });
+        pulsing = false;
+        const p = data as Pulse | null;
+        if (disposed || !p) return;
+        if (!p.ok) {
+          if (p.reason === "position") return; // corrected by the next save
+          pulseEvery = p.reason === "trial" ? 4000 : 30000; // in a trial (at the chest), or not hunting
+          if (p.reason !== "trial") hideChest();
+          heat = null;
+          showHeat();
+          return;
+        }
+        saved = { ...traveller.pos }; // the pulse saved it
+        if (!p.inArea) {
+          pulseEvery = 8000;
+          hideChest();
+          if (heat) {
+            heat = null;
+            say("The heat fades: you've left the key's area.");
+          }
+          showHeat();
+          return;
+        }
+        pulseEvery = 2500;
+        const level = p.heat ?? 0;
+        const key = p.key ?? 0;
+        if (!heat || heat.key !== key) say(`🔥 You're in Key ${key}'s area! Feel for the heat: the edges glow and pulse faster as you get closer.`, true);
+        const trend = heat && heat.key === key ? (level > heat.level + 0.01 ? "warmer" : level < heat.level - 0.01 ? "colder" : heat.trend) : "steady";
+        heat = { level, key, trend };
+        if (p.spot) showChest(p.spot, key);
+        else hideChest();
+        showHeat();
+      }
+
+      /** Every frame: ask when it's time, raise and turn the chest, buzz with the heat. */
+      function pulseTick(now: number, t: number) {
+        if (!huntId) return;
+        if (!pulsing && !ride && !visit && traveller.phase === "idle" && now - pulseAt > pulseEvery) void pulse(now);
+        if (chest) {
+          const k = Math.min(1, (now - chest.born) / 1200);
+          chest.body.position.y = -1.6 * (1 - k) ** 3;
+          chest.body.rotation.y = t * 0.6;
+          chest.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.08);
+          const here = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [chest.spot.lng, chest.spot.lat]) <= 40;
+          if (here !== chestHere) {
+            chestHere = here;
+            showHeat();
+          }
+        }
+        // A buzz in the hand with each beat once it's warm (phones that can).
+        if (heat && heat.level > 0.35 && now - lastBeat > 1600 - 1250 * heat.level) {
+          lastBeat = now;
+          try {
+            navigator.vibrate?.(heat.level > 0.8 ? 60 : 25);
+          } catch {
+            // no vibration here
+          }
+        }
+      }
+
       // ---- Resting by the road: sitting at its edge, not in the lane, the bicycle standing beside ----
       let restBike: import("@/game/ThreeMapLayer").MapEntity | null = null;
       const restingNow = () => traveller.resting && traveller.phase === "idle" && traveller.v < 0.3 && !ride && !visit;
@@ -5019,6 +5131,7 @@ export function GameMap({
         djinnTick(now);
         wondersTick(now);
         pocketTick(now);
+        pulseTick(now, t);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -5193,6 +5306,8 @@ export function GameMap({
         for (const channel of areaChannels.values()) void supabase.removeChannel(channel);
         if (huntChannel) void supabase.removeChannel(huntChannel);
         areaChannels.clear();
+        window.removeEventListener("loota:hunt-changed", pulseSoon);
+        window.removeEventListener("loota:key-earned", keyWon);
         map.remove();
       };
     })().catch(() => setFailed(true));
@@ -5289,7 +5404,8 @@ export function GameMap({
               hud.wonders.sand ||
               hud.wonders.eye ||
               hud.wonders.cloaked ||
-              hud.wonders.mirrored) && (
+              hud.wonders.mirrored ||
+              hud.heat) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {hud.clock && (
                   <div
@@ -5348,6 +5464,17 @@ export function GameMap({
                   <div className={`${chip} bg-ink`} aria-label={`Fuel keg ${Math.round(hud.keg.fuel)}%, ${hud.keg.usesLeft} uses left`} title={`Fuel keg · ${hud.keg.usesLeft} uses left`}>
                     <span aria-hidden="true">🛢</span>
                     {hud.keg.fuel > 0 ? `${Math.round(hud.keg.fuel)}%` : "empty"}
+                  </div>
+                )}
+                {hud.heat && (
+                  <div
+                    className={`${chip} ${hud.heat.level >= 0.7 ? "bg-danger" : hud.heat.level >= 0.35 ? "bg-[#F28C28] text-ink" : "bg-[#7A3A10]"}`}
+                    aria-label={`The key's heat: ${Math.round(hud.heat.level * 100)}%`}
+                    title="Hotter as you get closer to the key"
+                  >
+                    <span aria-hidden="true">🔥</span>
+                    {hud.heat.level >= 0.85 ? "Burning!" : hud.heat.level >= 0.6 ? "Hot" : hud.heat.level >= 0.3 ? "Warm" : "In the area"}
+                    {hud.heat.trend !== "steady" && <span className="font-semibold opacity-90">· {hud.heat.trend === "warmer" ? "↑ warmer" : "↓ colder"}</span>}
                   </div>
                 )}
                 {hud.wonders.frozen && (
@@ -5892,6 +6019,20 @@ export function GameMap({
       )}
       {trapFlash && <div className="loota-trap-flash pointer-events-none absolute inset-0 z-20" aria-hidden="true" />}
 
+      {/* The metal detector: the edges glow and pulse faster as the key gets closer. */}
+      {hud.heat && (
+        <div
+          className="loota-heat pointer-events-none absolute inset-0"
+          style={{ opacity: 0.12 + 0.6 * hud.heat.level, animationDuration: `${(1.6 - 1.25 * hud.heat.level).toFixed(2)}s` }}
+          aria-hidden="true"
+        />
+      )}
+      {keyFly && (
+        <span key={keyFly} className="loota-key-fly pointer-events-none fixed z-40 text-6xl" aria-hidden="true">
+          🗝
+        </span>
+      )}
+
       {/* The Djinn's Wonders: news of every use, and what they do to you. */}
       {hud.wonders.sand && <div className="loota-sand pointer-events-none absolute inset-0" aria-hidden="true" />}
       {hud.wonders.frozen && <div className="loota-frost pointer-events-none absolute inset-0" aria-hidden="true" />}
@@ -5920,7 +6061,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.heat?.chest || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -5946,6 +6087,16 @@ export function GameMap({
               className="pointer-events-auto flex h-10 items-center gap-1.5 rounded-full bg-[#9B5DE5] px-3.5 text-sm font-bold text-paper shadow-lg disabled:opacity-50"
             >
               🧞 Enter the chamber
+            </button>
+          )}
+          {hud.heat?.chest && (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("loota:hunt-search"))}
+              aria-label="Open the key's chest"
+              className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-full bg-gold px-4 font-display text-base font-extrabold text-ink shadow-lg ring-2 ring-[#FFD45C] active:scale-95"
+            >
+              🗝 Open the chest
             </button>
           )}
           {hud.repairHere && (

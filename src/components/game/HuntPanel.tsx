@@ -121,10 +121,14 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     // A Wonder took or gave keys (the map hears of it first).
     const changed = () => void refreshRef.current();
     window.addEventListener("loota:hunt-changed", changed);
+    // "Open the chest" on the map: search right there (it starts the Key Trial).
+    const openChest = () => void searchRef.current();
+    window.addEventListener("loota:hunt-search", openChest);
     return () => {
       window.clearTimeout(timer);
       window.clearInterval(timer);
       window.removeEventListener("loota:hunt-changed", changed);
+      window.removeEventListener("loota:hunt-search", openChest);
     };
   }, [actions, huntId]);
 
@@ -180,6 +184,11 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     };
   }, [racing, huntId]);
 
+  const searchRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => {
+    searchRef.current = search;
+  });
+
   async function search() {
     const map = actions.current;
     if (!map || searching) return;
@@ -232,9 +241,12 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
       setEnding({ kind: "failed", reason: r.reason, correct: r.correct, saved: !!r.saved });
     } else if (r.result === "key") {
       setEnding({ kind: "key", keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle });
+      window.dispatchEvent(new Event("loota:key-earned"));
     } else {
       setEnding({ kind: "finished", place: r.place, winner: r.winner });
+      window.dispatchEvent(new Event("loota:key-earned"));
     }
+    window.dispatchEvent(new Event("loota:hunt-changed"));
     setFeedback(null);
     void refresh();
   }

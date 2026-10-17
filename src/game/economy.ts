@@ -17,5 +17,11 @@ export const MEAL_ENERGY = 40;
 
 /** Within this distance of a petrol station or a place to eat, its button appears. */
 export const SERVICE_RADIUS_M = 40;
-/** You can get on your own vehicle within this distance of where it's parked. */
-export const BOARD_RADIUS_M = 30;
+/** A mechanic called out to the player (they come to you; ready in 45 s). Must match call_out_price() in the database. */
+export const CALL_OUT_PRICE: Record<VehicleKind, number> = { bicycle: 60, motorbike: 150, car: 150 };
+/** Walking a broken-down vehicle into a repair shop: price and wait. Must match repair_price() and repair_wait_s(). */
+export const REPAIR: Record<VehicleKind, { price: number; waitS: number }> = {
+  bicycle: { price: 40, waitS: 120 },
+  motorbike: { price: 120, waitS: 180 },
+  car: { price: 200, waitS: 240 },
+};

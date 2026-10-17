@@ -164,3 +164,26 @@ export function lookForId(id: string): AvatarLook {
     return (seed >>> 0) / 4294967296;
   });
 }
+
+/** A Mama's, Iya's or Aunty's head-wrap colour, from her name (none for men). */
+export function keeperWrap(name: string): string | undefined {
+  if (!/^(Mama|Iya|Aunty|Madam)(\s|$)/.test(name)) return undefined;
+  const colours = ["#E85D9E", "#F07A28", "#7C4DCC", "#13A3A3", "#F4B41A"];
+  return colours[name.length % colours.length];
+}
+
+/** A shopkeeper's look, from their name: always the same for the same keeper. Mamas, Iyas and Aunties wear braids or a bun; Babas and Alhajis are grey. */
+export function keeperLook(name: string): AvatarLook {
+  const look = lookForId(`keeper:${name}`);
+  const woman = /^(Mama|Iya|Aunty|Madam)(\s|$)/.test(name);
+  const elder = /^(Baba|Alhaji)(\s|$)/.test(name);
+  const deep = SKIN_TONES.slice(3);
+  return {
+    ...look,
+    skin: deep[name.length % deep.length].color,
+    hair: woman ? (look.hair === "bun" ? "bun" : "braids") : look.hair === "braids" || look.hair === "bun" ? "short" : look.hair,
+    hairColour: elder ? "#9A9A9A" : "#1B120C",
+    top: "tee",
+    extra: woman ? "none" : elder ? "cap" : look.extra === "headphones" ? "none" : look.extra,
+  };
+}

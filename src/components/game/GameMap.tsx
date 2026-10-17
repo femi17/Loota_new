@@ -3,11 +3,12 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { lookForId, type AvatarLook } from "@/lib/avatar";
+import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
-import { MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
+import { CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
+import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
@@ -114,6 +115,8 @@ type Hud = {
   landmarkHere: { landmark: Landmark; canTry: boolean } | null;
   /** A rental waiting at a bus stop, or a taxi on its way: where, how far, and the button once there. */
   pickup: { icon: string; title: string; status: string; action: string | null } | null;
+  /** At a repair shop the player's vehicle is booked into: the "Enter" button. */
+  repairHere: RepairJob | null;
   /**
    * The Djinn's Wonders at work (design doc 7.7): seconds left frozen by an Hourglass, in someone's sandstorm,
    * and with your Eye open (the hunters it sees: bearing relative to the view); under your Cloak; mirrored.
@@ -233,6 +236,8 @@ export function GameMap({
   const actions = useRef<{
     vehicles: () => OwnedVehicle[];
     ride: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
+    /** The repair shop for a broken-down vehicle: found (or recalled), with the way there. */
+    findRepairShop: (kind: VehicleKind) => void;
     getOff: () => void;
     refuel: () => void;
     eat: () => void;
@@ -302,6 +307,7 @@ export function GameMap({
     djinn: null,
     djinnHere: null,
     wonders: { frozen: null, sand: null, eye: null, cloaked: false, mirrored: false },
+    repairHere: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -324,6 +330,8 @@ export function GameMap({
   const [landmarksOpen, setLandmarksOpen] = useState<{ quiz: CheckinQuestion | null; message: string | null } | null>(null);
   const [checkingIn, setCheckingIn] = useState(false);
   const [lampActions, setLampActions] = useState<LampActions | null>(null);
+  const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
+  const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   const [lampOpen, setLampOpen] = useState<{ quiz: LampQuestion | string | null } | null>(null);
   const [djinnActions, setDjinnActions] = useState<DjinnActions | null>(null);
   const [djinnOpen, setDjinnOpen] = useState<{ chamber: DjinnChamber | string | null } | null>(null);
@@ -1294,6 +1302,7 @@ export function GameMap({
             state: v.broken_at ? (v.repair_ready_at ? "repairing" : "broken") : v.kind !== "bicycle" && v.fuel <= 0 ? "empty" : "ready",
           })),
         ride: (kind, how) => void chooseVehicle(kind, how),
+        findRepairShop: (kind) => void findRepairShop(kind, true),
         getOff: () => void getOff(),
         refuel: () => void refuelHere(),
         eat() {
@@ -2685,7 +2694,7 @@ export function GameMap({
           }
           const broken = owned.find((v) => !!v.broken_at && !v.repair_ready_at) ?? null; // the mechanic comes to you
           if (broken) {
-            const fee = broken.kind === "bicycle" ? 30 : 80;
+            const fee = CALL_OUT_PRICE[broken.kind];
             list.push({ id: "mechanic", icon: "🔧", short: `Mechanic · ${fee}`, label: `Call a mechanic for your ${vehicleName(broken.kind)} · ${fee} coins` });
           }
         }
@@ -2830,7 +2839,8 @@ export function GameMap({
             ["fuel"],
           );
         } else {
-          void advise("engine", "Broken down", `Your ${name} has broken down and goes into your pocket. Call a mechanic: the gold 🔧 button, or the vehicle button. They come to you, wherever you are.`, null);
+          say(`Your ${name} has broken down and goes into your pocket. Take it to a repair shop nearby, or call a mechanic to you.`, true);
+          if (kind) void findRepairShop(kind, false);
         }
       }
 
@@ -2864,7 +2874,6 @@ export function GameMap({
       };
       let visit: Visit | null = null;
       let fainting = false;
-      let damagedBike: LngLat | null = null; // their own bicycle, damaged where they collapsed
 
       function showCare(icon: string, title: string, status: string) {
         setHud((h) => (h.care?.title === title && h.care.status === status ? h : { ...h, care: { icon, title, status } }));
@@ -2938,8 +2947,7 @@ export function GameMap({
               true,
             );
           } else if (r.damaged === "bicycle") {
-            damagedBike = at;
-            say("You collapsed on your bicycle: it's damaged and stays where you fell. A mechanic can repair it there (30 coins).", true);
+            say("You collapsed on your bicycle: it's damaged. Once you're out of hospital, a repair shop nearby can fix it.", true);
           }
         } else if (r?.reason === "not_fainted") {
           traveller.phase = "idle";
@@ -3065,17 +3073,9 @@ export function GameMap({
         await refreshVehicles();
         void refreshSpots();
         say(`Discharged from ${r.hospital ?? vs.v.hospital}. You've got ${Math.round(traveller.energy)} energy: pace yourself, and rest before it runs low.`, true);
-        if (damagedBike) {
-          // Back to the bicycle: it waits, damaged, where they fell.
-          const bike = damagedBike;
-          damagedBike = null;
-          adviceKey = "bike";
-          advicePlace = { name: "your bicycle", lng: bike.lng, lat: bike.lat };
-          setHud((h) => ({
-            ...h,
-            advice: { key: "bike", title: "Bicycle damaged", where: "Where you collapsed", text: "Your bicycle is damaged where you collapsed. Go back to it and call a mechanic to repair it (30 coins).", place: advicePlace },
-          }));
-        }
+        // A vehicle damaged in the fall: a repair shop not far from the hospital, and the way there.
+        const broken = owned.find((v) => v.broken_at && !v.repair_ready_at);
+        if (broken) void findRepairShop(broken.kind, true);
       }
 
       /** On loading: energy, the keg, and a faint or hospital visit in progress. */
@@ -3819,6 +3819,112 @@ export function GameMap({
         }
       }
 
+      // ---- Repair shops: a broken-down vehicle is walked into a shop nearby (RepairScene) ----
+      type RepairJson = Omit<RepairJob, "readyAt"> & { readyAt: string | null; now: string };
+      let repairs: RepairJob[] = [];
+      const repairMarkers = new Map<number, import("@/game/ThreeMapLayer").MapEntity[]>();
+      let lastRepairCheck = 0;
+      const toJob = (j: RepairJson): RepairJob => ({
+        id: j.id,
+        kind: j.kind,
+        shop: j.shop,
+        keeper: j.keeper,
+        lng: j.lng,
+        lat: j.lat,
+        price: j.price,
+        waitS: j.waitS,
+        readyAt: j.readyAt ? Date.parse(j.readyAt) + (Date.now() - Date.parse(j.now)) : null,
+      });
+
+      /** The shops on the map: the keeper, a sign, and vehicles waiting outside. */
+      function showRepairs() {
+        for (const [id, entities] of repairMarkers) {
+          if (repairs.some((j) => j.id === id)) continue;
+          for (const e of entities) layer.remove(e);
+          repairMarkers.delete(id);
+        }
+        for (const j of repairs) {
+          if (repairMarkers.has(j.id)) continue;
+          const keeper = models.buildAvatar(keeperLook(j.keeper));
+          keeper.root.add(layer.billboard(models.makeNameplate(j.kind === "bicycle" ? "BICYCLE REPAIRS" : "MECHANIC", "#B8322A")));
+          const k = 1.6 * layer.enlargement();
+          const east = (m: number) => j.lng + (m * k) / (111320 * Math.cos((j.lat * Math.PI) / 180));
+          repairMarkers.set(j.id, [
+            layer.add({ object: keeper.root, lng: j.lng, lat: j.lat, heading: 0 }),
+            layer.add({ object: models.makeVehicleModel(j.kind === "bicycle" ? "bicycle" : "motorbike"), lng: east(1), lat: j.lat, heading: 0 }),
+            layer.add({ object: models.makeVehicleModel(j.kind === "bicycle" ? "bicycle" : "car"), lng: east(-1.3), lat: j.lat, heading: 0.4 }),
+          ]);
+        }
+      }
+
+      async function refreshRepairs() {
+        const { data } = await supabase.rpc("my_repairs");
+        if (disposed) return;
+        repairs = ((data ?? []) as RepairJson[]).map(toJob);
+        showRepairs();
+      }
+
+      /** Find (or recall) the repair shop for a broken-down vehicle, and point the way (drawn, if `route`). */
+      async function findRepairShop(kind: VehicleKind, route: boolean) {
+        await savePosition();
+        const { data } = await supabase.rpc("repair_shop", { p_kind: kind });
+        const r = data as { ok: boolean; reason?: string; job?: RepairJson } | null;
+        if (disposed || !r?.ok || !r.job) return;
+        const job = toJob(r.job);
+        await refreshRepairs();
+        const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [job.lng, job.lat]);
+        if (route) void planDirections({ lng: job.lng, lat: job.lat }, job.shop, true);
+        adviceKey = "repair";
+        advicePlace = { name: job.shop, lng: job.lng, lat: job.lat };
+        setHud((h) => ({
+          ...h,
+          advice: {
+            key: "repair",
+            title: `Your ${vehicleName(kind)} needs a repair`,
+            where: job.shop,
+            text: `${job.shop} can fix your ${vehicleName(kind)}: ${geo.formatDistance(away)} away, ${job.price} coins. ${route ? "Follow the blue line, then go in." : "Tap for the way there."}`,
+            place: advicePlace,
+          },
+        }));
+      }
+
+      /** At a shop the player's vehicle is booked into: the Enter button. */
+      function repairTick(now: number) {
+        if (now - lastRepairCheck < 500) return;
+        lastRepairCheck = now;
+        const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        const shop = ride || visit ? null : (repairs.find((j) => geo.distanceM(at, [j.lng, j.lat]) <= 40) ?? null);
+        setHud((h) => (h.repairHere?.id === shop?.id && h.repairHere?.readyAt === shop?.readyAt ? h : { ...h, repairHere: shop }));
+      }
+
+      setRepairActions({
+        agree: async (job) => {
+          await savePosition(); // the server checks you're in the shop
+          const { data, error } = await supabase.rpc("repair_agree", { p_job: job.id });
+          const r = data as { ok: boolean; reason?: string; job?: RepairJson; balance?: number } | null;
+          if (error || !r) return "error";
+          if (!r.ok || !r.job) return r.reason === "coins" ? "coins" : r.reason === "far" ? "far" : "error";
+          const done = toJob(r.job);
+          repairs = repairs.map((j) => (j.id === done.id ? done : j));
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          void refreshVehicles();
+          return done;
+        },
+        collect: async (job) => {
+          const { data } = await supabase.rpc("repair_collect", { p_job: job.id });
+          const r = data as { ok: boolean; kind?: VehicleKind } | null;
+          if (!r?.ok) return false;
+          await refreshVehicles();
+          await refreshRepairs();
+          clearAdvice("repair");
+          if (trip && geo.distanceM([trip.to.lng, trip.to.lat], [job.lng, job.lat]) < 60) endDirections();
+          say(`Your ${vehicleName(job.kind)} is back in your pocket, as good as new. Take it out with the vehicle button.`);
+          return true;
+        },
+      });
+      void refreshRepairs();
+
       setLampActions({
         refresh: async () => {
           const s = await refreshLamp();
@@ -4554,6 +4660,7 @@ export function GameMap({
         landmarkTick(now, dt);
         skyAndTrafficTick(now);
         lampTick(now);
+        repairTick(now);
         journeyTick(now);
         djinnTick(now);
         wondersTick(now);
@@ -5315,6 +5422,10 @@ export function GameMap({
             actions.current?.act("mechanic");
             setGarage(null);
           }}
+          onRepairShop={(kind) => {
+            actions.current?.findRepairShop(kind);
+            setGarage(null);
+          }}
           onTaxi={() => {
             setGarage(null);
             setTransitOpen(true);
@@ -5334,6 +5445,9 @@ export function GameMap({
         />
       )}
 
+      {repairOpen && repairActions && (
+        <RepairScene job={repairOpen} you={JSON.parse(lookKey) as AvatarLook} actions={repairActions} onClose={() => setRepairOpen(null)} />
+      )}
       {lampOpen && lampActions && (
         <LampPanel
           actions={lampActions}
@@ -5385,7 +5499,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -5411,6 +5525,17 @@ export function GameMap({
               className="pointer-events-auto flex h-10 items-center gap-1.5 rounded-full bg-[#9B5DE5] px-3.5 text-sm font-bold text-paper shadow-lg disabled:opacity-50"
             >
               🧞 Enter the chamber
+            </button>
+          )}
+          {hud.repairHere && (
+            <button
+              type="button"
+              onClick={() => setRepairOpen(hud.repairHere)}
+              aria-label={`Go into ${hud.repairHere.shop}`}
+              title={hud.repairHere.shop}
+              className={`${here} gap-1.5`}
+            >
+              🔧 {hud.repairHere.readyAt ? "Back to the shop" : "Go in"}
             </button>
           )}
           {hud.detourHere && (

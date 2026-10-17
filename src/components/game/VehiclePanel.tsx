@@ -1,6 +1,6 @@
 "use client";
 
-import { VEHICLE_KINDS, VEHICLES, type VehicleKind } from "@/game/economy";
+import { CALL_OUT_PRICE, REPAIR, VEHICLE_KINDS, VEHICLES, type VehicleKind } from "@/game/economy";
 
 /** A vehicle the player owns: ridden, or in their pocket (it goes everywhere with them). */
 export type OwnedVehicle = { kind: VehicleKind; fuel: number; inUse: boolean; state: "ready" | "empty" | "broken" | "repairing" };
@@ -15,6 +15,7 @@ export function VehiclePanel({
   onRide,
   onGetOff,
   onMechanic,
+  onRepairShop,
   onTaxi,
   onClose,
 }: {
@@ -26,6 +27,8 @@ export function VehiclePanel({
   onGetOff: () => void;
   /** Call out a mechanic to a broken-down vehicle: they come to the player, wherever they are. */
   onMechanic: () => void;
+  /** Take a broken-down vehicle to a repair shop nearby (cheaper; the way there is drawn). */
+  onRepairShop: (kind: VehicleKind) => void;
   /** Cars aren't rented: a taxi is called instead. */
   onTaxi: () => void;
   onClose: () => void;
@@ -85,17 +88,22 @@ export function VehiclePanel({
                     {mine.state === "empty"
                       ? "Empty tank: any petrol station fills it in your pocket, or pour in a keg."
                       : mine.state === "broken"
-                        ? "Broken down: call a mechanic. They come to you, wherever you are, and fix it in about 45 seconds."
-                        : "A mechanic is fixing it. Ready in a moment."}
+                        ? "Broken down. Take it to a repair shop nearby, or call a mechanic to come to you (dearer, but quick)."
+                        : "Being repaired. Take it out once it's ready."}
                   </p>
                 )}
                 {!onIt && (
                   <div className="flex flex-wrap gap-2">
                     {mine ? (
                       mine.state === "broken" ? (
-                        <button type="button" disabled={busy} onClick={onMechanic} className={`${button} bg-gold text-ink`}>
-                          🔧 Call a mechanic · {kind === "bicycle" ? 30 : 80} coins
-                        </button>
+                        <>
+                          <button type="button" disabled={busy} onClick={() => onRepairShop(kind)} className={`${button} bg-gold text-ink`}>
+                            🔧 Repair shop nearby · {REPAIR[kind].price} coins
+                          </button>
+                          <button type="button" disabled={busy} onClick={onMechanic} className={`${button} border-[1.5px] border-gold text-paper`}>
+                            Call a mechanic to you · {CALL_OUT_PRICE[kind]} coins
+                          </button>
+                        </>
                       ) : (
                         <button type="button" disabled={busy || mine.state === "empty"} onClick={() => onRide(kind, "own")} className={`${button} bg-gold text-ink`}>
                           {mine.inUse ? "Ride it" : "Take it out"}

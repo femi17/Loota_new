@@ -116,3 +116,17 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .loota-wonder-banner, .loota-sand { animation: none; }
 }
+
+/* Event scenes: the keeper's idle sway and work, the spanner, sparkles on a mended vehicle, the typing caret. */
+.loota-npc-idle { transform-origin: 50% 100%; animation: loota-npc-idle 2.4s ease-in-out infinite; }
+@keyframes loota-npc-idle { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2%); } }
+.loota-npc-work { transform-origin: 50% 100%; animation: loota-npc-work 0.5s ease-in-out infinite; }
+@keyframes loota-npc-work { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(5deg) translateX(6%); } }
+.loota-spanner { animation: loota-spanner 0.5s ease-in-out infinite; }
+@keyframes loota-spanner { 0%, 100% { transform: rotate(-25deg); } 50% { transform: rotate(25deg); } }
+.loota-sparkle { animation: loota-sparkle 1.2s ease-in-out infinite; }
+@keyframes loota-sparkle { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
+.loota-caret { animation: loota-sparkle 0.8s steps(2) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .loota-npc-idle, .loota-npc-work, .loota-spanner, .loota-sparkle, .loota-caret { animation: none; }
+}

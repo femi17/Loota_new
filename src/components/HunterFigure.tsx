@@ -5,10 +5,13 @@ export function HunterFigure({
   look,
   width = 40,
   label,
+  wrap,
 }: {
   look: AvatarLook;
   width?: number;
   label?: string;
+  /** A head-wrap (gele) in this colour, over the hair. */
+  wrap?: string;
 }) {
   const { skin, hair, hairColour, top, topColour, bottomsColour, extra } = look;
   const sleeves = top === "hoodie";
@@ -38,6 +41,14 @@ export function HunterFigure({
       {hair !== "bald" && <path d="M10 11a10 10 0 0 1 20 0z" fill={hairColour} />}
       <circle cx="16.3" cy="13" r="1.1" fill="#111" />
       <circle cx="23.7" cy="13" r="1.1" fill="#111" />
+
+      {wrap && (
+        <>
+          <path d="M8.6 12.5a11.4 11 0 0 1 22.8 0q-11.4 -3.4 -22.8 0z" fill={wrap} />
+          <path d="M26 3.5q6 -2 7 3q-3 1.5 -6 0z" fill={wrap} />
+          <path d="M11 9.5q9 -3 18 0" stroke="#000" strokeOpacity="0.2" strokeWidth="0.8" fill="none" />
+        </>
+      )}
 
       {/* Extras */}
       {extra === "cap" && (

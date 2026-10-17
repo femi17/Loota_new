@@ -6,7 +6,7 @@ import type { AvatarLook } from "@/lib/avatar";
 import type { VehicleKind } from "@/game/economy";
 
 /** Where a scene takes place. */
-export type SceneStage = "bicycle_shop" | "workshop";
+export type SceneStage = "bicycle_shop" | "workshop" | "bike_hire";
 export type SceneLine = { who: "them" | "you"; text: string };
 export type SceneChoice = { label: string; primary?: boolean; onPick: () => void };
 
@@ -33,8 +33,8 @@ export function EventScene({
   sign: string;
   them: { name: string; look: AvatarLook; wrap?: string };
   you: AvatarLook;
-  /** The player's own vehicle, in the middle of the scene (broken until `fixed`). */
-  vehicle?: { kind: VehicleKind; fixed: boolean } | null;
+  /** A vehicle in the middle of the scene: the player's own being repaired (broken until `fixed`), or one for hire. */
+  vehicle?: Vehicle | null;
   lines: SceneLine[];
   choices: SceneChoice[];
   busy?: boolean;
@@ -148,8 +148,11 @@ export function EventScene({
 // ---------------------------------------------------------------------------
 // The places, drawn flat (viewBox 320 × 180).
 
-function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: string; vehicle: { kind: VehicleKind; fixed: boolean } | null; working: boolean }) {
+type Vehicle = { kind: VehicleKind; fixed: boolean; sparkle?: boolean };
+
+function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: string; vehicle: Vehicle | null; working: boolean }) {
   const shop = stage === "bicycle_shop";
+  const hire = stage === "bike_hire";
   return (
     <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMax slice" className="absolute inset-0 size-full" aria-hidden="true">
       <defs>
@@ -166,40 +169,46 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
         <rect x="250" y="28" width="30" height="46" />
         <rect x="286" y="38" width="34" height="36" />
       </g>
-      {/* The ground: a dusty roadside */}
-      <rect y="146" width="320" height="34" fill={shop ? "#D2AE7A" : "#9C8E7C"} />
-      <rect y="146" width="320" height="3" fill="#000" opacity="0.08" />
-      {!shop && <ellipse cx="160" cy="166" rx="46" ry="6" fill="#3B2F25" opacity="0.35" />}
+      {hire ? (
+        <BikeHireStop kind={vehicle?.kind === "motorbike" ? "motorbike" : "bicycle"} />
+      ) : (
+        <>
+          {/* The ground: a dusty roadside */}
+          <rect y="146" width="320" height="34" fill={shop ? "#D2AE7A" : "#9C8E7C"} />
+          <rect y="146" width="320" height="3" fill="#000" opacity="0.08" />
+          {!shop && <ellipse cx="160" cy="166" rx="46" ry="6" fill="#3B2F25" opacity="0.35" />}
 
-      {/* The shop: wall, zinc roof, poles */}
-      <rect x="10" y="58" width="300" height="90" fill={shop ? "#EAD9B6" : "#C9C3B6"} />
-      <rect x="10" y="58" width="300" height="8" fill="#000" opacity="0.08" />
-      <polygon points="0,60 320,60 308,40 12,40" fill={shop ? "#A7B1B9" : "#8B5A3C"} />
-      <g stroke={shop ? "#8C969E" : "#6E4630"} strokeWidth="1.2">
-        {Array.from({ length: 30 }, (_, i) => (
-          <line key={i} x1={14 + i * 10} y1="41" x2={11 + i * 10.2} y2="59" />
-        ))}
-      </g>
-      <rect x="14" y="58" width="5" height="90" fill="#7A5230" />
-      <rect x="301" y="58" width="5" height="90" fill="#7A5230" />
+          {/* The shop: wall, zinc roof, poles */}
+          <rect x="10" y="58" width="300" height="90" fill={shop ? "#EAD9B6" : "#C9C3B6"} />
+          <rect x="10" y="58" width="300" height="8" fill="#000" opacity="0.08" />
+          <polygon points="0,60 320,60 308,40 12,40" fill={shop ? "#A7B1B9" : "#8B5A3C"} />
+          <g stroke={shop ? "#8C969E" : "#6E4630"} strokeWidth="1.2">
+            {Array.from({ length: 30 }, (_, i) => (
+              <line key={i} x1={14 + i * 10} y1="41" x2={11 + i * 10.2} y2="59" />
+            ))}
+          </g>
+          <rect x="14" y="58" width="5" height="90" fill="#7A5230" />
+          <rect x="301" y="58" width="5" height="90" fill="#7A5230" />
+        </>
+      )}
 
       {/* The hand-painted sign */}
-      <line x1="100" y1="38" x2="100" y2="44" stroke="#4A3A2A" strokeWidth="2" />
-      <line x1="220" y1="38" x2="220" y2="44" stroke="#4A3A2A" strokeWidth="2" />
-      <rect x="64" y="12" width="192" height="26" rx="3" fill={shop ? "#1E6FB8" : "#B8322A"} stroke="#1B2433" strokeWidth="1.5" />
+      <line x1="100" y1="38" x2="100" y2={hire ? 62 : 44} stroke="#4A3A2A" strokeWidth="2" />
+      <line x1="220" y1="38" x2="220" y2={hire ? 134 : 44} stroke="#4A3A2A" strokeWidth={hire ? 3 : 2} />
+      <rect x="64" y="12" width="192" height="26" rx="3" fill={hire ? "#1E9E62" : shop ? "#1E6FB8" : "#B8322A"} stroke="#1B2433" strokeWidth="1.5" />
       <text x="160" y="29" textAnchor="middle" fill="#FFFFFF" fontSize="11" fontWeight="800" fontFamily="system-ui, sans-serif" textLength={Math.min(180, sign.length * 7)} lengthAdjust="spacingAndGlyphs">
         {sign.toUpperCase()}
       </text>
 
-      {shop ? <BicycleShopProps /> : <WorkshopProps />}
+      {hire ? null : shop ? <BicycleShopProps /> : <WorkshopProps />}
 
       {/* The player's own vehicle, in the middle */}
       {vehicle && (
         <g transform="translate(160 166)">
           {vehicle.kind === "bicycle" ? (
-            <Bicycle x={0} y={0} scale={1.6} colour="#5B6475" lean={vehicle.fixed ? 0 : -8} flat={!vehicle.fixed} />
+            <Bicycle x={0} y={0} scale={1.6} colour={hire ? "#E5484D" : "#5B6475"} lean={vehicle.fixed ? 0 : -8} flat={!vehicle.fixed} />
           ) : vehicle.kind === "motorbike" ? (
-            <Motorbike x={0} y={0} scale={1.45} colour="#2F6FEB" lean={vehicle.fixed ? 0 : -6} />
+            <Motorbike x={0} y={0} scale={1.45} colour={hire ? "#E5484D" : "#2F6FEB"} lean={vehicle.fixed ? 0 : -6} />
           ) : (
             <Car x={0} y={0} scale={1} colour="#E5484D" bonnetUp={!vehicle.fixed} />
           )}
@@ -208,7 +217,7 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
               <path d="M-30 -44 l12 12 m-14 -14 a3.5 3.5 0 1 1 5 -5" stroke="#5B6475" strokeWidth="2.6" fill="none" strokeLinecap="round" />
             </g>
           )}
-          {vehicle.fixed && (
+          {vehicle.fixed && (vehicle.sparkle ?? true) && (
             <g fill="#F4B41A" className="loota-sparkle">
               <path d="M-32 -50l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" />
               <path d="M30 -42l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" />
@@ -217,6 +226,51 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
         </g>
       )}
     </svg>
+  );
+}
+
+/** A bus stop by the road where the renter waits: the shelter, the yellow BUS STOP sign, more for hire lined up. */
+function BikeHireStop({ kind }: { kind: "bicycle" | "motorbike" }) {
+  return (
+    <g>
+      {/* Pavement and road */}
+      <rect y="132" width="320" height="22" fill="#C9C2B4" />
+      <rect y="132" width="320" height="2" fill="#000" opacity="0.1" />
+      <rect y="154" width="320" height="26" fill="#4A4F57" />
+      <g fill="#F4F1EA">
+        {Array.from({ length: 8 }, (_, i) => (
+          <rect key={i} x={6 + i * 42} y="168" width="22" height="2.5" />
+        ))}
+      </g>
+      {/* The shelter */}
+      <rect x="40" y="62" width="4" height="72" fill="#5B6475" />
+      <rect x="132" y="62" width="4" height="72" fill="#5B6475" />
+      <rect x="34" y="56" width="108" height="9" rx="2" fill="#1E9E62" />
+      <rect x="46" y="68" width="84" height="44" fill="#CFE6F7" opacity="0.6" />
+      <rect x="50" y="112" width="76" height="5" rx="2" fill="#7A5230" />
+      <rect x="54" y="117" width="3" height="15" fill="#7A5230" />
+      <rect x="119" y="117" width="3" height="15" fill="#7A5230" />
+      {/* BUS STOP */}
+      <rect x="152" y="70" width="3" height="64" fill="#5B6475" />
+      <rect x="136" y="58" width="35" height="15" rx="2" fill="#F4D03F" stroke="#1B2433" strokeWidth="1" />
+      <text x="153.5" y="68.5" textAnchor="middle" fontSize="5.5" fontWeight="800" fill="#1B2433" fontFamily="system-ui, sans-serif">
+        BUS STOP
+      </text>
+      {/* More for hire, lined up */}
+      {kind === "bicycle" ? (
+        <>
+          <Bicycle x={196} y={140} scale={0.95} colour="#1E9E62" lean={0} />
+          <Bicycle x={226} y={140} scale={0.95} colour="#F4B41A" lean={0} />
+          <Bicycle x={286} y={140} scale={0.95} colour="#2F6FEB" lean={0} />
+        </>
+      ) : (
+        <>
+          <Motorbike x={196} y={140} scale={0.9} colour="#1E9E62" lean={0} />
+          <Motorbike x={232} y={140} scale={0.9} colour="#F4B41A" lean={0} />
+          <Motorbike x={290} y={140} scale={0.9} colour="#2F6FEB" lean={0} />
+        </>
+      )}
+    </g>
   );
 }
 

@@ -9,6 +9,7 @@ import { canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
 import { CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
+import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
@@ -147,6 +148,14 @@ type HunterUpdate = {
   mode: Mode;
   moving: boolean;
 };
+
+/** Who brings a rented bicycle or okada (the same renter for the same request, on the map and in the scene). */
+const RENTERS = ["Musa", "Kunle", "Mama Ronke", "Tunde", "Aunty Joy", "Chidi", "Danjuma", "Iya Bola"];
+function renterName(requestedAt: string) {
+  let n = 0;
+  for (let i = 0; i < requestedAt.length; i++) n = (n * 31 + requestedAt.charCodeAt(i)) % 9973;
+  return RENTERS[n % RENTERS.length];
+}
 
 /** Areas for live positions (~2.2 km); each hunter listens to theirs and the 8 around it. */
 const LIVE_AREA_DEG = 0.02;
@@ -332,6 +341,8 @@ export function GameMap({
   const [lampActions, setLampActions] = useState<LampActions | null>(null);
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
+  const [rentalActions, setRentalActions] = useState<RentalActions | null>(null);
+  const [rentOpen, setRentOpen] = useState<RentalOffer | null>(null);
   const [lampOpen, setLampOpen] = useState<{ quiz: LampQuestion | string | null } | null>(null);
   const [djinnActions, setDjinnActions] = useState<DjinnActions | null>(null);
   const [djinnOpen, setDjinnOpen] = useState<{ chamber: DjinnChamber | string | null } | null>(null);
@@ -957,22 +968,23 @@ export function GameMap({
         if (trip) void planDirections(trip.to, trip.name, true); // and may need a different way there
       }
 
-      async function chooseVehicle(kind: VehicleKind, how: "own" | "rent" | "buy") {
-        if (busy || traveller.phase !== "idle") return;
+      /** Ride your own, rent, or buy. Resolves to "ok", or why not (the server's reason, "busy", "walk"…). */
+      async function chooseVehicle(kind: VehicleKind, how: "own" | "rent" | "buy"): Promise<string> {
+        if (busy || traveller.phase !== "idle") return "busy";
         if (how === "rent") {
           if (kind === "car") {
             setTransitOpen(true); // cars come as taxis
-            return;
+            return "taxi";
           }
           // Rent only where the renter is waiting; until then, ask for one.
           const waiting = pickup && pickup.p.kind === kind;
           if (!waiting) {
             await requestBikePickup(kind);
-            return;
+            return "asked";
           }
           if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [pickup!.p.lng, pickup!.p.lat]) > PICKUP_AT_M) {
             say(`Walk to the renter at ${pickup!.p.name} first (the blue line).`, true);
-            return;
+            return "walk";
           }
         }
         setBusy(true);
@@ -988,7 +1000,7 @@ export function GameMap({
                   : "Couldn't complete the purchase. Please try again.",
                 true,
               );
-              return;
+              return bought?.reason ?? "error";
             }
             const balance = bought.balance;
             if (balance != null) setHud((h) => ({ ...h, coins: balance }));
@@ -1015,7 +1027,7 @@ export function GameMap({
             else if (started?.reason === "repairing") say(`The mechanic is still working on your ${vehicleName(kind)}. Try again in a moment.`, true);
             else say("Couldn't get on. Please try again.", true);
             afterModeChange();
-            return;
+            return started?.reason ?? "error";
           }
 
           if (traveller.mode !== "walk" && !rental && traveller.mode !== kind) pocketAnim(traveller.mode as VehicleKind, false); // swapping vehicles
@@ -1035,6 +1047,7 @@ export function GameMap({
               ? `You've rented a ${vehicleName(kind)}: ${VEHICLES[kind].ratePerMinute} coins a minute until you get off.`
               : `Out of your pocket: you're ${kind === "car" ? "in" : "on"} your ${vehicleName(kind)}.`,
           );
+          return "ok";
         } finally {
           setBusy(false);
         }
@@ -3144,7 +3157,7 @@ export function GameMap({
           car = layer.add({ object: models.makeTaxi(), lng: first[0], lat: first[1], heading: 0 });
           entities.push(car);
         } else {
-          renter = models.buildAvatar(lookForId(`renter:${p.requestedAt}`));
+          renter = models.buildAvatar(keeperLook(renterName(p.requestedAt)));
           renter.root.add(layer.billboard(models.makeNameplate(p.kind === "bicycle" ? "BICYCLE HIRE" : "OKADA HIRE", "#1E9E62")));
           entities.push(layer.add({ object: renter.root, lng: p.lng, lat: p.lat, heading: 0 }));
           // The bike stands beside the renter.
@@ -3337,12 +3350,25 @@ export function GameMap({
         return null;
       }
 
+      setRentalActions({
+        rent: async () => {
+          const pk = pickup;
+          if (!pk || pk.p.kind === "taxi") return "error";
+          const r = await chooseVehicle(pk.p.kind, "rent");
+          return r === "ok" ? "ok" : r === "coins" ? "coins" : "error";
+        },
+        cancel: () => void cancelPickup(),
+      });
+
       /** The banner's button: get in the taxi, or ride off on the rented bike. */
       async function pickupAction() {
         const pk = pickup;
         if (!pk || busy) return;
         if (pk.p.kind !== "taxi") {
-          await chooseVehicle(pk.p.kind, "rent");
+          // At the renter: meet them (RentalScene); not there yet, chooseVehicle says to walk.
+          if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [pk.p.lng, pk.p.lat]) <= PICKUP_AT_M) {
+            setRentOpen({ kind: pk.p.kind, renter: renterName(pk.p.requestedAt), stop: pk.p.name, rate: VEHICLES[pk.p.kind].ratePerMinute });
+          } else await chooseVehicle(pk.p.kind, "rent");
           return;
         }
         setBusy(true);
@@ -5445,6 +5471,9 @@ export function GameMap({
         />
       )}
 
+      {rentOpen && rentalActions && (
+        <RentalScene offer={rentOpen} you={JSON.parse(lookKey) as AvatarLook} actions={rentalActions} onClose={() => setRentOpen(null)} />
+      )}
       {repairOpen && repairActions && (
         <RepairScene job={repairOpen} you={JSON.parse(lookKey) as AvatarLook} actions={repairActions} onClose={() => setRepairOpen(null)} />
       )}

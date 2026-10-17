@@ -1003,7 +1003,7 @@ export function GameMap({
             else if (started?.reason === "far_pickup") say("Walk to the renter first: they're waiting at the bus stop.", true);
             else if (started?.reason === "pickup") say(`Ask for a ${vehicleName(kind)} first (Rent in Vehicles): a renter brings one to a bus stop near you.`, true);
             else if (started?.reason === "taxi") say("Cars come as taxis: call one from Taxi, bus, train or plane.", true);
-            else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the gold 🔧 button): they come to you.`, true);
+            else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the gold 🔧 button, or in Vehicles): they come to you.`, true);
             else if (started?.reason === "repairing") say(`The mechanic is still working on your ${vehicleName(kind)}. Try again in a moment.`, true);
             else say("Couldn't get on. Please try again.", true);
             afterModeChange();
@@ -1025,7 +1025,7 @@ export function GameMap({
           say(
             started.source === "rented"
               ? `You've rented a ${vehicleName(kind)}: ${VEHICLES[kind].ratePerMinute} coins a minute until you get off.`
-              : `Out of your pocket: you're on your ${vehicleName(kind)}.`,
+              : `Out of your pocket: you're ${kind === "car" ? "in" : "on"} your ${vehicleName(kind)}.`,
           );
         } finally {
           setBusy(false);
@@ -2830,7 +2830,7 @@ export function GameMap({
             ["fuel"],
           );
         } else {
-          void advise("engine", "Broken down", `Your ${name} has broken down and goes into your pocket. Call a mechanic (the gold 🔧 button): they come to you, wherever you are.`, null);
+          void advise("engine", "Broken down", `Your ${name} has broken down and goes into your pocket. Call a mechanic: the gold 🔧 button, or the vehicle button. They come to you, wherever you are.`, null);
         }
       }
 
@@ -5309,6 +5309,10 @@ export function GameMap({
           }}
           onGetOff={() => {
             actions.current?.getOff();
+            setGarage(null);
+          }}
+          onMechanic={() => {
+            actions.current?.act("mechanic");
             setGarage(null);
           }}
           onTaxi={() => {

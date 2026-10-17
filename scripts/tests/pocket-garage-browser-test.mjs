@@ -26,7 +26,12 @@ try {
   const id = data.user.id; ids.push(id);
   await admin.from("profiles").update({ home_lng: yaba.lng, home_lat: yaba.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   await admin.from("player_positions").upsert({ user_id: id, lng: yaba.lng, lat: yaba.lat, mode: "walk", energy: 100, updated_at: ago(30) });
-  await admin.from("player_vehicles").insert({ user_id: id, kind: "motorbike", fuel: 80, tyre: 100, engine: 100, lng: ibadan.lng, lat: ibadan.lat, in_use: false });
+  await admin.from("player_vehicles").insert([
+    { user_id: id, kind: "motorbike", fuel: 80, tyre: 100, engine: 100, lng: ibadan.lng, lat: ibadan.lat, in_use: false },
+    // Broken down far away, before the pocket garage (as the owner's bicycle was): the mechanic must still be callable.
+    { user_id: id, kind: "car", fuel: 60, tyre: 100, engine: 10, lng: ibadan.lng, lat: ibadan.lat, in_use: false, broken_at: ago(3600) },
+  ]);
+  await admin.rpc("apply_coin_change", { p_user: id, p_amount: 200, p_kind: "admin", p_reason: "Pocket garage test" });
   const mode = async () => (await admin.from("player_positions").select("mode").eq("user_id", id).single()).data.mode;
 
   const jar = new Map();
@@ -80,6 +85,24 @@ try {
   await wait(3000);
   check("getting off: on foot, and the game says it's in your pocket", (await mode()) === "walk" && /pocket/.test(await hint()), await hint());
   await shot("4-pocketed");
+
+  // ---- A broken-down car in the pocket: the gold 🔧 button, and Call a mechanic in the panel
+  check("the gold 🔧 button is there, wherever the player is", await page.evaluate(() => [...document.querySelectorAll("button")].some((b) => /Mechanic/.test(b.textContent ?? ""))));
+  await page.evaluate(() => document.querySelector('[data-tool="travel"]')?.click());
+  await wait(1000);
+  const carCard = await page.evaluate((nl) => [...document.querySelectorAll('[aria-label="Vehicles"] li')].find((x) => x.querySelector("span")?.textContent === "Car")?.innerText.split(nl).join(" | "), NL);
+  check("the broken car's card says so, with Call a mechanic", /Broken down/.test(carCard ?? "") && /Call a mechanic/.test(carCard ?? ""), carCard);
+  await shot("5-broken");
+  await clickText("Call a mechanic");
+  await wait(3000);
+  const car = (await admin.from("player_vehicles").select("repair_ready_at").eq("user_id", id).eq("kind", "car").single()).data;
+  check("the mechanic is on the way", !!car.repair_ready_at && /mechanic is on the way/.test(await hint()), await hint());
+  await admin.from("player_vehicles").update({ repair_ready_at: ago(1) }).eq("user_id", id).eq("kind", "car");
+  await page.evaluate(() => document.querySelector('[data-tool="travel"]')?.click());
+  await wait(1000);
+  await page.evaluate(() => [...document.querySelectorAll('[aria-label="Vehicles"] li')].find((x) => x.querySelector("span")?.textContent === "Car")?.querySelector("button")?.click());
+  await wait(3000);
+  check("fixed: the car comes out", (await mode()) === "car", await hint());
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

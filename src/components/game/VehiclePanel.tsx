@@ -14,6 +14,7 @@ export function VehiclePanel({
   busy,
   onRide,
   onGetOff,
+  onMechanic,
   onTaxi,
   onClose,
 }: {
@@ -23,6 +24,8 @@ export function VehiclePanel({
   busy: boolean;
   onRide: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
   onGetOff: () => void;
+  /** Call out a mechanic to a broken-down vehicle: they come to the player, wherever they are. */
+  onMechanic: () => void;
   /** Cars aren't rented: a taxi is called instead. */
   onTaxi: () => void;
   onClose: () => void;
@@ -82,16 +85,22 @@ export function VehiclePanel({
                     {mine.state === "empty"
                       ? "Empty tank: any petrol station fills it in your pocket, or pour in a keg."
                       : mine.state === "broken"
-                        ? "Broken down: call a mechanic (the gold 🔧 button). They come to you."
+                        ? "Broken down: call a mechanic. They come to you, wherever you are, and fix it in about 45 seconds."
                         : "A mechanic is fixing it. Ready in a moment."}
                   </p>
                 )}
                 {!onIt && (
                   <div className="flex flex-wrap gap-2">
                     {mine ? (
-                      <button type="button" disabled={busy || mine.state === "empty" || mine.state === "broken"} onClick={() => onRide(kind, "own")} className={`${button} bg-gold text-ink`}>
-                        {mine.inUse ? "Ride it" : "Take it out"}
-                      </button>
+                      mine.state === "broken" ? (
+                        <button type="button" disabled={busy} onClick={onMechanic} className={`${button} bg-gold text-ink`}>
+                          🔧 Call a mechanic · {kind === "bicycle" ? 30 : 80} coins
+                        </button>
+                      ) : (
+                        <button type="button" disabled={busy || mine.state === "empty"} onClick={() => onRide(kind, "own")} className={`${button} bg-gold text-ink`}>
+                          {mine.inUse ? "Ride it" : "Take it out"}
+                        </button>
+                      )
                     ) : (
                       <button type="button" disabled={busy || coins < info.price} onClick={() => onRide(kind, "buy")} className={`${button} bg-gold text-ink`}>
                         Buy · {info.price.toLocaleString("en-NG")} coins

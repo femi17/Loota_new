@@ -201,6 +201,8 @@ export function GameMap({
   startMode,
   initialCoins,
   huntId,
+  huntHidden,
+  huntAsked,
 }: {
   playerId: string;
   username: string;
@@ -210,6 +212,10 @@ export function GameMap({
   initialCoins: number;
   /** The hunt the player has joined, if any. */
   huntId: string | null;
+  /** The player hid that hunt's panel (a cookie); it shows again when asked for from the lobby. */
+  huntHidden: boolean;
+  /** Opened from the lobby's "Continue the hunt" (?hunt=…): show it even if it was hidden. */
+  huntAsked: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false });
@@ -287,6 +293,16 @@ export function GameMap({
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [huntShown, setHuntShown] = useState(!huntHidden);
+  // Asked for from the lobby: it isn't hidden any more.
+  useEffect(() => {
+    if (huntAsked) document.cookie = "loota_hidden_hunt=; path=/; max-age=0";
+  }, [huntAsked]);
+  /** Hide the hunt's panel (the hunt goes on; the lobby's "Continue the hunt" brings it back). */
+  const hideHunt = () => {
+    if (huntId) document.cookie = `loota_hidden_hunt=${huntId}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
+    setHuntShown(false);
+  };
   const [journeyPlan, setJourneyPlan] = useState<{ place: Place; options: Journey[] | null; message: string | null } | null>(null);
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the vehicle panel, when open
   const [transitOpen, setTransitOpen] = useState(false);
@@ -495,6 +511,13 @@ export function GameMap({
           ? roads.buildNetworkFromCells(own, traveller.mode, traveller.pos)
           : roads.buildNetwork(features, traveller.mode, traveller.pos);
         onRoad = roads.snapToNetwork(network, traveller.pos, facing);
+        // Never on a cut-off pocket of road (an airfield's paths, a fenced car park): it only goes in
+        // circles. The nearest proper road instead, when it's near enough for the server to allow.
+        if (onRoad && roads.cutOffEdges(network)[onRoad.edge]) {
+          const main = roads.snapToNetwork(network, traveller.pos, facing, roads.cutOffEdges(network));
+          const m = main ? roads.positionOf(network, main) : null;
+          if (main && m && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [m.lng, m.lat]) <= Math.max(snapReachM, 240)) onRoad = main;
+        }
         if (!onRoad) return false;
         const p = roads.positionOf(network, onRoad);
         if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > snapReachM) {
@@ -4738,7 +4761,7 @@ export function GameMap({
             )}
 
             {/* The hunt (riddle, keys, Search here) */}
-            {huntId && <HuntPanel huntId={huntId} actions={huntActions} />}
+            {huntId && huntShown && <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} />}
           </div>
 
           {/* Right: the tools, as icons */}

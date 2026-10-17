@@ -53,7 +53,8 @@ export function isOneWay(net: RoadNetwork, rp: RoadPosition) {
   return !!net.edges[rp.edge]?.oneway;
 }
 
-export type RoadNetwork = { nodes: RoadNode[]; edges: RoadEdge[]; centre: LngLat };
+/** `radius`: how far from `centre` the roads were loaded (pieces beyond it are cut off). */
+export type RoadNetwork = { nodes: RoadNode[]; edges: RoadEdge[]; centre: LngLat; radius: number };
 
 /** Where a player is on the network: an edge, how far along it (0 = node a, 1 = node b), and which way they face. */
 export type RoadPosition = { edge: number; t: number; dir: 1 | -1 };
@@ -126,7 +127,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
 
   joinCrossings(nodes, edges, local);
   joinLooseEnds(nodes, edges, local);
-  return { nodes, ...mergeTinyGaps(nodes, edges), centre };
+  return { nodes, ...mergeTinyGaps(nodes, edges), centre, radius: radiusM };
 }
 
 /**
@@ -387,12 +388,54 @@ function headingAway(net: RoadNetwork, node: number, id: number, lookM = 10) {
  * `heading`. Roads within a few metres of each other (e.g. all the roads at a
  * junction) are tied, and the one lined up with `heading` wins.
  */
-export function snapToNetwork(net: RoadNetwork, pos: LngLat, heading: number): RoadPosition | null {
+/**
+ * Road pieces cut off from the rest: a small group of roads joined to nothing
+ * else, lying wholly inside the loaded area (so it isn't just cut by its edge),
+ * such as an airfield's paths or a fenced car park. A hunter put there could
+ * only walk in circles. 1 marks such an edge.
+ */
+const pocketsOf = new WeakMap<RoadNetwork, Uint8Array>();
+export function cutOffEdges(net: RoadNetwork): Uint8Array {
+  const known = pocketsOf.get(net);
+  if (known) return known;
+  const parent = net.nodes.map((_, i) => i);
+  const root = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  for (const e of net.edges) parent[root(e.a)] = root(e.b);
+  const length = new Map<number, number>();
+  const inside = new Map<number, boolean>();
+  const local = projector(net.centre);
+  const margin = net.radius - 100;
+  for (const e of net.edges) {
+    const r = root(e.a);
+    length.set(r, (length.get(r) ?? 0) + e.length);
+    if (inside.get(r) === false) continue;
+    const p = local(net.nodes[e.a]);
+    const q = local(net.nodes[e.b]);
+    inside.set(r, Math.hypot(p.x, p.y) < margin && Math.hypot(q.x, q.y) < margin);
+  }
+  const largest = Math.max(0, ...length.values());
+  const flags = new Uint8Array(net.edges.length);
+  if (largest > 3000) {
+    net.edges.forEach((e, i) => {
+      const r = root(e.a);
+      if (inside.get(r) && (length.get(r) ?? 0) < largest * 0.1) flags[i] = 1;
+    });
+  }
+  pocketsOf.set(net, flags);
+  return flags;
+}
+
+/** The nearest road to a point (`skip`: edges not to use, e.g. cut-off pockets). */
+export function snapToNetwork(net: RoadNetwork, pos: LngLat, heading: number, skip?: Uint8Array): RoadPosition | null {
   const local = projector(pos);
   let edge = -1;
   let t = 0;
   let nearest = Infinity;
   for (let i = 0; i < net.edges.length; i++) {
+    if (skip?.[i]) continue;
     const e = net.edges[i];
     const a = local(net.nodes[e.a]);
     const b = local(net.nodes[e.b]);
@@ -748,7 +791,7 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
       }
     }
   }
-  return { nodes, edges, centre };
+  return { nodes, edges, centre, radius: radiusM };
 }
 
 /** The road the player is on, for traffic: its kind, stretch and how built-up the area is (our own roads only). */

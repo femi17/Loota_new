@@ -34,7 +34,7 @@ const REFRESH_MS = 30_000;
  * The hunt card (riddle, keys, Search here, leaderboard) and the Key Trial.
  * Answers are checked only by the server; this never knows them.
  */
-export function HuntPanel({ huntId, actions }: { huntId: string; actions: RefObject<HuntActions | null> }) {
+export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions: RefObject<HuntActions | null>; onHide: () => void }) {
   const supabase = useRef(createClient()).current;
   const [state, setState] = useState<HuntState | null>(null);
   const [open, setOpen] = useState(true);
@@ -199,6 +199,17 @@ export function HuntPanel({ huntId, actions }: { huntId: string; actions: RefObj
               {searching ? "Searching…" : "Search here"}
             </button>
           )}
+          <button
+            type="button"
+            onClick={onHide}
+            aria-label="Hide the hunt (continue it from the lobby)"
+            title="Hide the hunt (continue it from the lobby)"
+            className="-mr-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-paper/70 hover:bg-ink-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
         </div>
 
         {open && (

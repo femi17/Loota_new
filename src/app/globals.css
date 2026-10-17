@@ -130,3 +130,10 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .loota-npc-idle, .loota-npc-work, .loota-spanner, .loota-sparkle, .loota-caret { animation: none; }
 }
+
+/* The hunt's start: each second of the countdown lands with a thump. */
+.loota-count { animation: loota-count 0.9s cubic-bezier(0.2, 1.4, 0.4, 1) both; text-shadow: 0 0 40px rgba(244, 180, 26, 0.6); }
+@keyframes loota-count { from { opacity: 0; transform: scale(1.8); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .loota-count { animation: none; }
+}

@@ -7,6 +7,8 @@ import {
   ordinal,
   type AnswerResult,
   type BoardRow,
+  type FeedEvent,
+  type HuntFeed,
   type HuntState,
   type SearchResult,
   type TrialView,
@@ -21,7 +23,22 @@ export type HuntActions = {
   /** Hold the hunter still during a Key Trial. */
   setFrozen: (frozen: boolean) => void;
   say: (text: string, alert?: boolean) => void;
+  /** Which way and how far a spot is from the hunter, as the screen shows it (bearing in degrees, 0 = up). */
+  pointer: (lng: number, lat: number) => { bearing: number; metres: number };
 };
+
+const FEED_MS = 6000;
+const TOAST_MS = 4500;
+const far = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
+
+/** A line of hunt news. */
+function newsOf(e: FeedEvent) {
+  const where = e.metres != null ? ` · ${far(e.metres)} from you` : "";
+  if (e.kind === "key") return `🔑 ${e.who} found Key ${e.key}${where}`;
+  if (e.kind === "trial") return `⚔️ ${e.who} is in the Key ${e.key} trial${where}`;
+  if (e.kind === "finished") return `🏁 ${e.who} finished ${ordinal(e.place ?? 0)}!`;
+  return `👋 ${e.who} joined the hunt`;
+}
 
 type Ending =
   | { kind: "failed"; reason: "wrong" | "timeout"; correct: string; saved: boolean }
@@ -43,6 +60,18 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
   const [trial, setTrial] = useState<TrialView | null>(null);
   const [ending, setEnding] = useState<Ending | null>(null);
   const [board, setBoard] = useState<BoardRow[] | null>(null);
+  const [feed, setFeed] = useState<HuntFeed | null>(null);
+  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+  const [revealed, setRevealed] = useState<string | null>(null); // the riddle being revealed (the start of the hunt)
+  const feedSince = useRef<string | null>(null);
+  const lastRank = useRef<number | null>(null);
+
+  function toast(text: string) {
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t.slice(-2), { id, text }]);
+    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), TOAST_MS);
+  }
 
   function startTrial(view: TrialView) {
     actions.current?.setFrozen(true);
@@ -55,6 +84,17 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     const next = data as HuntState | null;
     if (!next) return;
     setState(next);
+    if (next.phase === "live" && next.joined && next.keysHeld === 0 && next.riddle && !next.finishedAt) {
+      const seen = `loota:riddle-seen:${next.id}`;
+      let shown = false;
+      try {
+        shown = localStorage.getItem(seen) === "1";
+        localStorage.setItem(seen, "1");
+      } catch {
+        shown = false;
+      }
+      if (!shown) setRevealed(next.riddle);
+    }
     if (next.thrown) {
       actions.current?.placeAt(next.thrown.lng, next.thrown.lat);
       actions.current?.say("Your Key Trial ran out of time while you were away, so you were thrown 2 km from the key.", true);
@@ -87,6 +127,58 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
       window.removeEventListener("loota:hunt-changed", changed);
     };
   }, [actions, huntId]);
+
+  // A clock for the countdown and the rivals' arrows.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // The start: at the moment the hunt begins, everyone sees "GO!" (for 2 s) and gets the first riddle.
+  const startsIn = state?.phase === "upcoming" ? Math.ceil((Date.parse(state.startsAt) - now) / 1000) : null;
+  const sinceStart = state ? (now - Date.parse(state.startsAt)) / 1000 : null;
+  const go = sinceStart !== null && sinceStart >= 0 && sinceStart < 2;
+  const due = startsIn !== null && startsIn <= 0; // started by the clock; the server may need a second to agree
+  useEffect(() => {
+    if (!due) return;
+    const retry = window.setInterval(() => void refreshRef.current(), 1500);
+    return () => window.clearInterval(retry);
+  }, [due]);
+
+  // The race: news, rivals, rank, every few seconds while the hunt is on.
+  const racing = state?.phase === "live" && state.joined && !state.finishedAt;
+  useEffect(() => {
+    if (!racing) return;
+    let stopped = false;
+    const db = createClient();
+    async function poll() {
+      const { data } = await db.rpc("hunt_feed", { p_hunt: huntId, p_since: feedSince.current });
+      const f = data as HuntFeed | null;
+      if (stopped || !f) return;
+      const first = feedSince.current === null;
+      feedSince.current = f.now;
+      setFeed(f);
+      if (!first) {
+        let keys = false;
+        for (const e of f.events) {
+          if (e.mine) continue;
+          toast(newsOf(e));
+          if (e.kind === "key" || e.kind === "finished") keys = true;
+        }
+        if (keys) void refreshRef.current();
+      }
+      if (f.rank != null && lastRank.current != null && f.rank !== lastRank.current) {
+        toast(f.rank < lastRank.current ? `📈 You moved up to ${ordinal(f.rank)}!` : `📉 You dropped to ${ordinal(f.rank)}.`);
+      }
+      lastRank.current = f.rank;
+    }
+    void poll();
+    const timer = window.setInterval(() => void poll(), FEED_MS);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [racing, huntId]);
 
   async function search() {
     const map = actions.current;
@@ -219,9 +311,17 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
         {open && (
           <div className="flex flex-col gap-2 text-sm">
             {state.phase === "upcoming" && (
-              <p className="text-muted">
-                The first riddle appears when the hunt starts. Until then, roam to collect coins, relics and intel.
-              </p>
+              <>
+                {startsIn !== null && startsIn > 0 && startsIn < 24 * 3600 && (
+                  <p className="font-display text-2xl font-extrabold text-gold" aria-label="Starts in">
+                    Starts in {Math.floor(startsIn / 3600) > 0 ? `${Math.floor(startsIn / 3600)}:` : ""}
+                    {String(Math.floor((startsIn % 3600) / 60)).padStart(Math.floor(startsIn / 3600) > 0 ? 2 : 1, "0")}:{String(startsIn % 60).padStart(2, "0")}
+                  </p>
+                )}
+                <p className="text-muted">
+                  Everyone gets the first riddle at the same moment. Until then, roam to collect coins, relics and intel.
+                </p>
+              </>
             )}
             {state.phase === "live" && !done && state.riddle && (
               <>
@@ -234,6 +334,27 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
                   </p>
                 )}
               </>
+            )}
+            {racing && feed && (feed.inMyArea > 0 || feed.rivals.length > 0) && (
+              <div className="flex flex-col gap-1 rounded-xl bg-ink-2 p-2 text-xs" aria-label="Your rivals">
+                {feed.inMyArea > 0 && (
+                  <span className="font-bold text-[#FF9A5C]">
+                    🔥 {feed.inMyArea} hunter{feed.inMyArea > 1 ? "s are" : " is"} already in your key&apos;s area
+                  </span>
+                )}
+                {feed.rivals.slice(0, 3).map((r) => {
+                  const p = actions.current?.pointer(r.lng, r.lat);
+                  return (
+                    <span key={r.name} className="flex items-center gap-1.5">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="#FF9A5C" aria-hidden="true" style={{ transform: `rotate(${p?.bearing ?? 0}deg)` }}>
+                        <path d="M12 2l6 18-6-4-6 4z" />
+                      </svg>
+                      <b className="truncate">{r.name}</b>
+                      <span className="text-muted">chasing the same key · {far(p?.metres ?? r.metres)}</span>
+                    </span>
+                  );
+                })}
+              </div>
             )}
             {done && (
               <p>
@@ -249,6 +370,11 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
             )}
             <div className="flex items-center gap-3 text-xs text-muted">
               <span>Prize: {state.prize}</span>
+              {racing && feed?.rank != null && (
+                <span className="font-bold text-paper">
+                  {ordinal(feed.rank)} of {feed.hunters}
+                </span>
+              )}
               <button type="button" onClick={() => void toggleBoard()} className="ml-auto font-bold text-gold">
                 {board ? "Hide board" : "Leaderboard"}
               </button>
@@ -268,6 +394,42 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
           </div>
         )}
       </section>
+
+      {/* Hunt news, a few seconds each. */}
+      {toasts.length > 0 && (
+        <div className="pointer-events-none fixed inset-x-3 bottom-[190px] z-20 mx-auto flex max-w-sm flex-col gap-1.5" aria-live="polite">
+          {toasts.map((t) => (
+            <p key={t.id} className="loota-wonder-banner rounded-xl bg-ink/95 px-3 py-2 text-sm font-bold text-paper ring-1 ring-gold">
+              {t.text}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {/* The last ten seconds before the start, then GO! */}
+      {((startsIn !== null && startsIn > 0 && startsIn <= 10) || go) && (
+        <div className="pointer-events-none fixed inset-0 z-30 flex flex-col items-center justify-center bg-ink/60" aria-live="assertive">
+          <p className="text-sm font-bold uppercase tracking-widest text-paper/80">{go ? state.title : "The hunt starts in"}</p>
+          <p key={go ? "go" : startsIn} className="loota-count font-display text-[9rem] font-extrabold leading-none text-gold">
+            {go ? "GO!" : startsIn}
+          </p>
+        </div>
+      )}
+
+      {/* The first riddle, revealed with a flourish. */}
+      {revealed && !go && (
+        <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-ink/85 p-5">
+          <div role="dialog" aria-label="The first riddle" className="loota-wonder-banner flex w-full max-w-md flex-col gap-4 rounded-3xl bg-[#F5ECD8] p-6 text-center text-[#3A2410]">
+            <p className="text-xs font-extrabold uppercase tracking-widest text-[#8A5A00]">The hunt is on · Key 1 of {state.keys}</p>
+            <p className="font-display text-2xl font-extrabold leading-snug">&ldquo;{revealed}&rdquo;</p>
+            {state.category && <p className="text-sm">At the key: a Key Trial in {CATEGORY_NAMES[state.category]}.</p>}
+            <p className="text-sm text-[#5A4020]">Work out where it is, get there before the others, then search.</p>
+            <button type="button" onClick={() => setRevealed(null)} className="h-12 rounded-2xl bg-[#3A2410] font-bold text-[#F5ECD8]">
+              Let&apos;s go
+            </button>
+          </div>
+        </div>
+      )}
 
       {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} onAnswer={(choice) => answer(trial.attempt, choice)} />}
 

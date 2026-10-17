@@ -1417,6 +1417,13 @@ export function GameMap({
       }
 
       huntActions.current = {
+        pointer(lng, lat) {
+          const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+          return {
+            bearing: Math.round(geo.compassFromHeading(geo.headingOf(here, [lng, lat])) - map.getBearing()),
+            metres: Math.round(geo.distanceM(here, [lng, lat])),
+          };
+        },
         async search(hunt) {
           traveller.v = 0;
           const { data, error } = await supabase.rpc("search_here", {

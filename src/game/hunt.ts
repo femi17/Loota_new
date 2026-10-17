@@ -72,6 +72,28 @@ export type AnswerResult =
 
 export type BoardRow = { rank: number; username: string; keysHeld: number; place: number | null; me: boolean };
 
+/** Something that just happened in the hunt (hunt_feed); `metres`: how far from the player it was. */
+export type FeedEvent = {
+  at: string;
+  kind: "key" | "trial" | "finished" | "joined";
+  who: string;
+  mine: boolean;
+  key: number | null;
+  place: number | null;
+  metres: number | null;
+};
+
+/** The race around the player (hunt_feed): news, the rivals chasing the same key within 2 km, the pressure. */
+export type HuntFeed = {
+  now: string;
+  phase: HuntPhase;
+  rank: number | null;
+  hunters: number;
+  events: FeedEvent[];
+  rivals: { name: string; lng: number; lat: number; metres: number }[];
+  inMyArea: number;
+};
+
 export type TrialCategory = "maths" | "sequences" | "general" | "nigeria";
 
 export const CATEGORY_NAMES: Record<TrialCategory, string> = {

@@ -73,12 +73,14 @@ export function EventScene({
     <div className="absolute inset-0 z-20 flex items-end justify-center bg-ink/70 sm:items-center">
       <div role="dialog" aria-label={title} className="flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-ink sm:max-w-lg sm:rounded-3xl">
         {/* The place */}
-        <div className="relative w-full shrink-0" style={{ aspectRatio: "16 / 9" }}>
+        {/* At most a third of the screen: on short screens the picture gives way to the replies. */}
+        <div className="relative max-h-[34dvh] w-full shrink-0" style={{ aspectRatio: "16 / 9" }}>
           <Stage stage={stage} sign={sign} vehicle={vehicle ?? null} working={working} />
-          <div className={`absolute bottom-[6%] left-[8%] w-[17%] [&_svg]:h-auto [&_svg]:w-full ${working ? "loota-npc-work" : "loota-npc-idle"}`} aria-hidden="true">
+          {/* Sized by the picture's height, so they stay whole however wide or short it is. */}
+          <div className={`absolute bottom-[6%] left-[8%] h-[56%] [&_svg]:h-full [&_svg]:w-auto ${working ? "loota-npc-work" : "loota-npc-idle"}`} aria-hidden="true">
             <HunterFigure look={them.look} wrap={them.wrap} width={200} />
           </div>
-          <div className="absolute bottom-[6%] right-[8%] w-[17%] -scale-x-100 [&_svg]:h-auto [&_svg]:w-full" aria-hidden="true">
+          <div className="absolute bottom-[6%] right-[8%] h-[56%] -scale-x-100 [&_svg]:h-full [&_svg]:w-auto" aria-hidden="true">
             <HunterFigure look={you} width={200} />
           </div>
           <span className="absolute bottom-[1%] left-[8%] rounded-md bg-ink/80 px-1.5 text-[11px] font-bold text-paper">{them.name}</span>
@@ -96,7 +98,7 @@ export function EventScene({
         </div>
 
         {/* The conversation */}
-        <div ref={talk} className="flex min-h-[140px] flex-1 flex-col gap-2 overflow-y-auto p-4" aria-live="polite">
+        <div ref={talk} className="flex min-h-14 flex-auto flex-col gap-2 overflow-y-auto p-4 [@media(max-height:520px)]:p-2" aria-live="polite">
           {lines.map((l, i) => {
             const text = i === lines.length - 1 && l.who === "them" ? l.text.slice(0, shown) : l.text;
             return (
@@ -123,7 +125,10 @@ export function EventScene({
         </div>
 
         {/* Replies */}
-        <div className="flex flex-col gap-2 border-t border-line p-4" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+        <div
+          className="flex shrink-0 flex-col gap-2 border-t border-line p-4 [@media(max-height:520px)]:flex-row [@media(max-height:520px)]:flex-wrap [@media(max-height:520px)]:gap-1.5 [@media(max-height:520px)]:p-2"
+          style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+        >
           {done &&
             choices.map((c) => (
               <button
@@ -131,14 +136,14 @@ export function EventScene({
                 type="button"
                 disabled={busy}
                 onClick={c.onPick}
-                className={`min-h-11 rounded-xl px-4 text-left text-sm font-bold disabled:opacity-50 ${
+                className={`min-h-11 rounded-xl px-4 text-left text-sm font-bold disabled:opacity-50 [@media(max-height:520px)]:min-h-9 [@media(max-height:520px)]:flex-1 [@media(max-height:520px)]:text-xs ${
                   c.primary ? "bg-gold text-ink" : "border-[1.5px] border-line text-paper"
                 }`}
               >
                 {c.label}
               </button>
             ))}
-          {!done && <span className="h-11 text-sm text-muted">…</span>}
+          {!done && <span className="h-11 text-sm text-muted [@media(max-height:520px)]:h-9">…</span>}
         </div>
       </div>
     </div>

@@ -20,6 +20,8 @@ const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ?
 
 const yaba = { lng: 3.3787, lat: 6.5186 };
 const KIND = process.env.KIND === "motorbike" ? "motorbike" : "bicycle"; // KIND=motorbike: an okada instead
+// VIEW=360x640: a smaller phone (the replies must still all be on screen).
+const [VIEW_W, VIEW_H] = (process.env.VIEW ?? "390x844").split("x").map(Number);
 try {
   const email = `rental-b-${Date.now()}@example.com`, password = `T3st-${Math.random().toString(36).slice(2)}!`;
   const { data } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
@@ -40,7 +42,7 @@ try {
     args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] });
   const problems = [];
   const page = await browser.newPage();
-  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await page.setViewport({ width: VIEW_W, height: VIEW_H, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   page.on("pageerror", (e) => problems.push(e.message));
   await page.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
   const text = (sel) => page.evaluate((s, nl) => document.querySelector(s)?.innerText.split(nl).join(" | ") ?? null, sel, NL);
@@ -66,6 +68,15 @@ try {
   const price = await scene();
   check("…and names the rate", new RegExp(`${KIND === "bicycle" ? 4 : 10} coins a minute\\. The meter starts when you ride off`).test(price ?? ""), price);
   await shot("2-price");
+  // Every reply wholly inside the scene's card (it clips) and on the screen.
+  const offScreen = await page.evaluate(() => {
+    const card = document.querySelector('[role="dialog"]').getBoundingClientRect();
+    const edge = Math.min(card.bottom, window.innerHeight) + 1;
+    return [...document.querySelectorAll('[role="dialog"] button')]
+      .filter((b) => b.getAttribute("aria-label") !== "Leave" && b.getBoundingClientRect().bottom > edge)
+      .map((b) => b.textContent);
+  });
+  check(`every reply is on screen (${VIEW_W}×${VIEW_H})`, offScreen.length === 0, offScreen.join(" / "));
   await clickText("That's too much for me");
   await wait(3000);
   check("too much: no wahala", /No wahala/.test((await scene()) ?? ""));

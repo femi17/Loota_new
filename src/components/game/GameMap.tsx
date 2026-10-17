@@ -622,23 +622,29 @@ export function GameMap({
         to: LngLat,
         mode: Mode = traveller.mode,
       ): Promise<{ path: import("@/game/geo").Coord[]; forks: { index: number; side: -1 | 1 }[] } | null> {
-        const MARGIN = 0.01; // ~1 km around the straight line's box, for roads that bend outward
-        const x0 = Math.floor((Math.min(from.lng, to.lng) - MARGIN) / ROAD_CELL_DEG);
-        const x1 = Math.floor((Math.max(from.lng, to.lng) + MARGIN) / ROAD_CELL_DEG);
-        const y0 = Math.floor((Math.min(from.lat, to.lat) - MARGIN) / ROAD_CELL_DEG);
-        const y1 = Math.floor((Math.max(from.lat, to.lat) + MARGIN) / ROAD_CELL_DEG);
-        if ((x1 - x0 + 1) * (y1 - y0 + 1) > 30) return null;
-        const keys: string[] = [];
-        for (let ix = x0; ix <= x1; ix++) for (let iy = y0; iy <= y1; iy++) keys.push(roadCellKey(ix, iy));
-        await Promise.all(keys.map(ensureSquare));
-        const cells = keys.map((k) => roadSquares.get(k)).filter((c): c is RoadCellData => typeof c === "object");
-        if (!cells.length || disposed) return null;
-        await new Promise((r) => setTimeout(r, 30)); // let "Finding a route…" show before the search
-        const centre = { lng: (from.lng + to.lng) / 2, lat: (from.lat + to.lat) / 2 };
-        const net = roads.buildNetworkFromCells(cells, mode, centre, Infinity);
-        const start = roads.snapToNetwork(net, from, traveller.heading);
-        const path = start ? roads.findPath(net, start, to, 300) : null;
-        return path ? { path, forks: roads.findForks(net, path) } : null;
+        // ~1 km around the straight line's box, for roads that bend outward; if that finds no way
+        // (a fenced airport, a lagoon: the way round can be ten times the straight line), ~3 km.
+        for (const [margin, maxSquares] of [[0.01, 30], [0.03, 49]]) {
+          const x0 = Math.floor((Math.min(from.lng, to.lng) - margin) / ROAD_CELL_DEG);
+          const x1 = Math.floor((Math.max(from.lng, to.lng) + margin) / ROAD_CELL_DEG);
+          const y0 = Math.floor((Math.min(from.lat, to.lat) - margin) / ROAD_CELL_DEG);
+          const y1 = Math.floor((Math.max(from.lat, to.lat) + margin) / ROAD_CELL_DEG);
+          if ((x1 - x0 + 1) * (y1 - y0 + 1) > maxSquares) return null;
+          const keys: string[] = [];
+          for (let ix = x0; ix <= x1; ix++) for (let iy = y0; iy <= y1; iy++) keys.push(roadCellKey(ix, iy));
+          await Promise.all(keys.map(ensureSquare));
+          const cells = keys.map((k) => roadSquares.get(k)).filter((c): c is RoadCellData => typeof c === "object");
+          if (!cells.length || disposed) return null;
+          await new Promise((r) => setTimeout(r, 30)); // let "Finding a route…" show before the search
+          const centre = { lng: (from.lng + to.lng) / 2, lat: (from.lat + to.lat) / 2 };
+          const net = roads.buildNetworkFromCells(cells, mode, centre, Infinity);
+          // Not from a cut-off pocket of road (an airfield's paths): it leads nowhere.
+          let start = roads.snapToNetwork(net, from, traveller.heading);
+          if (start && roads.cutOffEdges(net)[start.edge]) start = roads.snapToNetwork(net, from, traveller.heading, roads.cutOffEdges(net)) ?? start;
+          const path = start ? roads.findPath(net, start, to, 300) : null;
+          if (path) return { path, forks: roads.findForks(net, path) };
+        }
+        return null;
       }
 
       /** Roughly how long a trip takes at the current mode's normal pace. */
@@ -3679,7 +3685,7 @@ export function GameMap({
           | ({ type: "detour" } & Omit<LampDetour, "endsAt"> & { endsAt: string })
           | { type: "whisper"; id: string; lng: number; lat: number; metres: number; endsAt: string }
           | { type: "orb"; id: string; lng: number; lat: number; metres: number; endsAt: string };
-        const raw = data as { now: string; current: RawItem | null } | null;
+        const raw = data as { now: string; current: RawItem | null; hunt?: boolean } | null;
         if (disposed || !raw) return lamp ?? { current: null };
         const skew = Date.now() - Date.parse(raw.now);
         const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
@@ -3690,7 +3696,7 @@ export function GameMap({
           : c.type === "whisper"
             ? { ...c, endsAt: Date.parse(c.endsAt) + skew, direction: compassWord(geo.compassFromHeading(geo.headingOf(here, [c.lng, c.lat]))) }
             : { ...c, endsAt: Date.parse(c.endsAt) + skew };
-        lamp = { current };
+        lamp = { current, inHunt: raw.hunt !== false };
         // Something new: say so (the lamp glows too).
         if (current && current.id !== before && !seenLamp.has(current.id)) {
           say(
@@ -4731,7 +4737,7 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><VehicleIcon kind={hud.vehicle?.kind ?? null} /></span> Walk, or ride a bicycle, motorbike or car</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><LandmarkIcon /></span> Landmarks: check in for coins</li>
-                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours, whispers and rare finds (it glows when something stirs; it smokes purple when the Djinn calls)</li>
+                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours, whispers and hidden finds during a hunt (it glows); the Djinn between hunts (it smokes purple)</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Your bag: relics</li>
                 </ul>
                 <p className="mt-1 font-bold">How to move</p>

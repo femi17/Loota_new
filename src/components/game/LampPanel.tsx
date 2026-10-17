@@ -31,7 +31,8 @@ export type LampOrb = { id: string; lng: number; lat: number; metres: number; en
 
 /** The lamp holds one thing at a time (owner's call, 15 Oct 2026). */
 export type LampItem = ({ type: "detour" } & LampDetour) | ({ type: "whisper" } & LampWhisper) | ({ type: "orb" } & LampOrb);
-export type LampState = { current: LampItem | null };
+/** `inHunt`: false when the player isn't in a live hunt (finds only come during one). */
+export type LampState = { current: LampItem | null; inHunt?: boolean };
 
 export type LampQuestion = { detourId: string; title: string; question: string; options: string[]; seconds: number; endsAt: number };
 export type LampResult = { outcome: "won" | "wrong" | "late" | "full"; answer: string; coins: number; relic: RelicId | null };
@@ -251,7 +252,11 @@ export function LampPanel({
         ) : !state ? (
           <p className="text-sm text-muted">The lamp flickers…</p>
         ) : !item ? (
-          <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">The lamp is quiet. Keep roaming: it glows when something stirs nearby.</p>
+          <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">
+            {state.inHunt === false
+              ? "The lamp sleeps between hunts. Detours, whispers and hidden finds come during a live hunt: join one in the lobby. Only the Djinn wakes it now."
+              : "The lamp is quiet. Keep roaming: it glows when something stirs nearby."}
+          </p>
         ) : item.type === "orb" ? (
           <div className="flex flex-col gap-2 rounded-2xl bg-[#2A1747] p-4 ring-2 ring-[#9B5DE5]">
             <div className="flex items-center justify-between gap-2">

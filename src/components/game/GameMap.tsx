@@ -2674,8 +2674,11 @@ export function GameMap({
       function computeActions() {
         const list: { id: LimitAction; icon: string; short: string; label: string }[] = [];
         if (!visit && !ride && traveller.phase === "idle") {
-          // The one being ridden first, else one in the pocket (the server picks the same way).
-          const ownedFirst = (want: (v: VehicleRow) => boolean) => owned.filter(want).sort((a, b) => Number(b.in_use) - Number(a.in_use))[0] ?? null;
+          // Buttons for the vehicle being ridden; one in the pocket only when it can't be ridden until seen to
+          // (an empty tank, a breakdown). The server picks the same vehicle.
+          const riding = ownInUse();
+          const motorRidden = riding && riding.kind !== "bicycle" ? riding : null;
+          const pocketed = (want: (v: VehicleRow) => boolean) => owned.find((v) => !v.in_use && v.kind !== "bicycle" && want(v)) ?? null;
           const eatSpot = spotHere(["eat"]);
           if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
           const chill = spotHere(["rest", "eat"]);
@@ -2684,7 +2687,7 @@ export function GameMap({
             list.push({ id: "rest_here", icon: "🧘", short: "Rest here", label: "Sit down and rest right here (slower than at a chill spot)" });
           }
           const station = spotHere(["fuel"]);
-          const thirsty = ownedFirst((v) => v.kind !== "bicycle" && v.fuel < 99);
+          const thirsty = motorRidden && motorRidden.fuel < 99 ? motorRidden : pocketed((v) => v.fuel <= 0);
           if (station && thirsty) {
             list.push({
               id: "refuel",
@@ -2693,15 +2696,16 @@ export function GameMap({
               label: thirsty.in_use ? `Refuel at ${station.name}` : `Fill your ${vehicleName(thirsty.kind)}'s tank (in your pocket) at ${station.name}`,
             });
           }
-          if (station && !keg && owned.some((v) => v.kind !== "bicycle")) list.push({ id: "buy_keg", icon: "🛢", short: "Buy keg · 25", label: "Buy a fuel keg · 25 coins" });
+          const lowOnFuel = (motorRidden && motorRidden.fuel < 40) || !!pocketed((v) => v.fuel <= 0);
+          if (station && !keg && lowOnFuel) list.push({ id: "buy_keg", icon: "🛢", short: "Buy keg · 25", label: "Buy a fuel keg · 25 coins" });
           if (station && keg && keg.fuel < 30) list.push({ id: "fill_keg", icon: "🛢", short: `Fill keg · ${2 * (30 - Math.floor(keg.fuel))}`, label: `Fill your keg · ${2 * (30 - Math.floor(keg.fuel))} coins` });
-          const dry = ownedFirst((v) => v.kind !== "bicycle" && v.fuel <= 70); // a keg holds 30%
+          const dry = motorRidden && motorRidden.fuel <= 70 ? motorRidden : pocketed((v) => v.fuel <= 0); // a keg holds 30%
           if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour keg", label: `Pour the keg into your ${vehicleName(dry.kind)}` });
-          const bike = ownedFirst((v) => v.kind === "bicycle");
+          const bike = riding?.kind === "bicycle" ? riding : null; // pumping is for the bicycle you're on
           if (spotHere(["tyres", "fuel"]) && bike && bike.tyre < 95) {
             list.push(bike.tyre <= 0 ? { id: "pump", icon: "🛞", short: "Fix flat · 20", label: "Fix the flat · 20 coins" } : { id: "pump", icon: "🛞", short: "Pump · 5", label: "Pump the tyres · 5 coins" });
           }
-          const motor = ownedFirst((v) => v.kind !== "bicycle" && (v.engine < 90 || !!v.broken_at));
+          const motor = motorRidden && motorRidden.engine < 90 ? motorRidden : pocketed((v) => !!v.broken_at);
           if (spotHere(["mechanic"]) && motor) {
             list.push({ id: "service", icon: "🔧", short: "Service · 60", label: `Service your ${vehicleName(motor.kind)} · 60 coins` });
           }

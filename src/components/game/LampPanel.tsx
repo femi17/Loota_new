@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { RELICS, type RelicId } from "@/game/items";
+import { wonderOf } from "@/game/wonders";
 
 /** A Detour (design doc 7.5): an offer everyone in the area shares. Times are on this device's clock (ms). */
 export type LampDetour = {
@@ -66,11 +67,16 @@ const rewardText = (coins: number, relic: RelicId | null) => (relic ? `${RELICS[
 export function LampPanel({
   actions,
   quiz: firstQuiz,
+  djinn,
+  onDjinn,
   onClose,
 }: {
   actions: LampActions;
   /** Opened by the Claim button at a Detour's place: the question already asked. */
   quiz: LampQuestion | string | null;
+  /** The Djinn's Wager, while one is on: pinned at the top. */
+  djinn: { stage: string; wonder: string; endsAt: number; place: string | null } | null;
+  onDjinn: () => void;
   onClose: () => void;
 }) {
   const [state, setState] = useState<LampState | null>(null);
@@ -165,6 +171,30 @@ export function LampPanel({
         </div>
 
         {message && <p className="mb-3 rounded-xl bg-ink-2 p-3 text-sm ring-1 ring-gold">{message}</p>}
+
+        {djinn && !quiz && (
+          <button type="button" onClick={onDjinn} className="mb-3 flex w-full items-center gap-3 rounded-2xl bg-[#2A1747] p-4 text-left ring-2 ring-[#9B5DE5]">
+            <span className="text-3xl" aria-hidden="true">
+              🧞
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="font-bold">The Djinn&apos;s Wager · {wonderOf(djinn.wonder).name.replace(/^the /, "The ")}</span>
+              <span className="text-xs text-paper/80">
+                {djinn.stage === "chosen" && djinn.place
+                  ? `Your seal: ${djinn.place}`
+                  : djinn.stage === "seals"
+                    ? "Break a seal on his map"
+                    : djinn.stage === "turned_away"
+                      ? "He turned you away for now"
+                      : djinn.stage === "over"
+                        ? "The Wager is over"
+                        : "He waits at his gate"}
+                {djinn.stage !== "over" && now > 0 ? ` · ⏳ ${countdown(djinn.endsAt - now)}` : ""}
+              </span>
+            </span>
+            <span className="text-sm font-bold text-[#C89BFF]">Open</span>
+          </button>
+        )}
 
         {quiz ? (
           result ? (

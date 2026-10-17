@@ -7,7 +7,7 @@ import { FormMessage } from "@/components/FormField";
 import { getPlayer } from "@/lib/player";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
-import { addKey, createHunt, deleteDraft, removeLastKey, setPublished } from "./actions";
+import { addKey, createHunt, deleteDraft, removeLastKey, setPublished, summonDjinn } from "./actions";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
 
@@ -86,6 +86,18 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6">
       <FormMessage error={error} message={message} />
+
+      <section className="flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-[#2A1747] p-6 ring-1 ring-[#9B5DE5]">
+        <div>
+          <h2 className="font-display text-xl font-extrabold">🧞 The Djinn&apos;s Wager</h2>
+          <p className="text-sm text-muted">The weekly surprise is off until the chambers are built. Summon him by hand to try it.</p>
+        </div>
+        <form action={summonDjinn}>
+          <button type="submit" className="h-11 rounded-xl bg-[#9B5DE5] px-4 font-bold text-white">
+            Summon the Djinn now
+          </button>
+        </form>
+      </section>
 
       <section className="flex flex-col gap-4 rounded-3xl bg-ink-2 p-6">
         <h1 className="font-display text-2xl font-extrabold">Create a hunt</h1>

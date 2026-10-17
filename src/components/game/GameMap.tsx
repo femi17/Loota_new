@@ -17,6 +17,7 @@ import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type Roa
 import { PlaceSearch } from "./PlaceSearch";
 import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
 import { JourneyPanel, legText } from "./JourneyPanel";
+import { DjinnPanel, type DjinnActions, type DjinnStage, type DjinnState, type GateVerdict } from "./DjinnPanel";
 import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, rideLeg, type Journey } from "@/game/journey";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -86,6 +87,8 @@ type Hud = {
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
+  /** The Djinn's Wager, while one is on (design doc 7.6): where the player is in it, and whether they've seen the summons. */
+  djinn: { stage: DjinnStage; wonder: string; endsAt: number; fresh: boolean; place: string | null } | null;
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
   journey: { place: string; step: number; total: number; text: string; board: string | null } | null;
   /** The lamp: whether it holds something (one thing at a time), and whether the player has looked at it yet (it glows). */
@@ -267,6 +270,7 @@ export function GameMap({
     lamp: { has: false, unseen: false },
     detourHere: null,
     journey: null,
+    djinn: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -280,6 +284,8 @@ export function GameMap({
   const [checkingIn, setCheckingIn] = useState(false);
   const [lampActions, setLampActions] = useState<LampActions | null>(null);
   const [lampOpen, setLampOpen] = useState<{ quiz: LampQuestion | string | null } | null>(null);
+  const [djinnActions, setDjinnActions] = useState<DjinnActions | null>(null);
+  const [djinnOpen, setDjinnOpen] = useState(false);
   /** The Claim button at a Detour's place: ask the question (once), then open the lamp on it. */
   const claimDetour = async (detour: LampDetour) => {
     if (!lampActions || checkingIn) return;
@@ -3740,6 +3746,113 @@ export function GameMap({
       });
       void refreshLamp();
 
+      // ---- The Djinn's Wager (design doc 7.6) -------------------------------
+      // Once a week the Djinn summons everyone at once through the lamp: his gate
+      // puzzle, then his map of eight seals (one real). The way to the chosen seal
+      // is drawn only when the player asks, through the journey planner.
+      let djinn: DjinnState | null = null;
+      let djinnAt = -Infinity;
+      const noDjinn: DjinnState = { wager: null, stage: "over", gate: null, retryAt: null, favour: 0, riddle: null, seals: null, chosen: null };
+      const djinnSeenKey = (id: string) => `loota:djinn-seen:${id}`;
+      const djinnSeen = (id: string) => {
+        try {
+          return localStorage.getItem(djinnSeenKey(id)) === "1";
+        } catch {
+          return false;
+        }
+      };
+
+      async function refreshDjinn(): Promise<DjinnState> {
+        djinnAt = performance.now();
+        const { data } = await supabase.rpc("djinn_state");
+        type Raw = {
+          now: string;
+          wager: { id: string; wonder: string; startsAt: string; endsAt: string; claimedBy: string | null } | null;
+          stage?: DjinnStage;
+          gate?: (Omit<NonNullable<DjinnState["gate"]>, "deadline"> & { deadline: string }) | null;
+          retryAt?: string | null;
+          favour?: number | null;
+          riddle?: string | null;
+          seals?: DjinnState["seals"];
+          chosen?: DjinnState["chosen"];
+        };
+        const raw = data as Raw | null;
+        if (disposed || !raw) return djinn ?? noDjinn;
+        const skew = Date.now() - Date.parse(raw.now);
+        const at = (iso: string) => Date.parse(iso) + skew;
+        const before = djinn?.wager?.id ?? null;
+        djinn = {
+          wager: raw.wager ? { ...raw.wager, startsAt: at(raw.wager.startsAt), endsAt: at(raw.wager.endsAt) } : null,
+          stage: raw.stage ?? "over",
+          gate: raw.gate ? { ...raw.gate, deadline: at(raw.gate.deadline) } : null,
+          retryAt: raw.retryAt ? at(raw.retryAt) : null,
+          favour: raw.favour ?? 0,
+          riddle: raw.riddle ?? null,
+          seals: raw.seals ?? null,
+          chosen: raw.chosen ?? null,
+        };
+        if (djinn.wager && djinn.stage === "summoned" && djinn.wager.id !== before && !djinnSeen(djinn.wager.id)) {
+          say("🧞 The lamp shakes and smokes purple: the Djinn has woken! Open the lamp.", true);
+        }
+        showDjinn();
+        return djinn;
+      }
+
+      function showDjinn() {
+        const w = djinn?.wager;
+        const view =
+          w && djinn
+            ? { stage: djinn.stage, wonder: w.wonder, endsAt: w.endsAt, fresh: djinn.stage === "summoned" && !djinnSeen(w.id), place: djinn.chosen?.name ?? null }
+            : null;
+        setHud((h) => (JSON.stringify(h.djinn) === JSON.stringify(view) ? h : { ...h, djinn: view }));
+      }
+
+      function djinnTick(now: number) {
+        if (now - djinnAt > 60_000) void refreshDjinn();
+      }
+
+      setDjinnActions({
+        state: async () => {
+          const s = await refreshDjinn();
+          if (s.wager) {
+            try {
+              localStorage.setItem(djinnSeenKey(s.wager.id), "1");
+            } catch {
+              // Not kept: the summons shows again next time.
+            }
+            showDjinn();
+          }
+          return s;
+        },
+        startGate: async () => {
+          const { data } = await supabase.rpc("djinn_start_gate");
+          const r = data as { ok: boolean; reason?: string } | null;
+          if (!r?.ok) {
+            return r?.reason === "turned_away"
+              ? "The Djinn will not see you yet."
+              : r?.reason === "passed"
+                ? "You've already passed his gate."
+                : "The Djinn has gone back into the lamp.";
+          }
+          return refreshDjinn();
+        },
+        answerGate: async (cipher, path, weights) => {
+          const { data } = await supabase.rpc("djinn_answer_gate", { p_cipher: cipher, p_path: path, p_weights: weights });
+          const r = data as ({ ok: boolean } & GateVerdict) | null;
+          if (!r?.ok) return "The Djinn didn't hear you. Try again.";
+          void refreshDjinn();
+          return { score: r.score, favour: r.favour, rooms: r.rooms };
+        },
+        choose: async (siteId) => {
+          const { data } = await supabase.rpc("djinn_choose", { p_site: siteId });
+          const r = data as { ok: boolean; reason?: string } | null;
+          if (!r?.ok) return r?.reason === "chosen" ? "You've already broken a seal." : "That seal won't break.";
+          return refreshDjinn();
+        },
+        showWay: (site) => void routeTo({ name: site.name, detail: site.country, lng: site.lng, lat: site.lat }),
+      });
+      void refreshDjinn();
+
       // ---- Landmarks: visit famous places and answer a question for coins and intel ----
       let landmarks: Landmark[] = [];
       let landmarksAt = -Infinity;
@@ -3967,6 +4080,7 @@ export function GameMap({
         skyAndTrafficTick(now);
         lampTick(now);
         journeyTick(now);
+        djinnTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -4455,7 +4569,7 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><VehicleIcon kind={hud.vehicle?.kind ?? null} /></span> Walk, or ride a bicycle, motorbike or car</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><LandmarkIcon /></span> Landmarks: check in for coins</li>
-                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours, whispers and rare finds (it glows when something stirs)</li>
+                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours, whispers and rare finds (it glows when something stirs; it smokes purple when the Djinn calls)</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Your bag: relics</li>
                 </ul>
                 <p className="mt-1 font-bold">How to move</p>
@@ -4538,8 +4652,16 @@ export function GameMap({
               data-tool="lamp"
               aria-label={`The lamp${hud.lamp.has ? (hud.lamp.unseen ? ": something new" : ": something waiting") : ""}`}
               title="The lamp"
-              onClick={() => setLampOpen({ quiz: null })}
-              className={`${tool} relative ${hud.lamp.unseen ? "loota-lamp-glow bg-gold text-ink" : hud.lamp.has ? "bg-ink text-gold" : "bg-ink text-paper/60"}`}
+              onClick={() => (hud.djinn?.fresh ? setDjinnOpen(true) : setLampOpen({ quiz: null }))}
+              className={`${tool} relative ${
+                hud.djinn && ["summoned", "gate", "seals"].includes(hud.djinn.stage)
+                  ? "loota-lamp-djinn bg-[#5B2A9E] text-paper"
+                  : hud.lamp.unseen
+                    ? "loota-lamp-glow bg-gold text-ink"
+                    : hud.lamp.has
+                      ? "bg-ink text-gold"
+                      : "bg-ink text-paper/60"
+              }`}
             >
               <LampIcon />
               {hud.lamp.has && <span className={`absolute -right-1 -top-1 size-3 rounded-full ring-2 ring-ink ${hud.lamp.unseen ? "bg-ink" : "bg-gold"}`} aria-hidden="true" />}
@@ -4618,7 +4740,20 @@ export function GameMap({
         />
       )}
 
-      {lampOpen && lampActions && <LampPanel actions={lampActions} quiz={lampOpen.quiz} onClose={() => setLampOpen(null)} />}
+      {lampOpen && lampActions && (
+        <LampPanel
+          actions={lampActions}
+          quiz={lampOpen.quiz}
+          djinn={hud.djinn}
+          onDjinn={() => {
+            setLampOpen(null);
+            setDjinnOpen(true);
+          }}
+          onClose={() => setLampOpen(null)}
+        />
+      )}
+
+      {djinnOpen && djinnActions && <DjinnPanel actions={djinnActions} onClose={() => setDjinnOpen(false)} />}
 
       {landmarksOpen && landmarkActions && (
         <LandmarkPanel actions={landmarkActions} quiz={landmarksOpen.quiz} message={landmarksOpen.message} onClose={() => setLandmarksOpen(null)} />

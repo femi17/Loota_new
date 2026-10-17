@@ -20,7 +20,8 @@
     "highways:upload": "node scripts/upload-highways.mts",
     "places:build": "node --max-old-space-size=4096 scripts/build-places.mts",
     "places:upload": "node scripts/upload-places.mts",
-    "landmarks:upload": "node scripts/upload-landmarks.mts"
+    "landmarks:upload": "node scripts/upload-landmarks.mts",
+    "djinn:upload": "node scripts/upload-djinn-sites.mts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -40,6 +41,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
     "osm-pbf-parser": "^2.3.0",
+    "puppeteer-core": "^25.14.0",
     "supabase": "^2.120.0",
     "tailwindcss": "^4",
     "typescript": "^5"

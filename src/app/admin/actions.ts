@@ -140,3 +140,11 @@ export async function deleteDraft(form: FormData) {
   revalidatePath("/admin");
   back("Draft deleted.");
 }
+
+/** Summon the Djinn now (design doc 7.6): opens a Wager if none is on. For testing until the weekly surprise is switched on. */
+export async function summonDjinn() {
+  await owner();
+  const { data, error } = await createAdminClient().rpc("djinn_open_wager");
+  if (error) back(`Couldn't summon the Djinn: ${error.message}`, true);
+  back(data ? "The Djinn has woken. Every player's lamp is smoking." : "A Wager is already on.");
+}

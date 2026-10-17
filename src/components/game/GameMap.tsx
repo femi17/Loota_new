@@ -78,6 +78,20 @@ type Hud = {
    * inside (free to move), and, when they're at its edge outside, the siege.
    */
   dome: { minutesLeft: number; key: number; inside: boolean; mine: boolean; siege: { attackers: number; needed: number } | null } | null;
+  /**
+   * The rush for a crowded bus (at night and rush hour): the question now (6 s each), the marks so far, and
+   * then how it went. Shown over the map, not in a panel.
+   */
+  rush: {
+    q: string;
+    choices: number[];
+    index: number;
+    total: number;
+    left: number;
+    per: number;
+    marks: ("right" | "wrong" | "late" | "done")[];
+    outcome: { boarded: boolean; score: number; of: number; next: number | null } | null;
+  } | null;
   /** On a bus, train or plane (or waiting for one). */
   ride: { icon: string; title: string; status: string; canCancel: boolean } | null;
   /** At a bus stop, station or airport: what the transport button offers. */
@@ -270,6 +284,8 @@ export function GameMap({
     endJourney: () => void;
     /** Get off a bus, train or plane that hasn't left yet (fare refunded). */
     cancelTrip: () => void;
+    /** An answer in the bus rush (the choice's place, 0–2). */
+    rushAnswer: (choice: number) => void;
     /** Do something where the player stands (eat, rest, refuel, kegs, tyres, repairs). */
     act: (id: LimitAction) => void;
     /** Directions to the place a warning points to, or dismiss the warning. */
@@ -317,6 +333,7 @@ export function GameMap({
     djinnHere: null,
     wonders: { frozen: null, sand: null, eye: null, cloaked: false, mirrored: false },
     repairHere: null,
+    rush: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -1356,6 +1373,7 @@ export function GameMap({
         },
         where: () => ({ ...traveller.pos }),
         cancelTrip: () => void cancelTrip(),
+        rushAnswer: (choice) => rushAnswer(choice),
         act: (id) => void act(id),
         followAdvice: () => {
           const place = advicePlace;
@@ -1899,6 +1917,30 @@ export function GameMap({
         lastTry: number;
       };
       let ride: Ride | null = null;
+      // The rush for a crowded bus: the people waiting at the stop, and the questions under way.
+      type CrowdMember = {
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+        avatar: ReturnType<typeof models.buildAvatar>;
+        spot: LngLat;
+        door: LngLat;
+        walk: number | null; // performance ms: squeezing onto the bus from then
+      };
+      type Rush = {
+        id: number;
+        questions: { q: string; choices: number[] }[];
+        answers: number[]; // the choice's place, or -1 (too slow)
+        marks: ("right" | "wrong" | "late" | "done")[];
+        asked: number; // performance ms the current question was asked
+        sending: boolean;
+        outcome: NonNullable<Hud["rush"]>["outcome"];
+        outcomeAt: number;
+      };
+      const RUSH_PER_S = 6;
+      let crowd: CrowdMember[] = [];
+      let rush: Rush | null = null;
+      let lastRushTry = 0;
+      let busLeftAt = 0; // performance ms: a full bus pulling off without the player
+      let lastRushHud = "";
       const TRAIN_SCALE = 0.8;
       const PLANE_GROUND_SCALE = 0.45; // at the gate and on the runway, next to the hunter
       const PLANE_AIR_SCALE = 1.4; // at cruising height, seen from far above
@@ -2130,6 +2172,10 @@ export function GameMap({
         if (!ride) return;
         for (const p of ride.parts) layer.remove(p);
         for (const rider of ride.riders) layer.remove(rider.entity);
+        clearCrowd();
+        rush = null;
+        busLeftAt = 0;
+        setHud((h) => (h.rush ? { ...h, rush: null } : h));
         ride = null;
         me.object.visible = true;
         map.setMinZoom(GAME_ZOOM); // back to the one zoom players play at
@@ -2155,16 +2201,36 @@ export function GameMap({
         const info = TRANSIT[r.trip.mode];
         const serverNow = Date.now() + r.offset;
         const total = r.cum[r.cum.length - 1];
-        if (serverNow < r.departs) {
+        rushTick(now);
+        const rushing = r.trip.mode === "bus" && r.trip.rush === "pending";
+        if (serverNow < r.departs || rushing) {
           // Waiting at the stop (or checking in). The bus or train pulls in for the last few seconds; the plane waits at the gate.
           const left = (r.departs - serverNow) / 1000;
-          placeRide(r, 0, dt, true);
-          // The bus or train pulls in for the last few seconds; the plane is at the gate for the last 20 (boarding).
-          for (const p of r.parts) p.object.visible = left < (r.trip.mode === "plane" ? 20 : 6);
-          showRide(`${r.trip.mode === "plane" ? "Check-in and boarding" : info.wait} · leaves in ${clock(left)}`, true);
+          if (rushing && !crowd.length && !rush) spawnCrowd(r);
+          if (busLeftAt && now - busLeftAt < 4000) {
+            // The full bus pulls off without the player.
+            placeRide(r, ((now - busLeftAt) / 4000) ** 2 * Math.min(200, total), dt, false);
+            for (const p of r.parts) p.object.visible = true;
+          } else {
+            busLeftAt = 0;
+            placeRide(r, 0, dt, true);
+            // The bus or train pulls in for the last few seconds; the plane is at the gate for the last 20 (boarding).
+            for (const p of r.parts) p.object.visible = left < (r.trip.mode === "plane" ? 20 : 6) || (rushing && left <= 0);
+          }
+          crowdStep(now, dt, now / 1000);
+          if (rushing && left <= 3 && !rush && !busLeftAt && now - lastRushTry > 1500) void beginRush(r, now);
+          showRide(
+            rushing
+              ? left > 0
+                ? `A crowd is waiting for this bus · it comes in ${clock(left)}: get ready to push!`
+                : "The bus is here: push through the crowd!"
+              : `${r.trip.mode === "plane" ? "Check-in and boarding" : info.wait} · leaves in ${clock(left)}`,
+            true,
+          );
           return false;
         }
         if (r.s === 0) {
+          clearCrowd(); // the rest squeezed on too
           // Leaving: the camera may pull back for a fast trip (the player still can't zoom), and street names stop.
           map.setMinZoom(8);
           setHud((h) => ({ ...h, street: null, services: { fuel: null, food: null } }));
@@ -2200,6 +2266,171 @@ export function GameMap({
         }
         if (f >= 1 && !r.finishing && now - r.lastTry > 2000) void finishRide(now);
         return true;
+      }
+
+      // ---- The bus rush (night, rush hour): the crowd, quick questions, the surge to the door ----
+      /** People waiting at the kerb for the same bus (more at night), facing the road. */
+      function spawnCrowd(r: Ride) {
+        const path = r.trip.path;
+        const stop = { lng: path[0][0], lat: path[0][1] };
+        const heading = geo.headingOf(path[0], path[1]);
+        const enlarge = layer.enlargement();
+        const tries = r.trip.rushTries ?? 0;
+        const random = seededRandom(`${r.trip.id}:crowd:${tries}`);
+        const count = (isNight(Date.now(), stop.lng, stop.lat) ? 7 : 5) + Math.floor(random() * 4);
+        const door = besideBus(stop, heading, 1.6 * enlarge, 1.5 * enlarge);
+        // The player waits on the kerb among them, not where the bus pulls in.
+        const kerb = besideBus(stop, heading, 3.6 * enlarge, -0.5 * enlarge);
+        traveller.pos = kerb;
+        traveller.heading = geo.headingOf([kerb.lng, kerb.lat], [door.lng, door.lat]);
+        for (let i = 0; i < count; i++) {
+          const spot = besideBus(stop, heading, (2.8 + random() * 2.6) * enlarge, (random() * 10 - 5) * enlarge);
+          const avatar = models.buildAvatar(lookForId(`${r.trip.id}:crowd:${tries}:${i}`));
+          const entity = layer.add({ object: avatar.root, lng: spot.lng, lat: spot.lat, heading: geo.headingOf([spot.lng, spot.lat], [door.lng, door.lat]) });
+          crowd.push({ entity, avatar, spot, door, walk: null });
+        }
+      }
+
+      function clearCrowd() {
+        for (const c of crowd) layer.remove(c.entity);
+        crowd = [];
+      }
+
+      /** Idle at the kerb, or squeezing to the door and in. */
+      function crowdStep(now: number, dt: number, t: number) {
+        const enlarge = layer.enlargement();
+        crowd = crowd.filter((c) => {
+          let moving = 0;
+          let stepM = 0;
+          if (c.walk !== null && now >= c.walk) {
+            const f = Math.min(1, (now - c.walk) / 1300);
+            const before: [number, number] = [c.entity.lng, c.entity.lat];
+            c.entity.lng = c.spot.lng + (c.door.lng - c.spot.lng) * f;
+            c.entity.lat = c.spot.lat + (c.door.lat - c.spot.lat) * f;
+            if (f >= 1) {
+              layer.remove(c.entity);
+              return false;
+            }
+            moving = 1.4; // pushing
+            stepM = geo.distanceM(before, [c.entity.lng, c.entity.lat]);
+          }
+          models.animateAvatar(c.avatar, { mode: "walk", phase: "idle", moving, distance: stepM / enlarge }, dt, t);
+          return true;
+        });
+      }
+
+      /** `n` more of the crowd squeeze onto the bus, one after another. */
+      function surge(n: number, now: number) {
+        let k = 0;
+        for (const c of crowd) {
+          if (k >= n) break;
+          if (c.walk !== null) continue;
+          c.walk = now + k * 350;
+          k++;
+        }
+      }
+
+      /** The answer to a rush question, worked out from it (the server checks the real one). */
+      function rushAnswerOf(q: string): number | null {
+        let m = /^(\d+) \+ (\d+)$/.exec(q);
+        if (m) return +m[1] + +m[2];
+        m = /^(\d+) − (\d+)$/.exec(q);
+        if (m) return +m[1] - +m[2];
+        m = /^(\d+) × (\d+)$/.exec(q);
+        if (m) return +m[1] * +m[2];
+        m = /^Half of (\d+)$/.exec(q);
+        if (m) return +m[1] / 2;
+        m = /^(\d+), (\d+), (\d+), (\d+), \?$/.exec(q);
+        if (m) return +m[4] + (+m[4] - +m[3]);
+        return null;
+      }
+
+      async function beginRush(r: Ride, now: number) {
+        lastRushTry = now;
+        const { data } = await supabase.rpc("bus_rush_start");
+        const res = data as {
+          ok: boolean;
+          reason?: string;
+          rush?: { id: number; questions: { q: string; choices: number[] }[] };
+        } | null;
+        if (disposed || ride !== r || rush) return;
+        if (!res?.ok || !res.rush) {
+          if (res?.reason === "no_rush") r.trip = { ...r.trip, rush: null }; // nothing to push for: on you get
+          return; // not yet (clocks differ): again shortly
+        }
+        rush = { id: res.rush.id, questions: res.rush.questions, answers: [], marks: [], asked: performance.now(), sending: false, outcome: null, outcomeAt: 0 };
+      }
+
+      function rushAnswer(choice: number) {
+        const ru = rush;
+        if (!ru || ru.sending || ru.outcome || ru.answers.length >= ru.questions.length) return;
+        const now = performance.now();
+        const q = ru.questions[ru.answers.length];
+        ru.answers.push(choice);
+        const expected = rushAnswerOf(q.q);
+        const mark = choice < 0 ? "late" : expected === null ? "done" : q.choices[choice] === expected ? "right" : "wrong";
+        ru.marks.push(mark);
+        // The crowd surges: a right answer, you hold your place; a wrong or late one, more cut in ahead of you.
+        surge(mark === "right" ? 1 : 2, now);
+        ru.asked = now;
+        if (ru.answers.length >= ru.questions.length) void sendRush(ru);
+      }
+
+      async function sendRush(ru: Rush) {
+        ru.sending = true;
+        const r = ride;
+        const { data } = await supabase.rpc("bus_rush_answer", { p_rush: ru.id, p_choices: ru.answers });
+        const res = data as { ok: boolean; reason?: string; boarded?: boolean; score?: number; of?: number; trip?: TransitTrip } | null;
+        if (disposed || !r || ride !== r || rush !== ru) return;
+        const now = performance.now();
+        if (!res?.ok || !res.trip) {
+          rush = null; // the bus went (another tab), or a hiccup: a new rush for the next one
+          return;
+        }
+        r.trip = res.trip;
+        r.offset = Date.parse(res.trip.now) - Date.now();
+        r.departs = Date.parse(res.trip.departsAt);
+        r.arrives = Date.parse(res.trip.arrivesAt);
+        const next = res.boarded ? null : Math.max(0, Math.round((r.departs - (Date.now() + r.offset)) / 1000));
+        ru.outcome = { boarded: !!res.boarded, score: res.score ?? 0, of: res.of ?? ru.questions.length, next };
+        ru.outcomeAt = now;
+        if (res.boarded) {
+          surge(crowd.length, now); // the rest pile in behind you
+          say(`You squeezed in! (${res.score} of ${res.of}). Off you go.`);
+        } else {
+          busLeftAt = now; // the full bus pulls off
+          clearCrowd();
+          say(`The bus filled up before you got to the door (${res.score} of ${res.of}). Next bus in ${clock(next ?? 0)}: you'll have to push again.`, true);
+        }
+      }
+
+      /** The rush's clock: each question 6 s; the strip on screen; the outcome shown for a few seconds. */
+      function rushTick(now: number) {
+        const ru = rush;
+        if (!ru) return;
+        let view: Hud["rush"];
+        if (ru.outcome) {
+          if (now - ru.outcomeAt > 4000) {
+            rush = null;
+            lastRushHud = "";
+            setHud((h) => ({ ...h, rush: null }));
+            return;
+          }
+          view = { q: "", choices: [], index: ru.questions.length, total: ru.questions.length, left: 0, per: RUSH_PER_S, marks: ru.marks, outcome: ru.outcome };
+        } else {
+          const index = ru.answers.length;
+          if (index < ru.questions.length && (now - ru.asked) / 1000 >= RUSH_PER_S) {
+            rushAnswer(-1); // too slow
+            return;
+          }
+          const q = ru.questions[Math.min(index, ru.questions.length - 1)];
+          const left = index < ru.questions.length ? Math.max(0, Math.round((RUSH_PER_S - (now - ru.asked) / 1000) * 10) / 10) : 0;
+          view = { q: q.q, choices: q.choices, index, total: ru.questions.length, left, per: RUSH_PER_S, marks: ru.marks, outcome: null };
+        }
+        const key = JSON.stringify(view);
+        if (key === lastRushHud) return;
+        lastRushHud = key;
+        setHud((h) => ({ ...h, rush: view }));
       }
 
       /** How close the camera is during a trip: as in play for a bus, further back for a train, high above for a flight. */
@@ -5416,11 +5647,69 @@ export function GameMap({
         role="status"
         className={`absolute bottom-9 left-3 right-[104px] rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
           hud.alert ? "ring-2 ring-gold" : ""
-        } ${hud.hint ? "" : "invisible"}`}
+        } ${hud.hint && !hud.rush ? "" : "invisible"}`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}
       >
         {hud.hint}
       </p>
+
+      {/* The bus rush: quick questions over the map while the crowd pushes for the door. */}
+      {hud.rush && (
+        <div
+          className="pointer-events-auto absolute inset-x-3 bottom-24 z-10 mx-auto flex max-w-md flex-col gap-2 rounded-2xl bg-ink/90 p-3 text-paper shadow-xl ring-2 ring-gold"
+          style={{ marginBottom: "env(safe-area-inset-bottom)" }}
+          role="group"
+          aria-label="Bus rush"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-display text-sm font-extrabold text-gold">
+              🚌 {hud.rush.outcome ? (hud.rush.outcome.boarded ? "You're on!" : "Bus full!") : "RUSH! Push through the crowd"}
+            </span>
+            <span className="flex gap-1" aria-label="Your answers">
+              {Array.from({ length: hud.rush.total }, (_, i) => {
+                const m = hud.rush!.marks[i];
+                return (
+                  <span
+                    key={i}
+                    className={`flex size-5 items-center justify-center rounded-full text-[11px] font-bold ${
+                      m === "right" ? "bg-[#1E9E62]" : m === "wrong" || m === "late" ? "bg-danger" : m === "done" ? "bg-paper/50" : i === hud.rush!.index ? "bg-gold text-ink" : "bg-paper/15"
+                    }`}
+                  >
+                    {m === "right" ? "✓" : m === "wrong" ? "✗" : m === "late" ? "…" : ""}
+                  </span>
+                );
+              })}
+            </span>
+          </div>
+          {hud.rush.outcome ? (
+            <p className="text-sm font-semibold">
+              {hud.rush.outcome.boarded
+                ? `You squeezed in! ${hud.rush.outcome.score} of ${hud.rush.outcome.of} right.`
+                : `The bus filled up before you reached the door (${hud.rush.outcome.score} of ${hud.rush.outcome.of}). Next bus in ${Math.floor((hud.rush.outcome.next ?? 0) / 60)}:${String((hud.rush.outcome.next ?? 0) % 60).padStart(2, "0")}.`}
+            </p>
+          ) : (
+            <>
+              <div className="h-1.5 overflow-hidden rounded-full bg-paper/15">
+                <div className="h-full rounded-full bg-gold transition-[width] duration-100" style={{ width: `${(100 * hud.rush.left) / hud.rush.per}%` }} />
+              </div>
+              <p className="text-center font-display text-2xl font-extrabold">{hud.rush.q}</p>
+              <div className="grid grid-cols-3 gap-2">
+                {hud.rush.choices.map((c, i) => (
+                  <button
+                    key={`${hud.rush!.index}-${i}`}
+                    type="button"
+                    disabled={hud.rush!.index >= hud.rush!.total}
+                    onClick={() => actions.current?.rushAnswer(i)}
+                    className="h-12 rounded-xl bg-gold font-display text-xl font-extrabold text-ink active:scale-95 disabled:opacity-50"
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Rain from a Rain Charm: falling streaks over the map, a little darker. */}
       {hud.rain && <div className="loota-rain pointer-events-none absolute inset-0" aria-hidden="true" />}

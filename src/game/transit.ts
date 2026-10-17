@@ -92,6 +92,9 @@ export type Trip = {
   departsAt: string;
   arrivesAt: string;
   now: string;
+  /** A crowded city bus (night, rush hour): "pending" until the player has pushed on (bus_rush_start). */
+  rush?: "pending" | "boarded" | null;
+  rushTries?: number;
 };
 
 /** "2 min 30 s", "45 s" */

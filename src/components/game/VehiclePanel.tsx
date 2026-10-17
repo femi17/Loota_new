@@ -102,9 +102,12 @@ export function VehiclePanel({
                         🚕 Call a taxi
                       </button>
                     ) : (
-                      <button type="button" disabled={busy || coins < info.ratePerMinute} onClick={() => onRide(kind, "rent")} className={`${button} border-[1.5px] border-line text-paper`}>
-                        Rent · {info.ratePerMinute} coins a minute
-                      </button>
+                      // Yours already: no renting one beside it.
+                      !mine && (
+                        <button type="button" disabled={busy || coins < info.ratePerMinute} onClick={() => onRide(kind, "rent")} className={`${button} border-[1.5px] border-line text-paper`}>
+                          Rent · {info.ratePerMinute} coins a minute
+                        </button>
+                      )
                     )}
                   </div>
                 )}

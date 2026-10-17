@@ -61,6 +61,8 @@ try {
   const panel = await text('[aria-label="Vehicles"]');
   check("the panel says the motorbike is in your pocket", /in your pocket/.test(panel ?? ""), panel?.slice(0, 200));
   check("…with Take it out, and no Walk to it", /Take it out/.test(panel ?? "") && !/Walk to it/.test(panel ?? ""));
+  const rentFor = (name) => page.evaluate((n) => { const li = [...document.querySelectorAll('[aria-label="Vehicles"] li')].find((x) => x.querySelector("span")?.textContent === n); return !!li && [...li.querySelectorAll("button")].some((b) => b.textContent?.includes("Rent")); }, name);
+  check("no Rent beside the motorbike you own; Rent still offered for the bicycle you don't", !(await rentFor("Motorbike")) && (await rentFor("Bicycle")));
   await shot("1-panel");
 
   await clickText("Take it out");

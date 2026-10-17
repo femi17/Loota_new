@@ -17,14 +17,17 @@ let browser;
 let fails = 0;
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
-const spot = { lng: 3.3755, lat: 6.5145 }; // a street in Yaba, away from chill spots
+// A street in Yaba, away from chill spots; SPOT="lng,lat" for another (e.g. a dual carriageway), MODE=walk to rest on foot.
+const [spotLng, spotLat] = (process.env.SPOT ?? "3.3755,6.5145").split(",").map(Number);
+const spot = { lng: spotLng, lat: spotLat };
+const MODE = process.env.MODE === "walk" ? "walk" : "bicycle";
 try {
   const email = `rest-b-${Date.now()}@example.com`, password = `T3st-${Math.random().toString(36).slice(2)}!`;
   const { data } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   const id = data.user.id; ids.push(id);
   await admin.from("profiles").update({ home_lng: spot.lng, home_lat: spot.lat, home_set_at: new Date().toISOString() }).eq("id", id);
-  await admin.from("player_vehicles").insert({ user_id: id, kind: "bicycle", fuel: 0, tyre: 100, engine: 100, lng: spot.lng, lat: spot.lat, in_use: true });
-  await admin.from("player_positions").upsert({ user_id: id, lng: spot.lng, lat: spot.lat, mode: "bicycle", energy: 40, updated_at: ago(5) });
+  await admin.from("player_vehicles").insert({ user_id: id, kind: "bicycle", fuel: 0, tyre: 100, engine: 100, lng: spot.lng, lat: spot.lat, in_use: MODE === "bicycle" });
+  await admin.from("player_positions").upsert({ user_id: id, lng: spot.lng, lat: spot.lat, mode: MODE, energy: 40, updated_at: ago(5) });
 
   const jar = new Map();
   const c = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { cookies: {
@@ -45,7 +48,7 @@ try {
   await page.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
   await wait(18000);
   await page.screenshot({ path: `${OUT}/rest-0-riding.png` });
-  check("tired on the bicycle: Rest here", await clickText("Rest here"));
+  check(`tired (${MODE}): Rest here`, await clickText("Rest here"));
   await wait(2500);
   check("resting by the road", /sit down/i.test(await hint()), await hint());
   await page.screenshot({ path: `${OUT}/rest-1-sitting.png` });

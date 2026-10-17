@@ -4780,6 +4780,47 @@ export function GameMap({
       // ---- Resting by the road: sitting at its edge, not in the lane, the bicycle standing beside ----
       let restBike: import("@/game/ThreeMapLayer").MapEntity | null = null;
       const restingNow = () => traveller.resting && traveller.phase === "idle" && traveller.v < 0.3 && !ride && !visit;
+      /**
+       * Where to sit while resting: off the road, on whichever side is furthest from any road (a dual carriageway's
+       * other half, a parallel street), facing the road. Worked out once per spot.
+       */
+      let seat: { key: string; at: LngLat; bike: LngLat; heading: number } | null = null;
+      function roadsideSeat() {
+        const key = `${traveller.pos.lng.toFixed(6)},${traveller.pos.lat.toFixed(6)},${traveller.heading.toFixed(2)}`;
+        if (seat?.key === key) return seat;
+        const enlarge = layer.enlargement();
+        const kx = 111320 * Math.cos((traveller.pos.lat * Math.PI) / 180);
+        const ky = 110574;
+        /** Metres from a spot to the nearest piece of road (within ~120 m). */
+        const clearance = (p: LngLat) => {
+          let best = Infinity;
+          if (!network) return best;
+          const px = p.lng * kx, py = p.lat * ky;
+          for (const e of network.edges) {
+            const a = network.nodes[e.a], b = network.nodes[e.b];
+            const ax = a.lng * kx, ay = a.lat * ky, bx = b.lng * kx, by = b.lat * ky;
+            if (Math.min(ax, bx) - px > 120 || px - Math.max(ax, bx) > 120 || Math.min(ay, by) - py > 120 || py - Math.max(ay, by) > 120) continue;
+            const len2 = (bx - ax) ** 2 + (by - ay) ** 2 || 1e-9;
+            const f = Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / len2));
+            best = Math.min(best, Math.hypot(ax + f * (bx - ax) - px, ay + f * (by - ay) - py));
+          }
+          return best;
+        };
+        // Both sides, a little out and further out: the clearest spot (the nearer one if it's clear enough).
+        let pick = { side: 1, off: 2.4, clear: -1 };
+        for (const off of [2.4, 3.4]) {
+          for (const side of [1, -1]) {
+            const clear = clearance(besideBus(traveller.pos, traveller.heading, side * off * enlarge, 0));
+            if (clear > pick.clear + 0.5) pick = { side, off, clear };
+          }
+          if (pick.clear >= 1.6 * enlarge) break; // clear of the road: no need to go further
+        }
+        const at = besideBus(traveller.pos, traveller.heading, pick.side * pick.off * enlarge, 0);
+        const bike = besideBus(traveller.pos, traveller.heading, pick.side * (pick.off - 0.2) * enlarge, 1.7 * enlarge);
+        seat = { key, at, bike, heading: traveller.heading + (pick.side * Math.PI) / 2 }; // facing the road
+        return seat;
+      }
+
       /** Waiting for a bus: the spot on the kerb among the others waiting, facing the door (not where the bus pulls in). */
       function busKerb(): { at: LngLat; heading: number } | null {
         if (!ride || ride.trip.mode !== "bus" || ride.s > 0) return null;
@@ -4801,13 +4842,12 @@ export function GameMap({
           me.lat = kerb.at.lat;
           me.heading = kerb.heading;
         } else if (sitting) {
-          const enlarge = layer.enlargement();
-          const seat = besideBus(traveller.pos, traveller.heading, 2.4 * enlarge, 0);
-          me.lng = seat.lng;
-          me.lat = seat.lat;
-          me.heading = traveller.heading + Math.PI / 2; // facing the road
+          const spot = roadsideSeat();
+          me.lng = spot.at.lng;
+          me.lat = spot.at.lat;
+          me.heading = spot.heading;
           if (traveller.mode === "bicycle") {
-            const stand = besideBus(traveller.pos, traveller.heading, 2.2 * enlarge, 1.7 * enlarge);
+            const stand = spot.bike;
             if (!restBike) {
               const bike = models.makeVehicleModel("bicycle");
               bike.rotation.z = 0.12; // leaning on its stand

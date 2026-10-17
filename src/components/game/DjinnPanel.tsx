@@ -14,10 +14,10 @@ export type DjinnGate = {
   floor: { grid: number[][]; riddle: string };
   scales: { weights: number[]; target: number };
 };
-export type DjinnStage = "summoned" | "gate" | "turned_away" | "seals" | "chosen" | "over";
+export type DjinnStage = "summoned" | "gate" | "turned_away" | "seals" | "chosen" | "fooled" | "won" | "over";
 /** The Djinn's Wager as the player sees it (djinn_state). Times are on this device's clock (ms). */
 export type DjinnState = {
-  wager: { id: string; wonder: string; startsAt: number; endsAt: number; claimedBy: string | null } | null;
+  wager: { id: string; wonder: string; extraWonder: string | null; startsAt: number; endsAt: number; claimedBy: string | null } | null;
   stage: DjinnStage;
   gate: DjinnGate | null;
   retryAt: number | null;
@@ -26,7 +26,18 @@ export type DjinnState = {
   seals: DjinnSeal[] | null;
   chosen: DjinnSite | null;
 };
-export type GateVerdict = { score: number; favour: number; rooms: { cipher: boolean; floor: boolean; scales: boolean } };
+export type Rooms = { cipher: string; floor: { grid: number[][]; riddle: string }; scales: { weights: number[]; target: number } };
+export type RoomMarks = { cipher: boolean; floor: boolean; scales: boolean };
+export type GateVerdict = { score: number; favour: number; rooms: RoomMarks };
+/** In the chamber at the chosen place (djinn_enter_chamber). The deadline is on this device's clock (ms). */
+export type DjinnChamber = Rooms & { id: string; place: string; deadline: number; seconds: number };
+export type ChamberResult = {
+  outcome: "won" | "empty" | "whirlwind" | "too_late";
+  rooms: RoomMarks;
+  wonder: string;
+  extraWonder: string | null;
+  dropAt: { name: string; lng: number; lat: number } | null;
+};
 
 export type DjinnActions = {
   state: () => Promise<DjinnState>;
@@ -34,6 +45,10 @@ export type DjinnActions = {
   answerGate: (cipher: string, path: number[], weights: number[]) => Promise<GateVerdict | string>;
   choose: (siteId: number) => Promise<DjinnState | string>;
   showWay: (site: DjinnSite) => void;
+  /** At the chosen place: the chamber's rooms (the same ones while an attempt is open), or why not. */
+  enterChamber: () => Promise<DjinnChamber | string>;
+  /** The chamber's answers; a whirlwind carries the player off (the game moves them). */
+  answerChamber: (chamberId: string, cipher: string, path: number[], weights: number[]) => Promise<ChamberResult | string>;
 };
 
 const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
@@ -208,17 +223,91 @@ function ScalesRoom({ weights, target, picked, onChange }: { weights: number[]; 
   );
 }
 
-/** The Djinn's Wager (design doc 7.6): the summons, the gate, the seals, and the way. */
-export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClose: () => void }) {
-  const [state, setState] = useState<DjinnState | null>(null);
-  const [now, setNow] = useState(0);
-  const [message, setMessage] = useState<string | null>(null);
-  const [working, setWorking] = useState(false);
+/** Three rooms against the clock (the gate, or the harder chamber); answered all together. */
+function RoomsPuzzle({
+  rooms,
+  deadline,
+  seconds,
+  now,
+  working,
+  speak,
+  onSpeak,
+}: {
+  rooms: Rooms;
+  deadline: number;
+  seconds: number;
+  now: number;
+  working: boolean;
+  speak: string;
+  onSpeak: (cipher: string, path: number[], weights: number[]) => void;
+}) {
   const [room, setRoom] = useState(0);
   const [shift, setShift] = useState(0);
   const [path, setPath] = useState<number[]>([]);
   const [stones, setStones] = useState<number[]>([]);
+  const left = Math.max(0, deadline - now);
+  const button = "h-11 rounded-xl px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40";
+  return (
+    <div className="mt-3 flex flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <div className="h-2 flex-1 overflow-hidden rounded bg-line">
+          <div className="h-full bg-[#C89BFF] transition-[width] duration-300" style={{ width: `${(left / 1000 / seconds) * 100}%` }} />
+        </div>
+        <span className="w-12 text-right text-xs font-bold text-paper/80">{countdown(left)}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-1.5" role="tablist" aria-label="The rooms">
+        {["I · Cipher", "II · Floor", "III · Scales"].map((label, i) => {
+          const done = i === 0 ? shift > 0 : i === 1 ? path.length === rooms.floor.grid.length : stones.length > 0;
+          return (
+            <button
+              key={label}
+              type="button"
+              role="tab"
+              aria-selected={room === i}
+              onClick={() => setRoom(i)}
+              className={`h-10 rounded-lg text-xs font-bold ${room === i ? "bg-[#9B5DE5] text-paper" : "bg-ink-2 text-paper/80"}`}
+            >
+              {done ? "✓ " : ""}
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      {room === 0 && <CipherRoom text={rooms.cipher} value={shift} onChange={setShift} />}
+      {room === 1 && <FloorRoom grid={rooms.floor.grid} riddle={rooms.floor.riddle} path={path} onChange={setPath} />}
+      {room === 2 && <ScalesRoom weights={rooms.scales.weights} target={rooms.scales.target} picked={stones} onChange={setStones} />}
+      <div className="flex gap-2">
+        {room < 2 && (
+          <button type="button" onClick={() => setRoom(room + 1)} className={`${button} bg-ink-2 text-paper`}>
+            Next room
+          </button>
+        )}
+        <button type="button" disabled={working} onClick={() => onSpeak(shiftBack(rooms.cipher, shift), path, stones)} className={`${button} bg-gold text-ink`}>
+          {speak}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The Djinn's Wager (design doc 7.6): the summons, the gate, the seals, the way, and the chamber. */
+export function DjinnPanel({
+  actions,
+  chamber: chamberStart,
+  onClose,
+}: {
+  actions: DjinnActions;
+  /** Opened at the chosen place by "Enter the chamber": the rooms already asked for, or why not. */
+  chamber: DjinnChamber | string | null;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<DjinnState | null>(null);
+  const [now, setNow] = useState(0);
+  const [message, setMessage] = useState<string | null>(typeof chamberStart === "string" ? chamberStart : null);
+  const [working, setWorking] = useState(false);
   const [verdict, setVerdict] = useState<GateVerdict | null>(null);
+  const chamber = typeof chamberStart === "object" ? chamberStart : null;
+  const [ending, setEnding] = useState<ChamberResult | null>(null);
   const [breaking, setBreaking] = useState<number | null>(null);
 
   useEffect(() => {
@@ -245,21 +334,25 @@ export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClos
     const r = await actions.startGate();
     setWorking(false);
     if (typeof r === "string") setMessage(r);
-    else {
-      setRoom(0);
-      setShift(0);
-      setPath([]);
-      setStones([]);
-      setState(r);
-    }
+    else setState(r);
   };
-  const speak = async () => {
-    if (!state?.gate) return;
+  const speak = async (cipher: string, path: number[], weights: number[]) => {
     setWorking(true);
-    const r = await actions.answerGate(shiftBack(state.gate.cipher, shift), path, stones);
+    const r = await actions.answerGate(cipher, path, weights);
     setWorking(false);
     if (typeof r === "string") setMessage(r);
     else setVerdict(r);
+  };
+  const speakInChamber = async (cipher: string, path: number[], weights: number[]) => {
+    if (!chamber) return;
+    setWorking(true);
+    const r = await actions.answerChamber(chamber.id, cipher, path, weights);
+    setWorking(false);
+    if (typeof r === "string") setMessage(r);
+    else {
+      setEnding(r);
+      if (r.outcome === "whirlwind") window.setTimeout(onClose, 2600); // the wind carries them off
+    }
   };
   const unroll = async () => {
     setVerdict(null);
@@ -274,8 +367,22 @@ export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClos
     else setState(r);
   };
 
-  const mood = stage === "turned_away" || (verdict && verdict.score === 0) ? "scornful" : verdict && verdict.favour > 0 ? "pleased" : "calm";
+  const mood =
+    stage === "turned_away" || stage === "fooled" || (verdict && verdict.score === 0) || ending?.outcome === "empty" || ending?.outcome === "whirlwind"
+      ? "scornful"
+      : (verdict && verdict.favour > 0) || ending?.outcome === "won" || stage === "won"
+        ? "pleased"
+        : "calm";
   const line = (() => {
+    if (ending) {
+      if (ending.outcome === "won")
+        return `Impossible… The chamber is mastered. Take it, then: ${wonderOf(ending.wonder).name} is yours. Use it well, little king, and tell no one.`;
+      if (ending.outcome === "empty") return "Hahaha! An empty vault! You trusted the wrong seal, little traveller. My treasure lies elsewhere, and you will never touch it now.";
+      if (ending.outcome === "too_late") return "Too slow! Another hand has already taken my treasure. The vault is bare.";
+      return "Wrong! The floor gives way to a howling wind… Away with you!";
+    }
+    if (chamber && !state) return "…";
+    if (chamber) return `So you found ${chamber.place}. Three rooms guard my vault, harder than my gate. Fail, and the wind will carry you far away.`;
     if (!state?.wager || !wonder) return "The lamp is cold. The Djinn sleeps.";
     if (verdict) {
       if (verdict.score === 0) return "Pah! A mind as dull as a rusty lamp. Come back when the sand has turned.";
@@ -294,6 +401,10 @@ export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClos
         return "Eight seals, one truth. Read my riddle, then break the seal you trust. Choose well: the lamp does not forgive.";
       case "chosen":
         return "So be it. The way is yours. Go, before another hand reaches it first.";
+      case "fooled":
+        return "You trusted the wrong seal. The vault was empty. Sleep now; I will wake you again.";
+      case "won":
+        return `You hold ${wonder.name}. Use it well, little king, and tell no one.`;
       default:
         return state.wager.claimedBy
           ? `${state.wager.claimedBy} has taken ${wonder.name}. Sleep, little traveller; I will wake you again.`
@@ -302,7 +413,6 @@ export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClos
   })();
 
   const gate = state?.gate ?? null;
-  const gateLeft = gate ? Math.max(0, gate.deadline - now) : 0;
 
   return (
     <div className="absolute inset-0 z-20 flex items-end justify-center bg-[#0B0616]/80 sm:items-center">
@@ -313,14 +423,14 @@ export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClos
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="font-display text-2xl font-extrabold text-[#E8D8FF]">The Djinn&apos;s Wager</h2>
+            <h2 className="font-display text-2xl font-extrabold text-[#E8D8FF]">{chamber ? `The Chamber of ${chamber.place}` : "The Djinn's Wager"}</h2>
             {state?.wager && wonder && stage !== "over" && (
               <p className="text-xs text-paper/70">
                 At stake: {wonder.icon} <b className="text-gold">{wonder.name.replace(/^the /, "The ")}</b> · ⏳ {now ? countdown(state.wager.endsAt - now) : "…"} left
               </p>
             )}
           </div>
-          {stage !== "gate" && (
+          {(chamber ? !!ending && ending.outcome !== "whirlwind" : stage !== "gate") && (
             <button type="button" onClick={onClose} aria-label="Close" className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-ink-2">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
                 <path d="M6 6l12 12M18 6L6 18" />
@@ -329,7 +439,7 @@ export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClos
           )}
         </div>
 
-        {stage !== "gate" || verdict ? (
+        {(chamber ? !!ending || !state : stage !== "gate" || verdict) ? (
           <>
             <DjinnArt mood={mood} />
             <p className="relative rounded-2xl bg-[#F5ECD8] p-4 text-sm font-semibold leading-relaxed text-[#3A2410] shadow-lg" role="status">
@@ -370,46 +480,43 @@ export function DjinnPanel({ actions, onClose }: { actions: DjinnActions; onClos
               Face the gate
             </button>
           </div>
-        ) : stage === "gate" && gate ? (
-          <div className="mt-3 flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <div className="h-2 flex-1 overflow-hidden rounded bg-line">
-                <div className="h-full bg-[#C89BFF] transition-[width] duration-300" style={{ width: `${(gateLeft / 1000 / gate.seconds) * 100}%` }} />
-              </div>
-              <span className="w-12 text-right text-xs font-bold text-paper/80">{countdown(gateLeft)}</span>
-            </div>
-            <div className="grid grid-cols-3 gap-1.5" role="tablist" aria-label="The rooms">
-              {["I · Cipher", "II · Floor", "III · Scales"].map((label, i) => {
-                const done = i === 0 ? shift > 0 : i === 1 ? path.length === gate.floor.grid.length : stones.length > 0;
-                return (
-                  <button
-                    key={label}
-                    type="button"
-                    role="tab"
-                    aria-selected={room === i}
-                    onClick={() => setRoom(i)}
-                    className={`h-10 rounded-lg text-xs font-bold ${room === i ? "bg-[#9B5DE5] text-paper" : "bg-ink-2 text-paper/80"}`}
-                  >
-                    {done ? "✓ " : ""}
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-            {room === 0 && <CipherRoom text={gate.cipher} value={shift} onChange={setShift} />}
-            {room === 1 && <FloorRoom grid={gate.floor.grid} riddle={gate.floor.riddle} path={path} onChange={setPath} />}
-            {room === 2 && <ScalesRoom weights={gate.scales.weights} target={gate.scales.target} picked={stones} onChange={setStones} />}
-            <div className="flex gap-2">
-              {room < 2 && (
-                <button type="button" onClick={() => setRoom(room + 1)} className={`${button} bg-ink-2 text-paper`}>
-                  Next room
+        ) : chamber ? (
+          ending ? (
+            <div className={`mt-4 flex flex-col gap-3 ${ending.outcome === "whirlwind" ? "loota-whirlwind" : ""}`}>
+              <ul className="flex flex-col gap-1 text-sm">
+                <li>{ending.rooms.cipher ? "✓" : "✗"} The cipher wheel</li>
+                <li>{ending.rooms.floor ? "✓" : "✗"} The cursed floor</li>
+                <li>{ending.rooms.scales ? "✓" : "✗"} The idol&apos;s scales</li>
+              </ul>
+              {ending.outcome === "won" && (
+                <p className="rounded-2xl bg-[#F5ECD8] p-4 text-center font-display text-xl font-extrabold text-[#3A2410]">
+                  {wonderOf(ending.wonder).icon} {wonderOf(ending.wonder).name.replace(/^the /, "The ")}
+                  {ending.extraWonder ? ` and ${wonderOf(ending.extraWonder).name}` : ""} {ending.extraWonder ? "are" : "is"} yours
+                </p>
+              )}
+              {ending.outcome !== "whirlwind" && (
+                <button type="button" onClick={onClose} className={`${button} self-start bg-gold text-ink`}>
+                  {ending.outcome === "won" ? "Take it" : "Leave"}
                 </button>
               )}
-              <button type="button" disabled={working} onClick={() => void speak()} className={`${button} bg-gold text-ink`}>
-                Speak to the Djinn
-              </button>
             </div>
-          </div>
+          ) : (
+            <RoomsPuzzle
+              rooms={chamber}
+              deadline={chamber.deadline}
+              seconds={chamber.seconds}
+              now={now}
+              working={working}
+              speak="Speak the final words"
+              onSpeak={(c, p, w) => void speakInChamber(c, p, w)}
+            />
+          )
+        ) : stage === "gate" && gate ? (
+          <RoomsPuzzle rooms={gate} deadline={gate.deadline} seconds={gate.seconds} now={now} working={working} speak="Speak to the Djinn" onSpeak={(c, p, w) => void speak(c, p, w)} />
+        ) : stage === "won" && wonder ? (
+          <p className="mt-4 rounded-2xl bg-[#F5ECD8] p-4 text-center font-display text-lg font-extrabold text-[#3A2410]">
+            {wonder.icon} {wonder.name.replace(/^the /, "The ")} is in your bag. Only you know.
+          </p>
         ) : stage === "turned_away" ? (
           <p className="mt-4 text-sm text-paper/80">The gate opens again in {state.retryAt && now ? countdown(state.retryAt - now) : "a while"}.</p>
         ) : stage === "seals" && state.seals ? (

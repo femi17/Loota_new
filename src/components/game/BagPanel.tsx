@@ -3,8 +3,11 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { RELICS, type RelicId } from "@/game/items";
+import { wonderOf } from "@/game/wonders";
 
 type Relic = { id: string; relic: RelicId; charges: number; expires_at: string };
+/** A Wonder from the Djinn (design doc 7.7): held in secret. */
+type Wonder = { id: string; wonder: string; expires_at: string };
 
 /** What each relic's button says (Shields work by themselves; Fast Pass waits for transport). */
 const USE_LABEL: Record<RelicId, string | null> = {
@@ -20,6 +23,7 @@ const USE_LABEL: Record<RelicId, string | null> = {
 /** The player's bag: relics found while roaming, and using them. */
 export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id: string) => Promise<string>; onClose: () => void }) {
   const [relics, setRelics] = useState<Relic[] | null>(null);
+  const [wonders, setWonders] = useState<Wonder[]>([]);
   const [now] = useState(() => Date.now());
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -34,6 +38,14 @@ export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id:
       .order("acquired_at", { ascending: false })
       .then(({ data }) => {
         if (!cancelled) setRelics(((data ?? []) as Relic[]).filter((r) => new Date(r.expires_at).getTime() > Date.now()));
+      });
+    createClient()
+      .from("player_wonders")
+      .select("id, wonder, expires_at")
+      .is("used_at", null)
+      .order("won_at", { ascending: false })
+      .then(({ data }) => {
+        if (!cancelled) setWonders(((data ?? []) as Wonder[]).filter((w) => new Date(w.expires_at).getTime() > Date.now()));
       });
     return () => {
       cancelled = true;
@@ -79,6 +91,26 @@ export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id:
           <p role="status" className="mb-4 rounded-2xl border border-gold/60 bg-gold/10 p-3 text-sm">
             {message}
           </p>
+        )}
+
+        {wonders.length > 0 && (
+          <ul className="mb-4 flex flex-col gap-2" aria-label="Your Wonders">
+            {wonders.map((w) => {
+              const info = wonderOf(w.wonder);
+              return (
+                <li key={w.id} className="flex flex-col gap-1 rounded-2xl bg-[#2A1747] p-4 ring-2 ring-[#9B5DE5]">
+                  <p className="font-display text-lg font-extrabold">
+                    {info.icon} {info.name.replace(/^the /, "The ")}
+                  </p>
+                  <p className="text-sm text-paper/85">{info.effect}</p>
+                  <p className="text-xs text-paper/60">
+                    A Wonder from the Djinn: one in the world, and only you know you hold it. Fades in {daysLeft(w.expires_at)} days. Its power
+                    wakes in a live hunt.
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
         )}
 
         {relics === null ? (

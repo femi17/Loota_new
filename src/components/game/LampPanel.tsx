@@ -75,7 +75,7 @@ export function LampPanel({
   /** Opened by the Claim button at a Detour's place: the question already asked. */
   quiz: LampQuestion | string | null;
   /** The Djinn's Wager, while one is on: pinned at the top. */
-  djinn: { stage: string; wonder: string; endsAt: number; place: string | null } | null;
+  djinn: { stage: string; wonder: string; endsAt: number; place: string | null; rivals: { count: number; nearest: number } | null } | null;
   onDjinn: () => void;
   onClose: () => void;
 }) {
@@ -184,12 +184,19 @@ export function LampPanel({
                   ? `Your seal: ${djinn.place}`
                   : djinn.stage === "seals"
                     ? "Break a seal on his map"
-                    : djinn.stage === "turned_away"
+                    : djinn.stage === "won"
+                      ? "You hold the Wonder"
+                      : djinn.stage === "fooled"
+                        ? "The vault was empty"
+                        : djinn.stage === "turned_away"
                       ? "He turned you away for now"
                       : djinn.stage === "over"
                         ? "The Wager is over"
                         : "He waits at his gate"}
                 {djinn.stage !== "over" && now > 0 ? ` · ⏳ ${countdown(djinn.endsAt - now)}` : ""}
+                {djinn.stage === "chosen" && djinn.rivals
+                  ? ` · ⚠ ${djinn.rivals.count} rival${djinn.rivals.count > 1 ? "s" : ""}, the nearest ${distance(djinn.rivals.nearest)} away`
+                  : ""}
               </span>
             </span>
             <span className="text-sm font-bold text-[#C89BFF]">Open</span>

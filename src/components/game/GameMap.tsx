@@ -17,7 +17,8 @@ import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type Roa
 import { PlaceSearch } from "./PlaceSearch";
 import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
 import { JourneyPanel, legText } from "./JourneyPanel";
-import { DjinnPanel, type DjinnActions, type DjinnStage, type DjinnState, type GateVerdict } from "./DjinnPanel";
+import { DjinnPanel, type ChamberResult, type DjinnActions, type DjinnChamber, type DjinnStage, type DjinnState, type GateVerdict } from "./DjinnPanel";
+import { wonderOf } from "@/game/wonders";
 import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, rideLeg, type Journey } from "@/game/journey";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -88,7 +89,17 @@ type Hud = {
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
   /** The Djinn's Wager, while one is on (design doc 7.6): where the player is in it, and whether they've seen the summons. */
-  djinn: { stage: DjinnStage; wonder: string; endsAt: number; fresh: boolean; place: string | null } | null;
+  djinn: {
+    stage: DjinnStage;
+    wonder: string;
+    endsAt: number;
+    fresh: boolean;
+    place: string | null;
+    /** Other hunters who broke the same seal, and how close the nearest is to the place. */
+    rivals: { count: number; nearest: number } | null;
+  } | null;
+  /** At the chosen seal's place: the "Enter the chamber" button. */
+  djinnHere: { place: string } | null;
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
   journey: { place: string; step: number; total: number; text: string; board: string | null } | null;
   /** The lamp: whether it holds something (one thing at a time), and whether the player has looked at it yet (it glows). */
@@ -271,6 +282,7 @@ export function GameMap({
     detourHere: null,
     journey: null,
     djinn: null,
+    djinnHere: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -285,7 +297,19 @@ export function GameMap({
   const [lampActions, setLampActions] = useState<LampActions | null>(null);
   const [lampOpen, setLampOpen] = useState<{ quiz: LampQuestion | string | null } | null>(null);
   const [djinnActions, setDjinnActions] = useState<DjinnActions | null>(null);
-  const [djinnOpen, setDjinnOpen] = useState(false);
+  const [djinnOpen, setDjinnOpen] = useState<{ chamber: DjinnChamber | string | null } | null>(null);
+  /** A whirlwind is carrying the player off (the chamber was failed). */
+  const [whirlwind, setWhirlwind] = useState(false);
+  /** A trap just sprang: a red flash. */
+  const [trapFlash, setTrapFlash] = useState(false);
+  /** "Enter the chamber" at the chosen place: ask for the rooms (once), then open the Djinn on them. */
+  const enterChamber = async () => {
+    if (!djinnActions || checkingIn) return;
+    setCheckingIn(true);
+    const chamber = await djinnActions.enterChamber();
+    setCheckingIn(false);
+    setDjinnOpen({ chamber });
+  };
   /** The Claim button at a Detour's place: ask the question (once), then open the lamp on it. */
   const claimDetour = async (detour: LampDetour) => {
     if (!lampActions || checkingIn) return;
@@ -1273,6 +1297,7 @@ export function GameMap({
 
       // ---- Hunts: searching where you stand, trials and being thrown out ----
       let frozen = false; // standing still during a Key Trial
+      let stuckUntil = 0; // held by a trap (quicksand, a dart wall), performance.now() time
 
       /** Put the hunter at a spot the server has already recorded (e.g. thrown 2 km after a failed trial). */
       function placeAt(lng: number, lat: number) {
@@ -3767,7 +3792,7 @@ export function GameMap({
         const { data } = await supabase.rpc("djinn_state");
         type Raw = {
           now: string;
-          wager: { id: string; wonder: string; startsAt: string; endsAt: string; claimedBy: string | null } | null;
+          wager: { id: string; wonder: string; extraWonder: string | null; startsAt: string; endsAt: string; claimedBy: string | null } | null;
           stage?: DjinnStage;
           gate?: (Omit<NonNullable<DjinnState["gate"]>, "deadline"> & { deadline: string }) | null;
           retryAt?: string | null;
@@ -3781,8 +3806,9 @@ export function GameMap({
         const skew = Date.now() - Date.parse(raw.now);
         const at = (iso: string) => Date.parse(iso) + skew;
         const before = djinn?.wager?.id ?? null;
+        const takenBefore = djinn?.wager?.claimedBy ?? null;
         djinn = {
-          wager: raw.wager ? { ...raw.wager, startsAt: at(raw.wager.startsAt), endsAt: at(raw.wager.endsAt) } : null,
+          wager: raw.wager ? { ...raw.wager, extraWonder: raw.wager.extraWonder ?? null, startsAt: at(raw.wager.startsAt), endsAt: at(raw.wager.endsAt) } : null,
           stage: raw.stage ?? "over",
           gate: raw.gate ? { ...raw.gate, deadline: at(raw.gate.deadline) } : null,
           retryAt: raw.retryAt ? at(raw.retryAt) : null,
@@ -3794,6 +3820,10 @@ export function GameMap({
         if (djinn.wager && djinn.stage === "summoned" && djinn.wager.id !== before && !djinnSeen(djinn.wager.id)) {
           say("🧞 The lamp shakes and smokes purple: the Djinn has woken! Open the lamp.", true);
         }
+        const taken = djinn.wager?.claimedBy;
+        if (taken && !takenBefore && before === djinn.wager?.id && djinn.stage === "over") {
+          say(`🧞 ${taken} has mastered the chamber and taken ${wonderOf(djinn.wager!.wonder).name}. The Wager is over.`, true);
+        }
         showDjinn();
         return djinn;
       }
@@ -3802,13 +3832,82 @@ export function GameMap({
         const w = djinn?.wager;
         const view =
           w && djinn
-            ? { stage: djinn.stage, wonder: w.wonder, endsAt: w.endsAt, fresh: djinn.stage === "summoned" && !djinnSeen(w.id), place: djinn.chosen?.name ?? null }
+            ? {
+                stage: djinn.stage,
+                wonder: w.wonder,
+                endsAt: w.endsAt,
+                fresh: djinn.stage === "summoned" && !djinnSeen(w.id),
+                place: djinn.chosen?.name ?? null,
+                rivals: djinnRivals,
+              }
             : null;
         setHud((h) => (JSON.stringify(h.djinn) === JSON.stringify(view) ? h : { ...h, djinn: view }));
       }
 
       function djinnTick(now: number) {
         if (now - djinnAt > 60_000) void refreshDjinn();
+        djinnApproachTick(now);
+      }
+
+      // ---- The approach to the chosen seal: traps, rivals, the chamber ----
+      // Hidden traps lie on two rings around the place (the server springs them);
+      // other hunters who broke the same seal are reported as they close in; at the
+      // place, the chamber.
+      let approachAt = -Infinity;
+      let rivalsAt = -Infinity;
+      let rivalBand = Infinity;
+      let djinnRivals: { count: number; nearest: number } | null = null;
+      const TRAPS: Record<string, string> = {
+        quicksand: "Quicksand! You're stuck, sinking slowly. Hold still… (25 s)",
+        dart_wall: "A dart wall! You dive for cover: stuck 15 s, and 10 energy lost.",
+        snake_pit: "A snake pit! You scramble out, bitten and shaken: 25 energy lost.",
+        collapsing_bridge: "The bridge collapses under you! You're swept back 300 m.",
+      };
+
+      function djinnApproachTick(now: number) {
+        const site = djinn?.stage === "chosen" && !ride && !visit ? djinn.chosen : null;
+        const d = site ? geo.distanceM([traveller.pos.lng, traveller.pos.lat], [site.lng, site.lat]) : Infinity;
+        const here = site && d <= 55 ? { place: site.name } : null;
+        setHud((h) => (h.djinnHere?.place === here?.place ? h : { ...h, djinnHere: here }));
+        if (!site) return;
+        if (d < 1300 && now - approachAt > 3000) {
+          approachAt = now;
+          void approach();
+        }
+        if (now - rivalsAt > 60_000) {
+          rivalsAt = now;
+          void watchRivals(site.name);
+        }
+      }
+
+      async function approach() {
+        await savePosition(); // the server checks the rings against where it last saw the player
+        const { data } = await supabase.rpc("djinn_approach");
+        const r = data as { quest: boolean; energy?: number; trap?: { kind: string; stuck?: number; lng?: number; lat?: number } | null } | null;
+        const trap = r?.trap;
+        if (disposed || !trap) return;
+        if (r.energy != null) traveller.energy = r.energy;
+        if (trap.stuck) {
+          stuckUntil = performance.now() + trap.stuck * 1000;
+          traveller.v = 0;
+        }
+        if (trap.lng != null && trap.lat != null) placeAt(trap.lng, trap.lat);
+        setTrapFlash(true);
+        window.setTimeout(() => setTrapFlash(false), 1400);
+        say(TRAPS[trap.kind] ?? "A trap!", true);
+      }
+
+      async function watchRivals(place: string) {
+        const { data } = await supabase.rpc("djinn_rivals");
+        const r = data as { count: number; nearest: number | null } | null;
+        djinnRivals = r && r.count > 0 && r.nearest != null ? { count: r.count, nearest: r.nearest } : null;
+        showDjinn();
+        if (!djinnRivals) return;
+        const band = [500, 2000, 5000].find((b) => djinnRivals!.nearest <= b);
+        if (band && band < rivalBand) {
+          rivalBand = band;
+          say(`⚠ A rival hunter is within ${geo.formatDistance(band)} of ${place}. Hurry!`, true);
+        }
       }
 
       setDjinnActions({
@@ -3850,6 +3949,46 @@ export function GameMap({
           return refreshDjinn();
         },
         showWay: (site) => void routeTo({ name: site.name, detail: site.country, lng: site.lng, lat: site.lat }),
+        enterChamber: async () => {
+          await savePosition(); // the server checks the player is at the place
+          const { data } = await supabase.rpc("djinn_enter_chamber");
+          type Raw = Omit<DjinnChamber, "id" | "deadline"> & { ok: boolean; reason?: string; chamber: string; deadline: string; now: string };
+          const r = data as Raw | null;
+          if (!r?.ok) {
+            return r?.reason === "far" ? "The chamber's door is right at the place: get closer." : "The Djinn's Wager is over.";
+          }
+          return {
+            id: r.chamber,
+            place: r.place,
+            seconds: r.seconds,
+            deadline: Date.now() + (Date.parse(r.deadline) - Date.parse(r.now)),
+            cipher: r.cipher,
+            floor: r.floor,
+            scales: r.scales,
+          };
+        },
+        answerChamber: async (chamberId, cipher, path, weights) => {
+          const { data } = await supabase.rpc("djinn_answer_chamber", { p_chamber: chamberId, p_cipher: cipher, p_path: path, p_weights: weights });
+          const r = data as ({ ok: boolean } & ChamberResult) | null;
+          if (!r?.ok) return "The chamber is silent. Try again.";
+          const place = djinn?.chosen;
+          if (r.outcome === "whirlwind" && r.dropAt) {
+            const drop = r.dropAt;
+            setWhirlwind(true);
+            window.setTimeout(() => {
+              if (disposed) return;
+              snapReachM = 3000; // dropped on the airfield: onto its nearest road
+              placeAt(drop.lng, drop.lat);
+              setWhirlwind(false);
+              const far = place ? geo.formatDistance(geo.distanceM([drop.lng, drop.lat], [place.lng, place.lat])) : "far";
+              say(`🌪 The whirlwind spits you out at ${drop.name}, ${far} from ${place?.name ?? "the place"}. Come back and face the chamber again.`, true);
+            }, 2500);
+          } else if (r.outcome === "won") {
+            say(`🧞 ${wonderOf(r.wonder).name.replace(/^the /, "The ")} is yours! It's in your bag, and only you know.`, true);
+          }
+          void refreshDjinn();
+          return { outcome: r.outcome, rooms: r.rooms, wonder: r.wonder, extraWonder: r.extraWonder, dropAt: r.dropAt };
+        },
       });
       void refreshDjinn();
 
@@ -3967,7 +4106,7 @@ export function GameMap({
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && !ride && !visit && !!onRoad;
+        const canMove = !frozen && now >= stuckUntil && !ride && !visit && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
@@ -4652,7 +4791,7 @@ export function GameMap({
               data-tool="lamp"
               aria-label={`The lamp${hud.lamp.has ? (hud.lamp.unseen ? ": something new" : ": something waiting") : ""}`}
               title="The lamp"
-              onClick={() => (hud.djinn?.fresh ? setDjinnOpen(true) : setLampOpen({ quiz: null }))}
+              onClick={() => (hud.djinn?.fresh ? setDjinnOpen({ chamber: null }) : setLampOpen({ quiz: null }))}
               className={`${tool} relative ${
                 hud.djinn && ["summoned", "gate", "seals"].includes(hud.djinn.stage)
                   ? "loota-lamp-djinn bg-[#5B2A9E] text-paper"
@@ -4747,13 +4886,21 @@ export function GameMap({
           djinn={hud.djinn}
           onDjinn={() => {
             setLampOpen(null);
-            setDjinnOpen(true);
+            setDjinnOpen({ chamber: null });
           }}
           onClose={() => setLampOpen(null)}
         />
       )}
 
-      {djinnOpen && djinnActions && <DjinnPanel actions={djinnActions} onClose={() => setDjinnOpen(false)} />}
+      {djinnOpen && djinnActions && <DjinnPanel actions={djinnActions} chamber={djinnOpen.chamber} onClose={() => setDjinnOpen(null)} />}
+
+      {/* Carried off by the Djinn's whirlwind; a trap springing. */}
+      {whirlwind && (
+        <div className="loota-whirlwind-screen pointer-events-none absolute inset-0 z-30 flex items-center justify-center" aria-hidden="true">
+          <span className="text-7xl">🌪</span>
+        </div>
+      )}
+      {trapFlash && <div className="loota-trap-flash pointer-events-none absolute inset-0 z-20" aria-hidden="true" />}
 
       {landmarksOpen && landmarkActions && (
         <LandmarkPanel actions={landmarkActions} quiz={landmarksOpen.quiz} message={landmarksOpen.message} onClose={() => setLandmarksOpen(null)} />
@@ -4764,7 +4911,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -4779,6 +4926,17 @@ export function GameMap({
               <span className="text-xs font-semibold text-paper/85">
                 {hud.dome.siege.attackers} of {hud.dome.siege.needed} hunters attacking together
               </span>
+            </button>
+          )}
+          {hud.djinnHere && (
+            <button
+              type="button"
+              disabled={checkingIn}
+              onClick={() => void enterChamber()}
+              aria-label={`Enter the chamber at ${hud.djinnHere.place}`}
+              className="pointer-events-auto flex h-10 items-center gap-1.5 rounded-full bg-[#9B5DE5] px-3.5 text-sm font-bold text-paper shadow-lg disabled:opacity-50"
+            >
+              🧞 Enter the chamber
             </button>
           )}
           {hud.detourHere && (

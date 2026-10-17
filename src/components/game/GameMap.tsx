@@ -10,6 +10,7 @@ import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from
 import { CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
+import { RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
@@ -376,6 +377,9 @@ export function GameMap({
   const [carpetFor, setCarpetFor] = useState<string | null>(null);
   /** A key just won: it flies into the bag (the time it set off, so each one animates). */
   const [keyFly, setKeyFly] = useState<number | null>(null);
+  /** Something on the road (a hunt): the officer, the traveller, the seller. */
+  const [roadEvent, setRoadEvent] = useState<RoadEvent | null>(null);
+  const [roadActions, setRoadActions] = useState<RoadEventActions | null>(null);
   /** "Enter the chamber" at the chosen place: ask for the rooms (once), then open the Djinn on them. */
   const enterChamber = async () => {
     if (!djinnActions || checkingIn) return;
@@ -4896,6 +4900,40 @@ export function GameMap({
         }
       }
 
+      // ---- On the road in a hunt: now and then something stops the hunter (a checkpoint, a traveller, a seller) ----
+      let sceneHold = false; // a scene is up: the hunter stands still
+      let lastRoadRoll = performance.now(); // the first chance comes after ~45 s on the move
+      let rolling = false;
+      async function roadTick(now: number) {
+        if (!huntId || rolling || sceneHold || ride || visit || traveller.phase !== "idle" || traveller.v < 1) return;
+        if (now - lastRoadRoll < 45000) return;
+        rolling = true;
+        lastRoadRoll = now;
+        const { data } = await supabase.rpc("road_event_roll", { p_hunt: huntId });
+        rolling = false;
+        const e = (data as { ok: boolean; event: RoadEvent | null } | null)?.event;
+        if (disposed || !e) return;
+        sceneHold = true;
+        traveller.v = 0;
+        setRoadEvent(e);
+      }
+      setRoadActions({
+        answer: async (e, choice) => {
+          const { data } = await supabase.rpc("road_event_answer", { p_event: e.id, p_choice: choice });
+          const r = data as ({ ok: boolean; balance?: number; holdS?: number } & RoadEventResult) | null;
+          if (disposed || !r?.ok) return null;
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          if (r.holdS) stuckUntil = Math.max(stuckUntil, performance.now() + r.holdS * 1000);
+          if (r.hint) say(`🧭 Key ${r.hint.key}'s area: ${r.hint.direction} of where you met ${e.npc}, ${r.hint.band} away.`, true);
+          return r;
+        },
+        close: () => {
+          sceneHold = false;
+          lastRoadRoll = performance.now();
+        },
+      });
+
       // ---- Resting by the road: sitting at its edge, not in the lane, the bicycle standing beside ----
       let restBike: import("@/game/ThreeMapLayer").MapEntity | null = null;
       const restingNow = () => traveller.resting && traveller.phase === "idle" && traveller.v < 0.3 && !ride && !visit;
@@ -5015,7 +5053,7 @@ export function GameMap({
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
+        const canMove = !frozen && !sceneHold && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
@@ -5132,6 +5170,7 @@ export function GameMap({
         wondersTick(now);
         pocketTick(now);
         pulseTick(now, t);
+        void roadTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -5990,6 +6029,18 @@ export function GameMap({
         />
       )}
 
+      {roadEvent && roadActions && (
+        <RoadEventScene
+          event={roadEvent}
+          you={JSON.parse(lookKey) as AvatarLook}
+          vehicle={hud.vehicle?.kind ?? null}
+          actions={roadActions}
+          onClose={() => {
+            roadActions.close();
+            setRoadEvent(null);
+          }}
+        />
+      )}
       {rentOpen && rentalActions && (
         <RentalScene offer={rentOpen} you={JSON.parse(lookKey) as AvatarLook} actions={rentalActions} onClose={() => setRentOpen(null)} />
       )}

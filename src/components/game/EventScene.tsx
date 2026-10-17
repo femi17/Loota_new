@@ -6,7 +6,7 @@ import type { AvatarLook } from "@/lib/avatar";
 import type { VehicleKind } from "@/game/economy";
 
 /** Where a scene takes place. */
-export type SceneStage = "bicycle_shop" | "workshop" | "bike_hire";
+export type SceneStage = "bicycle_shop" | "workshop" | "bike_hire" | "checkpoint" | "roadside" | "stall";
 export type SceneLine = { who: "them" | "you"; text: string };
 export type SceneChoice = { label: string; primary?: boolean; onPick: () => void };
 
@@ -158,6 +158,7 @@ type Vehicle = { kind: VehicleKind; fixed: boolean; sparkle?: boolean };
 function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: string; vehicle: Vehicle | null; working: boolean }) {
   const shop = stage === "bicycle_shop";
   const hire = stage === "bike_hire";
+  const street = stage === "checkpoint" || stage === "roadside" || stage === "stall";
   return (
     <svg viewBox="0 0 320 180" preserveAspectRatio="xMidYMax slice" className="absolute inset-0 size-full" aria-hidden="true">
       <defs>
@@ -176,6 +177,8 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
       </g>
       {hire ? (
         <BikeHireStop kind={vehicle?.kind === "motorbike" ? "motorbike" : "bicycle"} />
+      ) : street ? (
+        <Street stage={stage} />
       ) : (
         <>
           {/* The ground: a dusty roadside */}
@@ -197,15 +200,28 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
         </>
       )}
 
-      {/* The hand-painted sign */}
-      <line x1="100" y1="38" x2="100" y2={hire ? 62 : 44} stroke="#4A3A2A" strokeWidth="2" />
-      <line x1="220" y1="38" x2="220" y2={hire ? 134 : 44} stroke="#4A3A2A" strokeWidth={hire ? 3 : 2} />
-      <rect x="64" y="12" width="192" height="26" rx="3" fill={hire ? "#1E9E62" : shop ? "#1E6FB8" : "#B8322A"} stroke="#1B2433" strokeWidth="1.5" />
-      <text x="160" y="29" textAnchor="middle" fill="#FFFFFF" fontSize="11" fontWeight="800" fontFamily="system-ui, sans-serif" textLength={Math.min(180, sign.length * 7)} lengthAdjust="spacingAndGlyphs">
-        {sign.toUpperCase()}
-      </text>
+      {/* The hand-painted sign (none by the roadside) */}
+      {sign && (
+        <>
+          <line x1="100" y1="38" x2="100" y2={hire ? 62 : street ? 134 : 44} stroke="#4A3A2A" strokeWidth={street ? 3 : 2} />
+          <line x1="220" y1="38" x2="220" y2={hire || street ? 134 : 44} stroke="#4A3A2A" strokeWidth={hire || street ? 3 : 2} />
+          <rect
+            x="64"
+            y="12"
+            width="192"
+            height="26"
+            rx="3"
+            fill={hire ? "#1E9E62" : stage === "checkpoint" ? "#1E3A6E" : stage === "stall" ? "#F07A28" : shop ? "#1E6FB8" : "#B8322A"}
+            stroke="#1B2433"
+            strokeWidth="1.5"
+          />
+          <text x="160" y="29" textAnchor="middle" fill="#FFFFFF" fontSize="11" fontWeight="800" fontFamily="system-ui, sans-serif" textLength={Math.min(180, sign.length * 7)} lengthAdjust="spacingAndGlyphs">
+            {sign.toUpperCase()}
+          </text>
+        </>
+      )}
 
-      {hire ? null : shop ? <BicycleShopProps /> : <WorkshopProps />}
+      {hire || street ? null : shop ? <BicycleShopProps /> : <WorkshopProps />}
 
       {/* The player's own vehicle, in the middle */}
       {vehicle && (
@@ -231,6 +247,83 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
         </g>
       )}
     </svg>
+  );
+}
+
+/** By the road, for what happens on the way: a police checkpoint, a stranded traveller, a street seller's stall. */
+function Street({ stage }: { stage: "checkpoint" | "roadside" | "stall" }) {
+  return (
+    <g>
+      {/* Pavement and road */}
+      <rect y="132" width="320" height="22" fill="#C9C2B4" />
+      <rect y="132" width="320" height="2" fill="#000" opacity="0.1" />
+      <rect y="154" width="320" height="26" fill="#4A4F57" />
+      <g fill="#F4F1EA">
+        {Array.from({ length: 8 }, (_, i) => (
+          <rect key={i} x={6 + i * 42} y="168" width="22" height="2.5" />
+        ))}
+      </g>
+      {stage === "checkpoint" && (
+        <>
+          {/* A barrier across the road, cones, the patrol van with its lights */}
+          <rect x="22" y="128" width="5" height="30" fill="#5B6475" />
+          <rect x="24" y="130" width="128" height="8" fill="#FFFFFF" stroke="#1B2433" strokeWidth="0.8" />
+          {Array.from({ length: 7 }, (_, i) => (
+            <rect key={i} x={26 + i * 18} y="130" width="9" height="8" fill="#D62828" />
+          ))}
+          {[172, 192, 212].map((x) => (
+            <g key={x}>
+              <path d={`M${x - 6} 158 L${x} 140 L${x + 6} 158 Z`} fill="#F07A28" />
+              <rect x={x - 3.5} y="148" width="7" height="3" fill="#FFFFFF" />
+            </g>
+          ))}
+          <g transform="translate(236 104)">
+            <rect x="0" y="12" width="78" height="30" rx="4" fill="#F4F1EA" stroke="#1B2433" strokeWidth="1" />
+            <rect x="0" y="27" width="78" height="5" fill="#1E3A6E" />
+            <rect x="8" y="16" width="20" height="9" fill="#9FC6E8" />
+            <rect x="32" y="16" width="20" height="9" fill="#9FC6E8" />
+            <rect x="30" y="6" width="9" height="6" fill="#D62828" className="loota-sparkle" />
+            <rect x="40" y="6" width="9" height="6" fill="#2F6FEB" />
+            <circle cx="16" cy="43" r="6" fill="#222" />
+            <circle cx="62" cy="43" r="6" fill="#222" />
+          </g>
+        </>
+      )}
+      {stage === "roadside" && (
+        <>
+          {/* A shady tree, a street lamp, the traveller's bag */}
+          <rect x="54" y="92" width="9" height="42" fill="#6B4A2B" />
+          <circle cx="58" cy="82" r="26" fill="#2E7D4F" />
+          <circle cx="38" cy="94" r="17" fill="#2E7D4F" />
+          <circle cx="80" cy="94" r="17" fill="#2E7D4F" />
+          <rect x="262" y="70" width="4" height="64" fill="#5B6475" />
+          <path d="M264 70 q0 -8 12 -8" stroke="#5B6475" strokeWidth="3" fill="none" />
+          <ellipse cx="277" cy="64" rx="6" ry="3" fill="#FFD45C" />
+          <rect x="118" y="122" width="16" height="12" rx="2" fill="#7A4B22" />
+          <rect x="122" y="118" width="8" height="5" rx="2" fill="none" stroke="#7A4B22" strokeWidth="1.5" />
+        </>
+      )}
+      {stage === "stall" && (
+        <>
+          {/* A striped umbrella over a table of oranges and snacks, a cooler */}
+          <rect x="88" y="66" width="3" height="66" fill="#5B6475" />
+          <path d="M40 72 Q89 30 138 72 Z" fill="#E5484D" />
+          <path d="M64 72 Q89 30 89 72 Z M89 72 Q89 30 114 72 Z" fill="#F4F1EA" />
+          <rect x="44" y="110" width="92" height="7" fill="#7A5230" />
+          <rect x="48" y="117" width="4" height="17" fill="#7A5230" />
+          <rect x="128" y="117" width="4" height="17" fill="#7A5230" />
+          {[
+            [60, 106], [68, 106], [76, 106], [64, 99], [72, 99], [68, 92],
+          ].map(([x, y]) => (
+            <circle key={`${x}-${y}`} cx={x} cy={y} r="4" fill="#F28C28" />
+          ))}
+          <rect x="96" y="98" width="14" height="12" rx="2" fill="#F4B41A" />
+          <rect x="114" y="100" width="14" height="10" rx="2" fill="#C89B5A" />
+          <rect x="146" y="118" width="22" height="16" rx="3" fill="#2F6FEB" />
+          <rect x="146" y="118" width="22" height="4" rx="2" fill="#F4F1EA" />
+        </>
+      )}
+    </g>
   );
 }
 

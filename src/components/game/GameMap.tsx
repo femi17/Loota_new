@@ -234,7 +234,6 @@ export function GameMap({
     vehicles: () => OwnedVehicle[];
     ride: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
     getOff: () => void;
-    walkTo: (vehicle: OwnedVehicle) => void;
     refuel: () => void;
     eat: () => void;
     /** Use a relic from the bag; resolves to a message for the bag. */
@@ -844,7 +843,6 @@ export function GameMap({
       let owned: VehicleRow[] = [];
       let rental: { kind: VehicleKind; startedAt: number; rate: number } | null = null;
       let busy = false;
-      const parked = new Map<VehicleKind, import("@/game/ThreeMapLayer").MapEntity>();
 
       const setBusy = (value: boolean) => {
         busy = value;
@@ -893,26 +891,45 @@ export function GameMap({
         showVehicle();
       }
 
-      /** Your own vehicles wait where you left them, with a green tag. */
-      function showParked() {
-        for (const [kind, entity] of [...parked]) {
-          if (!owned.some((v) => v.kind === kind && !v.in_use)) {
-            layer.remove(entity);
-            parked.delete(kind);
+      // The pocket garage: your own vehicles go everywhere with you. Off one, it shrinks into your pocket;
+      // taking it out, it grows back under you (like a gadget in Ready Player One).
+      const POCKET_MS = 900;
+      let pocketAnims: { kind: VehicleKind; out: boolean; start: number; entity: import("@/game/ThreeMapLayer").MapEntity | null }[] = [];
+      function pocketAnim(kind: VehicleKind, out: boolean) {
+        pocketAnims = pocketAnims.filter((a) => {
+          if (a.kind !== kind) return true;
+          if (a.entity) layer.remove(a.entity);
+          return false;
+        });
+        const entity = out ? null : layer.add({ object: models.makeVehicleModel(kind), lng: traveller.pos.lng, lat: traveller.pos.lat, heading: traveller.heading });
+        if (out) avatar.vehicles[kind].group.scale.setScalar(0.05);
+        pocketAnims.push({ kind, out, start: performance.now(), entity });
+      }
+      function pocketTick(now: number) {
+        if (!pocketAnims.length) return;
+        pocketAnims = pocketAnims.filter((a) => {
+          const k = Math.min(1, (now - a.start) / POCKET_MS);
+          const ease = 1 - (1 - k) ** 3;
+          if (a.out) avatar.vehicles[a.kind].group.scale.setScalar(Math.max(0.05, ease));
+          else if (a.entity) {
+            // Shrinking and spinning into the pocket, at the hunter's side.
+            a.entity.scaleBy = Math.max(0.01, 1 - ease);
+            a.entity.heading = traveller.heading + ease * Math.PI * 3;
+            a.entity.lng = traveller.pos.lng;
+            a.entity.lat = traveller.pos.lat;
           }
-        }
-        for (const v of owned) {
-          if (v.in_use) continue;
-          let entity = parked.get(v.kind);
-          if (!entity) {
-            const model = models.makeVehicleModel(v.kind);
-            model.add(layer.billboard(models.makeNameplate(`YOUR ${VEHICLES[v.kind].name.toUpperCase()}`, "#1E9E62")));
-            entity = layer.add({ object: model, lng: v.lng, lat: v.lat, heading: 0 });
-            parked.set(v.kind, entity);
-          }
-          entity.lng = v.lng;
-          entity.lat = v.lat;
-        }
+          if (k < 1) return true;
+          if (a.entity) layer.remove(a.entity);
+          if (a.out) avatar.vehicles[a.kind].group.scale.setScalar(1);
+          return false;
+        });
+      }
+      /** Another way to travel took over (a bus, train, plane, taxi, rental or the Carpet): your own vehicle is pocketed. */
+      function pocketed() {
+        if (traveller.mode === "walk" || rental) return;
+        pocketAnim(traveller.mode as VehicleKind, false);
+        traveller.mode = "walk";
+        void refreshVehicles().then(afterModeChange);
       }
 
       async function refreshVehicles() {
@@ -924,7 +941,6 @@ export function GameMap({
         owned = (vehicles ?? []) as VehicleRow[];
         const active = rentals?.[0] as { kind: VehicleKind; started_at: string } | undefined;
         rental = active ? { kind: active.kind, startedAt: new Date(active.started_at).getTime(), rate: VEHICLES[active.kind].ratePerMinute } : null;
-        showParked();
         showVehicle();
       }
 
@@ -954,7 +970,7 @@ export function GameMap({
         setBusy(true);
         try {
           if (how === "buy") {
-            await savePosition(); // it's parked where the server last saw you
+            await savePosition();
             const { data } = await supabase.rpc("buy_vehicle", { p_kind: kind });
             const bought = data as { ok: boolean; reason?: string; balance?: number } | null;
             if (!bought?.ok) {
@@ -981,24 +997,23 @@ export function GameMap({
           if (!started?.ok) {
             traveller.mode = "walk"; // the server put you on foot
             await refreshVehicles();
-            if (started?.reason === "far" && started.lng != null && started.lat != null) {
-              const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [started.lng, started.lat]);
-              void planDirections({ lng: started.lng, lat: started.lat }, `your ${vehicleName(kind)}`, true);
-              say(`Your ${vehicleName(kind)} is parked ${geo.formatDistance(away)} away (green tag). Follow the blue line to it, then open Vehicles and ride it.`, true);
-            } else if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
-            else if (started?.reason === "fuel") say(`Your ${vehicleName(kind)} has no fuel. Bring fuel in a keg from a petrol station and pour it in.`, true);
+            if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
+            else if (started?.reason === "fuel")
+              say(`Your ${vehicleName(kind)}'s tank is empty. Any petrol station fills it while it's in your pocket, or pour in fuel from a keg.`, true);
             else if (started?.reason === "far_pickup") say("Walk to the renter first: they're waiting at the bus stop.", true);
             else if (started?.reason === "pickup") say(`Ask for a ${vehicleName(kind)} first (Rent in Vehicles): a renter brings one to a bus stop near you.`, true);
             else if (started?.reason === "taxi") say("Cars come as taxis: call one from Taxi, bus, train or plane.", true);
-            else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the button appears next to it).`, true);
+            else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the gold 🔧 button): they come to you.`, true);
             else if (started?.reason === "repairing") say(`The mechanic is still working on your ${vehicleName(kind)}. Try again in a moment.`, true);
             else say("Couldn't get on. Please try again.", true);
             afterModeChange();
             return;
           }
 
+          if (traveller.mode !== "walk" && !rental && traveller.mode !== kind) pocketAnim(traveller.mode as VehicleKind, false); // swapping vehicles
           traveller.mode = kind;
           saved = { ...traveller.pos };
+          if (started.source === "owned") pocketAnim(kind, true);
           if (started.source === "rented") {
             endPickup();
             endDirections();
@@ -1010,7 +1025,7 @@ export function GameMap({
           say(
             started.source === "rented"
               ? `You've rented a ${vehicleName(kind)}: ${VEHICLES[kind].ratePerMinute} coins a minute until you get off.`
-              : `You're on your ${vehicleName(kind)}.`,
+              : `Out of your pocket: you're on your ${vehicleName(kind)}.`,
           );
         } finally {
           setBusy(false);
@@ -1029,6 +1044,7 @@ export function GameMap({
             say("Couldn't get off. Please try again.", true);
             return;
           }
+          if (!wasRental) pocketAnim(kind, false);
           traveller.mode = "walk";
           saved = { ...traveller.pos };
           setHud((h) => ({ ...h, coins: stopped.balance }));
@@ -1037,7 +1053,7 @@ export function GameMap({
           say(
             wasRental
               ? `Rental returned.${stopped.charged > 0 ? ` ${stopped.charged} more coins for the extra minutes.` : ""}`
-              : `You've parked your ${vehicleName(kind)} here. It'll wait for you.`,
+              : `Your ${vehicleName(kind)} shrinks into your pocket. Take it out anywhere with the vehicle button.`,
           );
         } finally {
           setBusy(false);
@@ -1054,12 +1070,11 @@ export function GameMap({
             say(r?.reason === "full" ? "Your tank is already full." : r?.reason === "coins" ? "Not enough coins for fuel." : "Couldn't refuel here.", true);
             return;
           }
-          const mine = ownInUse();
-          if (mine && r.fuel != null) mine.fuel = r.fuel;
+          await refreshVehicles(); // the one ridden, or one in the pocket, was filled
           warned.fuel = 100;
+          clearAdvice("fuel");
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
-          showVehicle();
           say(`Filled up for ${r.cost} coins.`);
         } finally {
           setBusy(false);
@@ -1275,16 +1290,11 @@ export function GameMap({
           owned.map((v) => ({
             kind: v.kind,
             fuel: v.fuel,
-            lng: v.lng,
-            lat: v.lat,
             inUse: v.in_use,
-            distanceM: geo.distanceM([traveller.pos.lng, traveller.pos.lat], [v.lng, v.lat]),
+            state: v.broken_at ? (v.repair_ready_at ? "repairing" : "broken") : v.kind !== "bicycle" && v.fuel <= 0 ? "empty" : "ready",
           })),
         ride: (kind, how) => void chooseVehicle(kind, how),
         getOff: () => void getOff(),
-        walkTo(vehicle) {
-          void planDirections({ lng: vehicle.lng, lat: vehicle.lat }, `your ${vehicleName(vehicle.kind)}`);
-        },
         refuel: () => void refuelHere(),
         eat() {
           void act("eat");
@@ -2371,7 +2381,7 @@ export function GameMap({
 
       async function board(quote: TransitQuote, fastPass: boolean): Promise<string | null> {
         if (ride) return "You're already on a trip.";
-        if (traveller.mode !== "walk") return "Get off your vehicle first (vehicle button, then Get off and walk), then board.";
+        if (rental) return "Return your rental first (vehicle button, then Get off), then board.";
         await savePosition(); // the server checks you're at the stop
         const { data, error } = await supabase.rpc("start_trip", { p_from: quote.from.id, p_to: quote.to.id, p_path: quote.path, p_fast_pass: fastPass });
         if (error || !data) return fastPass ? "Your Fast Pass couldn't be used. Try again without it." : "Something went wrong. Try again.";
@@ -2380,7 +2390,7 @@ export function GameMap({
           const why: Record<string, string> = {
             coins: `You need ${result.fare ?? quote.fare} coins for this fare.`,
             far: `Get to ${stopTitle(quote.from)} first: you need to be at the stop.`,
-            vehicle: "Get off your vehicle first (vehicle button, then Get off and walk), then board.",
+            vehicle: "Return your rental first (vehicle button, then Get off), then board.",
             dome: "A Lockdown dome covers that stop. Pick somewhere else.",
             path: "Couldn't plan that route. Try another stop.",
             route: "Nothing goes there from here.",
@@ -2394,6 +2404,7 @@ export function GameMap({
         const fromStop: [number, number] = [quote.from.lng, quote.from.lat];
         const headed = trip && geo.distanceM(fromStop, [trip.to.lng, trip.to.lat]) > 300 ? { name: trip.name, detail: "", lng: trip.to.lng, lat: trip.to.lat } : null;
         endDirections(); // the old route is done with: the bus, train or plane takes over
+        pocketed();
         startRide(result.trip!, quote.label, quote.then ?? headed);
         if (fastPass) countRelics();
         say(
@@ -2604,7 +2615,7 @@ export function GameMap({
         if (mine && mine.kind !== "bicycle") {
           if (mine.fuel < 10 && warned.fuel > 10) {
             warned.fuel = 10;
-            void advise("fuel", "Fuel almost gone", `Fuel almost gone! If the tank runs dry your ${vehicleName(mine.kind)} stops, and you'll have to carry fuel to it in a keg.`, ["fuel"]);
+            void advise("fuel", "Fuel almost gone", `Fuel almost gone! If the tank runs dry your ${vehicleName(mine.kind)} goes into your pocket until a petrol station or a keg fills it.`, ["fuel"]);
           } else if (mine.fuel < 25 && warned.fuel > 25) {
             warned.fuel = 25;
             void advise("fuel", "Fuel low", "Fuel is getting low. Fill up at a petrol station.", ["fuel"]);
@@ -2641,10 +2652,8 @@ export function GameMap({
       function computeActions() {
         const list: { id: LimitAction; icon: string; short: string; label: string }[] = [];
         if (!visit && !ride && traveller.phase === "idle") {
-          const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
-          const mine = ownInUse();
-          const parkedNear = (want: (v: VehicleRow) => boolean) =>
-            owned.find((v) => !v.in_use && want(v) && geo.distanceM(at, [v.lng, v.lat]) < 30) ?? null;
+          // The one being ridden first, else one in the pocket (the server picks the same way).
+          const ownedFirst = (want: (v: VehicleRow) => boolean) => owned.filter(want).sort((a, b) => Number(b.in_use) - Number(a.in_use))[0] ?? null;
           const eatSpot = spotHere(["eat"]);
           if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
           const chill = spotHere(["rest", "eat"]);
@@ -2653,20 +2662,28 @@ export function GameMap({
             list.push({ id: "rest_here", icon: "🧘", short: "Rest here", label: "Sit down and rest right here (slower than at a chill spot)" });
           }
           const station = spotHere(["fuel"]);
-          if (station && mine && mine.kind !== "bicycle" && mine.fuel < 99) list.push({ id: "refuel", icon: "⛽", short: "Refuel", label: `Refuel at ${station.name}` });
+          const thirsty = ownedFirst((v) => v.kind !== "bicycle" && v.fuel < 99);
+          if (station && thirsty) {
+            list.push({
+              id: "refuel",
+              icon: "⛽",
+              short: "Refuel",
+              label: thirsty.in_use ? `Refuel at ${station.name}` : `Fill your ${vehicleName(thirsty.kind)}'s tank (in your pocket) at ${station.name}`,
+            });
+          }
           if (station && !keg && owned.some((v) => v.kind !== "bicycle")) list.push({ id: "buy_keg", icon: "🛢", short: "Buy keg · 25", label: "Buy a fuel keg · 25 coins" });
           if (station && keg && keg.fuel < 30) list.push({ id: "fill_keg", icon: "🛢", short: `Fill keg · ${2 * (30 - Math.floor(keg.fuel))}`, label: `Fill your keg · ${2 * (30 - Math.floor(keg.fuel))} coins` });
-          const dry = parkedNear((v) => v.kind !== "bicycle" && v.fuel < 100);
+          const dry = ownedFirst((v) => v.kind !== "bicycle" && v.fuel <= 70); // a keg holds 30%
           if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour keg", label: `Pour the keg into your ${vehicleName(dry.kind)}` });
-          const bike = mine?.kind === "bicycle" ? mine : parkedNear((v) => v.kind === "bicycle");
+          const bike = ownedFirst((v) => v.kind === "bicycle");
           if (spotHere(["tyres", "fuel"]) && bike && bike.tyre < 95) {
             list.push(bike.tyre <= 0 ? { id: "pump", icon: "🛞", short: "Fix flat · 20", label: "Fix the flat · 20 coins" } : { id: "pump", icon: "🛞", short: "Pump · 5", label: "Pump the tyres · 5 coins" });
           }
-          const motor = mine && mine.kind !== "bicycle" ? mine : parkedNear((v) => v.kind !== "bicycle");
-          if (spotHere(["mechanic"]) && motor && (motor.engine < 90 || motor.broken_at)) {
+          const motor = ownedFirst((v) => v.kind !== "bicycle" && (v.engine < 90 || !!v.broken_at));
+          if (spotHere(["mechanic"]) && motor) {
             list.push({ id: "service", icon: "🔧", short: "Service · 60", label: `Service your ${vehicleName(motor.kind)} · 60 coins` });
           }
-          const broken = parkedNear((v) => !!v.broken_at && !v.repair_ready_at);
+          const broken = owned.find((v) => !!v.broken_at && !v.repair_ready_at) ?? null; // the mechanic comes to you
           if (broken) {
             const fee = broken.kind === "bicycle" ? 30 : 80;
             list.push({ id: "mechanic", icon: "🔧", short: `Mechanic · ${fee}`, label: `Call a mechanic for your ${vehicleName(broken.kind)} · ${fee} coins` });
@@ -2722,7 +2739,7 @@ export function GameMap({
               coins: "Not enough coins for that.",
               have_one: "You already have a keg.",
               full: "It's already full.",
-              no_vehicle: "Your vehicle needs to be right here.",
+              no_vehicle: "None of your vehicles needs that.",
               no_keg: "Buy a keg first.",
               empty: "Your keg is empty: fill it at a petrol station.",
             };
@@ -2749,7 +2766,7 @@ export function GameMap({
             keg = r.spoilt ? null : { fuel: 0, usesLeft: r.usesLeft ?? 0 };
             await refreshVehicles();
             const name = r.kind ? vehicleName(r.kind) : "vehicle";
-            say(`Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your keg's last use: it's worn out." : ` Your keg has ${r.usesLeft} uses left.`} Get on it with the vehicle button.`);
+            say(`Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your keg's last use: it's worn out." : ` Your keg has ${r.usesLeft} uses left.`}`);
             clearAdvice("fuel");
           } else if (id === "pump") {
             await refreshVehicles();
@@ -2763,7 +2780,7 @@ export function GameMap({
             clearAdvice("engine");
           } else if (id === "mechanic") {
             await refreshVehicles();
-            say(`A mechanic is on the way: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be ready again in about 45 seconds. Then get on it with the vehicle button.`);
+            say(`A mechanic is on the way to you: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be ready again in about 45 seconds. Then take it out with the vehicle button.`);
             clearAdvice("engine");
             clearAdvice("bike");
           }
@@ -2797,6 +2814,7 @@ export function GameMap({
       /** An empty tank or a breakdown: the vehicle stays where it stopped; the hunter is on foot. */
       function vehicleStopped(why: "fuel" | "broken") {
         const kind = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
+        if (kind) pocketAnim(kind, false);
         traveller.mode = "walk";
         traveller.v = 0;
         void refreshVehicles().then(() => {
@@ -2808,11 +2826,11 @@ export function GameMap({
           void advise(
             "fuel",
             "Out of fuel",
-            `Out of fuel! Your ${name} has stopped and is parked here. Walk to a petrol station, ${keg ? "fill your keg" : "buy a keg (25 coins) and fill it"}, then bring it back and pour it in.`,
+            `Out of fuel! Your ${name} goes into your pocket. Any petrol station fills it there${keg && keg.fuel > 0 ? ", or pour in your keg right now" : ""}.`,
             ["fuel"],
           );
         } else {
-          void advise("engine", "Broken down", `Your ${name} has broken down and is parked here. Call a mechanic (80 coins, the gold button) to get it going.`, null);
+          void advise("engine", "Broken down", `Your ${name} has broken down and goes into your pocket. Call a mechanic (the gold 🔧 button): they come to you, wherever you are.`, null);
         }
       }
 
@@ -3203,8 +3221,8 @@ export function GameMap({
 
       /** Ask for a bicycle or motorbike: a renter brings one to the nearest bus stop. */
       async function requestBikePickup(kind: "bicycle" | "motorbike") {
-        if (traveller.mode !== "walk") {
-          say("Get off first (vehicle button, then Get off and walk), then ask for a rental.", true);
+        if (rental) {
+          say("Return your rental first (vehicle button, then Get off), then ask for another.", true);
           return;
         }
         await savePosition();
@@ -3216,9 +3234,10 @@ export function GameMap({
         const r = res as { ok: boolean; reason?: string; pickup?: PickupJson } | null;
         if (disposed) return;
         if (!r?.ok || !r.pickup) {
-          say(r?.reason === "vehicle" ? "Get off first (vehicle button, then Get off and walk), then ask for a rental." : "Couldn't arrange a rental just now. Try again.", true);
+          say(r?.reason === "vehicle" ? "Return your rental first (vehicle button, then Get off), then ask for another." : "Couldn't arrange a rental just now. Try again.", true);
           return;
         }
+        pocketed();
         startPickup(r.pickup);
         if (spot.metres > PICKUP_AT_M) void planDirections({ lng: spot.lng, lat: spot.lat }, spot.name, true);
         say(
@@ -3282,7 +3301,7 @@ export function GameMap({
       }
 
       async function callTaxi(q: TaxiQuote): Promise<string | null> {
-        if (traveller.mode !== "walk") return "Get off your vehicle first (vehicle button, then Get off and walk), then call a taxi.";
+        if (rental) return "Return your rental first (vehicle button, then Get off), then call a taxi.";
         await savePosition();
         const { data } = await supabase.rpc("request_pickup", {
           p_kind: "taxi",
@@ -3299,7 +3318,7 @@ export function GameMap({
         if (!r?.ok || !r.pickup) {
           const why: Record<string, string> = {
             coins: `You need ${r?.fare ?? q.fare} coins for this taxi.`,
-            vehicle: "Get off your vehicle first (vehicle button, then Get off and walk), then call a taxi.",
+            vehicle: "Return your rental first (vehicle button, then Get off), then call a taxi.",
             on_trip: "You're already on a trip.",
             route: "Taxis go up to 40 km.",
             far: "That pickup point is too far from you.",
@@ -3307,6 +3326,7 @@ export function GameMap({
           };
           return why[r?.reason ?? ""] ?? "Couldn't call a taxi just now. Try again.";
         }
+        pocketed();
         startPickup(r.pickup, q.place);
         if (q.pickup.walkM > PICKUP_AT_M) void planDirections({ lng: q.pickup.lng, lat: q.pickup.lat }, "the pickup point", true);
         say(
@@ -3346,6 +3366,7 @@ export function GameMap({
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           const then = pk.then;
+          pocketed();
           endPickup();
           endDirections();
           startRide(r.trip, pk.p.toName ?? r.trip.to, then);
@@ -4201,8 +4222,8 @@ export function GameMap({
       }
 
       async function useWonder(id: string, to?: LngLat): Promise<string> {
-        if (to && traveller.mode !== "walk") {
-          const text = "Get off first (vehicle button, then Get off and walk): the carpet carries only you.";
+        if (to && rental) {
+          const text = "Return your rental first (vehicle button, then Get off), then fly: the carpet carries only you.";
           say(text, true);
           return text;
         }
@@ -4219,6 +4240,7 @@ export function GameMap({
         const message = `${r.message ?? ""}${r.finished ? " That was the last key: you've finished the hunt!" : ""}`;
         showWonder(wonder, message, false);
         if (wonder === "carpet_of_kings" && r.lng != null && r.lat != null) {
+          pocketed(); // the carpet carries only you; your vehicle rides in your pocket
           snapReachM = 3000; // set down beside the place: onto its nearest road
           placeAt(r.lng, r.lat);
           void refreshVehicles();
@@ -4535,6 +4557,7 @@ export function GameMap({
         journeyTick(now);
         djinnTick(now);
         wondersTick(now);
+        pocketTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -5282,10 +5305,6 @@ export function GameMap({
           busy={hud.busy}
           onRide={(kind, how) => {
             actions.current?.ride(kind, how);
-            setGarage(null);
-          }}
-          onWalkTo={(vehicle) => {
-            actions.current?.walkTo(vehicle);
             setGarage(null);
           }}
           onGetOff={() => {

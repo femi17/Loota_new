@@ -224,7 +224,7 @@ C is set per hunt. Daily hunts in one city use a lower C (trips feel longer and 
 - **Bus:** walk to a real bus stop → buy a fare → wait → ride along the real route → choose your stop → get off and walk.
 - **Train:** the same, using real stations and lines where the data exists.
 - **Plane:** travel to a real airport → book a ticket (price by distance) → check in **before the deadline** (late means a rebooking fee) → board → fly along the great-circle path → land → leave the airport.
-- **Vehicle at the airport:** owned vehicles must be parked (daily fee) or left behind; rentals are returned. Owned vehicles stay where they were parked and must be collected later.
+- **Vehicle at the airport:** owned vehicles go into the player's pocket and come along (the pocket garage, 10.3); rentals are returned.
 
 ### 5.6 Retained from the old version
 
@@ -494,7 +494,7 @@ Rentals, fares, plane tickets, fuel, food, maintenance, towing, hospital bills, 
 - **Bought once, kept across hunts.** They are expensive to start with.
 - They need **maintenance** to keep working, and they can break down, needing towing and the garage.
 - **Add-ons** matter at police checkpoints.
-- They **stay where they were left.** A bicycle parked at Heathrow is still at Heathrow.
+- **The pocket garage** (owner's decision, 17 Oct 2026, replacing "they stay where they were left"): an owned vehicle goes everywhere with its owner, like a gadget in *Ready Player One*. Off it, it shrinks into the player's pocket; it can be taken out anywhere in the world.
 
 **Built (v1, 13 Oct 2026).** Prices are first guesses to tune once real players are spending:
 
@@ -505,8 +505,8 @@ Rentals, fares, plane tickets, fuel, food, maintenance, towing, hospital bills, 
 | Car | 8,000 coins | 20 coins a minute | 1.2% a km |
 
 - **Renting** is charged per started minute until you get off. The first minute is paid up front. A rental left running with no sign of the player for 3 minutes is ended and charged by the server.
-- **Owned vehicles** are bought once and parked where you get off, with a green "YOUR MOTORBIKE" tag on the map. To ride one you must be within 30 m of it; the game walks you there.
-- **Fuel** costs 2 coins per 1%. The Refuel button appears only within 40 m of a real petrol station on the map. Rentals come fuelled. An owned motorbike or car with an empty tank can only be pushed, at walking pace.
+- **Owned vehicles** are bought once and carried in the pocket: "Take it out" anywhere, "Get off" and it shrinks away. A petrol station fills a pocketed tank, a vulcanizer pumps pocketed tyres, a mechanic services one, a mechanic called out comes to the player wherever they are, and a keg pours in anywhere. Boarding a bus, train, plane or taxi, asking for a rental, or flying the Carpet pockets the vehicle being ridden (a rental must be returned first).
+- **Fuel** costs 2 coins per 1%. The Refuel button appears only within 40 m of a real petrol station on the map. Rentals come fuelled. An owned motorbike or car that runs dry goes into the pocket until it's filled.
 - **Food:** a meal costs 30 coins and gives +40 energy. The Eat button appears within 40 m of a real restaurant, fast-food place or café. Resting is still free.
 - **The server decides** what you're riding. A saved position in a mode you aren't using is rejected, and fuel is used up by the server from the distance it accepts.
 
@@ -729,3 +729,4 @@ Each phase ends with something playable that can be tested.
 | 17 Oct 2026 | **Fixes from the owner's play:** (1) a player is never put on a cut-off pocket of road (a small group of roads joined to nothing, wholly inside the loaded area, such as an airport's airside paths): the nearest proper road within ~240 m is used instead. The owner had landed at Lagos airport onto one and could only walk in circles. (2) The hunt panel has a ✕: the hunt goes on but the panel hides (a cookie), and the lobby's "Continue the hunt" brings it back. |
 | 17 Oct 2026 | **Finds belong to hunts** (owner's call): Detours, whispers, hidden finds, relics and the Lockdown Orb only happen while the player is in a live hunt (`in_live_hunt`); nothing is stocked, shown or claimable otherwise. Between hunts the lamp is the Djinn's alone and says so. **Routes round fences:** when no road route turns up within ~1 km of the straight line (a fenced airport, a lagoon), the search widens to ~3 km before giving up, and a route never starts from a cut-off pocket. From outside Lagos airport's terminal, a petrol station 1.6 km away is now routed by road (12 km round the airport) instead of drawn as a straight line. |
 | 17 Oct 2026 | **The Wonders' powers built (7.7).** Each Wonder has its button in the bag (tap twice: it's used once); the Coin works by itself. Every use reaches every player as a banner, with what it did to them; the Cataclysm flashes white. The Hourglass freezes (the server refuses moves; frost on the screen and a countdown), the Sandstorm halves speed (sand on the screen), the Eye shows a card of the hunters with direction, distance and keys, and their key areas on the map, the Cloak stops the player's position being sent and hides them from the broadcast, the Mirror sends three copies. The Carpet asks where to (any place in the world). A Coin save on a failed Key Trial says so. Also fixed: the step from a landing spot onto a road no longer costs energy (a 1.7 km step had cost 87), and the chamber's answer could fail with a database error on some connections. |
+| 17 Oct 2026 | **The pocket garage (10.3, owner's call):** bought vehicles are always available, anywhere in the world: off one, it shrinks into the pocket (a short animation) and "Take it out" grows it back under the hunter. No more parked vehicles, green tags or walking to them. Fuel, tyres, servicing, kegs and the mechanic all work on a pocketed vehicle (the station fills the one that needs it most; the mechanic comes to you). Buses, trains, planes, taxis, rentals and the Carpet pocket the vehicle you're on instead of saying "get off first"; only a rental must be returned first. The Practice Hunt was taken off (unpublished) for free-roam testing. |

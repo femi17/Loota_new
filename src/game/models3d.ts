@@ -210,7 +210,7 @@ function buildCar(): Vehicle3D {
   return { group, wheels, wheelRadius: 0.45 };
 }
 
-/** A parked vehicle on the map (the player's own, waiting where they left it). */
+/** A vehicle on its own (the player's, shrinking into their pocket). */
 export function makeVehicleModel(kind: "bicycle" | "motorbike" | "car") {
   const v = kind === "bicycle" ? buildBicycle() : kind === "motorbike" ? buildMotorbike() : buildCar();
   return v.group;

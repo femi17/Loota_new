@@ -2278,11 +2278,7 @@ export function GameMap({
         const tries = r.trip.rushTries ?? 0;
         const random = seededRandom(`${r.trip.id}:crowd:${tries}`);
         const count = (isNight(Date.now(), stop.lng, stop.lat) ? 7 : 5) + Math.floor(random() * 4);
-        const door = besideBus(stop, heading, 1.6 * enlarge, 1.5 * enlarge);
-        // The player waits on the kerb among them, not where the bus pulls in.
-        const kerb = besideBus(stop, heading, 3.6 * enlarge, -0.5 * enlarge);
-        traveller.pos = kerb;
-        traveller.heading = geo.headingOf([kerb.lng, kerb.lat], [door.lng, door.lat]);
+        const door = besideBus(stop, heading, 1.6 * enlarge, 1.5 * enlarge); // (the player waits among them: busKerb)
         for (let i = 0; i < count; i++) {
           const spot = besideBus(stop, heading, (2.8 + random() * 2.6) * enlarge, (random() * 10 - 5) * enlarge);
           const avatar = models.buildAvatar(lookForId(`${r.trip.id}:crowd:${tries}:${i}`));
@@ -4784,10 +4780,27 @@ export function GameMap({
       // ---- Resting by the road: sitting at its edge, not in the lane, the bicycle standing beside ----
       let restBike: import("@/game/ThreeMapLayer").MapEntity | null = null;
       const restingNow = () => traveller.resting && traveller.phase === "idle" && traveller.v < 0.3 && !ride && !visit;
-      /** Where the hunter is drawn: on the road, or sitting at the roadside while resting (where they are doesn't change). */
+      /** Waiting for a bus: the spot on the kerb among the others waiting, facing the door (not where the bus pulls in). */
+      function busKerb(): { at: LngLat; heading: number } | null {
+        if (!ride || ride.trip.mode !== "bus" || ride.s > 0) return null;
+        const path = ride.trip.path;
+        const stop = { lng: path[0][0], lat: path[0][1] };
+        const heading = geo.headingOf(path[0], path[1]);
+        const enlarge = layer.enlargement();
+        const at = besideBus(stop, heading, 3.6 * enlarge, -0.5 * enlarge);
+        const door = besideBus(stop, heading, 1.6 * enlarge, 1.5 * enlarge);
+        return { at, heading: geo.headingOf([at.lng, at.lat], [door.lng, door.lat]) };
+      }
+
+      /** Where the hunter is drawn: on the road; on the kerb waiting for a bus; sitting at the roadside resting. Where they are doesn't change. */
       function placeMe() {
         const sitting = restingNow();
-        if (sitting) {
+        const kerb = busKerb();
+        if (kerb) {
+          me.lng = kerb.at.lng;
+          me.lat = kerb.at.lat;
+          me.heading = kerb.heading;
+        } else if (sitting) {
           const enlarge = layer.enlargement();
           const seat = besideBus(traveller.pos, traveller.heading, 2.4 * enlarge, 0);
           me.lng = seat.lng;

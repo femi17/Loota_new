@@ -4781,6 +4781,40 @@ export function GameMap({
       });
       void refreshLandmarks();
 
+      // ---- Resting by the road: sitting at its edge, not in the lane, the bicycle standing beside ----
+      let restBike: import("@/game/ThreeMapLayer").MapEntity | null = null;
+      const restingNow = () => traveller.resting && traveller.phase === "idle" && traveller.v < 0.3 && !ride && !visit;
+      /** Where the hunter is drawn: on the road, or sitting at the roadside while resting (where they are doesn't change). */
+      function placeMe() {
+        const sitting = restingNow();
+        if (sitting) {
+          const enlarge = layer.enlargement();
+          const seat = besideBus(traveller.pos, traveller.heading, 2.4 * enlarge, 0);
+          me.lng = seat.lng;
+          me.lat = seat.lat;
+          me.heading = traveller.heading + Math.PI / 2; // facing the road
+          if (traveller.mode === "bicycle") {
+            const stand = besideBus(traveller.pos, traveller.heading, 2.2 * enlarge, 1.7 * enlarge);
+            if (!restBike) {
+              const bike = models.makeVehicleModel("bicycle");
+              bike.rotation.z = 0.12; // leaning on its stand
+              restBike = layer.add({ object: bike, lng: stand.lng, lat: stand.lat, heading: traveller.heading });
+            }
+            restBike.lng = stand.lng;
+            restBike.lat = stand.lat;
+            restBike.heading = traveller.heading;
+          }
+        } else {
+          me.lng = traveller.pos.lng;
+          me.lat = traveller.pos.lat;
+          me.heading = traveller.heading;
+        }
+        if (restBike && (!sitting || traveller.mode !== "bicycle")) {
+          layer.remove(restBike);
+          restBike = null;
+        }
+      }
+
       // ---- Game loop -------------------------------------------------------
       let frame = 0;
       let last = performance.now();
@@ -4868,13 +4902,12 @@ export function GameMap({
             phase: traveller.phase,
             moving: traveller.v / movement.baseSpeed(traveller.mode),
             distance: distance / layer.enlargement(),
+            sitting: restingNow(),
           },
           dt,
           t,
         );
-        me.lng = traveller.pos.lng;
-        me.lat = traveller.pos.lat;
-        me.heading = traveller.heading;
+        placeMe();
         marker.halo.scale.setScalar(1 + Math.sin(t * 4) * 0.1);
 
         // Spin the finds, and pick up anything within reach.

@@ -224,13 +224,27 @@ const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
  */
 export function animateAvatar(
   av: Avatar3D,
-  state: { mode: Mode; phase: Phase; moving: number; distance: number },
+  state: { mode: Mode; phase: Phase; moving: number; distance: number; sitting?: boolean },
   dt: number,
   t: number,
 ) {
   const k = Math.min(1, 10 * dt);
   const { legL, legR, armL, armR, rig } = av;
-  for (const [kind, v] of Object.entries(av.vehicles)) v.group.visible = state.mode === kind && state.phase !== "fainted";
+  for (const [kind, v] of Object.entries(av.vehicles)) v.group.visible = state.mode === kind && state.phase !== "fainted" && !state.sitting;
+
+  if (state.sitting && state.phase !== "fainted") {
+    // Resting by the road: sitting on the ground, legs out in front, hands on the knees, a slow breath.
+    rig.position.x = 0;
+    rig.rotation.x = lerp(rig.rotation.x, -0.08, k);
+    rig.position.y = lerp(rig.position.y, -0.78 + Math.sin(t * 1.6) * 0.012, k);
+    legL.rotation.x = lerp(legL.rotation.x, -1.45, k);
+    legR.rotation.x = lerp(legR.rotation.x, -1.3, k);
+    armL.rotation.x = lerp(armL.rotation.x, -0.75, k);
+    armR.rotation.x = lerp(armR.rotation.x, -0.75, k);
+    armL.rotation.z = lerp(armL.rotation.z, 0, k);
+    armR.rotation.z = lerp(armR.rotation.z, 0, k);
+    return;
+  }
   const riding = state.mode === "walk" ? null : av.vehicles[state.mode];
   if (riding) for (const w of riding.wheels) w.rotation.x += state.distance / riding.wheelRadius;
   if (state.mode !== "car") rig.position.x = 0;

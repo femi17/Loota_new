@@ -101,3 +101,18 @@ body {
   margin-top: 3px; padding: 1px 8px; border-radius: 8px; background: rgba(14, 19, 32, 0.85);
   color: #fff; font: 700 13px/1.4 system-ui, sans-serif; white-space: nowrap;
 }
+
+/* The Djinn's Wonders: the news banner, a Cataclysm's white flash, a sandstorm, the Hourglass's frost. */
+.loota-wonder-banner { box-shadow: 0 0 40px rgba(155, 93, 229, 0.7); animation: loota-wonder-in 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+@keyframes loota-wonder-in { from { opacity: 0; transform: translateY(-16px) scale(0.9); } to { opacity: 1; transform: none; } }
+.loota-cataclysm-flash { background: #fff; animation: loota-trap 1.8s ease-out forwards; }
+.loota-sand {
+  background: linear-gradient(115deg, rgba(214, 170, 90, 0.35), rgba(170, 120, 50, 0.2) 40%, rgba(230, 190, 110, 0.35));
+  background-size: 300% 300%;
+  animation: loota-sand 4s linear infinite;
+}
+@keyframes loota-sand { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
+.loota-frost { box-shadow: inset 0 0 140px 30px rgba(170, 215, 255, 0.65); }
+@media (prefers-reduced-motion: reduce) {
+  .loota-wonder-banner, .loota-sand { animation: none; }
+}

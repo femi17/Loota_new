@@ -371,32 +371,33 @@ The big event. **Once a week at a surprise moment, lasting 3 days, never while a
    - **Lose:** a whirlwind lifts the player off the map and drops them far away (tens of km in a random direction), with a dramatic animation. They can come back and face a new chamber as often as they like until the treasure is claimed or the 3 days end.
 7. **Unclaimed after 3 days:** the treasure sinks back into the Djinn's vault, and next week he offers two Wonders at once.
 
-### 7.7 The Djinn's Wonders [PLAN]
+### 7.7 The Djinn's Wonders [BUILT 17 Oct 2026]
 
 The prize is never real money. It is a **Wonder**: a relic so strong that every player wishes they held it (the *Ready Player One* layer: one player's orb wipes out everyone, another's extra life brings them back).
 
 | Wonder | What it does |
 |---|---|
-| The Cataclysm Orb | During a live hunt, wipes out every hunter: all keys gone, everyone (the holder too) thrown back to where they started. A few seconds' warning: the ground shakes, the screen goes white. |
-| The Djinn's Coin (the extra life) | Survives any wipe: after a Cataclysm, Oblivion or Return, the holder respawns where they were with their keys. Also saves them from one whirlwind or trial throw-back. Revealed only when it saves someone. |
+| The Cataclysm Orb | During a live hunt, wipes out every hunter: all keys gone, everyone (the holder too, the cloaked too) sent home. The screen of everyone it hits goes white. |
+| The Djinn's Coin (the extra life) | Works by itself, once: a Cataclysm, Oblivion or Return passes the holder by (keys and place kept), or a failed Key Trial doesn't throw them, or the chamber's whirlwind dies at their feet. Revealed only when it saves someone. |
 | The Orb of Oblivion | Every other hunter loses all their keys in the current hunt. Positions stay. |
-| The Orb of Return | Every hunter, the holder too, is sent back to their original start point. Keys stay. |
+| The Orb of Return | Every hunter, the holder too, is sent home (where they set it). Keys stay. |
 | The Eye of the Djinn | For 10 minutes, see every hunter on the map and the area of the key each is chasing. |
 | The Hourglass of Ages | Freezes every other hunter in place for 3 minutes. |
 | The Master Key | Opens one key without its trial (the place must still be found and reached). |
-| The Phantom Cloak | For a whole hunt: invisible on the map, the broadcast and radar, and untouched by every orb except the Cataclysm. |
-| The Carpet of Kings | One instant flight to anywhere in the world. |
+| The Phantom Cloak | For the rest of the hunt: off other players' maps and the broadcast, unseen by the Eye, and untouched by every Wonder except the Cataclysm. |
+| The Carpet of Kings | One instant flight to anywhere in the world (a place search), on foot, any time; set down on the nearest road. |
 | The Thief's Hand | Takes the latest key from every hunter within 1 km and keeps one of them. |
 | The Djinn's Bargain | Swap places on the map with the hunter in the lead. |
-| The Sandstorm Crown | A sandstorm over a whole country for 30 minutes: everyone there (planes too) moves at half speed, except the holder. |
-| The Mirror of Many | Three copies of the holder appear on the map and the broadcast for a hunt; nobody knows which is real. |
-| The Seer's Seal | At the next Djinn's Wager, every decoy is burned: the holder sees the real place. |
+| The Sandstorm Crown | A sandstorm within 400 km of the holder for 30 minutes: everyone there moves at half speed, whatever they ride, except the holder. |
+| The Mirror of Many | For the rest of the hunt, three copies of the holder, a few hundred metres off, appear on other players' maps; nobody knows which is real. (Not yet on the broadcast.) |
+| The Seer's Seal | On the Djinn's map (after his gate, before choosing a seal), every decoy burns: the holder sees the real place. |
 
 **Rules for Wonders** (owner's decisions, 15 Oct 2026):
 - **Each Wonder exists once in the world.** It can't be traded.
 - **Holders are secret.** Nobody knows who holds what until it's used (the Djinn's Coin shows itself when it saves someone).
 - **Usable any time during a live hunt**, including the final stretch. Each is used once, then returns to the Djinn's vault as a future prize. Unused, it fades back to the vault after 30 days.
-- Every use is announced to all players and on the broadcast.
+- Every use is announced to all players (a banner within 8 seconds, with what it did to them) and on the broadcast.
+- A Wonder that can't work where the holder is (the Master Key away from the key, the Thief's Hand with nobody near, the Bargain with nobody to swap with) says so and stays in the bag.
 - **Wonders override the limits in 2 and 7.2** (area effects only, at most 2 effects per hour, nothing within 500 m of a key). That is their point. The Cataclysm and the Orb of Return hit their holder too.
 - The Lockdown Orb stays as it is (one in the world), but is now found through the lamp instead of lying on the map.
 
@@ -727,3 +728,4 @@ Each phase ends with something playable that can be tested.
 | 17 Oct 2026 | **The Djinn's approach and chamber built (7.6 steps 5–7).** Traps: two hidden rings (600 m, 300 m) around each place, three of eight directions trapped on each, the same for everyone that Wager; crossing one springs quicksand (stuck 25 s), a dart wall (stuck 15 s, −10 energy), a snake pit (−25 energy) or a collapsing bridge (thrown back 300 m), with a red flash. Rivals who broke the same seal are counted, and the player is warned as one comes within 5 km, 2 km and 500 m. The chamber (within 60 m): a longer cipher, a 7-row floor with false stones, seven stones for the scales, 3 minutes, all three to be right. Real place, first: the Wonder (and every lamp hears who took it). Decoy: an empty vault. Failing: a whirlwind drops the player at an airport 10–300 km away (as if flown there); the traps reset and they may try again until the Wager closes. An unclaimed Wager makes the next one offer two Wonders, never one already held. Wonders show in the holder's bag only; their powers come next. |
 | 17 Oct 2026 | **Fixes from the owner's play:** (1) a player is never put on a cut-off pocket of road (a small group of roads joined to nothing, wholly inside the loaded area, such as an airport's airside paths): the nearest proper road within ~240 m is used instead. The owner had landed at Lagos airport onto one and could only walk in circles. (2) The hunt panel has a ✕: the hunt goes on but the panel hides (a cookie), and the lobby's "Continue the hunt" brings it back. |
 | 17 Oct 2026 | **Finds belong to hunts** (owner's call): Detours, whispers, hidden finds, relics and the Lockdown Orb only happen while the player is in a live hunt (`in_live_hunt`); nothing is stocked, shown or claimable otherwise. Between hunts the lamp is the Djinn's alone and says so. **Routes round fences:** when no road route turns up within ~1 km of the straight line (a fenced airport, a lagoon), the search widens to ~3 km before giving up, and a route never starts from a cut-off pocket. From outside Lagos airport's terminal, a petrol station 1.6 km away is now routed by road (12 km round the airport) instead of drawn as a straight line. |
+| 17 Oct 2026 | **The Wonders' powers built (7.7).** Each Wonder has its button in the bag (tap twice: it's used once); the Coin works by itself. Every use reaches every player as a banner, with what it did to them; the Cataclysm flashes white. The Hourglass freezes (the server refuses moves; frost on the screen and a countdown), the Sandstorm halves speed (sand on the screen), the Eye shows a card of the hunters with direction, distance and keys, and their key areas on the map, the Cloak stops the player's position being sent and hides them from the broadcast, the Mirror sends three copies. The Carpet asks where to (any place in the world). A Coin save on a failed Key Trial says so. Also fixed: the step from a landing spot onto a road no longer costs energy (a 1.7 km step had cost 87), and the chamber's answer could fail with a database error on some connections. |

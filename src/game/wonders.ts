@@ -1,7 +1,7 @@
 /**
  * The Djinn's Wonders (design doc 7.7): relics so strong every player wishes
  * they held one. One of each in the world; held in secret; usable any time in
- * a live hunt. Must match the list in djinn_open_wager() in the database.
+ * a live hunt (the Carpet any time). Must match the list in djinn_open_wager() and use_wonder() in the database.
  */
 export type WonderId =
   | "cataclysm_orb"
@@ -23,13 +23,13 @@ export const WONDERS: Record<WonderId, { name: string; icon: string; effect: str
   cataclysm_orb: {
     name: "the Cataclysm Orb",
     icon: "💥",
-    effect: "During a live hunt, wipes out every hunter: all keys gone, everyone (you too) thrown back to the start.",
+    effect: "During a live hunt, wipes out every hunter: all keys gone, everyone (you too) sent home.",
     boast: "an orb that can end every hunt in one white flash",
   },
   djinn_coin: {
     name: "the Djinn's Coin",
     icon: "🪙",
-    effect: "An extra life: survive any wipe with your keys, and one whirlwind or trial throw-back.",
+    effect: "An extra life, once: a wipe passes you by, or a trial or the whirlwind can't throw you.",
     boast: "a coin that buys back your life when all others fall",
   },
   orb_of_oblivion: {
@@ -41,7 +41,7 @@ export const WONDERS: Record<WonderId, { name: string; icon: string; effect: str
   orb_of_return: {
     name: "the Orb of Return",
     icon: "🌀",
-    effect: "Every hunter, you too, is sent back to where they started. Keys stay.",
+    effect: "Every hunter, you too, is sent home. Keys stay.",
     boast: "an orb that pulls every hunter back to where they began",
   },
   eye_of_the_djinn: {
@@ -59,13 +59,13 @@ export const WONDERS: Record<WonderId, { name: string; icon: string; effect: str
   master_key: {
     name: "the Master Key",
     icon: "🗝",
-    effect: "Opens one key without its trial (you must still find and reach the place).",
+    effect: "Opens one key without its trial: stand on the key's spot (you must still find it).",
     boast: "a key that opens any lock without a single question",
   },
   phantom_cloak: {
     name: "the Phantom Cloak",
     icon: "🧥",
-    effect: "For a whole hunt, invisible on the map, the broadcast and radar; untouched by every orb but the Cataclysm.",
+    effect: "For the rest of a hunt, invisible on the map and the broadcast; untouched by every Wonder but the Cataclysm.",
     boast: "a cloak that makes you a ghost for a whole hunt",
   },
   carpet_of_kings: {
@@ -89,19 +89,19 @@ export const WONDERS: Record<WonderId, { name: string; icon: string; effect: str
   sandstorm_crown: {
     name: "the Sandstorm Crown",
     icon: "👑",
-    effect: "A sandstorm over a whole country for 30 minutes: everyone there moves at half speed but you.",
+    effect: "A sandstorm within 400 km for 30 minutes: everyone in it moves at half speed but you.",
     boast: "a crown that buries a whole country in sand while you ride the wind",
   },
   mirror_of_many: {
     name: "the Mirror of Many",
     icon: "🪞",
-    effect: "Three copies of you appear on the map and the broadcast for a hunt; nobody knows which is real.",
+    effect: "Three copies of you walk the map for the rest of a hunt; nobody knows which is real.",
     boast: "a mirror that makes three of you, and none can tell which is true",
   },
   seers_seal: {
     name: "the Seer's Seal",
     icon: "🔮",
-    effect: "At the next Djinn's Wager, every decoy burns: you see the real place.",
+    effect: "On the Djinn's map, before you choose a seal, every decoy burns: you see the real place.",
     boast: "a seal that shows you the one true place at my next Wager",
   },
 };

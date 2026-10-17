@@ -20,12 +20,35 @@ const USE_LABEL: Record<RelicId, string | null> = {
   lockdown_orb: "Raise dome",
 };
 
+/** What each Wonder's button says (the Djinn's Coin works by itself). */
+const WONDER_LABEL: Record<string, string> = {
+  carpet_of_kings: "Fly",
+  seers_seal: "Break",
+  master_key: "Turn",
+  phantom_cloak: "Wear",
+  sandstorm_crown: "Wear",
+  eye_of_the_djinn: "Open",
+  hourglass_of_ages: "Turn",
+};
+
 /** The player's bag: relics found while roaming, and using them. */
-export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id: string) => Promise<string>; onClose: () => void }) {
+export function BagPanel({
+  leads,
+  onUse,
+  onWonder,
+  onClose,
+}: {
+  leads: number;
+  onUse: (id: string) => Promise<string>;
+  /** Use a Wonder; null when the map takes over (the Carpet asks where to). */
+  onWonder: (id: string, wonder: string) => Promise<string | null>;
+  onClose: () => void;
+}) {
   const [relics, setRelics] = useState<Relic[] | null>(null);
   const [wonders, setWonders] = useState<Wonder[]>([]);
   const [now] = useState(() => Date.now());
   const [busy, setBusy] = useState<string | null>(null);
+  const [sure, setSure] = useState<string | null>(null); // a Wonder is used once: tap twice
   const [message, setMessage] = useState<string | null>(null);
   const [version, setVersion] = useState(0); // reload after using one
 
@@ -58,6 +81,20 @@ export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id:
     setBusy(id);
     setMessage(await onUse(id));
     setBusy(null);
+    setVersion((v) => v + 1);
+  }
+
+  async function unleash(w: Wonder) {
+    if (sure !== w.id) {
+      setSure(w.id);
+      return;
+    }
+    setSure(null);
+    setBusy(w.id);
+    const said = await onWonder(w.id, w.wonder);
+    setBusy(null);
+    if (said === null) return;
+    setMessage(said);
     setVersion((v) => v + 1);
   }
 
@@ -104,9 +141,27 @@ export function BagPanel({ leads, onUse, onClose }: { leads: number; onUse: (id:
                   </p>
                   <p className="text-sm text-paper/85">{info.effect}</p>
                   <p className="text-xs text-paper/60">
-                    A Wonder from the Djinn: one in the world, and only you know you hold it. Fades in {daysLeft(w.expires_at)} days. Its power
-                    wakes in a live hunt.
+                    A Wonder from the Djinn: one in the world, and only you know you hold it. Fades in {daysLeft(w.expires_at)} days.{" "}
+                    {w.wonder === "djinn_coin"
+                      ? "It works by itself, once."
+                      : w.wonder === "carpet_of_kings"
+                        ? "Fly any time."
+                        : w.wonder === "seers_seal"
+                          ? "Break it on the Djinn's map, before you choose a seal."
+                          : "Its power wakes in a live hunt. Everyone will hear when you use it."}
                   </p>
+                  {w.wonder !== "djinn_coin" && (
+                    <button
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => void unleash(w)}
+                      className={`mt-1 h-10 self-start rounded-xl px-4 text-sm font-bold disabled:opacity-50 ${
+                        sure === w.id ? "bg-danger text-paper" : "bg-[#9B5DE5] text-paper"
+                      }`}
+                    >
+                      {busy === w.id ? "…" : sure === w.id ? "Sure? It's used once. Tap again" : (WONDER_LABEL[w.wonder] ?? "Unleash")}
+                    </button>
+                  )}
                 </li>
               );
             })}

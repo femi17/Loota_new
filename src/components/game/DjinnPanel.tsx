@@ -32,7 +32,8 @@ export type GateVerdict = { score: number; favour: number; rooms: RoomMarks };
 /** In the chamber at the chosen place (djinn_enter_chamber). The deadline is on this device's clock (ms). */
 export type DjinnChamber = Rooms & { id: string; place: string; deadline: number; seconds: number };
 export type ChamberResult = {
-  outcome: "won" | "empty" | "whirlwind" | "too_late";
+  /** "coin": failed, but a Djinn's Coin stopped the whirlwind (and is spent). */
+  outcome: "won" | "empty" | "whirlwind" | "too_late" | "coin";
   rooms: RoomMarks;
   wonder: string;
   extraWonder: string | null;
@@ -368,7 +369,7 @@ export function DjinnPanel({
   };
 
   const mood =
-    stage === "turned_away" || stage === "fooled" || (verdict && verdict.score === 0) || ending?.outcome === "empty" || ending?.outcome === "whirlwind"
+    stage === "turned_away" || stage === "fooled" || (verdict && verdict.score === 0) || ending?.outcome === "empty" || ending?.outcome === "whirlwind" || ending?.outcome === "coin"
       ? "scornful"
       : (verdict && verdict.favour > 0) || ending?.outcome === "won" || stage === "won"
         ? "pleased"
@@ -379,6 +380,8 @@ export function DjinnPanel({
         return `Impossible… The chamber is mastered. Take it, then: ${wonderOf(ending.wonder).name} is yours. Use it well, little king, and tell no one.`;
       if (ending.outcome === "empty") return "Hahaha! An empty vault! You trusted the wrong seal, little traveller. My treasure lies elsewhere, and you will never touch it now.";
       if (ending.outcome === "too_late") return "Too slow! Another hand has already taken my treasure. The vault is bare.";
+      if (ending.outcome === "coin")
+        return "Wrong! Away with y… What is that? MY Coin! It glows, and my wind dies at your feet. It is dust now, thief. The vault stays shut: try my rooms again, if you dare.";
       return "Wrong! The floor gives way to a howling wind… Away with you!";
     }
     if (chamber && !state) return "…";

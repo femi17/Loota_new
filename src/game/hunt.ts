@@ -65,7 +65,7 @@ export type SearchResult =
 
 export type AnswerResult =
   | { ok: true; result: "next"; trial: TrialView }
-  | { ok: true; result: "failed"; reason: "wrong" | "timeout"; correct: string; lng: number; lat: number }
+  | { ok: true; result: "failed"; reason: "wrong" | "timeout"; correct: string; lng: number; lat: number; saved?: boolean }
   | { ok: true; result: "key"; keysHeld: number; keys: number; riddle: string }
   | { ok: true; result: "finished"; keysHeld: number; keys: number; place: number; winner: boolean }
   | { ok: false; reason: "no_trial" };

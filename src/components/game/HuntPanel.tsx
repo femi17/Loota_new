@@ -24,7 +24,7 @@ export type HuntActions = {
 };
 
 type Ending =
-  | { kind: "failed"; reason: "wrong" | "timeout"; correct: string }
+  | { kind: "failed"; reason: "wrong" | "timeout"; correct: string; saved: boolean }
   | { kind: "key"; keysHeld: number; keys: number; riddle: string }
   | { kind: "finished"; place: number; winner: boolean };
 
@@ -78,9 +78,13 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
       }
     };
     begin();
+    // A Wonder took or gave keys (the map hears of it first).
+    const changed = () => void refreshRef.current();
+    window.addEventListener("loota:hunt-changed", changed);
     return () => {
       window.clearTimeout(timer);
       window.clearInterval(timer);
+      window.removeEventListener("loota:hunt-changed", changed);
     };
   }, [actions, huntId]);
 
@@ -133,7 +137,7 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     setTrial(null);
     if (r.result === "failed") {
       actions.current?.placeAt(r.lng, r.lat);
-      setEnding({ kind: "failed", reason: r.reason, correct: r.correct });
+      setEnding({ kind: "failed", reason: r.reason, correct: r.correct, saved: !!r.saved });
     } else if (r.result === "key") {
       setEnding({ kind: "key", keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle });
     } else {
@@ -147,7 +151,7 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     const was = ending;
     setEnding(null);
     actions.current?.setFrozen(false);
-    if (was?.kind === "failed") {
+    if (was?.kind === "failed" && !was.saved) {
       actions.current?.say("You were thrown 2 km away. Travel back to the key and search again: you'll get new questions.", true);
     }
   }
@@ -276,9 +280,15 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
                 <p>
                   The answer was <b>{ending.correct}</b>.
                 </p>
-                <p className="text-muted">
-                  You&apos;ve been thrown 2 km away. Travel back to the key and search again for a new set of questions.
-                </p>
+                {ending.saved ? (
+                  <p className="text-[#C3A6FF]">
+                    🪙 Your Djinn&apos;s Coin glowed and crumbled to dust: you stand your ground. Search again for a new set of questions.
+                  </p>
+                ) : (
+                  <p className="text-muted">
+                    You&apos;ve been thrown 2 km away. Travel back to the key and search again for a new set of questions.
+                  </p>
+                )}
               </>
             )}
             {ending.kind === "key" && (

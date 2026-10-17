@@ -114,6 +114,17 @@ type Hud = {
   landmarkHere: { landmark: Landmark; canTry: boolean } | null;
   /** A rental waiting at a bus stop, or a taxi on its way: where, how far, and the button once there. */
   pickup: { icon: string; title: string; status: string; action: string | null } | null;
+  /**
+   * The Djinn's Wonders at work (design doc 7.7): seconds left frozen by an Hourglass, in someone's sandstorm,
+   * and with your Eye open (the hunters it sees: bearing relative to the view); under your Cloak; mirrored.
+   */
+  wonders: {
+    frozen: number | null;
+    sand: { seconds: number; by: string | null } | null;
+    eye: { seconds: number; hunters: { name: string; keysHeld: number; metres: number; bearing: number }[] } | null;
+    cloaked: boolean;
+    mirrored: boolean;
+  };
 };
 
 /** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
@@ -228,6 +239,8 @@ export function GameMap({
     eat: () => void;
     /** Use a relic from the bag; resolves to a message for the bag. */
     useRelic: (id: string) => Promise<string>;
+    /** Use a Wonder from the bag (`to`: where the Carpet of Kings flies); resolves to a message. */
+    useWonder: (id: string, to?: LngLat) => Promise<string>;
     /** Attack the dome the hunter is standing at the edge of. */
     attackDome: () => void;
     follow: () => void;
@@ -289,6 +302,7 @@ export function GameMap({
     journey: null,
     djinn: null,
     djinnHere: null,
+    wonders: { frozen: null, sand: null, eye: null, cloaked: false, mirrored: false },
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -318,6 +332,10 @@ export function GameMap({
   const [whirlwind, setWhirlwind] = useState(false);
   /** A trap just sprang: a red flash. */
   const [trapFlash, setTrapFlash] = useState(false);
+  /** News of a Wonder (everyone hears of every use); `flash`: a Cataclysm hit you. */
+  const [wonderBanner, setWonderBanner] = useState<{ n: number; icon: string; text: string; hit: boolean; flash: boolean } | null>(null);
+  /** The Carpet of Kings is ready: asking where to fly. */
+  const [carpetFor, setCarpetFor] = useState<string | null>(null);
   /** "Enter the chamber" at the chosen place: ask for the rooms (once), then open the Djinn on them. */
   const enterChamber = async () => {
     if (!djinnActions || checkingIn) return;
@@ -755,6 +773,8 @@ export function GameMap({
         lat: number;
         reason?: string;
         mode?: Mode;
+        /** Frozen by the Hourglass of Ages until then. */
+        until?: string;
         fuel?: number | null;
         tyre?: number | null;
         engine?: number | null;
@@ -795,6 +815,9 @@ export function GameMap({
           return;
         } else if (result.reason === "dome") {
           say("A Lockdown dome keeps you out of this key area. Attack it with other hunters at its edge to break it.", true);
+        } else if (result.reason === "frozen") {
+          freeze(result.until ? Date.parse(result.until) : Date.now() + 10_000);
+          say("⌛ The Hourglass of Ages holds you fast: you can't move until its sand runs out.", true);
         } else {
           say("Your position was corrected to the last valid spot.", true);
         }
@@ -856,8 +879,10 @@ export function GameMap({
       let vehicleFactor = 1;
       let weatherFactor = 1;
       let trafficSpeed = 1; // in a jam: cars crawl, motorbikes weave through (src/game/clock.ts)
+      let sandFactor = 1; // in someone's sandstorm (the Sandstorm Crown): half speed, whatever you ride
       function applySpeed() {
-        traveller.speedFactor = vehicleFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : trafficSpeed);
+        traveller.speedFactor =
+          vehicleFactor * sandFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : trafficSpeed);
       }
 
       /** New fuel for the vehicle the player is on (a save, a refuel, a Jerry Can relic). */
@@ -1265,6 +1290,7 @@ export function GameMap({
           void act("eat");
         },
         useRelic: (id) => useRelic(id),
+        useWonder: (id, to) => useWonder(id, to),
         attackDome: () => void attackDome(),
         turn(dir) {
           // Standing on a junction, or pressed just after going through one: take the turn there.
@@ -1722,7 +1748,12 @@ export function GameMap({
         others.delete(id);
       }
 
+      // The Phantom Cloak keeps the hunter off everyone's map; the Mirror of Many shows three copies (Date.now() times).
+      let cloakedUntil = 0;
+      let mirroredUntil = 0;
+
       function announce(now: number) {
+        if (Date.now() < cloakedUntil) return;
         const moving = traveller.v > 0.5;
         if (now - lastAnnounce < (moving ? 1000 : 8000)) return;
         lastAnnounce = now;
@@ -1744,6 +1775,21 @@ export function GameMap({
         };
         void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: update });
         void huntChannel?.send({ type: "broadcast", event: "pos", payload: update });
+        if (Date.now() < mirroredUntil) {
+          // Three copies a few hundred metres off, doing as the hunter does: nobody knows which is real.
+          for (let i = 1; i <= 3; i++) {
+            const angle = (i * 2 * Math.PI) / 3 + 0.6;
+            const metres = 180 + i * 90;
+            const copy: HunterUpdate = {
+              ...update,
+              id: `${playerId}:m${i}`,
+              lng: update.lng + (metres * Math.sin(angle)) / (111320 * Math.cos((update.lat * Math.PI) / 180)),
+              lat: update.lat + (metres * Math.cos(angle)) / 110574,
+            };
+            void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: copy });
+            void huntChannel?.send({ type: "broadcast", event: "pos", payload: copy });
+          }
+        }
       }
 
       // Closing the tab or leaving the app: tell the others straight away (otherwise
@@ -4014,12 +4060,251 @@ export function GameMap({
             }, 2500);
           } else if (r.outcome === "won") {
             say(`🧞 ${wonderOf(r.wonder).name.replace(/^the /, "The ")} is yours! It's in your bag, and only you know.`, true);
+          } else if (r.outcome === "coin") {
+            say("🪙 Your Djinn's Coin glowed and crumbled to dust: the whirlwind died at your feet. Face the chamber again.", true);
           }
           void refreshDjinn();
           return { outcome: r.outcome, rooms: r.rooms, wonder: r.wonder, extraWonder: r.extraWonder, dropAt: r.dropAt };
         },
       });
       void refreshDjinn();
+
+      // ---- The Djinn's Wonders (design doc 7.7): using one, and hearing of every use ----
+      type WonderEvent = { id: number; wonder: string; message: string; at: string; mine: boolean; hitMe: boolean; savedMe: boolean };
+      type WonderNews = {
+        now: string;
+        latest: number;
+        events: WonderEvent[];
+        position: LngLat | null;
+        frozenUntil: string | null;
+        sandstorm: { until: string; by: string } | null;
+        eyeUntil: string | null;
+        cloakUntil: string | null;
+        mirrorUntil: string | null;
+      };
+      type EyeHunter = { name: string; lng: number; lat: number; keysHeld: number; chasing: { key: number; lng: number; lat: number; radiusM: number } | null };
+      const WONDER_POLL_MS = 8000;
+      /** Wonders that move whoever they hit, and ones that take or give keys. */
+      const MOVES = new Set(["cataclysm_orb", "orb_of_return", "djinns_bargain"]);
+      const CHANGES_KEYS = new Set(["cataclysm_orb", "orb_of_oblivion", "thiefs_hand", "master_key"]);
+      /** What a Wonder did to you, after the news of it. */
+      const HIT_YOU: Record<string, string> = {
+        cataclysm_orb: "Your keys are gone, and you're back home.",
+        orb_of_oblivion: "Your keys are gone.",
+        orb_of_return: "You're back home. Your keys are safe.",
+        hourglass_of_ages: "You can't move until the sand runs out.",
+        thiefs_hand: "One of your keys was stolen.",
+        djinns_bargain: "You were in the lead: now you stand where they stood.",
+      };
+      const WONDER_REFUSED: Record<string, string> = {
+        gone: "That Wonder has faded.",
+        passive: "The Djinn's Coin works by itself: once, it spares you a wipe, a throw-back or the whirlwind.",
+        no_hunt: "Its power wakes only in a live hunt you've joined. Keep it secret until then.",
+        where: "Pick a place for the carpet first.",
+        trip: "Get off the bus, train or plane first.",
+        no_map: "The Seer's Seal works on the Djinn's map: pass his gate while a Wager is on, then break it before you choose a seal.",
+        not_at_key: "The Master Key turns only at your next key's spot. Find it, stand on it, then turn the Key. It stays in your bag.",
+        nobody_near: "No hunter holding a key is within 1 km. The Hand stays in your bag.",
+        no_leader: "There's no other hunter on the map to bargain with. The Bargain stays in your bag.",
+        position: "Move a little first, then try again.",
+      };
+      let wondersAt = -Infinity;
+      let wonderSince = -1; // the last Wonder news heard on this device (-1: never looked)
+      try {
+        wonderSince = Number(localStorage.getItem("loota:wonder-seen") ?? -1);
+      } catch {
+        wonderSince = -1;
+      }
+      let frozenUntil = 0; // Date.now() times (frozenUntil: the Hourglass of Ages)
+      let sandUntil = 0;
+      let sandBy: string | null = null;
+      let eyeUntil = 0;
+      let eyeAt = -Infinity;
+      let eyeSeen: EyeHunter[] = [];
+      let lastWonderHud = 0;
+      const banners: { icon: string; text: string; hit: boolean; flash: boolean }[] = [];
+      let bannerN = 0;
+      let bannerTimer = 0;
+
+      /** A banner for each piece of news, one after another. */
+      function showWonder(wonder: string, text: string, hit: boolean) {
+        banners.push({ icon: wonderOf(wonder).icon, text, hit, flash: hit && wonder === "cataclysm_orb" });
+        if (!bannerTimer) nextBanner();
+      }
+      function nextBanner() {
+        if (disposed) return;
+        const b = banners.shift();
+        setWonderBanner(b ? { ...b, n: ++bannerN } : null);
+        bannerTimer = b ? window.setTimeout(nextBanner, 6000) : 0;
+      }
+
+      /** Frozen by the Hourglass of Ages until then (the server says when; the loop holds the player till then). */
+      function freeze(until: number) {
+        frozenUntil = until;
+        if (until > Date.now()) traveller.v = 0;
+      }
+
+      /** Where the server has the player now (after a Wonder moved them). */
+      async function landWhereServerSays() {
+        const { data } = await supabase.from("player_positions").select("lng, lat").eq("user_id", playerId).maybeSingle();
+        if (disposed || !data) return;
+        placeAt(data.lng, data.lat);
+      }
+
+      async function wonderNews() {
+        wondersAt = performance.now();
+        const { data } = await supabase.rpc("wonder_news", { p_since: Math.max(0, wonderSince) });
+        const n = data as WonderNews | null;
+        if (disposed || !n) return;
+        const skew = Date.now() - Date.parse(n.now);
+        const at = (iso: string | null) => (iso ? Date.parse(iso) + skew : 0);
+        const firstLook = wonderSince < 0;
+        wonderSince = Math.max(wonderSince, n.latest);
+        try {
+          localStorage.setItem("loota:wonder-seen", String(wonderSince));
+        } catch {
+          // Private browsing: news may be told again next time.
+        }
+        let moved = false;
+        let keys = false;
+        for (const e of n.events) {
+          // The holder heard when they used it; a Coin that saved you is told by what it saved you from.
+          if (e.mine) continue;
+          if (firstLook && Date.now() - at(e.at) > 120_000) continue; // old news
+          if (e.hitMe && MOVES.has(e.wonder)) moved = true;
+          if (CHANGES_KEYS.has(e.wonder)) keys = true;
+          const text = e.savedMe
+            ? `${e.message} …but your Djinn's Coin glowed and spared you! It's dust now.`
+            : e.hitMe && HIT_YOU[e.wonder]
+              ? `${e.message} ${HIT_YOU[e.wonder]}`
+              : e.message;
+          showWonder(e.wonder, text, e.hitMe);
+        }
+        if (moved && n.position && !ride) placeAt(n.position.lng, n.position.lat);
+        if (keys) window.dispatchEvent(new Event("loota:hunt-changed"));
+
+        // What's acting on the player now.
+        freeze(at(n.frozenUntil));
+        sandUntil = at(n.sandstorm?.until ?? null);
+        sandBy = n.sandstorm?.by ?? null;
+        eyeUntil = at(n.eyeUntil);
+        const wasCloaked = Date.now() < cloakedUntil;
+        cloakedUntil = at(n.cloakUntil);
+        mirroredUntil = at(n.mirrorUntil);
+        if (!wasCloaked && Date.now() < cloakedUntil) {
+          // Vanish from everyone's map straight away.
+          sayBye();
+          void huntChannel?.send({ type: "broadcast", event: "bye", payload: { id: playerId } });
+        }
+        if (Date.now() < mirroredUntil) lastAnnounce = 0;
+        showWonders();
+      }
+
+      async function useWonder(id: string, to?: LngLat): Promise<string> {
+        if (to && traveller.mode !== "walk") {
+          const text = "Get off first (vehicle button, then Get off and walk): the carpet carries only you.";
+          say(text, true);
+          return text;
+        }
+        await savePosition();
+        const { data, error } = await supabase.rpc("use_wonder", { p_wonder: id, p_lng: to?.lng ?? null, p_lat: to?.lat ?? null });
+        const r = data as { ok: boolean; reason?: string; wonder?: string; message?: string; lng?: number; lat?: number; finished?: boolean } | null;
+        if (disposed) return "";
+        if (error || !r || !r.ok) {
+          const text = (r && WONDER_REFUSED[r.reason ?? ""]) ?? "The Wonder didn't stir. Try again.";
+          if (to) say(text, true);
+          return text;
+        }
+        const wonder = r.wonder ?? "";
+        const message = `${r.message ?? ""}${r.finished ? " That was the last key: you've finished the hunt!" : ""}`;
+        showWonder(wonder, message, false);
+        if (wonder === "carpet_of_kings" && r.lng != null && r.lat != null) {
+          snapReachM = 3000; // set down beside the place: onto its nearest road
+          placeAt(r.lng, r.lat);
+          void refreshVehicles();
+        } else if (MOVES.has(wonder)) {
+          await landWhereServerSays();
+        }
+        if (CHANGES_KEYS.has(wonder)) window.dispatchEvent(new Event("loota:hunt-changed"));
+        if (wonder === "seers_seal") void refreshDjinn();
+        await wonderNews(); // the Eye, the Cloak and the Mirror start now
+        if (wonder === "eye_of_the_djinn") void lookWithEye();
+        return message;
+      }
+
+      /** The Eye of the Djinn: every other hunter in the hunt, and the key areas they chase. */
+      async function lookWithEye() {
+        eyeAt = performance.now();
+        const { data } = await supabase.rpc("eye_view");
+        if (disposed) return;
+        eyeSeen = (data ?? []) as EyeHunter[];
+        drawEye();
+      }
+      const ringAround = (lng: number, lat: number, r: number) =>
+        Array.from({ length: 49 }, (_, i) => {
+          const a = (i / 48) * 2 * Math.PI;
+          return [lng + (r * Math.sin(a)) / (111320 * Math.cos((lat * Math.PI) / 180)), lat + (r * Math.cos(a)) / 110574];
+        });
+      function drawEye() {
+        const source = map.getSource("eye") as import("maplibre-gl").GeoJSONSource | undefined;
+        if (!source) return;
+        const features: GeoJSON.Feature[] = [];
+        const areas = new Set<number>();
+        for (const h of eyeSeen) {
+          features.push({ type: "Feature", properties: { label: `${h.name} · ${h.keysHeld} keys` }, geometry: { type: "Point", coordinates: [h.lng, h.lat] } });
+          const c = h.chasing;
+          if (c && !areas.has(c.key)) {
+            areas.add(c.key);
+            features.push({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ringAround(c.lng, c.lat, c.radiusM)] } });
+          }
+        }
+        source.setData({ type: "FeatureCollection", features });
+      }
+
+      function showWonders() {
+        const left = (until: number) => Math.max(0, Math.ceil((until - Date.now()) / 1000));
+        const sandLeft = left(sandUntil);
+        if ((sandLeft > 0 ? 0.5 : 1) !== sandFactor) {
+          sandFactor = sandLeft > 0 ? 0.5 : 1;
+          applySpeed();
+        }
+        const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        const view: Hud["wonders"] = {
+          frozen: left(frozenUntil) || null,
+          sand: sandLeft ? { seconds: sandLeft, by: sandBy } : null,
+          eye: left(eyeUntil)
+            ? {
+                seconds: left(eyeUntil),
+                hunters: eyeSeen
+                  .map((h) => ({
+                    name: h.name,
+                    keysHeld: h.keysHeld,
+                    metres: Math.round(geo.distanceM(here, [h.lng, h.lat])),
+                    bearing: Math.round(geo.compassFromHeading(geo.headingOf(here, [h.lng, h.lat])) - map.getBearing()),
+                  }))
+                  .sort((a, b) => a.metres - b.metres)
+                  .slice(0, 5),
+              }
+            : null,
+          cloaked: Date.now() < cloakedUntil,
+          mirrored: Date.now() < mirroredUntil,
+        };
+        setHud((h) => (JSON.stringify(h.wonders) === JSON.stringify(view) ? h : { ...h, wonders: view }));
+      }
+
+      function wondersTick(now: number) {
+        if (now - wondersAt > WONDER_POLL_MS) void wonderNews();
+        const eyeOpen = Date.now() < eyeUntil;
+        if (eyeOpen && now - eyeAt > 5000) void lookWithEye();
+        if (!eyeOpen && eyeSeen.length) {
+          eyeSeen = [];
+          drawEye();
+        }
+        if (now - lastWonderHud > 1000) {
+          lastWonderHud = now;
+          showWonders();
+        }
+      }
 
       // ---- Landmarks: visit famous places and answer a question for coins and intel ----
       let landmarks: Landmark[] = [];
@@ -4135,7 +4420,7 @@ export function GameMap({
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && now >= stuckUntil && !ride && !visit && !!onRoad;
+        const canMove = !frozen && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
@@ -4249,6 +4534,7 @@ export function GameMap({
         lampTick(now);
         journeyTick(now);
         djinnTick(now);
+        wondersTick(now);
 
         if (now - lastHud > 100) {
           lastHud = now;
@@ -4333,6 +4619,30 @@ export function GameMap({
           },
           firstSymbol,
         );
+        // The Eye of the Djinn (a Wonder): other hunters, and the key areas they chase.
+        map.addSource("eye", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        const isArea: import("maplibre-gl").FilterSpecification = ["==", ["geometry-type"], "Polygon"];
+        const isHunter: import("maplibre-gl").FilterSpecification = ["==", ["geometry-type"], "Point"];
+        map.addLayer({ id: "eye-area", type: "fill", source: "eye", filter: isArea, paint: { "fill-color": "#9B5DE5", "fill-opacity": 0.15 } }, firstSymbol);
+        map.addLayer(
+          { id: "eye-edge", type: "line", source: "eye", filter: isArea, paint: { "line-color": "#C3A6FF", "line-width": 2, "line-dasharray": [2, 2] } },
+          firstSymbol,
+        );
+        map.addLayer({
+          id: "eye-hunter",
+          type: "circle",
+          source: "eye",
+          filter: isHunter,
+          paint: { "circle-radius": 7, "circle-color": "#9B5DE5", "circle-stroke-color": "#FFFFFF", "circle-stroke-width": 2 },
+        });
+        map.addLayer({
+          id: "eye-name",
+          type: "symbol",
+          source: "eye",
+          filter: isHunter,
+          layout: { "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-offset": [0, 1.2], "text-anchor": "top" },
+          paint: { "text-color": "#FFFFFF", "text-halo-color": "#2A1747", "text-halo-width": 2 },
+        });
         styleMapForGame(map);
         map.addLayer(layer);
         frame = requestAnimationFrame(loop);
@@ -4428,6 +4738,7 @@ export function GameMap({
   /** Something to do right here (above the street name). */
   const here = "pointer-events-auto flex h-10 items-center rounded-full bg-gold px-3.5 text-sm font-bold text-ink shadow-lg disabled:opacity-50";
   const distanceText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
+  const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
@@ -4482,7 +4793,19 @@ export function GameMap({
         <div className="flex items-start gap-2">
           {/* Left: what's going on (small chips), then the cards */}
           <div className="flex min-w-0 flex-1 flex-col gap-2">
-            {(hud.clock || hud.vehicle || hud.keg || hud.radar || hud.dome || hud.rain || hud.hunters > 0 || hud.turn !== 0) && (
+            {(hud.clock ||
+              hud.vehicle ||
+              hud.keg ||
+              hud.radar ||
+              hud.dome ||
+              hud.rain ||
+              hud.hunters > 0 ||
+              hud.turn !== 0 ||
+              hud.wonders.frozen ||
+              hud.wonders.sand ||
+              hud.wonders.eye ||
+              hud.wonders.cloaked ||
+              hud.wonders.mirrored) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {hud.clock && (
                   <div
@@ -4537,6 +4860,51 @@ export function GameMap({
                     {hud.keg.fuel > 0 ? `${Math.round(hud.keg.fuel)}%` : "empty"}
                   </div>
                 )}
+                {hud.wonders.frozen && (
+                  <div className={`${chip} bg-[#16324F] text-[#CFE6FF] ring-1 ring-[#8EC5FF]`} aria-label="Frozen by the Hourglass of Ages" title="Frozen by the Hourglass of Ages">
+                    <span aria-hidden="true">⌛</span>
+                    Frozen {mmss(hud.wonders.frozen)}
+                  </div>
+                )}
+                {hud.wonders.sand && (
+                  <div className={`${chip} bg-[#6B4A16] text-paper`} aria-label="Sandstorm: half speed" title={`${hud.wonders.sand.by ?? "Someone"}'s Sandstorm Crown: half speed`}>
+                    <span aria-hidden="true">🌪</span>
+                    Sandstorm · half speed {mmss(hud.wonders.sand.seconds)}
+                  </div>
+                )}
+                {hud.wonders.cloaked && (
+                  <div className={`${chip} bg-[#2A1747] text-[#C3A6FF]`} aria-label="Cloaked: nobody can see you" title="The Phantom Cloak: off everyone's map">
+                    <span aria-hidden="true">🧥</span>
+                    Unseen
+                  </div>
+                )}
+                {hud.wonders.mirrored && (
+                  <div className={`${chip} bg-[#2A1747] text-[#C3A6FF]`} aria-label="Mirrored: three copies of you" title="The Mirror of Many: three copies of you">
+                    <span aria-hidden="true">🪞</span>×3
+                  </div>
+                )}
+                {hud.wonders.eye && (
+                  <div className="pointer-events-auto flex w-full max-w-xs flex-col gap-1 rounded-lg bg-[#2A1747] px-2.5 py-2 text-xs font-bold text-paper ring-1 ring-[#9B5DE5]" aria-label="The Eye of the Djinn">
+                    <span className="flex items-center gap-1.5 text-[#C3A6FF]">
+                      <span aria-hidden="true">👁</span> The Eye sees · {mmss(hud.wonders.eye.seconds)}
+                    </span>
+                    {hud.wonders.eye.hunters.length === 0 ? (
+                      <span className="font-semibold text-paper/70">No other hunter in the hunt</span>
+                    ) : (
+                      hud.wonders.eye.hunters.map((h, i) => (
+                        <span key={i} className="flex items-center gap-1.5">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="#C3A6FF" aria-hidden="true" style={{ transform: `rotate(${h.bearing}deg)` }}>
+                            <path d="M12 2l6 18-6-4-6 4z" />
+                          </svg>
+                          <span className="truncate">{h.name}</span>
+                          <span className="font-semibold text-paper/70">
+                            {distanceText(h.metres)} · {h.keysHeld} {h.keysHeld === 1 ? "key" : "keys"}
+                          </span>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                )}
                 {hud.radar && (
                   <div className={`${chip} bg-[#3B2F0A] text-paper ring-1 ring-gold`} aria-label="Radar">
                     <span className="text-gold">Radar</span>
@@ -4588,6 +4956,33 @@ export function GameMap({
                     {hud.hunters}
                   </div>
                 )}
+              </div>
+            )}
+
+            {carpetFor && (
+              <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#2A1747] p-3 text-paper ring-2 ring-[#9B5DE5]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-extrabold">🧞 Where shall the Carpet of Kings fly you? Anywhere in the world.</span>
+                  <button
+                    type="button"
+                    onClick={() => setCarpetFor(null)}
+                    aria-label="Not now"
+                    className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-ink/60"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                </div>
+                <PlaceSearch
+                  inline
+                  near={() => actions.current?.where() ?? { lng: startLng, lat: startLat }}
+                  onPick={(place) => {
+                    const id = carpetFor;
+                    setCarpetFor(null);
+                    void actions.current?.useWonder(id, { lng: place.lng, lat: place.lat });
+                  }}
+                />
               </div>
             )}
 
@@ -4868,6 +5263,14 @@ export function GameMap({
         <BagPanel
           leads={hud.leads}
           onUse={(id) => actions.current?.useRelic(id) ?? Promise.resolve("The map isn't ready yet.")}
+          onWonder={async (id, wonder) => {
+            if (wonder === "carpet_of_kings") {
+              setBagOpen(false);
+              setCarpetFor(id);
+              return null;
+            }
+            return (await actions.current?.useWonder(id)) ?? "The map isn't ready yet.";
+          }}
           onClose={() => setBagOpen(false)}
         />
       )}
@@ -4930,6 +5333,25 @@ export function GameMap({
         </div>
       )}
       {trapFlash && <div className="loota-trap-flash pointer-events-none absolute inset-0 z-20" aria-hidden="true" />}
+
+      {/* The Djinn's Wonders: news of every use, and what they do to you. */}
+      {hud.wonders.sand && <div className="loota-sand pointer-events-none absolute inset-0" aria-hidden="true" />}
+      {hud.wonders.frozen && <div className="loota-frost pointer-events-none absolute inset-0" aria-hidden="true" />}
+      {wonderBanner?.flash && <div key={`flash-${wonderBanner.n}`} className="loota-cataclysm-flash pointer-events-none absolute inset-0 z-30" aria-hidden="true" />}
+      {wonderBanner && (
+        <div
+          key={wonderBanner.n}
+          role="alert"
+          className={`loota-wonder-banner pointer-events-none absolute inset-x-3 top-20 z-30 mx-auto flex max-w-md items-center gap-3 rounded-2xl bg-[#2A1747] p-4 text-paper ring-2 ${
+            wonderBanner.hit ? "ring-danger" : "ring-[#9B5DE5]"
+          }`}
+        >
+          <span className="text-4xl" aria-hidden="true">
+            {wonderBanner.icon}
+          </span>
+          <p className="text-sm font-bold">{wonderBanner.text}</p>
+        </div>
+      )}
 
       {landmarksOpen && landmarkActions && (
         <LandmarkPanel actions={landmarkActions} quiz={landmarksOpen.quiz} message={landmarksOpen.message} onClose={() => setLandmarksOpen(null)} />

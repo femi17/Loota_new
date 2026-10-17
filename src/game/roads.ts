@@ -40,9 +40,23 @@ export function cellUrban(cell: RoadCellData) {
   return Math.max(0, Math.min(1, (cell.ways.length - 300) / 1500));
 }
 
-/** A stretch of road for traffic: about 25 points of one road in one square (segment i runs from point i − 1 to i). */
-export function jamStretch(way: RoadCellData["ways"][number], i: number) {
-  return way.points[0] * 64 + Math.floor((i - 1) / 25);
+/** Squares (about 1.1 km) a go-slow covers along one road. */
+const JAM_SQUARE_DEG = 0.01;
+
+/**
+ * A stretch of road for traffic: one named road (or one unnamed way) within a ~1.1 km square, so a go-slow
+ * runs along the road for a kilometre or so, the same for every player. `at`: the start of the segment.
+ * (It was ~25 points of one way, about 250 m: a motorbike was through a jam in 4 seconds and hardly noticed it.)
+ */
+export function jamStretch(way: RoadCellData["ways"][number], at: { lng: number; lat: number }) {
+  let road = way.points[0];
+  if (way.name) {
+    road = 0;
+    for (let k = 0; k < way.name.length; k++) road = (Math.imul(road, 31) + way.name.charCodeAt(k)) | 0;
+  }
+  const gx = Math.floor(at.lng / JAM_SQUARE_DEG);
+  const gy = Math.floor(at.lat / JAM_SQUARE_DEG);
+  return (Math.imul(road, 73856093) ^ Math.imul(gx, 19349663) ^ Math.imul(gy, 83492791)) | 0;
 }
 
 /** May the player travel along this road piece in this direction? */
@@ -783,7 +797,7 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
           name: way.name,
           oneway,
           cls: way.cls,
-          stretch: jamStretch(way, i),
+          stretch: jamStretch(way, pa),
           urban,
         });
         nodes[a].edges.push(id);

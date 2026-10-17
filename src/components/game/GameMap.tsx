@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type P
 import Link from "next/link";
 import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
-import { canSprint, type Mode } from "@/game/movement";
+import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
 import { CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
@@ -3457,10 +3457,10 @@ export function GameMap({
                 line = [];
               };
               for (let i = 1; i < way.points.length; i++) {
-                const jam = jamOn(way.cls, roads.jamStretch(way, i), urban, level, now);
                 const a = pts.get(way.points[i - 1]);
                 const b = pts.get(way.points[i]);
                 if (!a || !b) continue;
+                const jam = jamOn(way.cls, roads.jamStretch(way, a), urban, level, now);
                 if (jam !== lineJam || !line.length) {
                   flush();
                   lineJam = jam;
@@ -4986,6 +4986,12 @@ export function GameMap({
                   >
                     <span aria-hidden="true">🚦</span>
                     {hud.jam === 2 ? "Go-slow" : "Slow traffic"}
+                    {/* How much it holds you back: your speed now, and your vehicle's usual top speed. */}
+                    {hud.vehicle && (
+                      <span className="font-semibold opacity-90">
+                        · {hud.speedKmh} of {MODES[hud.vehicle.kind].kmh} km/h
+                      </span>
+                    )}
                   </div>
                 )}
                 {hud.turn !== 0 && (

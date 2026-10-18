@@ -63,6 +63,11 @@ export type TransitActions = {
   quoteTo: (from: TransitStop, to: TransitDestination) => Promise<TransitQuote | string>;
   /** Pay and board; a message if it didn't work. */
   board: (quote: TransitQuote, fastPass: boolean) => Promise<string | null>;
+  /**
+   * A train or plane: tickets are bought at the station's ticket office, flights checked in at the airport's desk
+   * (owner, 18 Oct 2026). Goes in if the player is at its door (null: the panel closes); otherwise the way there.
+   */
+  ticketOffice: (quote: TransitQuote) => string | null;
   directionsTo: (stop: TransitStop) => void;
   /** Where the player's directions lead, if they have any. */
   heading: () => Place | null;
@@ -331,9 +336,24 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
               </label>
             )}
             <div className="flex flex-wrap gap-2">
-              <button type="button" disabled={working || coins < quote.fare} onClick={board} className={`${button} bg-gold text-ink`}>
-                Pay {quote.fare} coins and board
-              </button>
+              {quote.mode === "train" || quote.mode === "plane" ? (
+                <button
+                  type="button"
+                  disabled={working || coins < quote.fare}
+                  onClick={() => {
+                    const where = actions.ticketOffice(quote);
+                    if (where) setMessage(where);
+                    else onClose();
+                  }}
+                  className={`${button} bg-gold text-ink`}
+                >
+                  {quote.mode === "plane" ? "🛫 Check in at the airport" : "🎫 Buy at the ticket office"}
+                </button>
+              ) : (
+                <button type="button" disabled={working || coins < quote.fare} onClick={board} className={`${button} bg-gold text-ink`}>
+                  Pay {quote.fare} coins and board
+                </button>
+              )}
               <button type="button" disabled={working} onClick={() => setQuote(null)} className={`${button} border-[1.5px] border-line text-paper`}>
                 Back
               </button>

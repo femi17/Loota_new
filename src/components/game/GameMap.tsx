@@ -14,6 +14,7 @@ import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
 import { MealScene, todaysMenu, type MealActions, type MealOffer } from "./MealScene";
 import type { SceneMoment } from "./EventScene";
 import { NurseScene, type Discharge } from "./NurseScene";
+import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
 import { OFFICER, RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
@@ -103,6 +104,8 @@ type Hud = {
   ride: { icon: string; title: string; status: string; canCancel: boolean } | null;
   /** At a bus stop, station or airport: what the transport button offers. */
   stopHere: { icon: string; label: string } | null;
+  /** At a station's ticket office or an airport's check-in desk: the button to go in. */
+  ticketHere: { kind: "train" | "plane"; name: string } | null;
   /** What can be done where the player stands: eat, rest, refuel, kegs, tyres, repairs. */
   actions: { id: LimitAction; icon: string; short: string; label: string }[];
   /** A warning that needs acting on (tired, fuel low, soft tyres, a worn engine), with the nearest place that helps. */
@@ -282,6 +285,8 @@ export function GameMap({
     findRepairShop: (kind: VehicleKind) => void;
     /** Go into a repair shop: the open-roof shop on the map, the camera looking in (an in-world scene). */
     enterShop: (job: RepairJob) => void;
+    /** Go into the ticket office or check-in hall where the player stands. */
+    enterTicket: () => void;
     /** Walk out of the place: back to the street. */
     leaveShop: () => void;
     /** What's happening in the scene, for the place on the map to show it. */
@@ -343,6 +348,7 @@ export function GameMap({
     dome: null,
     ride: null,
     stopHere: null,
+    ticketHere: null,
     actions: [],
     advice: null,
     care: null,
@@ -386,7 +392,9 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | null>(null);
+  const [ticketOpen, setTicketOpen] = useState<TicketOffer | null>(null);
+  const [ticketActions, setTicketActions] = useState<TicketActions | null>(null);
   /** The scenes tell the place on the map what's happening (one function for good: their timers depend on it). */
   const onMoment = useCallback((m: SceneMoment) => actions.current?.sceneMoment(m), []);
   const [rentalActions, setRentalActions] = useState<RentalActions | null>(null);
@@ -1382,6 +1390,7 @@ export function GameMap({
         ride: (kind, how) => void chooseVehicle(kind, how),
         findRepairShop: (kind) => void findRepairShop(kind, true),
         enterShop: (job) => openShopScene(job),
+        enterTicket: () => enterTicket(),
         leaveShop: () => closePlace(),
         sceneMoment: (m) => sceneMoment(m),
         getOff: () => void getOff(),
@@ -2756,6 +2765,7 @@ export function GameMap({
         quoteBus,
         quoteTo,
         board,
+        ticketOffice,
         directionsTo: (stop) => void planDirections({ lng: stop.lng, lat: stop.lat }, stopTitle(stop)),
         heading: () => (trip ? { name: trip.name, detail: "", lng: trip.to.lng, lat: trip.to.lat } : null),
         fastPasses: async () => {
@@ -4157,6 +4167,12 @@ export function GameMap({
           say(quote, true);
           return;
         }
+        if (quote.mode === "train" || quote.mode === "plane") {
+          // Tickets at the ticket office, flights checked in at the desk: in, or the way there.
+          const where = ticketOffice({ ...quote, then: place });
+          if (where) say(where, true);
+          return;
+        }
         const problem = await board({ ...quote, then: place }, false);
         if (problem) say(problem, true);
         showJourney();
@@ -4334,7 +4350,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -4365,6 +4381,10 @@ export function GameMap({
         vehicle?: import("three").Object3D;
         sparkles?: import("three").Object3D;
         buka?: ReturnType<typeof models.makeOpenBuka>;
+        hall?: ReturnType<typeof models.makeTicketHall>;
+        terminal?: ReturnType<typeof models.makeTerminal>;
+        /** When the bag went on the scale (check-in). */
+        bagAt?: number;
         petrol?: ReturnType<typeof models.makeOpenPetrol>;
         /** Flashing lights (the patrol van's). */
         lights?: import("three").Object3D[];
@@ -4393,19 +4413,27 @@ export function GameMap({
        * Where a place stands: at the kerb of the road nearest its spot (`kerbM` from the road's middle), its
        * doorway to the street. Worked out once the roads are known, then kept.
        */
-      const placements = new Map<string, { origin: LngLat; facing: number; door: LngLat }>();
-      function placeAtKerb(key: string, at: LngLat, kerbM = 8) {
+      const placements = new Map<string, { origin: LngLat; facing: number; door: LngLat; net: unknown }>();
+      let cutOff: { net: unknown; edges: Uint8Array } | null = null;
+      const cutOffOf = (net: NonNullable<typeof network>) => {
+        if (cutOff?.net !== net) cutOff = { net, edges: roads.cutOffEdges(net) };
+        return cutOff.edges;
+      };
+      function placeAtKerb(key: string, at: LngLat, kerbM = 8, withinM = 50) {
+        // Kept while the roads stay the same (a place mid-scene doesn't move); worked out again on new roads (the
+        // first ones, from the map tiles while our own load, can put it on the wrong road).
         const known = placements.get(key);
-        if (known) return known;
-        const rp = network ? roads.snapToNetwork(network, at, 0) : null;
+        if (known && (known.net === network || inWorld)) return known;
+        // On a road the hunter can reach: never a cut-off pocket (an airfield's own roads, a fenced yard).
+        const rp = network ? roads.snapToNetwork(network, at, 0, cutOffOf(network)) : null;
         const road = network && rp ? roads.positionOf(network, rp) : null;
-        if (!road || geo.distanceM([road.lng, road.lat], [at.lng, at.lat]) > 50) {
+        if (!road || geo.distanceM([road.lng, road.lat], [at.lng, at.lat]) > withinM) {
           return { origin: at, facing: geo.headingOf([at.lng, at.lat], [traveller.pos.lng, traveller.pos.lat]), door: at };
         }
         const right = besideBus(road, road.heading, 1, 0);
         const side = (right.lng - road.lng) * (at.lng - road.lng) + (right.lat - road.lat) * (at.lat - road.lat) < 0 ? -1 : 1;
         const origin = besideBus(road, road.heading, side * kerbM, 0);
-        const placed = { origin, facing: geo.headingOf([origin.lng, origin.lat], [road.lng, road.lat]), door: { lng: road.lng, lat: road.lat } };
+        const placed = { origin, facing: geo.headingOf([origin.lng, origin.lat], [road.lng, road.lat]), door: { lng: road.lng, lat: road.lat }, net: network as unknown };
         placements.set(key, placed);
         return placed;
       }
@@ -4423,11 +4451,12 @@ export function GameMap({
         you: { from: { x: number; z: number }; to: { x: number; z: number }; lying?: boolean };
         hidden?: import("@/game/ThreeMapLayer").MapEntity[];
         kerbM?: number;
+        withinM?: number;
         closeScene: () => void;
         extra?: Partial<InWorld>;
       }) {
         if (inWorld || ride) return false;
-        const { origin, facing } = placeAtKerb(o.key, o.at, o.kerbM);
+        const { origin, facing } = placeAtKerb(o.key, o.at, o.kerbM, o.withinM);
         const walker = (look: AvatarLook, spot: { x: number; z: number }, face: number): Walker => {
           const av = models.buildAvatar(look);
           av.root.position.set(spot.x, 0.14, spot.z);
@@ -4617,6 +4646,107 @@ export function GameMap({
         });
       }
 
+      // ---- Tickets and check-in (owner, 18 Oct 2026: "for trains, the user must go and purchase the ticket; at the
+      // airport, the user must go and check in"). A station's ticket office stands at the road nearest the station
+      // (within the 150 m the server allows), an airport's terminal at the road nearest it (within its 2 km).
+      const TICKET_AT_M = 30;
+      const CLERKS = ["Mrs Okafor", "Mr Adeyemi", "Miss Bello", "Mr Danjuma", "Mrs Eze"];
+      let pendingTicket: TransitQuote | null = null; // chosen in the travel panel, to buy at the office
+      const boards = new Map<number, string[]>(); // each station's or airport's departures, for its board
+      const ticketDoor = (st: TransitStop) => placeAtKerb(`ticket:${st.id}`, st, 9, st.kind === "plane" ? 1900 : 140);
+
+      function openTicketPlace(st: TransitStop, quote: TransitQuote | null) {
+        if (st.kind !== "train" && st.kind !== "plane") return;
+        const plane = st.kind === "plane";
+        const S = plane ? models.TERMINAL_SPOTS : models.TICKET_SPOTS;
+        const clerk = nameFor(CLERKS, String(st.id));
+        // The departures board: the trip chosen, then where else the line or airport goes (looked up as you approach).
+        const board = [...(quote ? [quote.label] : []), ...(boards.get(st.id) ?? []).filter((r) => r !== quote?.label)].slice(0, 5);
+        const hall = plane ? null : models.makeTicketHall(st.name, board);
+        const terminal = plane ? models.makeTerminal(`${st.name}${st.code ? ` (${st.code})` : ""}`, board) : null;
+        const opened = openPlace({
+          kind: "ticket",
+          key: `ticket:${st.id}`,
+          at: st,
+          withinM: plane ? 1900 : 140,
+          kerbM: 9,
+          group: (hall ?? terminal)!.group,
+          spots: S,
+          keeper: { look: { ...keeperLook(clerk), topColour: plane ? "#2F6FEB" : "#1E9E62", extra: "none" }, at: S.keeper },
+          you: { from: S.outside, to: S.customer },
+          closeScene: () => setTicketOpen(null),
+          extra: { hall: hall ?? undefined, terminal: terminal ?? undefined },
+        });
+        if (!opened) return;
+        pendingTicket = null;
+        setTicketOpen({ stop: st, clerk, quote });
+      }
+
+      /** At a ticket office or check-in desk's door: the button to go in. */
+      let lastTicketCheck = 0;
+      function ticketTick(now: number) {
+        if (now - lastTicketCheck < 500) return;
+        lastTicketCheck = now;
+        let here: { kind: "train" | "plane"; name: string } | null = null;
+        if (!ride && !visit && !inWorld && network && near) {
+          for (const st of near.here) {
+            if (st.kind !== "train" && st.kind !== "plane") continue;
+            const { door } = ticketDoor(st);
+            if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]) <= TICKET_AT_M) {
+              here = { kind: st.kind, name: st.kind === "plane" ? st.name : `${st.name} station` };
+              if (!boards.has(st.id)) {
+                boards.set(st.id, []);
+                const id = st.id;
+                void supabase.rpc("transit_destinations", { p_stop: id }).then(({ data }) => {
+                  boards.set(id, ((data ?? []) as { name: string }[]).map((d) => d.name));
+                });
+              }
+              break;
+            }
+          }
+        }
+        setHud((h) => (JSON.stringify(h.ticketHere) === JSON.stringify(here) ? h : { ...h, ticketHere: here }));
+      }
+
+      /** The gold button: into the ticket office (with the trip chosen in the travel panel, if it's from here). */
+      function enterTicket() {
+        const st = near?.here.find((s) => {
+          if (s.kind !== "train" && s.kind !== "plane") return false;
+          const { door } = ticketDoor(s);
+          return geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]) <= TICKET_AT_M;
+        });
+        if (st) openTicketPlace(st, pendingTicket?.from.id === st.id ? pendingTicket : null);
+      }
+
+      /** From the travel panel: go in if at the door, else the way to it. */
+      function ticketOffice(quote: TransitQuote): string | null {
+        const st = quote.from;
+        const { door } = ticketDoor(st);
+        const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]);
+        const office = st.kind === "plane" ? `${st.name}'s check-in desk` : `${st.name} station's ticket office`;
+        if (away <= TICKET_AT_M) {
+          setTransitOpen(false);
+          openTicketPlace(st, quote);
+          return null;
+        }
+        pendingTicket = quote;
+        void planDirections(door, office, true);
+        return `${st.kind === "plane" ? "Check in" : "Buy your ticket"} at ${office}, ${geo.formatDistance(away)} away: follow the blue line, then tap ${st.kind === "plane" ? "🛫 Check in" : "🎫 Ticket office"}.`;
+      }
+
+      setTicketActions({
+        destinations: async (stop) => {
+          const { data } = await supabase.rpc("transit_destinations", { p_stop: stop.id });
+          return (data ?? []) as import("@/game/transit").TransitDestination[];
+        },
+        quoteTo: (stop, to) => quoteTo(stop, to),
+        board: (quote) => board(quote, false),
+        elsewhere: () => {
+          closePlace();
+          setTransitOpen(true);
+        },
+      });
+
       /** Walk out: back to the street (riding, if you rented), the camera rises, the place folds away. */
       function closePlace() {
         const w = inWorld;
@@ -4653,6 +4783,8 @@ export function GameMap({
         }
         if (m.type === "plate") w.buka?.plate(m.state);
         if (m.type === "meter") w.petrol?.meter(m.n);
+        if (m.type === "ticket") w.hall?.ticket(true);
+        if (m.type === "bag") w.bagAt = performance.now();
         if (m.type === "rented") {
           w.you.tx = w.spots.stand.x + 0.2;
           w.you.tz = w.spots.stand.z;
@@ -4753,6 +4885,11 @@ export function GameMap({
           w.sparkles.rotation.y += dt * 1.5;
         }
         if (w.petrol) w.petrol.hose.visible = keeperThere && working;
+        if (w.terminal) {
+          // Your bag: by you, then on the scale for a moment, then along the belt and away.
+          const since = w.bagAt === undefined ? -1 : (now - w.bagAt) / 1000;
+          w.terminal.bag(since < 0 ? "you" : since < 1.2 ? "scale" : since < 4.2 ? (since - 1.2) / 3 : null);
+        }
         if (w.lights) w.lights.forEach((l, i) => (l.visible = Math.floor(t * 4 + i) % 2 === 0)); // the patrol van's lights
         if (w.buka) {
           w.buka.steam.forEach((s, i) => {
@@ -5855,6 +5992,7 @@ export function GameMap({
         skyAndTrafficTick(now);
         lampTick(now);
         repairTick(now);
+        ticketTick(now);
         journeyTick(now);
         djinnTick(now);
         wondersTick(now);
@@ -6459,7 +6597,7 @@ export function GameMap({
             )}
 
             {/* On a bus, train or plane: where to, and when it leaves or arrives. */}
-            {hud.ride && (
+            {hud.ride && !inside && (
               <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
                 <span className="text-2xl" aria-hidden="true">
                   {hud.ride.icon}
@@ -6774,6 +6912,16 @@ export function GameMap({
           onClose={() => (inside === "meal" ? actions.current?.leaveShop() : setMealOpen(null))}
         />
       )}
+      {ticketOpen && ticketActions && (
+        <TicketScene
+          offer={ticketOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={ticketActions}
+          world={inside === "ticket"}
+          onMoment={onMoment}
+          onClose={() => (inside === "ticket" ? actions.current?.leaveShop() : setTicketOpen(null))}
+        />
+      )}
       {discharge && (
         <NurseScene
           discharge={discharge}
@@ -6856,7 +7004,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.heat?.chest || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -6892,6 +7040,16 @@ export function GameMap({
               className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-full bg-gold px-4 font-display text-base font-extrabold text-ink shadow-lg ring-2 ring-[#FFD45C] active:scale-95"
             >
               🗝 Open the chest
+            </button>
+          )}
+          {hud.ticketHere && (
+            <button
+              type="button"
+              onClick={() => actions.current?.enterTicket()}
+              aria-label={hud.ticketHere.kind === "plane" ? `Check in at ${hud.ticketHere.name}` : `The ticket office at ${hud.ticketHere.name}`}
+              className={`${here} gap-1.5`}
+            >
+              {hud.ticketHere.kind === "plane" ? "🛫 Check in" : "🎫 Ticket office"}
             </button>
           )}
           {hud.repairHere && (

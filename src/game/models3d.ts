@@ -1295,3 +1295,126 @@ export function makeStallScene(sign: string) {
   group.add(board);
   return group;
 }
+
+/** A board of departures: a title and up to five lines, in amber on black. */
+function departuresBoard(title: string, rows: string[], width: number, height: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 768;
+  canvas.height = Math.round((768 * height) / width);
+  const g = canvas.getContext("2d")!;
+  g.fillStyle = "#10141A";
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.fillStyle = "#F4B41A";
+  g.font = "800 54px system-ui, sans-serif";
+  g.fillText(title.toUpperCase(), 28, 66);
+  g.font = "600 40px ui-monospace, monospace";
+  g.fillStyle = "#FFD45C";
+  rows.slice(0, 5).forEach((r, i) => g.fillText(r.toUpperCase().slice(0, 30), 28, 130 + i * 56));
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map: texture }));
+}
+
+export const TICKET_SPOTS: PlaceSpots = {
+  width: 11,
+  depth: 7.5,
+  keeper: { x: -1.2, z: -5.7 },
+  customer: { x: -1.2, z: -3.4 },
+  stand: { x: -1.2, z: -4.6 },
+  work: { x: 0.6, z: -5.7 },
+  outside: { x: 0, z: 2.6 },
+};
+
+/**
+ * A railway station's ticket hall with no roof: the counter with its glass windows and the clerk behind, the
+ * departures board, benches, the turnstile to the platform, and a train waiting beyond the back wall.
+ * `ticket(true)` shows the printed ticket on the counter.
+ */
+export function makeTicketHall(station: string, departures: string[]) {
+  const { width: W, depth: D } = TICKET_SPOTS;
+  const group = openRoom(W, D, "#E3E8EE", "#B9B4AA", `${station} station`, "#1E9E62");
+  // The counter, with glass above it and two windows
+  group.add(
+    mesh(new THREE.BoxGeometry(5, 1.1, 0.7), "#1E9E62", -1.5, 0.69, -4.6),
+    mesh(new THREE.BoxGeometry(5.05, 0.08, 0.75), "#F4F1EA", -1.5, 1.27, -4.6),
+  );
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(5, 1.2, 0.05), new THREE.MeshLambertMaterial({ color: "#BFDDF2", transparent: true, opacity: 0.35 }));
+  glass.position.set(-1.5, 1.9, -4.6);
+  group.add(glass, mesh(new THREE.BoxGeometry(0.08, 1.2, 0.08), "#5B6475", -2.6, 1.9, -4.6), mesh(new THREE.BoxGeometry(0.08, 1.2, 0.08), "#5B6475", 0, 1.9, -4.6));
+  // The ticket printer behind, and the ticket itself when printed
+  group.add(mesh(new THREE.BoxGeometry(0.6, 0.5, 0.5), "#3A3F47", 0.6, 1.05, -5.4));
+  const ticket = mesh(new THREE.BoxGeometry(0.5, 0.03, 0.28), "#F4B41A", -1.2, 1.33, -4.35);
+  ticket.visible = false;
+  group.add(ticket);
+  // The departures board, benches, the turnstile to the platform
+  const board = departuresBoard("Departures", departures, 3, 1.6);
+  board.position.set(3, 2.1, -D + 0.27);
+  group.add(board);
+  for (const z of [-2.2, -3.6]) group.add(mesh(new THREE.BoxGeometry(2.6, 0.12, 0.6), "#7A5230", 3.2, 0.62, z), mesh(new THREE.BoxGeometry(2.6, 0.5, 0.1), "#7A5230", 3.2, 0.9, z - 0.3));
+  group.add(mesh(new THREE.BoxGeometry(0.2, 1, 1.2), "#9AA1AC", W / 2 - 1.8, 0.64, -D + 1.2), mesh(new THREE.BoxGeometry(0.2, 1, 1.2), "#9AA1AC", W / 2 - 0.8, 0.64, -D + 1.2));
+  // The platform and the train beyond the back wall
+  group.add(mesh(new THREE.BoxGeometry(W + 4, 0.4, 2.2), "#C9C2B4", 0, 0.2, -D - 1.3));
+  for (let i = 0; i < 2; i++) {
+    const car = makeTrainCar(i === 0);
+    car.rotation.y = Math.PI / 2;
+    car.scale.setScalar(0.85);
+    car.position.set(-4 + i * 8.6, 0, -D - 3.6);
+    group.add(car);
+  }
+  return { group, ticket: (shown: boolean) => (ticket.visible = shown) };
+}
+
+export const TERMINAL_SPOTS: PlaceSpots = {
+  width: 12,
+  depth: 8,
+  keeper: { x: -1.2, z: -5.1 },
+  customer: { x: -1.2, z: -3.2 },
+  stand: { x: 0.25, z: -3.9 },
+  work: { x: -1.2, z: -5.1 },
+  outside: { x: 0, z: 2.6 },
+};
+
+/**
+ * An airport terminal's check-in hall with no roof: three desks (airline colours), the baggage scale and the belt
+ * behind them, the departures board, queue posts, and a plane at the gate beyond the back wall. `bag(at)` puts your
+ * bag by you, on the scale, or along the belt (0–1), or away (null).
+ */
+export function makeTerminal(airport: string, departures: string[]) {
+  const { width: W, depth: D } = TERMINAL_SPOTS;
+  const group = openRoom(W, D, "#EEF1F4", "#D8DDE3", airport, "#2F6FEB", 3.8);
+  // The desks, each with its airline's colour
+  for (const [x, colour] of [
+    [-3.6, "#D62828"],
+    [-1.2, "#1E9E62"],
+    [1.2, "#7C4DCC"],
+  ] as const) {
+    group.add(mesh(new THREE.BoxGeometry(1.8, 1.1, 0.8), "#F4F1EA", x, 0.69, -4.4), mesh(new THREE.BoxGeometry(1.82, 0.3, 0.82), colour, x, 1.1, -4.4));
+    group.add(mesh(new THREE.BoxGeometry(0.5, 0.35, 0.05), "#10141A", x - 0.3, 1.45, -4.6));
+  }
+  // The scale beside the middle desk, the belt behind the desks
+  group.add(mesh(new THREE.BoxGeometry(0.8, 0.25, 0.8), "#5B6475", 0.25, 0.27, -3.9));
+  group.add(mesh(new THREE.BoxGeometry(W - 2, 0.5, 0.9), "#2A2A2A", 0, 0.39, -5.9), mesh(new THREE.BoxGeometry(W - 2, 0.06, 0.8), "#3A3F47", 0, 0.66, -5.9));
+  const bag = new THREE.Group();
+  bag.add(mesh(new THREE.BoxGeometry(0.7, 0.5, 0.35), "#2F6FEB", 0, 0.25, 0), mesh(new THREE.BoxGeometry(0.25, 0.12, 0.06), "#1B2433", 0, 0.56, 0));
+  group.add(bag);
+  // The departures board, queue posts with a strap
+  const board = departuresBoard("Departures", departures, 3.4, 1.8);
+  board.position.set(3.4, 2.4, -D + 0.27);
+  group.add(board);
+  for (const x of [-4.2, -2.4, -0.6]) group.add(mesh(new THREE.CylinderGeometry(0.06, 0.1, 1, 8), "#C9CED6", x, 0.64, -2.2));
+  group.add(mesh(new THREE.BoxGeometry(3.6, 0.08, 0.04), "#D62828", -2.4, 1.05, -2.2));
+  // The plane at the gate beyond the back wall
+  const plane = makePlane().group;
+  plane.rotation.y = Math.PI / 2;
+  plane.scale.setScalar(0.35);
+  plane.position.set(0, 0, -D - 5);
+  group.add(plane);
+  const place = (at: "you" | "scale" | number | null) => {
+    bag.visible = at !== null;
+    if (at === "you") bag.position.set(-0.4, 0.14, -3.2);
+    else if (at === "scale") bag.position.set(0.25, 0.4, -3.9);
+    else if (typeof at === "number") bag.position.set(0.25 + at * (W / 2 - 1.5), 0.69, -5.9);
+  };
+  place("you");
+  return { group, bag: place };
+}

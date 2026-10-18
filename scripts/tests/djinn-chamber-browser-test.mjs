@@ -1,6 +1,6 @@
 // The Djinn's chamber in the browser (phone): a trap springs on the approach, the chamber's button at the
-// place, wrong answers and the whirlwind. Plays a decoy seal of the Wager that's on (never wins it);
-// the test player is deleted.   SHOTS=<folder> node scripts/tests/djinn-chamber-browser-test.mjs
+// place, wrong answers and the whirlwind. Plays a decoy seal of the Wager that's on (never wins it), or of one
+// opened for the test (ended afterwards); the test player is deleted.   SHOTS=<folder> node scripts/tests/djinn-chamber-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 const app = createRequire(new URL("../../package.json", import.meta.url));
@@ -19,10 +19,18 @@ const around = (p, arc, m) => {
 };
 const ids = [];
 let browser;
+let fails = 0;
+const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
+let ownWager = null;
 try {
+  // The Wager that's on, or one opened for the test (ended afterwards).
   const { data: live } = await admin.from("djinn_wagers").select("*").gt("ends_at", new Date().toISOString()).is("winner", null).limit(1);
-  const w = live?.[0];
-  if (!w) throw new Error("No Wager is on: summon one from /admin first");
+  let w = live?.[0];
+  if (!w) {
+    const { data: opened } = await admin.rpc("djinn_open_wager");
+    ownWager = opened;
+    w = (await admin.from("djinn_wagers").select("*").eq("id", opened).single()).data;
+  }
   // A decoy seal (so the test never wins the Wager): the first one that isn't real.
   const { data: site } = await admin.from("djinn_sites").select("*").eq("id", w.site_ids.find((x) => x !== w.real_site)).single();
 
@@ -88,26 +96,56 @@ try {
   const button = await page.evaluate(() => [...document.querySelectorAll("button")].map((b) => b.textContent ?? "").find((t) => t.includes("Enter the chamber")) ?? null);
   console.log("chamber button:", button);
   await page.screenshot({ path: `${OUT}/chamber-door.png` });
-  console.log("enter:", await clickText("Enter the chamber"));
-  await wait(3000);
-  console.log("chamber:", (await text('[role="dialog"][aria-label="The Djinn"]'))?.slice(0, 400));
+  check("at the place: Enter the chamber", await clickText("Enter the chamber"));
+  await wait(4000);
+  // On the map: the vault drawn there, the rooms in a sheet at the bottom with the Djinn's words.
+  const sheet = await page.evaluate(() => {
+    const d = document.querySelector('[role="dialog"][aria-label="The Djinn"]');
+    return d ? { strip: d.hasAttribute("data-scene-strip"), text: d.innerText.split(String.fromCharCode(10)).join(" | ").slice(0, 300) } : null;
+  });
+  check("the chamber on the map: the rooms in a sheet, the Djinn speaking", !!sheet?.strip && /The Djinn:.*Three rooms guard my vault/.test(sheet?.text ?? ""), sheet?.text);
   await page.screenshot({ path: `${OUT}/chamber-rooms.png` });
+  // Into the second room: a step onto the cursed floor (its stone glows in the vault).
+  await clickText("II · Floor");
+  await wait(1500);
+  const stepped = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[aria-label="The Djinn"] button')].find((x) => !x.disabled && x.className.includes("ring-[#C89BFF]"));
+    b?.click();
+    return !!b;
+  });
+  check("on the cursed floor: a step taken", stepped);
+  await wait(1500);
+  await page.screenshot({ path: `${OUT}/chamber-floor.png` });
+  // The third: a stone on the scales.
+  await clickText("III · Scales");
+  await wait(1500);
+  check("at the scales: a stone put on", await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[aria-label="The Djinn"] button[aria-pressed]')][0];
+    b?.click();
+    return !!b;
+  }));
+  await wait(1500);
+  await page.screenshot({ path: `${OUT}/chamber-scales.png` });
 
   // ---- Wrong: the whirlwind
-  console.log("speak (wrong):", await clickText("Speak the final words"));
+  check("speak (wrong)", await clickText("Speak the final words"));
   await wait(1200);
-  console.log("whirlwind showing:", await page.evaluate(() => !!document.querySelector(".loota-whirlwind-screen")), "| the Djinn:", (await text('[role="dialog"][aria-label="The Djinn"]'))?.slice(0, 200));
+  const djinn = await text('[role="dialog"][aria-label="The Djinn"]');
+  check("…the whirlwind", (await page.evaluate(() => !!document.querySelector(".loota-whirlwind-screen"))) || /howling wind/.test(djinn ?? ""), djinn?.slice(0, 200));
   await page.screenshot({ path: `${OUT}/chamber-whirlwind.png` });
   await wait(5000);
   const pos = (await admin.from("player_positions").select("lng, lat").eq("user_id", id).single()).data;
   const km = Math.hypot((pos.lng - site.lng) * 111320 * k(site.lat), (pos.lat - site.lat) * 110574) / 1000;
   console.log("after:", await hint(), `| now ${km.toFixed(0)} km from ${site.name}`);
   await page.screenshot({ path: `${OUT}/chamber-after.png` });
-  console.log("browser errors:", problems.length ? problems.join(" | ") : "none");
+  check("…carried far away", km > 5, `${km.toFixed(0)} km`);
+  check("no page errors", problems.length === 0, problems.join(" | "));
 } catch (e) {
+  fails++;
   console.log("ERROR", e.message);
 } finally {
   await browser?.close().catch(() => {});
+  if (ownWager) await admin.from("djinn_wagers").update({ ends_at: new Date(Date.now() - 1000).toISOString() }).eq("id", ownWager);
   for (const id of ids) await admin.auth.admin.deleteUser(id);
-  console.log("test players deleted:", ids.length);
+  console.log(`test players deleted: ${ids.length}${ownWager ? "; test Wager ended" : ""}; ${fails ? `${fails} FAILED` : "all passed"}`);
 }

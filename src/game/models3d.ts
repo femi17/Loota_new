@@ -1553,3 +1553,131 @@ export function makeKeyCircle() {
   group.add(light);
   return { group, flames, glow: light };
 }
+
+/**
+ * The Djinn's chamber (design doc 7.6), open to the sky: three bays, one per room, the vault door at the back.
+ * `keeper` is where the Djinn hovers; `rooms[i]` where you stand to work on room i.
+ */
+export const VAULT_SPOTS: PlaceSpots & { rooms: { x: number; z: number }[] } = {
+  width: 13,
+  depth: 8.5,
+  keeper: { x: 0, z: -7.2 },
+  customer: { x: -4.3, z: -2.4 },
+  stand: { x: 0, z: -8.2 },
+  work: { x: 0, z: -7.2 },
+  outside: { x: 0, z: 2.6 },
+  rooms: [
+    { x: -4.3, z: -2.4 },
+    { x: 0, z: -1.2 },
+    { x: 4.3, z: -2.4 },
+  ],
+};
+
+/**
+ * Sandstone walls, a knee-high front with the doorway; in bay I the cipher on a glowing tablet and the wheel before it,
+ * in bay II the cursed floor (rows × cols tiles, the stones you step on glowing), in bay III the idol's scales; the
+ * golden vault door at the back. Set them as the puzzle goes: `wheel(n)`, `path(cols)`, `scales(stones, tilt)`,
+ * `open()` (the door swings, the Wonder's light rises).
+ */
+export function makeDjinnVault(place: string, cipher: string, rows: number, cols: number) {
+  const { width: W, depth: D } = VAULT_SPOTS;
+  const group = openRoom(W, D, "#C9A66B", "#B08D57", `The Chamber of ${place}`, "#7C4DCC", 3.6);
+  // Low walls between the bays
+  for (const x of [-2.2, 2.2]) group.add(mesh(new THREE.BoxGeometry(0.3, 1.3, D - 2.6), "#B8925A", x, 0.79, -D / 2 - 0.6));
+  // ---- Bay I: the cipher on a glowing tablet, the wheel on its pedestal
+  const canvas = document.createElement("canvas");
+  canvas.width = 768;
+  canvas.height = 384;
+  const g = canvas.getContext("2d")!;
+  g.fillStyle = "#1B0F2E";
+  g.fillRect(0, 0, 768, 384);
+  g.fillStyle = "#C89BFF";
+  g.font = "700 46px ui-monospace, monospace";
+  g.textAlign = "center";
+  const words = cipher.split(" ");
+  const lines: string[] = [];
+  for (const w of words) {
+    const last = lines.at(-1);
+    if (last !== undefined && (last + " " + w).length <= 16) lines[lines.length - 1] = last + " " + w;
+    else lines.push(w);
+  }
+  lines.slice(0, 5).forEach((l, i) => g.fillText(l, 384, 80 + i * 68));
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const tablet = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.7), new THREE.MeshBasicMaterial({ map: texture }));
+  tablet.position.set(-4.3, 2.0, -D + 0.28);
+  group.add(tablet, mesh(new THREE.CylinderGeometry(0.3, 0.4, 1, 10), "#8A6B3E", -4.3, 0.64, -4.6));
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.09, 8, 24), glow("#F4B41A"));
+  wheel.position.set(-4.3, 1.55, -4.6);
+  const spoke = mesh(new THREE.BoxGeometry(0.9, 0.08, 0.08), "#F4B41A");
+  wheel.add(spoke);
+  group.add(wheel);
+  // ---- Bay II: the cursed floor
+  const tileW = Math.min(0.9, 3.4 / cols);
+  const tileD = Math.min(0.9, 4.2 / rows);
+  const tiles: THREE.Mesh[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const row: THREE.Mesh[] = [];
+    for (let c = 0; c < cols; c++) {
+      const tile = new THREE.Mesh(new THREE.BoxGeometry(tileW * 0.9, 0.08, tileD * 0.9), material("#8C7A5B"));
+      // Row 0 is the bottom row: nearest the door.
+      tile.position.set((c - (cols - 1) / 2) * tileW, 0.18, -1.9 - r * tileD);
+      group.add(tile);
+      row.push(tile);
+    }
+    tiles.push(row);
+  }
+  // ---- Bay III: the idol's scales
+  const scales = new THREE.Group();
+  scales.position.set(4.3, 0.14, -4.4);
+  scales.add(mesh(new THREE.CylinderGeometry(0.08, 0.12, 2.2, 8), "#E0A82E", 0, 1.1, 0), mesh(new THREE.BoxGeometry(1, 0.12, 0.5), "#8A6B3E", 0, 0.06, 0));
+  const beam = new THREE.Group();
+  beam.position.y = 2.2;
+  beam.add(mesh(new THREE.BoxGeometry(2.6, 0.1, 0.1), "#E0A82E"));
+  const stonesPan = new THREE.Group();
+  stonesPan.position.set(-1.2, -0.6, 0);
+  stonesPan.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.06, 16), "#E0A82E"));
+  const idolPan = new THREE.Group();
+  idolPan.position.set(1.2, -0.6, 0);
+  idolPan.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.06, 16), "#E0A82E"), mesh(new THREE.BoxGeometry(0.3, 0.55, 0.3), "#F4B41A", 0, 0.3, 0));
+  beam.add(stonesPan, idolPan);
+  scales.add(beam);
+  group.add(scales);
+  const stones: THREE.Mesh[] = [];
+  for (let i = 0; i < 8; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), material("#7A7F86"));
+    s.position.set(((i % 3) - 1) * 0.22, 0.12 + Math.floor(i / 3) * 0.18, ((i % 2) - 0.5) * 0.18);
+    s.visible = false;
+    stonesPan.add(s);
+    stones.push(s);
+  }
+  // ---- The vault door, and the Wonder's light behind it
+  const door = new THREE.Group();
+  door.position.set(-1.1, 0, -D + 0.3);
+  const leaf = mesh(new THREE.BoxGeometry(2.2, 2.8, 0.2), "#C9A227", 1.1, 1.54, 0);
+  door.add(leaf, mesh(new THREE.TorusGeometry(0.35, 0.06, 6, 18), "#7C4DCC", 1.1, 1.7, 0.12));
+  group.add(door);
+  const light = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 1.1, 3.2, 16, 1, true), new THREE.MeshBasicMaterial({ color: "#E8D8FF", transparent: true, opacity: 0.3, side: THREE.DoubleSide }));
+  light.position.set(0, 1.8, -D + 0.9);
+  light.visible = false;
+  const prize = new THREE.Mesh(new THREE.OctahedronGeometry(0.45, 0), glow("#C3A6FF"));
+  prize.position.set(0, 2.2, -D + 0.9);
+  prize.visible = false;
+  group.add(light, prize);
+  return {
+    group,
+    prize,
+    wheel: (n: number) => (wheel.rotation.z = (-n / 26) * Math.PI * 2),
+    path: (cols: number[]) =>
+      tiles.forEach((row, r) => row.forEach((tile, c) => (tile.material = material(cols[r] === c ? "#F4B41A" : "#8C7A5B")))),
+    scales: (count: number, tilt: number) => {
+      stones.forEach((s, i) => (s.visible = i < count));
+      beam.rotation.z = (tilt * Math.PI) / 180;
+      stonesPan.rotation.z = idolPan.rotation.z = -beam.rotation.z;
+    },
+    open: () => {
+      door.rotation.y = -1.9;
+      light.visible = prize.visible = true;
+    },
+  };
+}

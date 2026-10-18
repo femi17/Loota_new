@@ -291,6 +291,8 @@ export function GameMap({
     enterShop: (job: RepairJob) => void;
     /** Go into the ticket office or check-in hall where the player stands. */
     enterTicket: () => void;
+    /** The Djinn's chamber on the map, where the player stands. */
+    openVault: (chamber: DjinnChamber) => void;
     /** A landmark's plaza or the Lamp's spot where the player stands, on the map; false if it can't be shown. */
     openQuizPlace: (kind: "landmark" | "detour", name: string, host: AvatarLook) => boolean;
     /** Walk out of the place: back to the street. */
@@ -398,7 +400,7 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
   const [ticketOpen, setTicketOpen] = useState<TicketOffer | null>(null);
@@ -435,6 +437,7 @@ export function GameMap({
     setCheckingIn(true);
     const chamber = await djinnActions.enterChamber();
     setCheckingIn(false);
+    if (typeof chamber === "object") actions.current?.openVault(chamber); // the vault on the map (the panel as a sheet)
     setDjinnOpen({ chamber });
   };
   /** The Claim button at a Detour's place: the Lamp's messenger on the map (the lamp's panel if it can't be shown). */
@@ -1463,6 +1466,7 @@ export function GameMap({
         findRepairShop: (kind) => void findRepairShop(kind, true),
         enterShop: (job) => openShopScene(job),
         enterTicket: () => enterTicket(),
+        openVault: (chamber) => openVault(chamber),
         openQuizPlace: (kind, name, host) => openQuizPlace(kind, name, host),
         leaveShop: () => closePlace(),
         sceneMoment: (m) => sceneMoment(m),
@@ -4423,7 +4427,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -4457,6 +4461,7 @@ export function GameMap({
         hall?: ReturnType<typeof models.makeTicketHall>;
         shrine?: ReturnType<typeof models.makeLampShrine>;
         circle?: ReturnType<typeof models.makeKeyCircle>;
+        vault?: ReturnType<typeof models.makeDjinnVault>;
         star?: import("three").Object3D;
         terminal?: ReturnType<typeof models.makeTerminal>;
         /** When the bag went on the scale (check-in). */
@@ -4886,6 +4891,30 @@ export function GameMap({
       window.addEventListener("loota:trial", trialEvent);
       window.addEventListener("loota:trial-step", trialStep);
 
+      // ---- The Djinn's chamber on the map: the vault at the chosen place, the Djinn hovering by its door. You go to
+      // whichever room you're working on; the wheel turns, the floor's stones glow where you step, the scales tip;
+      // mastered, the door swings open on the Wonder's light; failed, the whirlwind takes you.
+      const DJINN: AvatarLook = { skin: "#7C4DCC", hair: "bald", hairColour: "#1B120C", top: "hoodie", topColour: "#3B1F66", bottomsColour: "#2A1747", extra: "none" };
+      function openVault(chamber: DjinnChamber) {
+        if (inWorld || !network) return;
+        const S = models.VAULT_SPOTS;
+        const vault = models.makeDjinnVault(chamber.place, chamber.cipher, chamber.floor.grid.length, chamber.floor.grid[0]?.length ?? 3);
+        const opened = openPlace({
+          kind: "vault",
+          key: `vault:${chamber.id}`,
+          at: { ...traveller.pos },
+          group: vault.group,
+          spots: S,
+          kerbM: 8,
+          keeper: { look: DJINN, at: S.keeper },
+          you: { from: S.outside, to: S.rooms[0] },
+          closeScene: () => setDjinnOpen(null),
+          extra: { vault },
+        });
+        const w = inWorld as InWorld | null;
+        if (opened && w) w.keeper.av.root.scale.setScalar(1.6); // bigger than life
+      }
+
       /** Walk out: back to the street (riding, if you rented), the camera rises, the place folds away. */
       function closePlace() {
         const w = inWorld;
@@ -4923,6 +4952,18 @@ export function GameMap({
         if (m.type === "plate") w.buka?.plate(m.state);
         if (m.type === "meter") w.petrol?.meter(m.n);
         if (m.type === "ticket") w.hall?.ticket(true);
+        if (w.vault) {
+          if (m.type === "room") {
+            const to = models.VAULT_SPOTS.rooms[m.n] ?? models.VAULT_SPOTS.rooms[0];
+            w.you.tx = to.x;
+            w.you.tz = to.z;
+          }
+          if (m.type === "cipher") w.vault.wheel(m.shift);
+          if (m.type === "path") w.vault.path(m.path);
+          if (m.type === "scales") w.vault.scales(m.stones, m.tilt);
+          if (m.type === "won") w.vault.open();
+          if (m.type === "whirlwind") w.servedAt = performance.now();
+        }
         if (m.type === "won") {
           w.shrine?.reward(true);
           w.servedAt = performance.now(); // (the moment of winning: the host cheers)
@@ -5045,12 +5086,23 @@ export function GameMap({
           w.shrine.prize.position.y = 1.9 + Math.sin(t * 3) * 0.12;
         }
         if (w.star) w.star.rotation.y += dt * (w.moment?.type === "won" ? 6 : 1.2);
+        if (w.vault) {
+          // The Djinn hovers, rising and sinking; the Wonder turns in its light once the door is open.
+          w.keeper.av.root.position.y = 0.9 + Math.sin(t * 1.6) * 0.18;
+          w.vault.prize.rotation.y += dt * 2;
+          if (w.moment?.type === "whirlwind") {
+            // The wind: you spin and lift off the cursed floor.
+            w.you.face += dt * 14;
+            w.you.av.root.rotation.y = w.you.face;
+            w.you.av.root.position.y = 0.14 + Math.min(3, ((now - w.servedAt) / 1000) * 1.5);
+          }
+        }
         if (w.circle) {
           // Torches flicker; the key's light breathes over the chest.
           w.circle.flames.forEach((f, i) => f.scale.set(1, 0.8 + 0.35 * Math.abs(Math.sin(t * 9 + i * 1.7)), 1));
           (w.circle.glow.material as import("three").MeshBasicMaterial).opacity = 0.18 + 0.1 * Math.sin(t * 2.4);
         }
-        if ((w.kind === "quiz" || w.kind === "trial") && w.moment?.type === "won" && keeperThere && now - w.servedAt < 1800) {
+        if ((w.kind === "quiz" || w.kind === "trial" || w.kind === "vault") && w.moment?.type === "won" && keeperThere && now - w.servedAt < 1800) {
           w.keeper.av.armL.rotation.x = w.keeper.av.armR.rotation.x = -Math.PI; // hands up: well done!
         }
         if (w.lights) w.lights.forEach((l, i) => (l.visible = Math.floor(t * 4 + i) % 2 === 0)); // the patrol van's lights
@@ -5067,7 +5119,9 @@ export function GameMap({
         const strip = document.querySelector<HTMLElement>("[data-scene-strip]")?.offsetHeight;
         if (strip) w.pad += (strip - w.pad) * Math.min(1, 4 * dt);
         const k = w.closing === null ? opening : 1 - leaving;
-        const centre = insideAt(w, 0, -S.depth * 0.62); // looking a little past the middle: the place sits low, above the replies
+        // Looking a little past the middle, so the place sits low above the replies; under a tall sheet (the chamber's
+        // rooms), nearer the middle, or its far end goes under the status bar.
+        const centre = insideAt(w, 0, -S.depth * (w.pad > 320 ? 0.48 : 0.62));
         const back = { lng: traveller.pos.lng, lat: traveller.pos.lat };
         const target = geo.compassFromHeading(w.facing + Math.PI);
         const turn = ((target - w.cam.bearing) % 360 + 540) % 360 - 180;
@@ -7127,7 +7181,15 @@ export function GameMap({
         />
       )}
 
-      {djinnOpen && djinnActions && <DjinnPanel actions={djinnActions} chamber={djinnOpen.chamber} onClose={() => setDjinnOpen(null)} />}
+      {djinnOpen && djinnActions && (
+        <DjinnPanel
+          actions={djinnActions}
+          chamber={djinnOpen.chamber}
+          world={inside === "vault"}
+          onMoment={onMoment}
+          onClose={() => (inside === "vault" ? actions.current?.leaveShop() : setDjinnOpen(null))}
+        />
+      )}
 
       {/* Carried off by the Djinn's whirlwind; a trap springing. */}
       {whirlwind && (

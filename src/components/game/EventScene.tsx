@@ -19,7 +19,12 @@ export type SceneMoment =
   | { type: "rented" }
   | { type: "ticket" }
   | { type: "bag" }
-  | { type: "won" };
+  | { type: "won" }
+  | { type: "room"; n: number }
+  | { type: "cipher"; shift: number }
+  | { type: "path"; path: number[] }
+  | { type: "scales"; stones: number; tilt: number }
+  | { type: "whirlwind" };
 
 /**
  * A moment in the game as a little 2D scene (owner, 17 Oct 2026): the place, the person there, and a short

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { wonderOf } from "@/game/wonders";
+import type { SceneMoment } from "./EventScene";
 
 /** A seal on the Djinn's map: its verse, and whether favour burned it as a lie. */
 export type DjinnSeal = { id: number; verse: string; burned: boolean };
@@ -233,6 +234,7 @@ function RoomsPuzzle({
   working,
   speak,
   onSpeak,
+  onMoment,
 }: {
   rooms: Rooms;
   deadline: number;
@@ -241,11 +243,30 @@ function RoomsPuzzle({
   working: boolean;
   speak: string;
   onSpeak: (cipher: string, path: number[], weights: number[]) => void;
+  /** In the chamber on the map: which room you're in, the wheel, your steps, your stones. */
+  onMoment?: (m: SceneMoment) => void;
 }) {
-  const [room, setRoom] = useState(0);
-  const [shift, setShift] = useState(0);
-  const [path, setPath] = useState<number[]>([]);
-  const [stones, setStones] = useState<number[]>([]);
+  const [room, setRoomState] = useState(0);
+  const [shift, setShiftState] = useState(0);
+  const [path, setPathState] = useState<number[]>([]);
+  const [stones, setStonesState] = useState<number[]>([]);
+  const setRoom = (n: number) => {
+    setRoomState(n);
+    onMoment?.({ type: "room", n });
+  };
+  const setShift = (n: number) => {
+    setShiftState(n);
+    onMoment?.({ type: "cipher", shift: n });
+  };
+  const setPath = (p: number[]) => {
+    setPathState(p);
+    onMoment?.({ type: "path", path: p });
+  };
+  const setStones = (p: number[]) => {
+    setStonesState(p);
+    const total = p.reduce((s, i) => s + rooms.scales.weights[i], 0);
+    onMoment?.({ type: "scales", stones: p.length, tilt: Math.max(-12, Math.min(12, (total - rooms.scales.target) / 2)) });
+  };
   const left = Math.max(0, deadline - now);
   const button = "h-11 rounded-xl px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40";
   return (
@@ -295,11 +316,19 @@ function RoomsPuzzle({
 export function DjinnPanel({
   actions,
   chamber: chamberStart,
+  world = false,
+  onMoment,
   onClose,
 }: {
   actions: DjinnActions;
   /** Opened at the chosen place by "Enter the chamber": the rooms already asked for, or why not. */
   chamber: DjinnChamber | string | null;
+  /**
+   * The chamber on the map (owner, 18 Oct 2026: scenes in the world): the vault drawn there with the Djinn hovering
+   * by its door; the rooms in a sheet at the bottom, and what you do in them shown in the vault (onMoment).
+   */
+  world?: boolean;
+  onMoment?: (m: SceneMoment) => void;
   onClose: () => void;
 }) {
   const [state, setState] = useState<DjinnState | null>(null);
@@ -352,7 +381,11 @@ export function DjinnPanel({
     if (typeof r === "string") setMessage(r);
     else {
       setEnding(r);
-      if (r.outcome === "whirlwind") window.setTimeout(onClose, 2600); // the wind carries them off
+      if (r.outcome === "won") onMoment?.({ type: "won" });
+      if (r.outcome === "whirlwind") {
+        onMoment?.({ type: "whirlwind" });
+        window.setTimeout(onClose, 2600); // the wind carries them off
+      }
     }
   };
   const unroll = async () => {
@@ -417,12 +450,19 @@ export function DjinnPanel({
 
   const gate = state?.gate ?? null;
 
+  // In the chamber on the map: a sheet at the bottom, the vault in view above (the Djinn is there, not drawn here).
+  const sheet = world && !!chamber;
   return (
-    <div className="absolute inset-0 z-20 flex items-end justify-center bg-[#0B0616]/80 sm:items-center">
+    <div className={sheet ? "pointer-events-none absolute inset-0 z-20 flex items-end justify-center" : "absolute inset-0 z-20 flex items-end justify-center bg-[#0B0616]/80 sm:items-center"}>
       <div
         role="dialog"
         aria-label="The Djinn"
-        className="max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-gradient-to-b from-[#2A1747] to-ink p-5 ring-1 ring-[#9B5DE5] sm:max-w-lg sm:rounded-3xl"
+        data-scene-strip={sheet ? "" : undefined}
+        className={
+          sheet
+            ? "pointer-events-auto max-h-[48dvh] w-full overflow-y-auto rounded-t-3xl bg-gradient-to-b from-[#2A1747]/95 to-ink/95 p-3 ring-1 ring-[#9B5DE5] sm:max-w-lg"
+            : "max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-gradient-to-b from-[#2A1747] to-ink p-5 ring-1 ring-[#9B5DE5] sm:max-w-lg sm:rounded-3xl"
+        }
       >
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -442,7 +482,13 @@ export function DjinnPanel({
           )}
         </div>
 
-        {(chamber ? !!ending || !state : stage !== "gate" || verdict) ? (
+        {sheet ? (
+          // The Djinn's words in a box (he hovers in the vault above).
+          <p className="mt-2 rounded-xl bg-[#F5ECD8] px-3 py-2 text-sm font-semibold leading-snug text-[#3A2410]" role="status">
+            <span className="mr-1.5 font-extrabold text-[#7C4DCC]">The Djinn:</span>
+            {line}
+          </p>
+        ) : (chamber ? !!ending || !state : stage !== "gate" || verdict) ? (
           <>
             <DjinnArt mood={mood} />
             <p className="relative rounded-2xl bg-[#F5ECD8] p-4 text-sm font-semibold leading-relaxed text-[#3A2410] shadow-lg" role="status">
@@ -512,6 +558,7 @@ export function DjinnPanel({
               working={working}
               speak="Speak the final words"
               onSpeak={(c, p, w) => void speakInChamber(c, p, w)}
+              onMoment={onMoment}
             />
           )
         ) : stage === "gate" && gate ? (

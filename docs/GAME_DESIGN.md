@@ -274,6 +274,15 @@ Why leaked answers don't break the game:
 - Questions come from a large bank tagged by difficulty. Later keys use harder questions.
 - Trial answers are checked on the server only. The phone never receives the correct answers.
 
+### 6.3a The hunt, felt [BUILT 17–18 Oct 2026]
+
+The owner's charge: "the hunt experience is everything; how not to make it boring". Built in four parts:
+
+1. **The start and the race.** Before a hunt: "Starts in m:ss" on its card; the last ten seconds a big countdown over the map, GO!, and the first riddle revealed for everyone at the same moment. During it (`hunt_feed`, every 6 s): news as it happens, each with how far from you ("🔑 Ada found Key 2 · 3.1 km from you", "⚔️ Tunde is in the Key 1 trial"); your rank, and when it changes ("📈 You moved up to 3rd!"); how many are already in your key's area; the hunters chasing the same key within 2 km with an arrow and distance (further, only the Eye of the Djinn sees).
+2. **The metal detector and the chest.** In the key's area (`key_pulse`, every few seconds) the screen's edges glow and pulse, faster and stronger as the key gets closer; a chip says Warm / Hot / Burning, warmer or colder; phones buzz. Within 60 m the key's chest rises from the ground; within 40 m "Open the chest" starts the Key Trial; a key won flies into the bag. "Search here" stays for checking a guess from afar.
+3. **The road.** During a hunt, now and then (at most every 4 minutes) the server stops the hunter for a scene: a police checkpoint (a road-safety question; wrong or "just pay", a 20-coin fine and 15 s held), a stranded traveller (help, 15 s, and learn which way your key's area lies) or a street seller's riddle (25 coins).
+4. **Different questions.** Each trial category now mixes in new kinds with its classic questions: count the fruit, memorise (shown for 3 s, then hidden: which wasn't there? which number came third?), unscramble a Nigerian word, odd one out. The memorising time doesn't count against the answer.
+
 ### 6.4 Hunt length
 
 There are no scheduled gates. The prize sets how long a hunt lasts, through:
@@ -737,3 +746,4 @@ Each phase ends with something playable that can be tested.
 | 17 Oct 2026 | **Renting as a scene (10.3).** At the renter, Rent it opens the bike-hire stop with the renter, a short conversation about the price, and Deal! or no thanks (the renter goes back). Each renter has a name and the same look on the map and in the scene. |
 | 17 Oct 2026 | **Go-slows you can feel** (owner: "the motorbike still moves normal"). A jam now runs along one named road for its ~1.1 km square (it was ~25 map points of one way, a few hundred metres, each jammed or not on its own): a typical go-slow is now 1.2–1.3 km (up to 3 km), so a motorbike at a standstill takes ~21 s through it instead of ~10 s, a car ~55 s. The jam chip shows your speed against your vehicle's top speed ("Go-slow · 17 of 35 km/h"). Speeds in jams unchanged: motorbikes 80% / 50%, cars 45% / 15%. Check: `scripts/tests/jam-check.mts`. |
 | 17 Oct 2026 | **The bus rush (5.5).** City buses at night and at rush hour: a crowd at the stop, the RUSH strip with five quick questions as the bus pulls in, the crowd squeezing on as you answer; your chance of a place grows with each right answer; miss and wait for the next bus. Tables bus_rushes, transit_trips.rush / ride_s / rush_tries; RPCs bus_rush_start, bus_rush_answer; finish_trip waits for the rush. |
+| 17–18 Oct 2026 | **The hunt, felt (6.3a).** The start show (countdown, GO!, the riddle revealed for all), the live race (news with distances, rank changes, rivals chasing the same key, who's in your key's area), the metal detector and the rising chest, road events as scenes (checkpoint, traveller, seller), and new kinds of trial question (count, memorise, unscramble, odd one out). A new practice hunt, "Practice Hunt: Lagos Run", live to 27 Oct. |

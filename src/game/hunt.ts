@@ -28,7 +28,11 @@ export type TrialView = {
   count: number;
   prompt: string;
   choices: string[];
+  /** Shown with the question (a row of fruit to count), or first, to memorise, for `showSeconds` (then hidden). */
+  show?: string | null;
+  showSeconds?: number;
   seconds: number;
+  /** Including any memorising time still to come. */
   secondsLeft: number;
 };
 

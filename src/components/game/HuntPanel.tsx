@@ -495,9 +495,15 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
   );
 }
 
-/** One question of a Key Trial, with its countdown. Running out of time counts as a miss. */
+/**
+ * One question of a Key Trial, with its countdown. Running out of time counts as a miss. Some kinds show something
+ * first to memorise (then hide it), some show it alongside (a row to count), and jumbled words come as letter tiles.
+ */
 function KeyTrial({ trial, onAnswer }: { trial: TrialView; onAnswer: (choice: number) => Promise<void> | void }) {
   const [left, setLeft] = useState(trial.secondsLeft);
+  const memorise = (trial.showSeconds ?? 0) > 0;
+  const memorising = memorise && left > trial.seconds; // the first seconds: look, then it's hidden
+  const scramble = /^Unscramble: /.test(trial.prompt) ? trial.prompt.replace(/^Unscramble: /, "").split(" ") : null;
   const [sent, setSent] = useState<number | null>(null);
   const deadline = useRef(0);
   const sentRef = useRef(false);
@@ -527,7 +533,8 @@ function KeyTrial({ trial, onAnswer }: { trial: TrialView; onAnswer: (choice: nu
     void answerRef.current(i);
   };
 
-  const share = left / trial.seconds;
+  const answerLeft = Math.min(left, trial.seconds);
+  const share = answerLeft / trial.seconds;
   return (
     <div className="pointer-events-auto fixed inset-0 z-20 flex items-center justify-center bg-ink/80 p-4">
       <div role="dialog" aria-label="Key Trial" className="flex w-full max-w-lg flex-col gap-4 rounded-3xl bg-ink-2 p-6">
@@ -537,18 +544,42 @@ function KeyTrial({ trial, onAnswer }: { trial: TrialView; onAnswer: (choice: nu
             Question {trial.index + 1} of {trial.count}
           </span>
         </div>
-        <div className="h-2 overflow-hidden rounded bg-line" role="timer" aria-label={`${Math.ceil(left)} seconds left`}>
-          <div className={`h-full ${share < 0.3 ? "bg-danger" : "bg-gold"}`} style={{ width: `${share * 100}%` }} />
-        </div>
-        <p className="text-center font-display text-2xl font-extrabold leading-snug">{trial.prompt}</p>
-        <div className="grid grid-cols-2 gap-3">
+        {memorising ? (
+          <div className="flex flex-col items-center gap-3 py-2" aria-label="Memorise">
+            <p className="text-sm font-extrabold uppercase tracking-widest text-gold">Memorise!</p>
+            <p className="loota-count text-center font-display text-4xl font-extrabold leading-snug tracking-wide">{trial.show}</p>
+            <p className="text-sm text-muted">Hidden in {Math.ceil(left - trial.seconds)}…</p>
+          </div>
+        ) : (
+          <>
+            <div className="h-2 overflow-hidden rounded bg-line" role="timer" aria-label={`${Math.ceil(answerLeft)} seconds left`}>
+              <div className={`h-full ${share < 0.3 ? "bg-danger" : "bg-gold"}`} style={{ width: `${share * 100}%` }} />
+            </div>
+            {trial.show && !memorise && <p className="text-center text-3xl leading-relaxed tracking-wide" aria-label="Count these">{trial.show}</p>}
+            {scramble ? (
+              <div className="flex flex-col items-center gap-2">
+                <p className="text-sm font-bold text-muted">Unscramble:</p>
+                <div className="flex flex-wrap justify-center gap-1.5" aria-label={`Letters: ${scramble.join(" ")}`}>
+                  {scramble.map((ch, i) => (
+                    <span key={i} className="flex size-10 items-center justify-center rounded-lg bg-[#F5ECD8] font-display text-xl font-extrabold text-[#3A2410] shadow">
+                      {ch}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-center font-display text-2xl font-extrabold leading-snug">{trial.prompt}</p>
+            )}
+          </>
+        )}
+        <div className={`grid grid-cols-2 gap-3 ${memorising ? "invisible" : ""}`}>
           {trial.choices.map((choice, i) => (
             <button
               key={i}
               type="button"
-              disabled={sent !== null}
+              disabled={sent !== null || memorising}
               onClick={() => choose(i)}
-              className={`min-h-14 rounded-2xl border-2 px-3 py-2 text-base font-bold ${
+              className={`min-h-14 rounded-2xl border-2 px-3 py-2 font-bold ${/^\p{Extended_Pictographic}/u.test(choice) ? "text-4xl" : "text-base"} ${
                 sent === i ? "border-gold bg-gold text-ink" : "border-line bg-ink text-paper hover:border-gold"
               } disabled:cursor-default`}
             >
@@ -557,7 +588,7 @@ function KeyTrial({ trial, onAnswer }: { trial: TrialView; onAnswer: (choice: nu
           ))}
         </div>
         <p className="text-center text-xs text-muted">
-          {Math.ceil(left)} s left · one wrong answer or running out of time throws you 2 km away
+          {memorising ? "Look closely…" : `${Math.ceil(answerLeft)} s left · one wrong answer or running out of time throws you 2 km away`}
         </p>
       </div>
     </div>

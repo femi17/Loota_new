@@ -341,6 +341,11 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
                   type="button"
                   disabled={working || coins < quote.fare}
                   onClick={() => {
+                    // (A page open since before an update has the old actions: ask for a reload, not a crash.)
+                    if (typeof actions.ticketOffice !== "function") {
+                      setMessage("The game has just been updated: reload the page, then try again.");
+                      return;
+                    }
                     const where = actions.ticketOffice(quote);
                     if (where) setMessage(where);
                     else onClose();

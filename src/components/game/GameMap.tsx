@@ -10,6 +10,9 @@ import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from
 import { CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
+import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
+import { MealScene, type MealActions, type MealOffer } from "./MealScene";
+import { NurseScene, type Discharge } from "./NurseScene";
 import { RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
@@ -168,10 +171,18 @@ type HunterUpdate = {
 
 /** Who brings a rented bicycle or okada (the same renter for the same request, on the map and in the scene). */
 const RENTERS = ["Musa", "Kunle", "Mama Ronke", "Tunde", "Aunty Joy", "Chidi", "Danjuma", "Iya Bola"];
-function renterName(requestedAt: string) {
+/** The pump attendant, the cook, the nurse and the paramedic in the scenes (the same one for the same place or visit). */
+const ATTENDANTS = ["Chidi", "Musa", "Segun", "Ibrahim", "Emeka", "Yusuf", "Sola"];
+const COOKS = ["Mama Nkechi", "Mama Bisi", "Iya Titi", "Mama Ngozi", "Iya Kemi", "Aunty Amaka", "Mama Ronke"];
+const NURSES = ["Nurse Funmi", "Nurse Aisha", "Nurse Grace", "Nurse Ifeoma", "Nurse Zainab"];
+const PARAMEDICS = ["Paramedic Tobi", "Paramedic Usman", "Paramedic Ada", "Paramedic Kelechi"];
+function nameFor(list: string[], seed: string) {
   let n = 0;
-  for (let i = 0; i < requestedAt.length; i++) n = (n * 31 + requestedAt.charCodeAt(i)) % 9973;
-  return RENTERS[n % RENTERS.length];
+  for (let i = 0; i < seed.length; i++) n = (n * 31 + seed.charCodeAt(i)) % 9973;
+  return list[n % list.length];
+}
+function renterName(requestedAt: string) {
+  return nameFor(RENTERS, requestedAt);
 }
 
 /** Areas for live positions (~2.2 km); each hunter listens to theirs and the 8 around it. */
@@ -364,6 +375,12 @@ export function GameMap({
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   const [rentalActions, setRentalActions] = useState<RentalActions | null>(null);
   const [rentOpen, setRentOpen] = useState<RentalOffer | null>(null);
+  /** The scenes at a petrol station, a place to eat, and on leaving hospital. */
+  const [fuelActions, setFuelActions] = useState<FuelActions | null>(null);
+  const [fuelOpen, setFuelOpen] = useState<FuelOffer | null>(null);
+  const [mealActions, setMealActions] = useState<MealActions | null>(null);
+  const [mealOpen, setMealOpen] = useState<MealOffer | null>(null);
+  const [discharge, setDischarge] = useState<Discharge | null>(null);
   const [lampOpen, setLampOpen] = useState<{ quiz: LampQuestion | string | null } | null>(null);
   const [djinnActions, setDjinnActions] = useState<DjinnActions | null>(null);
   const [djinnOpen, setDjinnOpen] = useState<{ chamber: DjinnChamber | string | null } | null>(null);
@@ -1107,43 +1124,47 @@ export function GameMap({
         }
       }
 
-      async function refuelHere() {
-        if (busy) return;
+      async function refuelHere(quiet = false): Promise<{ ok: true; cost: number; fuel: number } | { ok: false; reason: string }> {
+        if (busy) return { ok: false, reason: "busy" };
         setBusy(true);
         try {
           const { data } = await supabase.rpc("refuel");
           const r = data as { ok: boolean; reason?: string; fuel?: number; cost?: number; balance?: number } | null;
           if (!r?.ok) {
-            say(r?.reason === "full" ? "Your tank is already full." : r?.reason === "coins" ? "Not enough coins for fuel." : "Couldn't refuel here.", true);
-            return;
+            if (!quiet) say(r?.reason === "full" ? "Your tank is already full." : r?.reason === "coins" ? "Not enough coins for fuel." : "Couldn't refuel here.", true);
+            return { ok: false, reason: r?.reason ?? "error" };
           }
           await refreshVehicles(); // the one ridden, or one in the pocket, was filled
           warned.fuel = 100;
           clearAdvice("fuel");
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
-          say(`Filled up for ${r.cost} coins.`);
+          if (!quiet) say(`Filled up for ${r.cost} coins.`);
+          return { ok: true, cost: r.cost ?? 0, fuel: r.fuel ?? 100 };
         } finally {
           setBusy(false);
+          computeActions();
         }
       }
 
-      async function eatHere(place: string) {
-        if (busy) return;
+      async function eatHere(place: string, quiet = false): Promise<{ ok: true; energy: number } | { ok: false; reason: string }> {
+        if (busy) return { ok: false, reason: "busy" };
         setBusy(true);
         try {
           const { data } = await supabase.rpc("buy_meal");
           const r = data as { ok: boolean; reason?: string; energy?: number; now?: number; balance?: number } | null;
           if (!r?.ok) {
-            say(r?.reason === "not_here" ? "Meals are sold at places to eat." : `A meal costs ${MEAL_PRICE} coins. Rest at a chill spot for free instead.`, true);
-            return;
+            if (!quiet) say(r?.reason === "not_here" ? "Meals are sold at places to eat." : `A meal costs ${MEAL_PRICE} coins. Rest at a chill spot for free instead.`, true);
+            return { ok: false, reason: r?.reason ?? "error" };
           }
           traveller.energy = r.now ?? Math.min(100, traveller.energy + (r.energy ?? MEAL_ENERGY));
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
-          say(`You ate at ${place}: +${r.energy ?? MEAL_ENERGY} energy.`);
+          if (!quiet) say(`You ate at ${place}: +${r.energy ?? MEAL_ENERGY} energy.`);
+          return { ok: true, energy: r.energy ?? MEAL_ENERGY };
         } finally {
           setBusy(false);
+          computeActions();
         }
       }
 
@@ -2913,6 +2934,13 @@ export function GameMap({
         }
       }
 
+      /** The motorbike or car a petrol station would fill: the one ridden, or an empty one in the pocket. */
+      function thirstyVehicle() {
+        const riding = ownInUse();
+        if (riding && riding.kind !== "bicycle" && riding.fuel < 99) return riding;
+        return owned.find((v) => !v.in_use && v.kind !== "bicycle" && v.fuel <= 0) ?? null;
+      }
+
       /** What can be done here: by the place the hunter is at, and the vehicles next to them. */
       function computeActions() {
         const list: { id: LimitAction; icon: string; short: string; label: string }[] = [];
@@ -2930,7 +2958,7 @@ export function GameMap({
             list.push({ id: "rest_here", icon: "🧘", short: "Rest here", label: "Sit down and rest right here (slower than at a chill spot)" });
           }
           const station = spotHere(["fuel"]);
-          const thirsty = motorRidden && motorRidden.fuel < 99 ? motorRidden : pocketed((v) => v.fuel <= 0);
+          const thirsty = thirstyVehicle();
           if (station && thirsty) {
             list.push({
               id: "refuel",
@@ -2963,18 +2991,30 @@ export function GameMap({
 
       const showKeg = () => setHud((h) => ({ ...h, keg: keg ? { ...keg } : null }));
 
-      async function act(id: LimitAction) {
-        if (busy) return;
-        if (id === "eat") {
+      setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg") });
+      setMealActions({
+        eat: async () => {
           const place = spotHere(["eat"]);
-          if (place) await eatHere(place.name);
-          computeActions();
-          return;
+          return place ? eatHere(place.name, true) : { ok: false, reason: "not_here" };
+        },
+      });
+
+      async function act(id: LimitAction): Promise<boolean> {
+        if (busy) return false;
+        if (id === "eat") {
+          // Sit down with the cook (MealScene).
+          const place = spotHere(["eat"]);
+          if (place) setMealOpen({ place: place.name, cook: nameFor(COOKS, String(place.id)), id: place.id, price: MEAL_PRICE, energy: MEAL_ENERGY });
+          return !!place;
         }
         if (id === "refuel") {
-          await refuelHere();
-          computeActions();
-          return;
+          // The pump attendant (FuelScene).
+          const station = spotHere(["fuel"]);
+          const v = thirstyVehicle();
+          if (station && v && v.kind !== "bicycle") {
+            setFuelOpen({ station: station.name, attendant: nameFor(ATTENDANTS, String(station.id)), kind: v.kind, fuel: v.fuel, pocket: !v.in_use, hasKeg: !!keg });
+          }
+          return !!station && !!v;
         }
         setBusy(true);
         try {
@@ -3001,7 +3041,7 @@ export function GameMap({
             spoilt?: boolean;
             kind?: VehicleKind;
           } | null;
-          if (disposed) return;
+          if (disposed) return false;
           if (!r?.ok) {
             const why: Record<string, string> = {
               not_here: "You need to be right at the place for that.",
@@ -3013,7 +3053,7 @@ export function GameMap({
               empty: "Your keg is empty: fill it at a petrol station.",
             };
             say(why[r?.reason ?? ""] ?? "Couldn't do that just now.", true);
-            return;
+            return false;
           }
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
@@ -3054,6 +3094,7 @@ export function GameMap({
             clearAdvice("bike");
           }
           showKeg();
+          return true;
         } finally {
           setBusy(false);
           computeActions();
@@ -3336,6 +3377,13 @@ export function GameMap({
         // A vehicle damaged in the fall: a repair shop not far from the hospital, and the way there.
         const broken = owned.find((v) => v.broken_at && !v.repair_ready_at);
         if (broken) void findRepairShop(broken.kind, true);
+        setDischarge({
+          hospital: vs.v.route ? (r.hospital ?? vs.v.hospital) : null,
+          nurse: nameFor(vs.v.route ? NURSES : PARAMEDICS, vs.v.calledAt),
+          bill: vs.v.bill,
+          energy: Math.round(traveller.energy),
+          damaged: broken?.kind ?? null,
+        });
       }
 
       /** On loading: energy, the keg, and a faint or hospital visit in progress. */
@@ -6044,6 +6092,13 @@ export function GameMap({
       {rentOpen && rentalActions && (
         <RentalScene offer={rentOpen} you={JSON.parse(lookKey) as AvatarLook} actions={rentalActions} onClose={() => setRentOpen(null)} />
       )}
+      {fuelOpen && fuelActions && (
+        <FuelScene offer={fuelOpen} you={JSON.parse(lookKey) as AvatarLook} actions={fuelActions} onClose={() => setFuelOpen(null)} />
+      )}
+      {mealOpen && mealActions && (
+        <MealScene offer={mealOpen} you={JSON.parse(lookKey) as AvatarLook} actions={mealActions} onClose={() => setMealOpen(null)} />
+      )}
+      {discharge && <NurseScene discharge={discharge} you={JSON.parse(lookKey) as AvatarLook} onClose={() => setDischarge(null)} />}
       {repairOpen && repairActions && (
         <RepairScene job={repairOpen} you={JSON.parse(lookKey) as AvatarLook} actions={repairActions} onClose={() => setRepairOpen(null)} />
       )}

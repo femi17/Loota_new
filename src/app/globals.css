@@ -127,8 +127,10 @@ body {
 .loota-sparkle { animation: loota-sparkle 1.2s ease-in-out infinite; }
 @keyframes loota-sparkle { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
 .loota-caret { animation: loota-sparkle 0.8s steps(2) infinite; }
+.loota-steam { animation: loota-steam 1.6s ease-in-out infinite; }
+@keyframes loota-steam { 0% { opacity: 0; transform: translateY(4px); } 40% { opacity: 0.8; } 100% { opacity: 0; transform: translateY(-6px); } }
 @media (prefers-reduced-motion: reduce) {
-  .loota-npc-idle, .loota-npc-work, .loota-spanner, .loota-sparkle, .loota-caret { animation: none; }
+  .loota-npc-idle, .loota-npc-work, .loota-spanner, .loota-sparkle, .loota-caret, .loota-steam { animation: none; }
 }
 
 /* The hunt's start: each second of the countdown lands with a thump. */

@@ -6,7 +6,7 @@ import type { AvatarLook } from "@/lib/avatar";
 import type { VehicleKind } from "@/game/economy";
 
 /** Where a scene takes place. */
-export type SceneStage = "bicycle_shop" | "workshop" | "bike_hire" | "checkpoint" | "roadside" | "stall";
+export type SceneStage = "bicycle_shop" | "workshop" | "bike_hire" | "checkpoint" | "roadside" | "stall" | "petrol_station" | "buka" | "hospital";
 export type SceneLine = { who: "them" | "you"; text: string };
 export type SceneChoice = { label: string; primary?: boolean; onPick: () => void };
 
@@ -25,6 +25,7 @@ export function EventScene({
   choices,
   busy = false,
   work = null,
+  overlay = null,
   onClose,
 }: {
   stage: SceneStage;
@@ -40,6 +41,8 @@ export function EventScene({
   busy?: boolean;
   /** Work under way: seconds left of the total (the keeper works, a bar fills). */
   work?: { left: number; total: number } | null;
+  /** Drawn over the place, in its 320 × 180 picture (the pump's display, a plate of food). */
+  overlay?: ReactNode;
   onClose: () => void;
 }) {
   const last = lines.at(-1);
@@ -75,7 +78,7 @@ export function EventScene({
         {/* The place */}
         {/* At most a third of the screen: on short screens the picture gives way to the replies. */}
         <div className="relative max-h-[34dvh] w-full shrink-0" style={{ aspectRatio: "16 / 9" }}>
-          <Stage stage={stage} sign={sign} vehicle={vehicle ?? null} working={working} />
+          <Stage stage={stage} sign={sign} vehicle={vehicle ?? null} working={working} overlay={overlay} />
           {/* Sized by the picture's height, so they stay whole however wide or short it is. */}
           <div className={`absolute bottom-[6%] left-[8%] h-[56%] [&_svg]:h-full [&_svg]:w-auto ${working ? "loota-npc-work" : "loota-npc-idle"}`} aria-hidden="true">
             <HunterFigure look={them.look} wrap={them.wrap} width={200} />
@@ -155,8 +158,9 @@ export function EventScene({
 
 type Vehicle = { kind: VehicleKind; fixed: boolean; sparkle?: boolean };
 
-function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: string; vehicle: Vehicle | null; working: boolean }) {
+function Stage({ stage, sign, vehicle, working, overlay }: { stage: SceneStage; sign: string; vehicle: Vehicle | null; working: boolean; overlay: ReactNode }) {
   const shop = stage === "bicycle_shop";
+  const place = stage === "petrol_station" ? <PetrolStation /> : stage === "buka" ? <Buka /> : stage === "hospital" ? <Hospital /> : null;
   const hire = stage === "bike_hire";
   const street = stage === "checkpoint" || stage === "roadside" || stage === "stall";
   return (
@@ -179,6 +183,8 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
         <BikeHireStop kind={vehicle?.kind === "motorbike" ? "motorbike" : "bicycle"} />
       ) : street ? (
         <Street stage={stage} />
+      ) : place ? (
+        place
       ) : (
         <>
           {/* The ground: a dusty roadside */}
@@ -211,7 +217,19 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
             width="192"
             height="26"
             rx="3"
-            fill={hire ? "#1E9E62" : stage === "checkpoint" ? "#1E3A6E" : stage === "stall" ? "#F07A28" : shop ? "#1E6FB8" : "#B8322A"}
+            fill={
+              hire || stage === "petrol_station"
+                ? "#1E9E62"
+                : stage === "checkpoint"
+                  ? "#1E3A6E"
+                  : stage === "stall" || stage === "buka"
+                    ? "#F07A28"
+                    : stage === "hospital"
+                      ? "#D62828"
+                      : shop
+                        ? "#1E6FB8"
+                        : "#B8322A"
+            }
             stroke="#1B2433"
             strokeWidth="1.5"
           />
@@ -221,7 +239,7 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
         </>
       )}
 
-      {hire || street ? null : shop ? <BicycleShopProps /> : <WorkshopProps />}
+      {hire || street || place ? null : shop ? <BicycleShopProps /> : <WorkshopProps />}
 
       {/* The player's own vehicle, in the middle */}
       {vehicle && (
@@ -246,7 +264,130 @@ function Stage({ stage, sign, vehicle, working }: { stage: SceneStage; sign: str
           )}
         </g>
       )}
+      {overlay}
     </svg>
+  );
+}
+
+/**
+ * A petrol station: the green canopy, the shop at the back, and the pump by the vehicle (its display is at
+ * x 95–119, y 99–111, for the scene to show the meter; the nozzle hangs at about 130, 124).
+ */
+function PetrolStation() {
+  return (
+    <g>
+      <rect y="146" width="320" height="34" fill="#B9B4AA" />
+      <rect y="146" width="320" height="3" fill="#000" opacity="0.08" />
+      <g stroke="#A29C90" strokeWidth="1">
+        <path d="M0 162h320M60 146l-20 34M140 146l-6 34M220 146l8 34M300 146l22 34" />
+      </g>
+      {/* The shop at the back */}
+      <rect x="188" y="74" width="124" height="72" fill="#F4F1EA" />
+      <rect x="188" y="74" width="124" height="8" fill="#1E9E62" />
+      <rect x="198" y="90" width="44" height="30" fill="#9FC6E8" />
+      <rect x="252" y="92" width="22" height="54" fill="#6B8BA4" />
+      <rect x="282" y="90" width="22" height="30" fill="#9FC6E8" />
+      {/* The canopy on its columns */}
+      <rect x="62" y="52" width="6" height="94" fill="#D8D8D8" />
+      <rect x="252" y="52" width="6" height="40" fill="#D8D8D8" />
+      <rect x="20" y="42" width="280" height="12" fill="#1E9E62" />
+      <rect x="20" y="54" width="280" height="3" fill="#F4F1EA" />
+      <rect x="20" y="57" width="280" height="2" fill="#F4B41A" />
+      {/* The island and the pump */}
+      <rect x="84" y="140" width="52" height="7" rx="2" fill="#8C8C8C" />
+      <rect x="92" y="92" width="30" height="50" rx="3" fill="#F4F1EA" stroke="#1B2433" strokeWidth="1" />
+      <rect x="92" y="92" width="30" height="5" rx="2" fill="#1E9E62" />
+      <rect x="95" y="99" width="24" height="12" rx="1.5" fill="#10141A" />
+      <rect x="97" y="116" width="8" height="5" rx="1" fill="#E5484D" />
+      <rect x="107" y="116" width="8" height="5" rx="1" fill="#F4B41A" />
+      <path d="M122 112 q8 0 8 10" stroke="#222" strokeWidth="2" fill="none" />
+      <rect x="126" y="121" width="7" height="5" rx="1" fill="#222" />
+      {/* An oil drum and a sand bucket */}
+      <rect x="146" y="124" width="12" height="20" fill="#B8322A" />
+      <ellipse cx="152" cy="124" rx="6" ry="2" fill="#00000044" />
+      <path d="M170 132h12l-2 12h-8z" fill="#D62828" />
+    </g>
+  );
+}
+
+/** A buka (a roadside eatery): pots on the fire, a menu board, a table and a bench. The table top is at y 128. */
+function Buka() {
+  return (
+    <g>
+      <rect y="146" width="320" height="34" fill="#C9A27A" />
+      <rect y="146" width="320" height="3" fill="#000" opacity="0.08" />
+      <rect x="10" y="58" width="300" height="90" fill="#E9C79A" />
+      <rect x="10" y="58" width="300" height="8" fill="#000" opacity="0.08" />
+      <rect x="10" y="118" width="300" height="30" fill="#D9A877" />
+      <polygon points="0,60 320,60 308,40 12,40" fill="#9C6B3F" />
+      <g stroke="#7E5230" strokeWidth="1.2">
+        {Array.from({ length: 30 }, (_, i) => (
+          <line key={i} x1={14 + i * 10} y1="41" x2={11 + i * 10.2} y2="59" />
+        ))}
+      </g>
+      <rect x="14" y="58" width="5" height="90" fill="#7A5230" />
+      <rect x="301" y="58" width="5" height="90" fill="#7A5230" />
+      {/* The menu board (the scene writes the day's dishes on it: x 166–222, y 70–102) */}
+      <rect x="160" y="64" width="68" height="44" rx="2" fill="#2B3A2F" stroke="#7A5230" strokeWidth="3" />
+      {/* Pots on the fire, steaming */}
+      <g>
+        <path d="M96 146l6 -8 6 8M112 146l6 -8 6 8" stroke="#6B4A2B" strokeWidth="3" fill="none" />
+        <path d="M102 140q4 -6 8 0q4 -6 8 0" fill="#F07A28" opacity="0.8" />
+        <path d="M92 116h40l-4 22h-32z" fill="#3A3A3A" />
+        <rect x="90" y="113" width="44" height="4" rx="2" fill="#555" />
+        <path className="loota-steam" d="M104 108q-4 -6 0 -12q4 -6 0 -12M120 108q-4 -6 0 -12q4 -6 0 -12" stroke="#FFFFFF" strokeWidth="2" fill="none" opacity="0.7" strokeLinecap="round" />
+      </g>
+      <g>
+        <path d="M60 118h26l-3 18h-20z" fill="#7A2232" />
+        <rect x="58" y="115" width="30" height="4" rx="2" fill="#5A1A26" />
+      </g>
+      {/* The table and the bench */}
+      <rect x="138" y="128" width="88" height="6" rx="1" fill="#7A5230" />
+      <rect x="144" y="134" width="4" height="13" fill="#7A5230" />
+      <rect x="216" y="134" width="4" height="13" fill="#7A5230" />
+      <rect x="150" y="140" width="64" height="4" fill="#9C6B3F" />
+      {/* A crate of soft drinks */}
+      <rect x="236" y="128" width="26" height="18" fill="#F4B41A" />
+      <g fill="#1E9E62">
+        {[240, 246, 252, 258].map((x) => (
+          <rect key={x} x={x - 1.5} y="120" width="3" height="9" rx="1" />
+        ))}
+      </g>
+    </g>
+  );
+}
+
+/** The front of a hospital: white walls, windows, the glass doors and a red cross. */
+function Hospital() {
+  return (
+    <g>
+      <rect y="146" width="320" height="34" fill="#C9C2B4" />
+      <rect y="146" width="320" height="3" fill="#000" opacity="0.1" />
+      <rect x="6" y="46" width="308" height="100" fill="#F4F6F8" />
+      <rect x="6" y="46" width="308" height="5" fill="#D9DEE4" />
+      <g fill="#9FC6E8">
+        {[22, 54, 86, 214, 246, 278].map((x) => (
+          <g key={x}>
+            <rect x={x} y="60" width="20" height="16" />
+            <rect x={x} y="88" width="20" height="16" />
+          </g>
+        ))}
+      </g>
+      {/* The doors under a canopy */}
+      <rect x="126" y="92" width="68" height="6" fill="#D62828" />
+      <rect x="134" y="98" width="52" height="48" fill="#BFDDF2" stroke="#8FA7B8" strokeWidth="1.5" />
+      <line x1="160" y1="98" x2="160" y2="146" stroke="#8FA7B8" strokeWidth="1.5" />
+      {/* The red cross */}
+      <rect x="148" y="58" width="24" height="24" rx="3" fill="#FFFFFF" stroke="#D62828" strokeWidth="1.5" />
+      <path d="M157 62h6v6h6v6h-6v6h-6v-6h-6v-6h6z" fill="#D62828" />
+      {/* Plants by the door */}
+      {[118, 202].map((x) => (
+        <g key={x}>
+          <rect x={x - 6} y="134" width="12" height="12" fill="#A0522D" />
+          <circle cx={x} cy="128" r="8" fill="#2E7D4F" />
+        </g>
+      ))}
+    </g>
   );
 }
 

@@ -1,0 +1,143 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
+import { keeperLook, type AvatarLook } from "@/lib/avatar";
+import { FUEL_PRICE } from "@/game/economy";
+
+/** At a petrol station with a motorbike or car that needs fuel (the one ridden, or an empty one in the pocket). */
+export type FuelOffer = { station: string; attendant: string; kind: "motorbike" | "car"; fuel: number; pocket: boolean; hasKeg: boolean };
+
+export type FuelActions = {
+  /** Fill the tank (as far as the coins go). */
+  fill: () => Promise<{ ok: true; cost: number; fuel: number } | { ok: false; reason: string }>;
+  /** A keg for the road (25 coins). */
+  buyKeg: () => Promise<boolean>;
+};
+
+/** The pump attendant: "Fill am?", the meter running, and a keg for the road. */
+export function FuelScene({ offer, you, actions, onClose }: { offer: FuelOffer; you: AvatarLook; actions: FuelActions; onClose: () => void }) {
+  const name = offer.kind === "car" ? "car" : "okada";
+  const want = Math.max(0, Math.floor(100 - offer.fuel)) * FUEL_PRICE;
+  const welcome = offer.station === "Petrol station" ? "Welcome!" : `Welcome to ${offer.station}!`; // unnamed on the map: "Petrol station"
+  type Step = "greet" | "pumping" | "filled" | "keg" | "short" | "bye";
+  const [step, setStep] = useState<Step>("greet");
+  const [busy, setBusy] = useState(false);
+  const [lines, setLines] = useState<SceneLine[]>([
+    {
+      who: "them",
+      text: offer.pocket
+        ? `${welcome} Bring your ${name} out of your pocket, let me fill it. The tank is empty: ${want} coins fills it to the top.`
+        : `${welcome} Your ${name} is at ${Math.round(offer.fuel)}%. Fill am? ${want} coins to the top.`,
+    },
+  ]);
+  const say = (...more: SceneLine[]) => setLines((l) => [...l, ...more]);
+  // The pump's meter: coins counting up as the fuel goes in.
+  const [meter, setMeter] = useState<{ shown: number; to: number; fuel: number } | null>(null);
+  useEffect(() => {
+    if (!meter || meter.shown >= meter.to) return;
+    const timer = window.setTimeout(() => {
+      const next = { ...meter, shown: Math.min(meter.to, meter.shown + Math.max(1, Math.ceil(meter.to / 30))) };
+      setMeter(next);
+      if (next.shown < next.to) return;
+      // The tank is filled: what it came to.
+      say({
+        who: "them",
+        text: `${next.fuel >= 99 ? "Full tank!" : `That's all your coins could buy: ${Math.round(next.fuel)}%.`} ${next.to} coins, thank you.${
+          offer.hasKeg ? " Drive safe!" : " You want a keg for the road? 25 coins: it carries a third of a tank, for when you're far from a station."
+        }`,
+      });
+      setStep("filled");
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [meter, offer.hasKeg]);
+  const pumped = !!meter && meter.shown >= meter.to;
+
+  async function fill() {
+    setBusy(true);
+    const r = await actions.fill();
+    setBusy(false);
+    say({ who: "you", text: "Fill it up, please." });
+    if (r.ok) {
+      setMeter({ shown: 0, to: r.cost, fuel: r.fuel });
+      setStep("pumping");
+    } else if (r.reason === "coins") {
+      say({ who: "them", text: `Ah, you don't have up to ${FUEL_PRICE} coins. Come back when you do.` });
+      setStep("short");
+    } else if (r.reason === "full") {
+      say({ who: "them", text: "Your tank is already full, my friend!" });
+      setStep("short");
+    } else {
+      say({ who: "them", text: "The pump has hung. Try me again." });
+    }
+  }
+
+  async function keg() {
+    setBusy(true);
+    const ok = await actions.buyKeg();
+    setBusy(false);
+    say(
+      { who: "you", text: "Yes, a keg." },
+      ok
+        ? { who: "them", text: "Here you go. Fill it here any time, and pour it in when the tank is low. Drive safe!" }
+        : { who: "them", text: "Hmm, it didn't go through. Maybe next time. Drive safe!" },
+    );
+    setStep("keg");
+  }
+
+  let choices: SceneChoice[];
+  if (step === "greet") {
+    choices = [
+      { label: `Fill it up · ${want} coins`, primary: true, onPick: () => void fill() },
+      {
+        label: "Not today",
+        onPick: () => {
+          say({ who: "you", text: "Not today, thanks." }, { who: "them", text: "No wahala. We dey here." });
+          setStep("bye");
+        },
+      },
+    ];
+  } else if (step === "filled" && !offer.hasKeg) {
+    choices = [
+      { label: "Yes, a keg · 25 coins", onPick: () => void keg() },
+      { label: `No, thanks. Let's go ${offer.kind === "car" ? "🚗" : "🏍"}`, primary: true, onPick: onClose },
+    ];
+  } else if (step === "filled" || step === "keg") {
+    choices = [{ label: `Thanks! Let's go ${offer.kind === "car" ? "🚗" : "🏍"}`, primary: true, onPick: onClose }];
+  } else if (step === "pumping") {
+    choices = [];
+  } else {
+    choices = [{ label: "Bye", onPick: onClose }];
+  }
+
+  // The meter on the pump, and the nozzle in the tank while the fuel goes in.
+  const overlay = (
+    <g>
+      <text x="107" y="108.5" textAnchor="middle" fontSize="8" fontWeight="700" fill="#5CF08A" fontFamily="ui-monospace, monospace">
+        {String(meter?.shown ?? 0).padStart(4, "0")}
+      </text>
+      {meter && <path d="M130 126 q14 18 26 18" stroke="#222" strokeWidth="2.4" fill="none" />}
+      {step === "pumping" && !pumped && (
+        <g className="loota-sparkle" fill="#F4B41A">
+          <circle cx="160" cy="136" r="2" />
+        </g>
+      )}
+    </g>
+  );
+
+  return (
+    <EventScene
+      stage="petrol_station"
+      title={`Petrol station: ${offer.station}`}
+      sign={offer.station}
+      them={{ name: offer.attendant, look: { ...keeperLook(offer.attendant), topColour: "#1E9E62", extra: "cap" } }}
+      you={you}
+      vehicle={{ kind: offer.kind, fixed: true, sparkle: pumped }}
+      lines={lines}
+      choices={choices}
+      busy={busy}
+      overlay={overlay}
+      onClose={onClose}
+    />
+  );
+}

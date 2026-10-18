@@ -35,6 +35,7 @@ export function EventScene({
   work = null,
   overlay = null,
   world = false,
+  leaveLabel = "Walk out",
   onClose,
 }: {
   stage: SceneStage;
@@ -54,10 +55,13 @@ export function EventScene({
   overlay?: ReactNode;
   /**
    * In the world (owner, 18 Oct 2026): the place is drawn on the map itself (an open-roof building, the people
-   * inside), so there's no picture here: what they say floats over their heads (`data-bubble`, placed by the map
-   * every frame) and the replies sit in a strip at the bottom, leaving the scene in view.
+   * inside), so there's no picture here. What they say is in a box in the strip at the bottom with the replies;
+   * over their heads only a 💬 and your short reply (`data-bubble`, placed by the map every frame), so the
+   * bubbles don't cover the scene (owner: "the text speech covers most part of the scene").
    */
   world?: boolean;
+  /** In the world, the button that leaves ("Walk out" of a place; on the road, "Ride on"). */
+  leaveLabel?: string;
   onClose: () => void;
 }) {
   const last = lines.at(-1);
@@ -91,41 +95,50 @@ export function EventScene({
     const lastThem = lines.findLastIndex((l) => l.who === "them");
     const lastYou = lines.findLastIndex((l) => l.who === "you");
     const themText = lastThem >= 0 ? (lastThem === lines.length - 1 ? lines[lastThem].text.slice(0, shown) : lines[lastThem].text) : null;
-    // What you said shows until they've answered and a moment more (the newest two lines).
+    const speaking = lastThem === lines.length - 1 && !done;
+    // What you said shows over your head until they've answered and a moment more (the newest two lines).
     const youText = lastYou >= 0 && lastYou >= lines.length - 2 ? lines[lastYou].text : null;
     return (
       <div role="dialog" aria-label={title} className="pointer-events-none absolute inset-0 z-20">
+        {/* Over their heads only a little: who's talking (their words are in the box below), and your short reply. */}
         {themText !== null && (
           <div
             data-bubble="them"
-            className="loota-bubble absolute left-0 top-0 w-max max-w-[min(78vw,340px)] -translate-x-1/2 -translate-y-full rounded-2xl bg-paper px-3 py-2 text-sm text-ink shadow-lg"
+            className="loota-bubble absolute left-0 top-0 -translate-x-1/2 -translate-y-full rounded-full bg-paper px-2.5 py-1 text-sm leading-none text-ink shadow-lg"
             style={{ visibility: "hidden" }}
-            aria-live="polite"
+            aria-hidden="true"
           >
-            <span className="mb-0.5 block text-[11px] font-bold text-[#B8322A]">{them.name}</span>
-            {themText}
-            {lastThem === lines.length - 1 && !done && <span className="loota-caret">▍</span>}
+            {speaking ? <span className="loota-caret">💬</span> : "💬"}
           </div>
         )}
         {youText && (
           <div
             data-bubble="you"
-            className="loota-bubble absolute left-0 top-0 w-max max-w-[min(60vw,260px)] -translate-x-1/2 -translate-y-full rounded-2xl bg-gold px-3 py-2 text-sm font-semibold text-ink shadow-lg"
+            className="loota-bubble absolute left-0 top-0 max-w-[45vw] -translate-x-1/2 -translate-y-full truncate rounded-full bg-gold px-2.5 py-1 text-xs font-bold text-ink shadow-lg"
             style={{ visibility: "hidden" }}
           >
             {youText}
           </div>
         )}
         <div
+          data-scene-strip=""
           className="pointer-events-auto absolute inset-x-0 bottom-0 flex flex-col gap-2 rounded-t-3xl bg-ink/90 p-3 backdrop-blur-sm sm:inset-x-auto sm:left-1/2 sm:w-[28rem] sm:-translate-x-1/2"
           style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
         >
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate font-display text-sm font-extrabold text-gold">{sign || title}</span>
             <button type="button" onClick={onClose} aria-label="Leave" className="flex h-8 items-center rounded-lg border border-line px-2.5 text-xs font-bold text-paper">
-              Walk out
+              {leaveLabel}
             </button>
           </div>
+          {/* What they say: the dialogue box */}
+          {themText !== null && (
+            <p className="max-h-[22dvh] overflow-y-auto rounded-xl bg-ink-2 px-3 py-2 text-sm leading-snug text-paper" aria-live="polite">
+              <span className="mr-1.5 font-bold text-gold">{them.name}:</span>
+              {themText}
+              {speaking && <span className="loota-caret">▍</span>}
+            </p>
+          )}
           {work && work.total > 0 && (
             <div className="flex items-center gap-2" aria-label="Repair under way">
               <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink-2">
@@ -142,12 +155,12 @@ export function EventScene({
                   type="button"
                   disabled={busy}
                   onClick={c.onPick}
-                  className={`min-h-11 flex-auto rounded-xl px-4 text-sm font-bold disabled:opacity-50 ${c.primary ? "bg-gold text-ink" : "border-[1.5px] border-line text-paper"}`}
+                  className={`min-h-10 flex-auto rounded-xl px-3 text-sm font-bold disabled:opacity-50 ${c.primary ? "bg-gold text-ink" : "border-[1.5px] border-line text-paper"}`}
                 >
                   {c.label}
                 </button>
               ))}
-            {!done && <span className="flex h-11 items-center text-sm text-muted">…</span>}
+            {!done && <span className="flex h-10 items-center text-sm text-muted">…</span>}
           </div>
         </div>
       </div>

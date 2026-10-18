@@ -24,7 +24,7 @@ export type RoadEventActions = {
 };
 
 /** A police officer in uniform and cap. */
-const OFFICER: AvatarLook = { skin: "#6B3E1F", hair: "short", hairColour: "#1B120C", top: "tee", topColour: "#1E3A6E", bottomsColour: "#1A1A1A", extra: "cap" };
+export const OFFICER: AvatarLook = { skin: "#6B3E1F", hair: "short", hairColour: "#1B120C", top: "tee", topColour: "#1E3A6E", bottomsColour: "#1A1A1A", extra: "cap" };
 
 /** Being stopped on the road: the officer's question, a stranded traveller, a seller's riddle. */
 export function RoadEventScene({
@@ -32,12 +32,15 @@ export function RoadEventScene({
   you,
   vehicle,
   actions,
+  world = false,
   onClose,
 }: {
   event: RoadEvent;
   you: AvatarLook;
   vehicle: VehicleKind | null;
   actions: RoadEventActions;
+  /** On the road on the map, where you were stopped (EventScene's world mode). */
+  world?: boolean;
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -104,6 +107,8 @@ export function RoadEventScene({
       lines={lines}
       choices={choices}
       busy={busy}
+      world={world}
+      leaveLabel={vehicle ? "Ride on" : "Walk on"}
       onClose={onClose}
     />
   );

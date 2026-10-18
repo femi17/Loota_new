@@ -16,7 +16,7 @@ import type { SceneMoment } from "./EventScene";
 import { NurseScene, type Discharge } from "./NurseScene";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
-import { RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
+import { OFFICER, RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
@@ -386,7 +386,7 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | null>(null);
   /** The scenes tell the place on the map what's happening (one function for good: their timers depend on it). */
   const onMoment = useCallback((m: SceneMoment) => actions.current?.sceneMoment(m), []);
   const [rentalActions, setRentalActions] = useState<RentalActions | null>(null);
@@ -4334,7 +4334,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -4366,9 +4366,13 @@ export function GameMap({
         sparkles?: import("three").Object3D;
         buka?: ReturnType<typeof models.makeOpenBuka>;
         petrol?: ReturnType<typeof models.makeOpenPetrol>;
+        /** Flashing lights (the patrol van's). */
+        lights?: import("three").Object3D[];
         /** The latest moment the scene told the map about. */
         moment: SceneMoment | null;
         servedAt: number;
+        /** The reply strip's height, as the camera keeps the place above it. */
+        pad: number;
       };
       let inWorld: InWorld | null = null;
 
@@ -4451,6 +4455,7 @@ export function GameMap({
           closeScene: o.closeScene,
           moment: null,
           servedAt: 0,
+          pad: SCENE_PAD,
           ...o.extra,
         };
         for (const e of inWorld.hidden) e.object.visible = false;
@@ -4570,6 +4575,45 @@ export function GameMap({
           hidden,
           closeScene: () => setRentOpen(null),
           extra: { vehicle },
+        });
+      }
+
+      /**
+       * Stopped on the road (a checkpoint, a stranded traveller, a seller's stall): the scene at the kerb where you
+       * are, your vehicle in the road beside it; you step off to talk.
+       */
+      function openRoadPlace(e: RoadEvent) {
+        const S = models.ROAD_EVENT_SPOTS;
+        let group: import("three").Object3D;
+        let lights: import("three").Object3D[] | undefined;
+        if (e.kind === "checkpoint") {
+          const c = models.makeCheckpointScene();
+          group = c.group;
+          lights = c.lights;
+        } else if (e.kind === "seller") group = models.makeStallScene(`${e.npc}'s snacks`);
+        else group = models.makeTravellerScene();
+        const riding = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
+        if (riding) {
+          const vehicle = models.makeVehicleModel(riding);
+          vehicle.rotation.y = Math.PI / 2; // along the road
+          vehicle.position.set(S.stand.x, 0, S.stand.z);
+          group.add(vehicle);
+        }
+        const look = e.kind === "checkpoint" ? OFFICER : e.kind === "seller" ? keeperLook(e.npc) : lookForId(`traveller:${e.npc}`);
+        return openPlace({
+          kind: "road",
+          key: `road:${e.id}`,
+          at: { ...traveller.pos },
+          group,
+          spots: S,
+          kerbM: 6,
+          keeper: { look, at: S.keeper },
+          you: { from: riding ? { x: S.stand.x - 1.2, z: S.stand.z } : S.outside, to: S.customer },
+          closeScene: () => {
+            roadDone();
+            setRoadEvent(null);
+          },
+          extra: { lights },
         });
       }
 
@@ -4709,6 +4753,7 @@ export function GameMap({
           w.sparkles.rotation.y += dt * 1.5;
         }
         if (w.petrol) w.petrol.hose.visible = keeperThere && working;
+        if (w.lights) w.lights.forEach((l, i) => (l.visible = Math.floor(t * 4 + i) % 2 === 0)); // the patrol van's lights
         if (w.buka) {
           w.buka.steam.forEach((s, i) => {
             const k = ((t * 0.6 + i * 0.33) % 1 + 1) % 1;
@@ -4717,7 +4762,10 @@ export function GameMap({
           });
         }
 
-        // The camera: down from the street to look in from the doorway, and back up again on leaving.
+        // The camera: down from the street to look in from the doorway, and back up again on leaving; the place
+        // sits above the reply strip, however tall its words make it.
+        const strip = document.querySelector<HTMLElement>("[data-scene-strip]")?.offsetHeight;
+        if (strip) w.pad += (strip - w.pad) * Math.min(1, 4 * dt);
         const k = w.closing === null ? opening : 1 - leaving;
         const centre = insideAt(w, 0, -S.depth * 0.62); // looking a little past the middle: the place sits low, above the replies
         const back = { lng: traveller.pos.lng, lat: traveller.pos.lat };
@@ -4728,7 +4776,7 @@ export function GameMap({
           bearing: w.cam.bearing + turn * k,
           zoom: w.cam.zoom + (SCENE_ZOOM - w.cam.zoom) * k,
           pitch: w.cam.pitch + (SCENE_PITCH - w.cam.pitch) * k,
-          padding: { top: 0, left: 0, right: 0, bottom: SCENE_PAD * k },
+          padding: { top: 0, left: 0, right: 0, bottom: w.pad * k },
         });
         if (w.closing !== null) camBearing = w.cam.bearing + turn * k;
 
@@ -5549,7 +5597,13 @@ export function GameMap({
         if (disposed || !e) return;
         sceneHold = true;
         traveller.v = 0;
+        openRoadPlace(e);
         setRoadEvent(e);
+      }
+      /** The road scene is over: the hunter may move again (unless held), and the next chance comes later. */
+      function roadDone() {
+        sceneHold = false;
+        lastRoadRoll = performance.now();
       }
       setRoadActions({
         answer: async (e, choice) => {
@@ -5562,10 +5616,7 @@ export function GameMap({
           if (r.hint) say(`🧭 Key ${r.hint.key}'s area: ${r.hint.direction} of where you met ${e.npc}, ${r.hint.band} away.`, true);
           return r;
         },
-        close: () => {
-          sceneHold = false;
-          lastRoadRoll = performance.now();
-        },
+        close: () => roadDone(),
       });
 
       // ---- Resting by the road: sitting at its edge, not in the lane, the bicycle standing beside ----
@@ -6463,7 +6514,12 @@ export function GameMap({
             )}
 
             {/* The hunt (riddle, keys, Search here) */}
-            {huntId && huntShown && <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} />}
+            {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
+            {huntId && huntShown && (
+              <div className={inside ? "hidden" : "contents"}>
+                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} />
+              </div>
+            )}
           </div>
 
           {/* Right: the tools, as icons */}
@@ -6680,7 +6736,9 @@ export function GameMap({
           you={JSON.parse(lookKey) as AvatarLook}
           vehicle={hud.vehicle?.kind ?? null}
           actions={roadActions}
+          world={inside === "road"}
           onClose={() => {
+            if (inside === "road") return actions.current?.leaveShop();
             roadActions.close();
             setRoadEvent(null);
           }}

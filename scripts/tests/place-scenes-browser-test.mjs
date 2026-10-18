@@ -112,8 +112,11 @@ try {
   check("…orders the first dish", await clickWhenThere(dish.split(" · ")[0]));
   await wait(1200);
   await shot("4-plate");
-  await wait(3500);
-  const ate = await text('[role="dialog"]');
+  let ate = null;
+  for (let i = 0; i < 20 && !/cleaned the plate.*\+40 energy/.test(ate ?? ""); i++) {
+    await wait(500);
+    ate = await text('[role="dialog"]');
+  }
   const energy = (await admin.from("player_positions").select("energy").eq("user_id", id).single()).data.energy;
   check("the plate cleared: +40 energy, 30 coins", /cleaned the plate.*\+40 energy/.test(ate ?? "") && (await coins()) === coinsBefore - 30 && energy >= 85, `${coinsBefore - (await coins())} · ${energy}`);
   await shot("5-ate");

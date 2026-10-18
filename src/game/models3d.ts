@@ -1181,3 +1181,117 @@ export function makeRoadsideCare() {
   group.add(amb);
   return group;
 }
+
+/**
+ * Something on the road during a hunt, where you were stopped: the kerb at the origin, the roadside along −z,
+ * the road along +z. Your vehicle stands in the road (`stand`); you step off it to talk.
+ */
+export const ROAD_EVENT_SPOTS: PlaceSpots = {
+  width: 9,
+  depth: 5,
+  keeper: { x: -1.3, z: -1.7 },
+  customer: { x: 1.1, z: -0.9 },
+  stand: { x: 2.8, z: 1.4 },
+  work: { x: -1.3, z: -1.7 },
+  outside: { x: 1.6, z: 1.6 },
+};
+
+/** A strip of pavement along the kerb. */
+function pavement(W: number) {
+  return mesh(new THREE.BoxGeometry(W, 0.12, 4.6), "#C9C2B4", 0, 0.06, -2.3);
+}
+
+/** A police checkpoint: a striped barrier half across the road, cones, the patrol van with its lights flashing. */
+export function makeCheckpointScene() {
+  const group = new THREE.Group();
+  group.add(pavement(ROAD_EVENT_SPOTS.width));
+  // The barrier, on two trestles, half into the road
+  const pole = new THREE.Group();
+  for (let i = 0; i < 6; i++) pole.add(mesh(new THREE.BoxGeometry(0.6, 0.22, 0.22), i % 2 ? "#FFFFFF" : "#D62828", -2.6 + i * 0.6, 1, 0));
+  pole.position.set(-1.6, 0, 1.4);
+  group.add(pole, mesh(new THREE.BoxGeometry(0.15, 1, 0.6), "#5B6475", -3.6, 0.5, 1.4), mesh(new THREE.BoxGeometry(0.15, 1, 0.6), "#5B6475", -0.6, 0.5, 1.4));
+  // Cones along the lane
+  for (const x of [0.6, 1.6, 2.6]) {
+    group.add(mesh(new THREE.ConeGeometry(0.28, 0.75, 12), "#F07A28", x - 3.4, 0.38, 3));
+    group.add(mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.1, 12), "#FFFFFF", x - 3.4, 0.4, 3));
+  }
+  // The patrol van on the pavement behind
+  const van = new THREE.Group();
+  van.add(
+    mesh(new THREE.BoxGeometry(4.2, 1.8, 2), "#F4F1EA", 0, 1.2, 0),
+    mesh(new THREE.BoxGeometry(4.22, 0.35, 2.02), "#1E3A6E", 0, 1.0, 0),
+    mesh(new THREE.BoxGeometry(1.2, 0.6, 1.9), "#9FC6E8", 1.4, 1.75, 0),
+  );
+  const red = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.4), glow("#FF3B30"));
+  red.position.set(0.3, 2.2, -0.3);
+  const blue = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.2, 0.4), glow("#3D7BFF"));
+  blue.position.set(0.3, 2.2, 0.3);
+  van.add(red, blue);
+  for (const [x, z] of [
+    [-1.4, -1],
+    [1.4, -1],
+    [-1.4, 1],
+    [1.4, 1],
+  ]) {
+    const w = mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.25, 14), "#1D1D1D", x, 0.4, z);
+    w.rotation.x = Math.PI / 2;
+    van.add(w);
+  }
+  van.position.set(1.8, 0, -3.2);
+  group.add(van);
+  return { group, lights: [red, blue] };
+}
+
+/** By the road where a traveller is stranded: a shade tree, a street lamp, their bag at their feet. */
+export function makeTravellerScene() {
+  const group = new THREE.Group();
+  group.add(pavement(ROAD_EVENT_SPOTS.width));
+  group.add(mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.4, 8), "#6B4A2B", -3.4, 1.2, -3.2));
+  for (const [x, y, z, r] of [
+    [-3.4, 3, -3.2, 1.4],
+    [-2.5, 2.6, -2.8, 0.9],
+    [-4.2, 2.6, -3.4, 0.9],
+  ]) {
+    const leaves = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), material("#2E7D4F"));
+    leaves.position.set(x, y, z);
+    group.add(leaves);
+  }
+  group.add(
+    mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.6, 6), "#5B6475", 3.4, 1.8, -0.6),
+    mesh(new THREE.BoxGeometry(0.9, 0.08, 0.2), "#5B6475", 3.0, 3.6, -0.6),
+    mesh(new THREE.BoxGeometry(0.7, 0.5, 0.45), "#7A4B22", -0.6, 0.37, -1.9),
+    mesh(new THREE.BoxGeometry(0.3, 0.1, 0.1), "#4A2E14", -0.6, 0.67, -1.9),
+  );
+  return group;
+}
+
+/** A street seller's stall by the road: an umbrella over a table of oranges and snacks, a cooler, a sign. */
+export function makeStallScene(sign: string) {
+  const group = new THREE.Group();
+  group.add(pavement(ROAD_EVENT_SPOTS.width));
+  // The umbrella over the table
+  const top = new THREE.Mesh(new THREE.ConeGeometry(1.9, 0.7, 10, 1, true), material("#E5484D"));
+  top.position.set(-2.4, 2.8, -2.6);
+  group.add(top, mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.7, 6), "#5B6475", -2.4, 1.35, -2.6));
+  // The table: oranges in a pyramid, snacks in packets
+  group.add(table(-2.4, -2.6, 2.2, 1.1));
+  for (const [x, y, z] of [
+    [-2.9, 1.25, -2.6],
+    [-2.6, 1.25, -2.6],
+    [-2.3, 1.25, -2.6],
+    [-2.75, 1.48, -2.6],
+    [-2.45, 1.48, -2.6],
+    [-2.6, 1.7, -2.6],
+  ]) {
+    const orange = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), material("#F28C28"));
+    orange.position.set(x, y, z);
+    group.add(orange);
+  }
+  group.add(mesh(new THREE.BoxGeometry(0.4, 0.3, 0.25), "#F4B41A", -1.8, 1.27, -2.5), mesh(new THREE.BoxGeometry(0.4, 0.3, 0.25), "#C89B5A", -1.8, 1.27, -2.85));
+  // A cooler of cold drinks, and the hand-painted sign
+  group.add(mesh(new THREE.BoxGeometry(0.9, 0.6, 0.6), "#2F6FEB", -0.6, 0.42, -3.2), mesh(new THREE.BoxGeometry(0.92, 0.12, 0.62), "#F4F1EA", -0.6, 0.76, -3.2));
+  const board = signBoard(sign, "#F07A28", 2.6, 0.55);
+  board.position.set(-2.4, 2.1, -3.5);
+  group.add(board);
+  return group;
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
+import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import { FUEL_PRICE } from "@/game/economy";
 
@@ -16,7 +16,22 @@ export type FuelActions = {
 };
 
 /** The pump attendant: "Fill am?", the meter running, and a keg for the road. */
-export function FuelScene({ offer, you, actions, onClose }: { offer: FuelOffer; you: AvatarLook; actions: FuelActions; onClose: () => void }) {
+export function FuelScene({
+  offer,
+  you,
+  actions,
+  world = false,
+  onMoment,
+  onClose,
+}: {
+  offer: FuelOffer;
+  you: AvatarLook;
+  actions: FuelActions;
+  /** At the station on the map (EventScene's world mode): the attendant fills it at the pump there. */
+  world?: boolean;
+  onMoment?: (m: SceneMoment) => void;
+  onClose: () => void;
+}) {
   const name = offer.kind === "car" ? "car" : "okada";
   const want = Math.max(0, Math.floor(100 - offer.fuel)) * FUEL_PRICE;
   const welcome = offer.station === "Petrol station" ? "Welcome!" : `Welcome to ${offer.station}!`; // unnamed on the map: "Petrol station"
@@ -39,7 +54,9 @@ export function FuelScene({ offer, you, actions, onClose }: { offer: FuelOffer; 
     const timer = window.setTimeout(() => {
       const next = { ...meter, shown: Math.min(meter.to, meter.shown + Math.max(1, Math.ceil(meter.to / 30))) };
       setMeter(next);
+      onMoment?.({ type: "meter", n: next.shown });
       if (next.shown < next.to) return;
+      onMoment?.({ type: "filled" });
       // The tank is filled: what it came to.
       say({
         who: "them",
@@ -50,7 +67,7 @@ export function FuelScene({ offer, you, actions, onClose }: { offer: FuelOffer; 
       setStep("filled");
     }, 80);
     return () => window.clearTimeout(timer);
-  }, [meter, offer.hasKeg]);
+  }, [meter, offer.hasKeg, onMoment]);
   const pumped = !!meter && meter.shown >= meter.to;
 
   async function fill() {
@@ -59,6 +76,7 @@ export function FuelScene({ offer, you, actions, onClose }: { offer: FuelOffer; 
     setBusy(false);
     say({ who: "you", text: "Fill it up, please." });
     if (r.ok) {
+      onMoment?.({ type: "pumping" });
       setMeter({ shown: 0, to: r.cost, fuel: r.fuel });
       setStep("pumping");
     } else if (r.reason === "coins") {
@@ -137,6 +155,7 @@ export function FuelScene({ offer, you, actions, onClose }: { offer: FuelOffer; 
       choices={choices}
       busy={busy}
       overlay={overlay}
+      world={world}
       onClose={onClose}
     />
   );

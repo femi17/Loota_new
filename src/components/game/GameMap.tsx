@@ -1,7 +1,7 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
@@ -11,7 +11,8 @@ import { CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } f
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
-import { MealScene, type MealActions, type MealOffer } from "./MealScene";
+import { MealScene, todaysMenu, type MealActions, type MealOffer } from "./MealScene";
+import type { SceneMoment } from "./EventScene";
 import { NurseScene, type Discharge } from "./NurseScene";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
@@ -281,8 +282,10 @@ export function GameMap({
     findRepairShop: (kind: VehicleKind) => void;
     /** Go into a repair shop: the open-roof shop on the map, the camera looking in (an in-world scene). */
     enterShop: (job: RepairJob) => void;
-    /** Walk out of the shop: back to the street. */
+    /** Walk out of the place: back to the street. */
     leaveShop: () => void;
+    /** What's happening in the scene, for the place on the map to show it. */
+    sceneMoment: (m: SceneMoment) => void;
     getOff: () => void;
     refuel: () => void;
     eat: () => void;
@@ -382,8 +385,10 @@ export function GameMap({
   const [lampActions, setLampActions] = useState<LampActions | null>(null);
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
-  /** Inside a place on the map (an in-world scene): the street's buttons step aside. */
-  const [inside, setInside] = useState(false);
+  /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | null>(null);
+  /** The scenes tell the place on the map what's happening (one function for good: their timers depend on it). */
+  const onMoment = useCallback((m: SceneMoment) => actions.current?.sceneMoment(m), []);
   const [rentalActions, setRentalActions] = useState<RentalActions | null>(null);
   const [rentOpen, setRentOpen] = useState<RentalOffer | null>(null);
   /** The scenes at a petrol station, a place to eat, and on leaving hospital. */
@@ -1377,7 +1382,8 @@ export function GameMap({
         ride: (kind, how) => void chooseVehicle(kind, how),
         findRepairShop: (kind) => void findRepairShop(kind, true),
         enterShop: (job) => openShopScene(job),
-        leaveShop: () => closeShopScene(),
+        leaveShop: () => closePlace(),
+        sceneMoment: (m) => sceneMoment(m),
         getOff: () => void getOff(),
         refuel: () => void refuelHere(),
         eat() {
@@ -3038,7 +3044,11 @@ export function GameMap({
         if (id === "eat") {
           // Sit down with the cook (MealScene).
           const place = spotHere(["eat"]);
-          if (place) setMealOpen({ place: place.name, cook: nameFor(COOKS, String(place.id)), id: place.id, price: MEAL_PRICE, energy: MEAL_ENERGY });
+          if (place) {
+            const offer = { place: place.name, cook: nameFor(COOKS, String(place.id)), id: place.id, price: MEAL_PRICE, energy: MEAL_ENERGY };
+            openMealPlace(offer, todaysMenu(place.id).map((d) => d.board), place);
+            setMealOpen(offer);
+          }
           return !!place;
         }
         if (id === "refuel") {
@@ -3046,7 +3056,9 @@ export function GameMap({
           const station = spotHere(["fuel"]);
           const v = thirstyVehicle();
           if (station && v && v.kind !== "bicycle") {
-            setFuelOpen({ station: station.name, attendant: nameFor(ATTENDANTS, String(station.id)), kind: v.kind, fuel: v.fuel, pocket: !v.in_use, hasKeg: !!keg });
+            const offer = { station: station.name, attendant: nameFor(ATTENDANTS, String(station.id)), kind: v.kind, fuel: v.fuel, pocket: !v.in_use, hasKeg: !!keg };
+            openFuelPlace(offer, station, station.id);
+            setFuelOpen(offer);
           }
           return !!station && !!v;
         }
@@ -3411,13 +3423,15 @@ export function GameMap({
         // A vehicle damaged in the fall: a repair shop not far from the hospital, and the way there.
         const broken = owned.find((v) => v.broken_at && !v.repair_ready_at);
         if (broken) void findRepairShop(broken.kind, true);
-        setDischarge({
+        const discharge = {
           hospital: vs.v.route ? (r.hospital ?? vs.v.hospital) : null,
           nurse: nameFor(vs.v.route ? NURSES : PARAMEDICS, vs.v.calledAt),
           bill: vs.v.bill,
           energy: Math.round(traveller.energy),
           damaged: broken?.kind ?? null,
-        });
+        };
+        openWardPlace(discharge, { lng, lat });
+        setDischarge(discharge);
       }
 
       /** On loading: energy, the keg, and a faint or hospital visit in progress. */
@@ -3705,7 +3719,9 @@ export function GameMap({
         if (pk.p.kind !== "taxi") {
           // At the renter: meet them (RentalScene); not there yet, chooseVehicle says to walk.
           if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [pk.p.lng, pk.p.lat]) <= PICKUP_AT_M) {
-            setRentOpen({ kind: pk.p.kind, renter: renterName(pk.p.requestedAt), stop: pk.p.name, rate: VEHICLES[pk.p.kind].ratePerMinute });
+            const offer = { kind: pk.p.kind, renter: renterName(pk.p.requestedAt), stop: pk.p.name, rate: VEHICLES[pk.p.kind].ratePerMinute };
+            openHirePlace(offer, { lng: pk.p.lng, lat: pk.p.lat }, pk.entities);
+            setRentOpen(offer);
           } else await chooseVehicle(pk.p.kind, "rent");
           return;
         }
@@ -4308,30 +4324,55 @@ export function GameMap({
         }
       }
 
-      // ---- In-world scenes (owner, 18 Oct 2026: "not a modal; an open-roof building where we can see inside").
-      // Going into a shop happens on the map: the shop stands at the kerb with no roof, the camera glides down to
-      // look in, the hunter walks in past the keeper; what they say floats over their heads and the replies sit
-      // in a strip at the bottom (EventScene's world mode). The people inside are drawn bigger than on the street.
+      // ---- In-world scenes (owner, 18 Oct 2026: "not a modal; an open-roof building where we can see inside, and
+      // the user interacts depending on the event"). Going into a place happens on the map: it stands at the kerb
+      // with no roof (a repair shop, a buka, a petrol station's forecourt, a hospital ward, a renter's spot), the
+      // camera glides down to look in, the hunter walks in; what they say floats over their heads and the replies
+      // sit in a strip at the bottom (EventScene's world mode). What happens inside follows the event (the scene
+      // tells the map: SceneMoment). The people inside are drawn bigger than on the street.
       const SCENE_SCALE = 1.7;
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
-      const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the shop sits above it
-      type Walker = { av: ReturnType<typeof models.buildAvatar>; x: number; z: number; tx: number; tz: number; face: number };
+      const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire";
+      type Walker = {
+        av: ReturnType<typeof models.buildAvatar>;
+        x: number;
+        z: number;
+        tx: number;
+        tz: number;
+        face: number;
+        /** Sitting on a bench (its height), lying on a bed, or riding off. */
+        seat: number | null;
+        lying: boolean;
+        riding: VehicleKind | null;
+      };
       type InWorld = {
-        job: RepairJob;
+        kind: PlaceKind;
+        spots: import("@/game/models3d").PlaceSpots;
         entity: import("@/game/ThreeMapLayer").MapEntity;
         keeper: Walker;
         you: Walker;
-        vehicle: import("three").Group;
-        sparkles: import("three").Group;
         facing: number;
         opened: number;
         closing: number | null;
         cam: { lng: number; lat: number; bearing: number; zoom: number; pitch: number };
+        /** Things on the street that are inside now (the shop's keeper, the renter): hidden until you leave. */
+        hidden: import("@/game/ThreeMapLayer").MapEntity[];
+        /** The scene's own state in React, cleared as you walk out. */
+        closeScene: () => void;
+        job?: RepairJob;
+        vehicle?: import("three").Object3D;
+        sparkles?: import("three").Object3D;
+        buka?: ReturnType<typeof models.makeOpenBuka>;
+        petrol?: ReturnType<typeof models.makeOpenPetrol>;
+        /** The latest moment the scene told the map about. */
+        moment: SceneMoment | null;
+        servedAt: number;
       };
       let inWorld: InWorld | null = null;
 
-      /** A spot inside (model units) on the map, at the shop's current size. */
+      /** A spot inside (model units) on the map, at the place's current size. */
       function insideAt(w: InWorld, x: number, z: number) {
         const s = layer.enlargement() * (w.entity.scaleBy ?? 1);
         const f = w.facing;
@@ -4345,14 +4386,13 @@ export function GameMap({
       }
 
       /**
-       * Where a shop stands: at the kerb of the road nearest its spot (within the 60 m the server allows), its
+       * Where a place stands: at the kerb of the road nearest its spot (`kerbM` from the road's middle), its
        * doorway to the street. Worked out once the roads are known, then kept.
        */
-      const placements = new Map<number, { origin: LngLat; facing: number; door: LngLat }>();
-      function shopPlacement(job: RepairJob) {
-        const known = placements.get(job.id);
+      const placements = new Map<string, { origin: LngLat; facing: number; door: LngLat }>();
+      function placeAtKerb(key: string, at: LngLat, kerbM = 8) {
+        const known = placements.get(key);
         if (known) return known;
-        const at = { lng: job.lng, lat: job.lat };
         const rp = network ? roads.snapToNetwork(network, at, 0) : null;
         const road = network && rp ? roads.positionOf(network, rp) : null;
         if (!road || geo.distanceM([road.lng, road.lat], [at.lng, at.lat]) > 50) {
@@ -4360,29 +4400,74 @@ export function GameMap({
         }
         const right = besideBus(road, road.heading, 1, 0);
         const side = (right.lng - road.lng) * (at.lng - road.lng) + (right.lat - road.lat) * (at.lat - road.lat) < 0 ? -1 : 1;
-        const origin = besideBus(road, road.heading, side * 8, 0);
+        const origin = besideBus(road, road.heading, side * kerbM, 0);
         const placed = { origin, facing: geo.headingOf([origin.lng, origin.lat], [road.lng, road.lat]), door: { lng: road.lng, lat: road.lat } };
-        placements.set(job.id, placed);
+        placements.set(key, placed);
         return placed;
       }
+      const shopPlacement = (job: RepairJob) => placeAtKerb(`repair:${job.id}`, { lng: job.lng, lat: job.lat });
 
-      function openShopScene(job: RepairJob) {
-        if (inWorld || ride || visit) return;
-        const { origin, facing } = shopPlacement(job);
-        const group = models.makeOpenShop(job.kind === "bicycle" ? "bicycle" : "workshop", job.shop); // the people go in it too
+      /** Into a place on the map: it grows in at the kerb, the camera looks in, the people take their places. */
+      function openPlace(o: {
+        kind: PlaceKind;
+        key: string;
+        at: LngLat;
+        group: import("three").Object3D;
+        spots: import("@/game/models3d").PlaceSpots;
+        keeper: { look: AvatarLook; at: { x: number; z: number } };
+        /** Where you appear, and where you go first. */
+        you: { from: { x: number; z: number }; to: { x: number; z: number }; lying?: boolean };
+        hidden?: import("@/game/ThreeMapLayer").MapEntity[];
+        kerbM?: number;
+        closeScene: () => void;
+        extra?: Partial<InWorld>;
+      }) {
+        if (inWorld || ride) return false;
+        const { origin, facing } = placeAtKerb(o.key, o.at, o.kerbM);
         const walker = (look: AvatarLook, spot: { x: number; z: number }, face: number): Walker => {
           const av = models.buildAvatar(look);
           av.root.position.set(spot.x, 0.14, spot.z);
           av.root.rotation.y = face;
-          group.add(av.root);
-          return { av, x: spot.x, z: spot.z, tx: spot.x, tz: spot.z, face };
+          o.group.add(av.root);
+          return { av, x: spot.x, z: spot.z, tx: spot.x, tz: spot.z, face, seat: null, lying: false, riding: null };
         };
+        const keeper = walker(o.keeper.look, o.keeper.at, 0);
+        const you = walker(JSON.parse(lookKey) as AvatarLook, o.you.from, Math.PI);
+        you.tx = o.you.to.x;
+        you.tz = o.you.to.z;
+        you.lying = !!o.you.lying;
+        const entity = layer.add({ object: o.group, lng: origin.lng, lat: origin.lat, heading: facing, scaleBy: 0.01 });
+        inWorld = {
+          kind: o.kind,
+          spots: o.spots,
+          entity,
+          keeper,
+          you,
+          facing,
+          opened: performance.now(),
+          closing: null,
+          cam: { lng: traveller.pos.lng, lat: traveller.pos.lat, bearing: camBearing, zoom: map.getZoom(), pitch: map.getPitch() },
+          hidden: o.hidden ?? [],
+          closeScene: o.closeScene,
+          moment: null,
+          servedAt: 0,
+          ...o.extra,
+        };
+        for (const e of inWorld.hidden) e.object.visible = false;
+        me.object.visible = false; // you're the one inside
+        traveller.v = 0;
+        controls.current.go = false;
+        touchGo = false;
+        map.setMaxZoom(20);
+        setInside(o.kind);
+        return true;
+      }
+
+      function openShopScene(job: RepairJob) {
+        if (inWorld || ride || visit) return;
+        const group = models.makeOpenShop(job.kind === "bicycle" ? "bicycle" : "workshop", job.shop); // the people go in it too
         const S = models.SHOP_SPOTS;
         const returning = !!job.readyAt;
-        const keeper = walker(keeperLook(job.keeper), returning && job.readyAt! > Date.now() ? S.work : S.keeper, 0);
-        const you = walker(JSON.parse(lookKey) as AvatarLook, S.outside, Math.PI);
-        you.tx = S.customer.x;
-        you.tz = S.customer.z;
         const vehicle = models.makeVehicleModel(job.kind);
         vehicle.rotation.y = Math.PI / 2;
         vehicle.position.set(returning ? S.stand.x : S.outside.x + 1.4, 0.14, returning ? S.stand.z : S.outside.z);
@@ -4391,106 +4476,250 @@ export function GameMap({
         sparkles.position.set(S.stand.x, 0.14, S.stand.z);
         sparkles.visible = false;
         group.add(sparkles);
-        const entity = layer.add({ object: group, lng: origin.lng, lat: origin.lat, heading: facing, scaleBy: 0.01 });
-        inWorld = {
-          job,
-          entity,
-          keeper,
-          you,
-          vehicle,
-          sparkles,
-          facing,
-          opened: performance.now(),
-          closing: null,
-          cam: { lng: traveller.pos.lng, lat: traveller.pos.lat, bearing: camBearing, zoom: map.getZoom(), pitch: map.getPitch() },
-        };
-        for (const e of repairMarkers.get(job.id) ?? []) e.object.visible = false; // the keeper is inside now
-        me.object.visible = false; // you're the one walking in
-        traveller.v = 0;
-        controls.current.go = false;
-        touchGo = false;
-        map.setMaxZoom(20);
-        setInside(true);
-        setRepairOpen(job);
+        const opened = openPlace({
+          kind: "repair",
+          key: `repair:${job.id}`,
+          at: { lng: job.lng, lat: job.lat },
+          group,
+          spots: { ...S },
+          keeper: { look: keeperLook(job.keeper), at: returning && job.readyAt! > Date.now() ? S.work : S.keeper },
+          you: { from: S.outside, to: S.customer },
+          hidden: repairMarkers.get(job.id) ?? [],
+          closeScene: () => setRepairOpen(null),
+          extra: { job, vehicle, sparkles },
+        });
+        if (opened) setRepairOpen(job);
       }
 
-      /** Walk out: back through the door, the camera rises to the street, the shop goes. */
-      function closeShopScene() {
+      /** Sitting down at a buka: the cook at the pots, the menu on the wall; you go to the bench. */
+      function openMealPlace(offer: MealOffer, menu: string[], at: LngLat) {
+        const S = models.BUKA_SPOTS;
+        const buka = models.makeOpenBuka(offer.place === "Place to eat" ? "Buka" : offer.place, menu);
+        return openPlace({
+          kind: "meal",
+          key: `meal:${offer.id}`,
+          at,
+          group: buka.group,
+          spots: S,
+          keeper: { look: keeperLook(offer.cook), at: S.keeper },
+          you: { from: S.outside, to: { x: S.seat!.x, z: S.seat!.z } },
+          closeScene: () => setMealOpen(null),
+          extra: { buka },
+        });
+      }
+
+      /** At the pump: your vehicle alongside it, the attendant by the kiosk; you step out to talk. */
+      function openFuelPlace(offer: FuelOffer, at: LngLat, id: number) {
+        const S = models.FUEL_SPOTS;
+        const petrol = models.makeOpenPetrol(offer.station === "Petrol station" ? "Petrol" : offer.station);
+        const vehicle = models.makeVehicleModel(offer.kind);
+        vehicle.position.set(S.stand.x, 0.1, S.stand.z);
+        petrol.group.add(vehicle);
+        return openPlace({
+          kind: "fuel",
+          key: `fuel:${id}`,
+          at,
+          group: petrol.group,
+          spots: S,
+          kerbM: 10,
+          keeper: { look: { ...keeperLook(offer.attendant), topColour: "#1E9E62", extra: "cap" }, at: S.keeper },
+          you: { from: { x: S.stand.x + 1.3, z: S.stand.z }, to: S.customer },
+          closeScene: () => setFuelOpen(null),
+          extra: { petrol, vehicle },
+        });
+      }
+
+      /** Waking up: on the ward's bed with the nurse beside it, or on the ground with the paramedic and the ambulance. */
+      function openWardPlace(d: Discharge, at: LngLat) {
+        const ward = !!d.hospital;
+        const S = ward ? models.WARD_SPOTS : models.ROADSIDE_SPOTS;
+        const look = ward
+          ? { ...keeperLook(d.nurse), hair: "bun" as const, topColour: "#F4F1EA", bottomsColour: "#F4F1EA", extra: "none" as const }
+          : { ...keeperLook(d.nurse), topColour: "#1E9E62", bottomsColour: "#1E9E62", extra: "cap" as const };
+        return openPlace({
+          kind: ward ? "ward" : "roadside",
+          key: `ward:${at.lng.toFixed(5)},${at.lat.toFixed(5)}`,
+          at,
+          group: ward ? models.makeOpenWard(d.hospital === "Hospital" ? "Hospital" : d.hospital!) : models.makeRoadsideCare(),
+          spots: S,
+          kerbM: ward ? 8 : 5,
+          keeper: { look, at: S.keeper },
+          you: { from: S.stand, to: S.customer, lying: true },
+          closeScene: () => setDischarge(null),
+        });
+      }
+
+      /** The renter's spot in the side street: the renter under the umbrella, your ride on its stand. */
+      function openHirePlace(offer: RentalOffer, at: LngLat, hidden: import("@/game/ThreeMapLayer").MapEntity[]) {
+        const S = models.HIRE_SPOTS;
+        const group = models.makeHireStand(offer.kind);
+        const vehicle = models.makeVehicleModel(offer.kind);
+        vehicle.userData.kind = offer.kind; // what you ride off on
+        vehicle.rotation.y = Math.PI / 2;
+        vehicle.position.set(S.stand.x, 0, S.stand.z);
+        group.add(vehicle);
+        return openPlace({
+          kind: "hire",
+          key: `hire:${at.lng.toFixed(5)},${at.lat.toFixed(5)}`,
+          at,
+          group,
+          spots: S,
+          kerbM: 5,
+          keeper: { look: keeperLook(offer.renter), at: S.keeper },
+          you: { from: S.outside, to: S.customer },
+          hidden,
+          closeScene: () => setRentOpen(null),
+          extra: { vehicle },
+        });
+      }
+
+      /** Walk out: back to the street (riding, if you rented), the camera rises, the place folds away. */
+      function closePlace() {
         const w = inWorld;
         if (!w || w.closing !== null) return;
         w.closing = performance.now();
-        w.you.tx = models.SHOP_SPOTS.outside.x;
-        w.you.tz = models.SHOP_SPOTS.outside.z;
-        setRepairOpen(null);
+        w.you.seat = null;
+        w.you.lying = false;
+        w.you.tx = w.spots.outside.x;
+        w.you.tz = w.spots.outside.z;
+        w.closeScene();
       }
 
-      function endShopScene() {
+      function endPlace() {
         const w = inWorld;
         if (!w) return;
         layer.remove(w.entity);
-        for (const e of repairMarkers.get(w.job.id) ?? []) e.object.visible = true;
+        for (const e of w.hidden) e.object.visible = true;
         me.object.visible = true;
         inWorld = null;
         map.setMaxZoom(GAME_ZOOM);
         map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
-        setInside(false);
+        setInside(null);
         for (const el of document.querySelectorAll<HTMLElement>("[data-bubble]")) el.style.visibility = "hidden";
+      }
+
+      /** What the scene says is happening (the plate served, the fuel going in, the bike rented). */
+      function sceneMoment(m: SceneMoment) {
+        const w = inWorld;
+        if (!w) return;
+        w.moment = m;
+        if (m.type === "served") {
+          w.servedAt = performance.now();
+          w.buka?.plate(null, { base: m.base, side: m.side });
+        }
+        if (m.type === "plate") w.buka?.plate(m.state);
+        if (m.type === "meter") w.petrol?.meter(m.n);
+        if (m.type === "rented") {
+          w.you.tx = w.spots.stand.x + 0.2;
+          w.you.tz = w.spots.stand.z;
+        }
       }
 
       const ease = (k: number) => k * k * (3 - 2 * k);
 
-      /** One frame inside: the shop growing in, people walking and working, the camera, the bubbles. */
-      function shopSceneStep(now: number, dt: number, t: number) {
+      /** One frame inside: the place growing in, people walking, sitting and working, the camera, the bubbles. */
+      function placeStep(now: number, dt: number, t: number) {
         const w = inWorld!;
-        const S = models.SHOP_SPOTS;
+        const S = w.spots;
         const opening = ease(Math.min(1, (now - w.opened) / 1400));
         const leaving = w.closing === null ? 0 : ease(Math.min(1, (now - w.closing) / 1600));
         w.entity.scaleBy = SCENE_SCALE * Math.max(0.01, ease(Math.min(1, (now - w.opened) / 700)) * (1 - ease(Math.max(0, (leaving - 0.6) / 0.4))));
+        const m = w.moment;
 
-        // The repair: the keeper works at the stand until it's ready, then comes back to the counter.
-        const job = w.job;
-        const ready = !!job.readyAt && Date.now() >= job.readyAt;
-        const working = !!job.readyAt && !ready;
-        const keeperSpot = working ? S.work : S.keeper;
+        // Where the keeper goes, by the event.
+        let keeperSpot: { x: number; z: number } = S.keeper;
+        let working = false;
+        if (w.kind === "repair" && w.job) {
+          const ready = !!w.job.readyAt && Date.now() >= w.job.readyAt;
+          working = !!w.job.readyAt && !ready;
+          if (working) keeperSpot = S.work;
+        } else if (w.kind === "meal" && m?.type === "served" && now - w.servedAt < 4000) {
+          keeperSpot = S.work; // bringing the plate to the table
+        } else if (w.kind === "fuel" && (m?.type === "pumping" || m?.type === "meter")) {
+          keeperSpot = S.work; // at the pump, nozzle in the tank
+          working = true;
+        } else if ((w.kind === "ward" || w.kind === "roadside") && now - w.opened < 2600) {
+          keeperSpot = { x: S.stand.x - 1.4, z: S.stand.z + 0.4 }; // by the bed while you wake
+        }
         w.keeper.tx = keeperSpot.x;
         w.keeper.tz = keeperSpot.z;
+
+        // Waking up: lying still for a moment, then up and over to talk.
+        if (w.you.lying && now - w.opened > 2200 && w.closing === null) w.you.lying = false;
+
         const step = (p: Walker, speed: number) => {
           const dx = p.tx - p.x;
           const dz = p.tz - p.z;
           const d = Math.hypot(dx, dz);
-          const go = Math.min(d, speed * dt);
-          if (d > 0.02) {
+          const still = p.lying || p.seat !== null;
+          const go = still ? 0 : Math.min(d, speed * dt);
+          if (d > 0.02 && !still) {
             p.x += (dx / d) * go;
             p.z += (dz / d) * go;
             p.face = Math.atan2(dx, dz);
           }
-          p.av.root.position.set(p.x, 0.14, p.z);
+          p.av.root.position.set(p.x, 0.14 + (p.seat ?? 0) + (p.lying ? 0.75 : 0), p.z);
           p.av.root.rotation.y = p.face;
-          models.animateAvatar(p.av, { mode: "walk", phase: "idle", moving: d > 0.02 ? 0.8 : 0, distance: go }, dt, t);
+          models.animateAvatar(
+            p.av,
+            { mode: p.riding ?? "walk", phase: p.lying ? "fainted" : "idle", moving: d > 0.02 && !still ? 0.8 : 0, distance: go, sitting: p.seat !== null },
+            dt,
+            t,
+          );
           return d <= 0.02;
         };
-        const youThere = step(w.you, 2.6);
+        const youThere = step(w.you, w.you.riding ? 4 : 2.6);
         const keeperThere = step(w.keeper, 2.2);
-        if (youThere && w.closing === null) w.you.face = Math.atan2(w.keeper.x - w.you.x, w.keeper.z - w.you.z); // talking to the keeper
+
+        // You: at the buka you sit down on the bench; at the renter's, you get on and ride.
+        if (youThere && w.closing === null && w.kind === "meal" && S.seat && w.you.seat === null && Math.abs(w.you.x - S.seat.x) < 0.05) {
+          w.you.seat = S.seat.y;
+          w.you.face = 0;
+        }
+        if (w.kind === "hire" && m?.type === "rented" && youThere && !w.you.riding && w.vehicle) {
+          w.vehicle.visible = false;
+          w.you.riding = (w.vehicle.userData.kind as VehicleKind | undefined) ?? "bicycle";
+          w.you.face = Math.PI / 2;
+        }
+        if (youThere && w.closing === null && w.you.seat === null && !w.you.lying && !w.you.riding) {
+          w.you.face = Math.atan2(w.keeper.x - w.you.x, w.keeper.z - w.you.z); // talking to the keeper
+        }
         if (keeperThere && !working) w.keeper.face = Math.atan2(w.you.x - w.keeper.x, w.you.z - w.keeper.z);
         if (keeperThere && working) {
-          // Bent over the vehicle with a spanner.
+          // Bent over the vehicle with a spanner, or holding the nozzle in the tank.
           w.keeper.face = Math.PI / 2;
-          w.keeper.av.rig.rotation.x = 0.45;
-          w.keeper.av.armR.rotation.x = -1.4 + Math.sin(t * 9) * 0.45;
-          w.keeper.av.armL.rotation.x = -1.1 + Math.sin(t * 9 + 1.5) * 0.25;
+          if (w.kind === "repair") {
+            w.keeper.av.rig.rotation.x = 0.45;
+            w.keeper.av.armR.rotation.x = -1.4 + Math.sin(t * 9) * 0.45;
+            w.keeper.av.armL.rotation.x = -1.1 + Math.sin(t * 9 + 1.5) * 0.25;
+          } else {
+            w.keeper.av.armR.rotation.x = -1.3;
+          }
         }
-        // The vehicle: wheeled in beside you, then on the stand; broken (leaning) until mended.
-        if (w.closing === null && !youThere && !job.readyAt) w.vehicle.position.set(w.you.x + 1.4, 0.14, w.you.z);
-        else if (w.closing !== null && ready) w.vehicle.position.set(w.you.x + 1.4, 0.14, w.you.z); // you take it with you
-        else w.vehicle.position.set(S.stand.x, 0.14, S.stand.z);
-        w.vehicle.rotation.z = ready ? 0 : 0.28;
-        w.sparkles.visible = ready && w.closing === null;
-        w.sparkles.rotation.y += dt * 1.5;
+        if (w.kind === "meal" && m?.type === "served" && keeperThere && keeperSpot === S.work) w.buka?.plate("full");
+
+        // The event's things.
+        if (w.kind === "repair" && w.job && w.vehicle && w.sparkles) {
+          const ready = !!w.job.readyAt && Date.now() >= w.job.readyAt;
+          if (w.closing === null && !youThere && !w.job.readyAt) w.vehicle.position.set(w.you.x + 1.4, 0.14, w.you.z);
+          else if (w.closing !== null && ready) w.vehicle.position.set(w.you.x + 1.4, 0.14, w.you.z); // you take it with you
+          else w.vehicle.position.set(S.stand.x, 0.14, S.stand.z);
+          w.vehicle.rotation.z = ready ? 0 : 0.28;
+          w.sparkles.visible = ready && w.closing === null;
+          w.sparkles.rotation.y += dt * 1.5;
+        }
+        if (w.petrol) w.petrol.hose.visible = keeperThere && working;
+        if (w.buka) {
+          w.buka.steam.forEach((s, i) => {
+            const k = ((t * 0.6 + i * 0.33) % 1 + 1) % 1;
+            s.position.y = 1.6 + k * 1.2;
+            (s.material as import("three").MeshBasicMaterial).opacity = 0.6 * (1 - k);
+          });
+        }
 
         // The camera: down from the street to look in from the doorway, and back up again on leaving.
         const k = w.closing === null ? opening : 1 - leaving;
-        const centre = insideAt(w, 0, -S.depth * 0.62); // looking a little past the middle: the shop sits low, above the replies
+        const centre = insideAt(w, 0, -S.depth * 0.62); // looking a little past the middle: the place sits low, above the replies
         const back = { lng: traveller.pos.lng, lat: traveller.pos.lat };
         const target = geo.compassFromHeading(w.facing + Math.PI);
         const turn = ((target - w.cam.bearing) % 360 + 540) % 360 - 180;
@@ -4503,12 +4732,13 @@ export function GameMap({
         });
         if (w.closing !== null) camBearing = w.cam.bearing + turn * k;
 
-        // The bubbles over their heads.
+        // The bubbles over their heads (lower when sitting or lying).
         const bubble = (sel: string, p: Walker) => {
           const el = document.querySelector<HTMLElement>(`[data-bubble="${sel}"]`);
           if (!el) return;
           const spot = insideAt(w, p.x, p.z);
-          const screen = layer.screenOf(spot.lng, spot.lat, 3.1 * spot.metresPerUnit);
+          const head = p.lying ? 1.5 : p.seat !== null ? 2.6 : 3.1;
+          const screen = layer.screenOf(spot.lng, spot.lat, head * spot.metresPerUnit);
           if (!screen || w.closing !== null) {
             el.style.visibility = "hidden";
             return;
@@ -4522,7 +4752,7 @@ export function GameMap({
         bubble("them", w.keeper);
         bubble("you", w.you);
 
-        if (w.closing !== null && leaving >= 1) endShopScene();
+        if (w.closing !== null && leaving >= 1) endPlace();
       }
 
       async function refreshRepairs() {
@@ -4582,7 +4812,7 @@ export function GameMap({
           if (!r.ok || !r.job) return r.reason === "coins" ? "coins" : r.reason === "far" ? "far" : "error";
           const done = toJob(r.job);
           repairs = repairs.map((j) => (j.id === done.id ? done : j));
-          if (inWorld?.job.id === done.id) inWorld.job = done; // the keeper gets to work
+          if (inWorld?.job?.id === done.id) inWorld.job = done; // the keeper gets to work
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           void refreshVehicles();
@@ -5548,7 +5778,7 @@ export function GameMap({
         const want = geo.compassFromHeading(traveller.heading) + lookOffset;
         const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
         camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
-        if (inWorld) shopSceneStep(now, dt, t);
+        if (inWorld) placeStep(now, dt, t);
         else map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom: ride ? rideZoom() : undefined });
 
         if (!ride && !visit && now - lastSave > SAVE_EVERY_MS) {
@@ -6068,7 +6298,7 @@ export function GameMap({
             )}
 
             {/* A journey under way: which step, and the Board button at the stop. */}
-            {hud.journey && !hud.ride && !hud.care && (
+            {hud.journey && !inside && !hud.ride && !hud.care && (
               <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#14324A] p-3 text-paper ring-1 ring-[#5FA8E6]" role="status" aria-label="Your journey">
                 <div className="flex items-center gap-2">
                   <span className="text-xl" aria-hidden="true">
@@ -6093,7 +6323,7 @@ export function GameMap({
             )}
 
             {/* Directions: the next turn. The player steers; this only guides. */}
-            {hud.guide && (
+            {hud.guide && !inside && (
               <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Directions">
                 <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0" style={{ transform: `rotate(${hud.guide.arrow}deg)` }}>
                   <path d="M12 2l7 9h-4.5v11h-5V11H5z" />
@@ -6122,7 +6352,7 @@ export function GameMap({
             )}
 
             {/* A rental waiting at a bus stop, or a taxi on its way. */}
-            {hud.pickup && !hud.ride && !hud.care && (
+            {hud.pickup && !inside && !hud.ride && !hud.care && (
               <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Your pickup">
                 <div className="flex items-center gap-3">
                   <span className="text-2xl" aria-hidden="true">
@@ -6150,7 +6380,7 @@ export function GameMap({
             )}
 
             {/* A warning: tired, fuel low, soft tyres, a worn engine; and the nearest place that helps. Tap for the whole story. */}
-            {hud.advice && !hud.care && (
+            {hud.advice && !inside && !hud.care && (
               <div className="pointer-events-auto flex w-full max-w-md items-start gap-2 rounded-2xl bg-[#3B2F0A] p-2.5 text-sm text-paper ring-1 ring-gold" role="alert">
                 <button type="button" onClick={() => setAdviceOpen((o) => !o)} aria-expanded={adviceOpen} className="flex min-w-0 flex-1 flex-col text-left">
                   <span className="font-bold text-gold">⚠ {hud.advice.title}</span>
@@ -6457,22 +6687,50 @@ export function GameMap({
         />
       )}
       {rentOpen && rentalActions && (
-        <RentalScene offer={rentOpen} you={JSON.parse(lookKey) as AvatarLook} actions={rentalActions} onClose={() => setRentOpen(null)} />
+        <RentalScene
+          offer={rentOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={rentalActions}
+          world={inside === "hire"}
+          onMoment={onMoment}
+          onClose={() => (inside === "hire" ? actions.current?.leaveShop() : setRentOpen(null))}
+        />
       )}
       {fuelOpen && fuelActions && (
-        <FuelScene offer={fuelOpen} you={JSON.parse(lookKey) as AvatarLook} actions={fuelActions} onClose={() => setFuelOpen(null)} />
+        <FuelScene
+          offer={fuelOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={fuelActions}
+          world={inside === "fuel"}
+          onMoment={onMoment}
+          onClose={() => (inside === "fuel" ? actions.current?.leaveShop() : setFuelOpen(null))}
+        />
       )}
       {mealOpen && mealActions && (
-        <MealScene offer={mealOpen} you={JSON.parse(lookKey) as AvatarLook} actions={mealActions} onClose={() => setMealOpen(null)} />
+        <MealScene
+          offer={mealOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={mealActions}
+          world={inside === "meal"}
+          onMoment={onMoment}
+          onClose={() => (inside === "meal" ? actions.current?.leaveShop() : setMealOpen(null))}
+        />
       )}
-      {discharge && <NurseScene discharge={discharge} you={JSON.parse(lookKey) as AvatarLook} onClose={() => setDischarge(null)} />}
+      {discharge && (
+        <NurseScene
+          discharge={discharge}
+          you={JSON.parse(lookKey) as AvatarLook}
+          world={inside === "ward" || inside === "roadside"}
+          onClose={() => (inside === "ward" || inside === "roadside" ? actions.current?.leaveShop() : setDischarge(null))}
+        />
+      )}
       {repairOpen && repairActions && (
         <RepairScene
           job={repairOpen}
           you={JSON.parse(lookKey) as AvatarLook}
           actions={repairActions}
-          world={inside}
-          onClose={() => (inside ? actions.current?.leaveShop() : setRepairOpen(null))}
+          world={inside === "repair"}
+          onClose={() => (inside === "repair" ? actions.current?.leaveShop() : setRepairOpen(null))}
         />
       )}
       {lampOpen && lampActions && (

@@ -1,4 +1,5 @@
-// The petrol station, the place to eat and the hospital as scenes (phone): Refuel opens the attendant (the meter runs,
+// The petrol station, the place to eat and the hospital as scenes on the map (phone; open-roof places, the talk in
+// bubbles and a strip at the bottom): Refuel opens the attendant (the meter runs,
 // the tank fills, a keg for the road), Eat opens the cook (the day's menu, the plate cleared, +energy), and leaving
 // hospital brings the nurse (the bill, the damaged bicycle). The test player is deleted.
 //   SHOTS=<folder> node scripts/tests/place-scenes-browser-test.mjs
@@ -74,16 +75,19 @@ try {
   // ---- The petrol station
   await open();
   await tapHere("Refuel");
-  await wait(1500);
+  await wait(4500); // the place grows in and the attendant's greeting types itself out
   const fuelScene = await text(`[role="dialog"][aria-label="Petrol station: ${station.name}"]`);
   check(`Refuel opens the attendant at ${station.name}`, /Welcome.* Bring your okada out of your pocket/.test(fuelScene ?? ""), fuelScene);
   await shot("1-station");
   const before = await coins();
   check("…and fills it up", await clickWhenThere("Fill it up · 200 coins"));
-  await wait(4500);
-  const filled = await text('[role="dialog"]');
-  const meter = await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] svg text')].map((t) => t.textContent).find((t) => /^\d{4}$/.test(t ?? "")));
-  check("the meter ran to 200, a full tank", meter === "0200" && /Full tank! 200 coins/.test(filled ?? ""), `${meter} · ${filled}`);
+  let filled = null;
+  for (let i = 0; i < 24 && !/Full tank! 200 coins/.test(filled ?? ""); i++) {
+    await wait(500);
+    filled = await text('[role="dialog"]');
+  }
+  // (The meter counts up on the pump in 3D; what it came to, the attendant says.)
+  check("the pump ran to 200, a full tank", /Full tank! 200 coins/.test(filled ?? ""), filled);
   const bike = (await admin.from("player_vehicles").select("fuel").eq("user_id", id).eq("kind", "motorbike").single()).data;
   check("…200 coins, the tank at 100%", (await coins()) === before - 200 && bike.fuel >= 99, `${before - (await coins())} · ${bike.fuel}`);
   await shot("2-filled");
@@ -128,12 +132,14 @@ try {
   const nurse = await text(`[role="dialog"][aria-label="Leaving ${hospital.name}"]`);
   check(`the nurse at ${hospital.name}`, /the ambulance brought you to/.test(nurse ?? "") && /70 energy/.test(nurse ?? ""), nurse);
   await shot("6-nurse");
+  // In the world only the newest line shows (in the bubble over the nurse): each answer in turn.
   await clickWhenThere("How much do I owe?");
-  await wait(2500);
-  await clickWhenThere("What about my bicycle?");
   await wait(3500);
+  const bill = await text('[role="dialog"]');
+  await clickWhenThere("What about my bicycle?");
+  await wait(4500);
   const talk = await text('[role="dialog"]');
-  check("…the bill and the bicycle", /50 coins, and it's already paid/.test(talk ?? "") && /repair shop not far from here/.test(talk ?? ""), talk);
+  check("…the bill and the bicycle", /50 coins, and it's already paid/.test(bill ?? "") && /repair shop not far from here/.test(talk ?? ""), `${bill} // ${talk}`);
   await shot("7-nurse-talk");
   await clickWhenThere("Thank you, nurse");
   await clickWhenThere("Bye");

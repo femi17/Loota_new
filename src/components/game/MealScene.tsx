@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
+import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, keeperWrap, type AvatarLook } from "@/lib/avatar";
 
 /** At a place to eat: the cook and the day's menu (every dish is one meal: the same price, the same energy). */
@@ -25,15 +25,30 @@ const DISHES: Dish[] = [
 ];
 
 /** Today's three dishes at this place (the same all day). */
-function menu(id: number) {
+export function todaysMenu(id: number) {
   const day = Math.floor(Date.now() / 86_400_000);
   const start = (id * 7 + day) % DISHES.length;
   return [0, 3, 5].map((k) => DISHES[(start + k) % DISHES.length]);
 }
 
 /** Sitting down to eat: the cook greets you, you pick from the day's menu, the plate comes and you clear it. */
-export function MealScene({ offer, you, actions, onClose }: { offer: MealOffer; you: AvatarLook; actions: MealActions; onClose: () => void }) {
-  const [dishes] = useState(() => menu(offer.id));
+export function MealScene({
+  offer,
+  you,
+  actions,
+  world = false,
+  onMoment,
+  onClose,
+}: {
+  offer: MealOffer;
+  you: AvatarLook;
+  actions: MealActions;
+  /** At the buka on the map (EventScene's world mode): the plate comes to your table there. */
+  world?: boolean;
+  onMoment?: (m: SceneMoment) => void;
+  onClose: () => void;
+}) {
+  const [dishes] = useState(() => todaysMenu(offer.id));
   const named = offer.place !== "Place to eat"; // unnamed on the map
   type Step = "greet" | "eating" | "done" | "short" | "bye";
   const [step, setStep] = useState<Step>("greet");
@@ -53,15 +68,18 @@ export function MealScene({ offer, you, actions, onClose }: { offer: MealOffer; 
   useEffect(() => {
     if (step !== "eating") return;
     const timer = window.setTimeout(() => {
-      if (plate === "full") setPlate("half");
-      else {
+      if (plate === "full") {
+        setPlate("half");
+        onMoment?.({ type: "plate", state: "half" });
+      } else {
         setPlate("empty");
+        onMoment?.({ type: "plate", state: "empty" });
         say({ who: "them", text: `Ehen! You cleaned the plate. That one go give you power: +${gained} energy. Come back any time!` });
         setStep("done");
       }
     }, 1400);
     return () => window.clearTimeout(timer);
-  }, [step, plate, gained]);
+  }, [step, plate, gained, onMoment]);
 
   async function order(d: Dish) {
     setBusy(true);
@@ -72,6 +90,7 @@ export function MealScene({ offer, you, actions, onClose }: { offer: MealOffer; 
       setDish(d);
       setGained(r.energy);
       setPlate("full");
+      onMoment?.({ type: "served", base: d.base, side: d.side });
       say({ who: "them", text: "Coming right up! Hot hot, straight from the pot." });
       setStep("eating");
     } else if (r.reason === "coins") {
@@ -139,6 +158,7 @@ export function MealScene({ offer, you, actions, onClose }: { offer: MealOffer; 
       choices={choices}
       busy={busy}
       overlay={overlay}
+      world={world}
       onClose={onClose}
     />
   );

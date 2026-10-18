@@ -9,6 +9,14 @@ import type { VehicleKind } from "@/game/economy";
 export type SceneStage = "bicycle_shop" | "workshop" | "bike_hire" | "checkpoint" | "roadside" | "stall" | "petrol_station" | "buka" | "hospital";
 export type SceneLine = { who: "them" | "you"; text: string };
 export type SceneChoice = { label: string; primary?: boolean; onPick: () => void };
+/** What's happening in a scene, for the place on the map to show it (in the world). */
+export type SceneMoment =
+  | { type: "served"; base: string; side: string }
+  | { type: "plate"; state: "full" | "half" | "empty" }
+  | { type: "pumping" }
+  | { type: "meter"; n: number }
+  | { type: "filled" }
+  | { type: "rented" };
 
 /**
  * A moment in the game as a little 2D scene (owner, 17 Oct 2026): the place, the person there, and a short

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
+import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, keeperWrap, type AvatarLook } from "@/lib/avatar";
 
 /** The renter waiting at the bus stop with a bicycle or an okada (a motorbike). */
@@ -15,7 +15,22 @@ export type RentalActions = {
 };
 
 /** Meeting the renter: they show you the ride, you ask the price, and it's a deal (or not). */
-export function RentalScene({ offer, you, actions, onClose }: { offer: RentalOffer; you: AvatarLook; actions: RentalActions; onClose: () => void }) {
+export function RentalScene({
+  offer,
+  you,
+  actions,
+  world = false,
+  onMoment,
+  onClose,
+}: {
+  offer: RentalOffer;
+  you: AvatarLook;
+  actions: RentalActions;
+  /** At the renter's spot on the map (EventScene's world mode): you get on and ride off there. */
+  world?: boolean;
+  onMoment?: (m: SceneMoment) => void;
+  onClose: () => void;
+}) {
   const bike = offer.kind === "bicycle";
   const ride = bike ? "bicycle" : "okada";
   type Step = "greet" | "price" | "rented" | "short" | "declined";
@@ -36,6 +51,7 @@ export function RentalScene({ offer, you, actions, onClose }: { offer: RentalOff
     const r = await actions.rent();
     setBusy(false);
     if (r === "ok") {
+      onMoment?.({ type: "rented" });
       say({ who: "you", text: "Deal!" }, { who: "them", text: `Safe journey! Ride well, and bring my ${ride} back in one piece, o.` });
       setStep("rented");
     } else if (r === "coins") {
@@ -102,6 +118,7 @@ export function RentalScene({ offer, you, actions, onClose }: { offer: RentalOff
       lines={lines}
       choices={choices}
       busy={busy}
+      world={world}
       onClose={onClose}
     />
   );

@@ -852,3 +852,332 @@ export function makeSparkles() {
   }
   return group;
 }
+
+/** Where people stand in a place you go into (model units; the doorway at the origin, the place along −z). */
+export type PlaceSpots = {
+  width: number;
+  depth: number;
+  /** The keeper (cook, attendant, nurse, renter) waits here. */
+  keeper: { x: number; z: number };
+  /** You stand here to talk, facing the keeper. */
+  customer: { x: number; z: number };
+  /** What the event is about: the vehicle at the pump or on the stand, the plate on the table, the bed. */
+  stand: { x: number; z: number };
+  /** The keeper at work on it. */
+  work: { x: number; z: number };
+  /** Just outside, where you come in from. */
+  outside: { x: number; z: number };
+  /** A seat (the buka's bench): where you sit, facing +z. */
+  seat?: { x: number; z: number; y: number };
+};
+
+/** Three walls, a knee-high front wall with a doorway, rafters, no roof; the sign high on the back wall. */
+function openRoom(W: number, D: number, wall: string, floor: string, sign: string, signColour: string, H = 3.4) {
+  const T = 0.25;
+  const group = new THREE.Group();
+  group.add(
+    mesh(new THREE.BoxGeometry(W, 0.14, D), floor, 0, 0.07, -D / 2),
+    mesh(new THREE.BoxGeometry(W, H, T), wall, 0, H / 2, -D + T / 2),
+    mesh(new THREE.BoxGeometry(T, H, D), wall, -W / 2 + T / 2, H / 2, -D / 2),
+    mesh(new THREE.BoxGeometry(T, H, D), wall, W / 2 - T / 2, H / 2, -D / 2),
+    mesh(new THREE.BoxGeometry(W / 2 - 1.5, 0.9, T), wall, -(W / 2 + 1.5) / 2, 0.45, -T / 2),
+    mesh(new THREE.BoxGeometry(W / 2 - 1.5, 0.9, T), wall, (W / 2 + 1.5) / 2, 0.45, -T / 2),
+    mesh(new THREE.BoxGeometry(W + 0.1, 0.12, T + 0.1), "#7A5230", 0, H, -D + T / 2),
+    mesh(new THREE.BoxGeometry(T + 0.1, 0.12, D), "#7A5230", -W / 2 + T / 2, H, -D / 2),
+    mesh(new THREE.BoxGeometry(T + 0.1, 0.12, D), "#7A5230", W / 2 - T / 2, H, -D / 2),
+    mesh(new THREE.BoxGeometry(0.3, 1.2, 0.3), "#7A5230", -1.5, 0.6, -T / 2),
+    mesh(new THREE.BoxGeometry(0.3, 1.2, 0.3), "#7A5230", 1.5, 0.6, -T / 2),
+    mesh(new THREE.BoxGeometry(W, 0.14, 0.14), "#6B4A2B", 0, H + 0.08, -D * 0.35),
+    mesh(new THREE.BoxGeometry(W, 0.14, 0.14), "#6B4A2B", 0, H + 0.08, -D * 0.7),
+  );
+  const board = signBoard(sign, signColour, Math.min(W - 2, 7), 0.95);
+  board.position.set(0, H - 0.65, -D + T + 0.02);
+  group.add(board);
+  return group;
+}
+
+/** A table top with legs. */
+function table(x: number, z: number, w: number, d: number, colour = "#7A5230") {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.BoxGeometry(w, 0.1, d), colour, 0, 0.95, 0));
+  for (const [lx, lz] of [
+    [-w / 2 + 0.1, -d / 2 + 0.1],
+    [w / 2 - 0.1, -d / 2 + 0.1],
+    [-w / 2 + 0.1, d / 2 - 0.1],
+    [w / 2 - 0.1, d / 2 - 0.1],
+  ]) {
+    g.add(mesh(new THREE.BoxGeometry(0.1, 0.9, 0.1), colour, lx, 0.45, lz));
+  }
+  g.position.set(x, 0.14, z);
+  return g;
+}
+
+export const BUKA_SPOTS: PlaceSpots = {
+  width: 11,
+  depth: 7.5,
+  keeper: { x: -2.6, z: -4.9 },
+  customer: { x: 1.4, z: -2.4 },
+  stand: { x: 2.6, z: -3.4 },
+  work: { x: 1.1, z: -3.4 },
+  outside: { x: 0, z: 2.6 },
+  seat: { x: 2.6, z: -4.35, y: 0.5 },
+};
+
+/**
+ * A buka with no roof: pots steaming on the fire at the back, the day's menu on the wall, tables and benches.
+ * `plate(state)` shows the plate on the table (full, half eaten, empty) or takes it away (null).
+ */
+export function makeOpenBuka(sign: string, menu: string[]) {
+  const { width: W, depth: D } = BUKA_SPOTS;
+  const group = openRoom(W, D, "#E9C79A", "#C9A27A", sign, "#F07A28");
+  // The cooking: three pots on a stand over the fire, steam rising
+  group.add(mesh(new THREE.BoxGeometry(3.4, 0.6, 1.2), "#5B4636", -3, 0.44, -D + 1.2));
+  const steam: THREE.Mesh[] = [];
+  for (const [i, x] of [-4.1, -3, -1.9].entries()) {
+    group.add(mesh(new THREE.CylinderGeometry(0.45, 0.38, 0.6, 14), i === 1 ? "#7A2232" : "#3A3A3A", x, 1.05, -D + 1.2));
+    group.add(mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.06, 14), "#555555", x, 1.37, -D + 1.2));
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), new THREE.MeshBasicMaterial({ color: "#FFFFFF", transparent: true, opacity: 0.6 }));
+    puff.position.set(x, 1.7, -D + 1.2);
+    group.add(puff);
+    steam.push(puff);
+  }
+  const fire = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.12, 1.0), glow("#F07A28"));
+  fire.position.set(-3, 0.2, -D + 1.2);
+  group.add(fire);
+  // The menu on the back wall, right
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 320;
+  const g = canvas.getContext("2d")!;
+  g.fillStyle = "#2B3A2F";
+  g.fillRect(0, 0, 512, 320);
+  g.strokeStyle = "#7A5230";
+  g.lineWidth = 16;
+  g.strokeRect(8, 8, 496, 304);
+  g.fillStyle = "#F4F1EA";
+  g.textAlign = "center";
+  g.font = "800 52px system-ui, sans-serif";
+  g.fillText("TODAY", 256, 76);
+  g.font = "600 40px system-ui, sans-serif";
+  menu.slice(0, 3).forEach((m, i) => g.fillText(m.toUpperCase(), 256, 146 + i * 58));
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.5), new THREE.MeshBasicMaterial({ map: texture }));
+  board.position.set(3, 1.9, -D + 0.27);
+  group.add(board);
+  // Tables and benches; you sit behind the first one, facing the door
+  const { stand, seat } = BUKA_SPOTS;
+  group.add(table(stand.x, stand.z, 2.4, 1.2));
+  group.add(
+    mesh(new THREE.BoxGeometry(2.4, 0.12, 0.5), "#9C6B3F", stand.x, 0.62, seat!.z),
+    mesh(new THREE.BoxGeometry(2.4, 0.12, 0.5), "#9C6B3F", stand.x, 0.62, stand.z + 1),
+  );
+  group.add(table(-1.8, -2.4, 2, 1.1));
+  group.add(mesh(new THREE.BoxGeometry(2, 0.12, 0.5), "#9C6B3F", -1.8, 0.62, -1.5));
+  // A crate of soft drinks by the door
+  group.add(mesh(new THREE.BoxGeometry(1, 0.6, 0.7), "#F4B41A", W / 2 - 1, 0.44, -1));
+  for (let i = 0; i < 4; i++) group.add(mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.4, 8), "#1E9E62", W / 2 - 1.35 + i * 0.23, 0.94, -1));
+  // The plate
+  const plate = new THREE.Group();
+  plate.position.set(stand.x, 1.13, stand.z);
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.34, 0.06, 18), material("#FFFFFF"));
+  const food = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8), material("#D9531E"));
+  food.scale.set(1, 0.45, 1);
+  food.position.y = 0.06;
+  const side = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 6), material("#C98A4B"));
+  side.scale.set(1, 0.6, 1);
+  side.position.set(0.22, 0.07, 0.1);
+  plate.add(dish, food, side);
+  plate.visible = false;
+  group.add(plate);
+  return {
+    group,
+    steam,
+    /** The plate on the table: its food (colours of the dish), half eaten, cleared, or gone. */
+    plate(state: "full" | "half" | "empty" | null, colours?: { base: string; side: string }) {
+      plate.visible = state !== null;
+      if (colours) {
+        food.material = material(colours.base);
+        side.material = material(colours.side);
+      }
+      food.visible = side.visible = state === "full" || state === "half";
+      food.scale.set(state === "half" ? 0.6 : 1, state === "half" ? 0.3 : 0.45, state === "half" ? 0.6 : 1);
+    },
+  };
+}
+
+export const FUEL_SPOTS: PlaceSpots = {
+  width: 12,
+  depth: 8,
+  keeper: { x: -2.8, z: -5.4 },
+  customer: { x: 3, z: -2.4 },
+  stand: { x: 0.9, z: -3.8 },
+  work: { x: -0.7, z: -2.4 },
+  outside: { x: 0, z: 2.6 },
+};
+
+/**
+ * A petrol station's forecourt with the canopy's frame (no roof, so you see the pump): the island, two pumps
+ * whose displays show `meter(n)`, the kiosk at the back, the sign over the canopy.
+ */
+export function makeOpenPetrol(sign: string) {
+  const { width: W, depth: D } = FUEL_SPOTS;
+  const group = new THREE.Group();
+  const H = 4.2;
+  group.add(mesh(new THREE.BoxGeometry(W, 0.1, D), "#B9B4AA", 0, 0.05, -D / 2));
+  // The canopy: four columns and the edge beams in the station's green, a gold stripe along the back
+  for (const [x, z] of [
+    [-W / 2 + 0.8, -0.8],
+    [W / 2 - 0.8, -0.8],
+    [-W / 2 + 0.8, -D + 1.6],
+    [W / 2 - 0.8, -D + 1.6],
+  ]) {
+    group.add(mesh(new THREE.BoxGeometry(0.4, H, 0.4), "#D8D8D8", x, H / 2, z));
+  }
+  // (No beam along the front: it would cross the view into the forecourt.)
+  group.add(
+    mesh(new THREE.BoxGeometry(W - 1, 0.5, 0.3), "#1E9E62", 0, H, -D + 1.6),
+    mesh(new THREE.BoxGeometry(0.3, 0.5, D - 2.4), "#1E9E62", -W / 2 + 0.8, H, -D / 2 + 0.4),
+    mesh(new THREE.BoxGeometry(0.3, 0.5, D - 2.4), "#1E9E62", W / 2 - 0.8, H, -D / 2 + 0.4),
+    mesh(new THREE.BoxGeometry(W - 1, 0.12, 0.32), "#F4B41A", 0, H - 0.3, -D + 1.6),
+  );
+  // The kiosk at the back
+  group.add(
+    mesh(new THREE.BoxGeometry(5, 2.6, 1.4), "#F4F1EA", 2.5, 1.35, -D + 0.7),
+    mesh(new THREE.BoxGeometry(5.05, 0.4, 1.45), "#1E9E62", 2.5, 2.6, -D + 0.7),
+    mesh(new THREE.BoxGeometry(1.8, 1.1, 0.05), "#9FC6E8", 1.5, 1.5, -D + 1.42),
+    mesh(new THREE.BoxGeometry(0.9, 1.8, 0.05), "#6B8BA4", 3.6, 0.95, -D + 1.42),
+  );
+  const board = signBoard(sign, "#1E9E62", 6, 0.8);
+  board.position.set(0, H + 0.6, -D + 1.6);
+  group.add(board);
+  // The island and the pumps, their displays facing the vehicle
+  group.add(mesh(new THREE.BoxGeometry(1, 0.25, 4.4), "#8C8C8C", -0.7, 0.17, -4.2));
+  const displays: { ctx: CanvasRenderingContext2D; texture: THREE.CanvasTexture }[] = [];
+  for (const z of [-3.2, -5.3]) {
+    group.add(mesh(new THREE.BoxGeometry(0.7, 1.7, 0.9), "#F4F1EA", -0.7, 1.15, z), mesh(new THREE.BoxGeometry(0.72, 0.25, 0.92), "#1E9E62", -0.7, 2.05, z));
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 128;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.4), new THREE.MeshBasicMaterial({ map: texture }));
+    screen.rotation.y = Math.PI / 2;
+    screen.position.set(-0.33, 1.55, z);
+    group.add(screen);
+    displays.push({ ctx: canvas.getContext("2d")!, texture });
+  }
+  let shown = -1;
+  const meter = (n: number) => {
+    const v = Math.round(n);
+    if (v === shown) return;
+    shown = v;
+    for (const { ctx, texture } of displays) {
+      ctx.fillStyle = "#10141A";
+      ctx.fillRect(0, 0, 256, 128);
+      ctx.fillStyle = "#5CF08A";
+      ctx.font = "700 84px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(v).padStart(4, "0"), 128, 68);
+      texture.needsUpdate = true;
+    }
+  };
+  meter(0);
+  // The hose: from the pump to the tank while it fills
+  const hose = mesh(new THREE.BoxGeometry(1.3, 0.08, 0.08), "#222222", 0.05, 1.25, -3.5);
+  hose.visible = false;
+  group.add(hose);
+  // A sand bucket and an oil drum
+  group.add(mesh(new THREE.CylinderGeometry(0.3, 0.25, 0.5, 12), "#D62828", -W / 2 + 1.6, 0.35, -2.4));
+  group.add(mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.1, 12), "#B8322A", -W / 2 + 1.6, 0.6, -D + 1));
+  return { group, meter, hose };
+}
+
+export const WARD_SPOTS: PlaceSpots = {
+  width: 11,
+  depth: 7.5,
+  keeper: { x: -1.5, z: -4.3 },
+  customer: { x: 1.2, z: -2.6 },
+  stand: { x: 0.2, z: -5.6 },
+  work: { x: -1.5, z: -4.3 },
+  outside: { x: 0, z: 2.6 },
+};
+
+/** A hospital ward with no roof: three beds along the back wall (yours in the middle), a cabinet, the red cross. */
+export function makeOpenWard(sign: string) {
+  const { width: W, depth: D } = WARD_SPOTS;
+  const group = openRoom(W, D, "#F4F6F8", "#CFE3EE", sign, "#D62828");
+  for (const x of [-3.6, 0.2, 4]) {
+    group.add(
+      mesh(new THREE.BoxGeometry(1.6, 0.5, 3), "#C9CED6", x, 0.45, -D + 1.9),
+      mesh(new THREE.BoxGeometry(1.5, 0.2, 2.9), "#FFFFFF", x, 0.8, -D + 1.9),
+      mesh(new THREE.BoxGeometry(1.1, 0.2, 0.5), "#E8EEF4", x, 0.95, -D + 0.75),
+      mesh(new THREE.BoxGeometry(1.52, 0.08, 1.6), "#7FB2D9", x, 0.92, -D + 2.4),
+    );
+  }
+  // The red cross on the back wall, a cabinet, a drip stand
+  group.add(
+    mesh(new THREE.BoxGeometry(0.9, 0.28, 0.05), "#D62828", 2.1, 1.9, -D + 0.3),
+    mesh(new THREE.BoxGeometry(0.28, 0.9, 0.05), "#D62828", 2.1, 1.9, -D + 0.3),
+    mesh(new THREE.BoxGeometry(0.9, 1.4, 0.6), "#E8EEF4", -W / 2 + 0.8, 0.84, -2.2),
+    mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.2, 6), "#9AA1AC", 1.4, 1.24, -D + 1.2),
+    mesh(new THREE.BoxGeometry(0.3, 0.4, 0.12), "#CFE6F7", 1.4, 2.2, -D + 1.2),
+  );
+  return group;
+}
+
+export const HIRE_SPOTS: PlaceSpots = {
+  width: 8,
+  depth: 5,
+  keeper: { x: -1.6, z: -2.6 },
+  customer: { x: 2.2, z: -1.8 },
+  stand: { x: 0.4, z: -2.4 },
+  work: { x: -0.6, z: -2.4 },
+  outside: { x: 1.5, z: 2.6 },
+};
+
+/** A renter's spot in a side street: an umbrella over a stool, more for hire lined up, the A-frame sign. */
+export function makeHireStand(kind: "bicycle" | "motorbike") {
+  const group = new THREE.Group();
+  // The umbrella (open) over the renter's stool
+  const top = new THREE.Mesh(new THREE.ConeGeometry(1.6, 0.6, 8, 1, true), material("#E5484D"));
+  top.position.set(-2.8, 2.9, -3.4);
+  group.add(top, mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.7, 6), "#5B6475", -2.8, 1.35, -3.4), mesh(new THREE.BoxGeometry(0.6, 0.5, 0.6), "#7A5230", -2.8, 0.25, -3.4));
+  // More for hire, lined up behind
+  for (const [x, colour] of [
+    [1.4, "#1E9E62"],
+    [3.1, "#F4B41A"],
+  ] as const) {
+    const v = (kind === "bicycle" ? buildBicycle() : buildMotorbike()).group;
+    v.position.set(x, 0, -4.2);
+    v.traverse((o) => {
+      if (o instanceof THREE.Mesh && (o.material === material(BIKE) || o.material === material(MOTO))) o.material = material(colour);
+    });
+    group.add(v);
+  }
+  const board = signBoard(kind === "bicycle" ? "Bicycle hire" : "Okada hire", "#1E9E62", 1.8, 0.5);
+  board.position.set(-0.6, 1.1, -0.6);
+  group.add(board, mesh(new THREE.BoxGeometry(0.06, 1.1, 0.06), "#4A3A2A", -1.4, 0.55, -0.62), mesh(new THREE.BoxGeometry(0.06, 1.1, 0.06), "#4A3A2A", 0.2, 0.55, -0.62));
+  return group;
+}
+
+export const ROADSIDE_SPOTS: PlaceSpots = {
+  width: 8,
+  depth: 5,
+  keeper: { x: -1.3, z: -2.2 },
+  customer: { x: 1.3, z: -2.0 },
+  stand: { x: 0.2, z: -2.6 },
+  work: { x: -1.3, z: -2.2 },
+  outside: { x: 1.5, z: 2.6 },
+};
+
+/** Where paramedics treated someone by the road: their ambulance parked behind. */
+export function makeRoadsideCare() {
+  const group = new THREE.Group();
+  const amb = makeAmbulance().group;
+  amb.rotation.y = Math.PI / 2;
+  amb.position.set(0, 0, -5);
+  group.add(amb);
+  return group;
+}

@@ -59,6 +59,9 @@ try {
     called_at: ago(120), picked_at: ago(110), arrives_at: ago(100), discharged_at: ago(5), left_at: null,
   });
   await open();
+  // You wake on the ward (the nurse's scene, on the map): walk out to the street.
+  await clickText("Walk out");
+  await wait(2500);
   const fromHospital = await job();
   const said = await page.evaluate(() => document.body.innerText);
   check("discharged: a repair shop near the hospital is found by itself", !!fromHospital && /Discharged|needs a repair|blue line/.test(said), fromHospital ? `${fromHospital.shop}` : "none");

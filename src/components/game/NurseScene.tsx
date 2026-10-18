@@ -11,7 +11,18 @@ export type Discharge = { hospital: string | null; nurse: string; bill: number; 
 const VEHICLE: Record<VehicleKind, string> = { bicycle: "bicycle", motorbike: "motorbike", car: "car" };
 
 /** The nurse at the door (or the paramedic by the road): what happened, the bill, and some advice for the road. */
-export function NurseScene({ discharge, you, onClose }: { discharge: Discharge; you: AvatarLook; onClose: () => void }) {
+export function NurseScene({
+  discharge,
+  you,
+  world = false,
+  onClose,
+}: {
+  discharge: Discharge;
+  you: AvatarLook;
+  /** On the ward on the map (EventScene's world mode): you wake on the bed there. */
+  world?: boolean;
+  onClose: () => void;
+}) {
   const ward = !!discharge.hospital;
   const hospital = discharge.hospital === "Hospital" ? "the hospital" : discharge.hospital; // unnamed on the map
   const [asked, setAsked] = useState<string[]>([]);
@@ -92,6 +103,7 @@ export function NurseScene({ discharge, you, onClose }: { discharge: Discharge; 
       you={you}
       lines={lines}
       choices={choices}
+      world={world}
       onClose={onClose}
     />
   );

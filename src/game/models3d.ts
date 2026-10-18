@@ -686,3 +686,169 @@ export function makeTrafficLight() {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Places you go into (in-world scenes): open-roof buildings seen from above
+// ---------------------------------------------------------------------------
+
+/** A painted sign: white letters on a coloured board, facing +z. */
+function signBoard(text: string, colour: string, width: number, height: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = Math.round((1024 * height) / width);
+  const g = canvas.getContext("2d")!;
+  g.fillStyle = colour;
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  g.strokeStyle = "#1B2433";
+  g.lineWidth = 10;
+  g.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
+  g.fillStyle = "#FFFFFF";
+  let size = Math.round(canvas.height * 0.62);
+  g.font = `800 ${size}px system-ui, sans-serif`;
+  while (g.measureText(text.toUpperCase()).width > canvas.width - 60 && size > 20) g.font = `800 ${(size -= 4)}px system-ui, sans-serif`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(text.toUpperCase(), canvas.width / 2, canvas.height / 2 + size * 0.05);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map: texture }));
+}
+
+/** Where things stand in an open shop (model units; the door is at the origin, the shop runs back along −z). */
+export const SHOP_SPOTS = {
+  width: 11,
+  depth: 7.5,
+  /** The keeper waits here, facing the door. */
+  keeper: { x: -2.2, z: -4.6 },
+  /** The customer stands here, facing the keeper. */
+  customer: { x: 1.9, z: -2.6 },
+  /** The vehicle being repaired, side-on to the door. */
+  stand: { x: 0, z: -3.7 },
+  /** The keeper at work beside it. */
+  work: { x: -1.9, z: -3.7 },
+  /** Just outside the door. */
+  outside: { x: 0, z: 2.6 },
+} as const;
+
+/**
+ * A repair shop with no roof, seen from above (the in-world scene, owner 18 Oct 2026): walls on three sides,
+ * a low front wall with the doorway, rafters where the roof would be, the sign on the back wall, and inside
+ * a bicycle repairer's tyres, bicycles and workbench, or a mechanic's oil drums, tool chest and a car.
+ */
+export function makeOpenShop(style: "bicycle" | "workshop", sign: string) {
+  const { width: W, depth: D } = SHOP_SPOTS;
+  const H = 3.4;
+  const T = 0.25;
+  const bike = style === "bicycle";
+  const wall = bike ? "#EAD9B6" : "#C9C3B6";
+  const group = new THREE.Group();
+  group.add(
+    // Floor, a step up from the pavement
+    mesh(new THREE.BoxGeometry(W, 0.14, D), bike ? "#C9B08A" : "#8F8A80", 0, 0.07, -D / 2),
+    // Back and side walls, full height; the front wall only knee-high, with the doorway
+    mesh(new THREE.BoxGeometry(W, H, T), wall, 0, H / 2, -D + T / 2),
+    mesh(new THREE.BoxGeometry(T, H, D), wall, -W / 2 + T / 2, H / 2, -D / 2),
+    mesh(new THREE.BoxGeometry(T, H, D), wall, W / 2 - T / 2, H / 2, -D / 2),
+    mesh(new THREE.BoxGeometry(W / 2 - 1.5, 0.9, T), wall, -(W / 2 + 1.5) / 2, 0.45, -T / 2),
+    mesh(new THREE.BoxGeometry(W / 2 - 1.5, 0.9, T), wall, (W / 2 + 1.5) / 2, 0.45, -T / 2),
+    // Wall tops and the posts either side of the door
+    mesh(new THREE.BoxGeometry(W + 0.1, 0.12, T + 0.1), "#7A5230", 0, H, -D + T / 2),
+    mesh(new THREE.BoxGeometry(T + 0.1, 0.12, D), "#7A5230", -W / 2 + T / 2, H, -D / 2),
+    mesh(new THREE.BoxGeometry(T + 0.1, 0.12, D), "#7A5230", W / 2 - T / 2, H, -D / 2),
+    // Short posts either side of the doorway
+    mesh(new THREE.BoxGeometry(0.3, 1.2, 0.3), "#7A5230", -1.5, 0.6, -T / 2),
+    mesh(new THREE.BoxGeometry(0.3, 1.2, 0.3), "#7A5230", 1.5, 0.6, -T / 2),
+    // Rafters where the roof would be, and a strip of zinc along the back
+    mesh(new THREE.BoxGeometry(W, 0.14, 0.14), "#6B4A2B", 0, H + 0.08, -D * 0.35),
+    mesh(new THREE.BoxGeometry(W, 0.14, 0.14), "#6B4A2B", 0, H + 0.08, -D * 0.7),
+  );
+  const zinc = mesh(new THREE.BoxGeometry(W + 0.4, 0.06, 1.4), bike ? "#A7B1B9" : "#8B5A3C", 0, H + 0.3, -D + 0.4);
+  zinc.rotation.x = 0.35;
+  group.add(zinc);
+  // The sign, high on the back wall, facing the door
+  const board = signBoard(sign, bike ? "#1E6FB8" : "#B8322A", 7, 0.95);
+  board.position.set(0, H - 0.65, -D + T + 0.02);
+  group.add(board);
+
+  if (bike) {
+    // Bicycles for sale or waiting, along the back wall
+    for (const [x, colour] of [
+      [-3.4, "#E5484D"],
+      [3.4, "#1E9E62"],
+    ] as const) {
+      const b = buildBicycle().group;
+      b.rotation.y = Math.PI / 2;
+      b.position.set(x, 0.14, -D + 0.9);
+      b.traverse((o) => {
+        if (o instanceof THREE.Mesh && o.material === material(BIKE)) o.material = material(colour);
+      });
+      group.add(b);
+    }
+    // Tyres hanging on the left wall
+    for (const [z, y] of [
+      [-2.2, 2.3],
+      [-3.4, 2.1],
+      [-4.6, 2.3],
+    ]) {
+      const tyre = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.12, 8, 20), material("#1D1D1D"));
+      tyre.rotation.y = Math.PI / 2;
+      tyre.position.set(-W / 2 + T + 0.15, y, z);
+      group.add(tyre);
+    }
+    // The workbench and the tool board on the right
+    group.add(
+      mesh(new THREE.BoxGeometry(1.3, 1, 2.6), "#8B5A3C", W / 2 - 1, 0.5, -4.2),
+      mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4), "#5B6475", W / 2 - 1.1, 1.15, -3.6),
+      mesh(new THREE.BoxGeometry(0.08, 1.3, 2.6), "#6B4A2B", W / 2 - T - 0.06, 2.2, -4.2),
+    );
+    for (let i = 0; i < 5; i++) group.add(mesh(new THREE.BoxGeometry(0.06, 0.7, 0.1), "#C9CED6", W / 2 - T - 0.13, 2.2, -5.1 + i * 0.45));
+    // A stack of old tyres by the door
+    for (let i = 0; i < 3; i++) {
+      const t = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.14, 8, 18), material("#2A2A2A"));
+      t.rotation.x = Math.PI / 2;
+      t.position.set(-W / 2 + 1.2, 0.3 + i * 0.26, -1.1);
+      group.add(t);
+    }
+  } else {
+    // Oil drums, a red tool chest, a tyre stack, and a car in for repair on the left
+    for (const [x, z, colour] of [
+      [W / 2 - 0.8, -D + 0.8, "#1E6FB8"],
+      [W / 2 - 1.8, -D + 0.8, "#B8322A"],
+      [W / 2 - 0.8, -D + 1.8, "#1E9E62"],
+    ] as const) {
+      group.add(mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.2, 14), colour, x, 0.74, z));
+    }
+    group.add(
+      mesh(new THREE.BoxGeometry(1.4, 1.1, 0.8), "#D62828", W / 2 - 1.1, 0.69, -3),
+      mesh(new THREE.BoxGeometry(1.42, 0.06, 0.82), "#8C969E", W / 2 - 1.1, 0.9, -3),
+    );
+    const car = buildCar().group;
+    car.rotation.y = Math.PI;
+    car.scale.setScalar(0.85);
+    car.position.set(-W / 2 + 1.6, 0.14, -D / 2 - 0.2);
+    group.add(car);
+    // Oil stains on the floor
+    for (const [x, z, r] of [
+      [0.5, -3.2, 0.7],
+      [-1.5, -1.8, 0.4],
+    ]) {
+      const stain = new THREE.Mesh(new THREE.CircleGeometry(r, 16), material("#4A4540"));
+      stain.rotation.x = -Math.PI / 2;
+      stain.position.set(x, 0.15, z);
+      group.add(stain);
+    }
+  }
+  return group;
+}
+
+/** A few sparkles over something mended; spin them with `.rotation.y`. */
+export function makeSparkles() {
+  const group = new THREE.Group();
+  for (let i = 0; i < 5; i++) {
+    const s = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), glow("#FFD45C"));
+    const a = (i / 5) * Math.PI * 2;
+    s.position.set(Math.cos(a) * 1.1, 1.6 + (i % 2) * 0.5, Math.sin(a) * 1.1);
+    group.add(s);
+  }
+  return group;
+}

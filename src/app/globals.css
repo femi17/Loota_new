@@ -155,3 +155,8 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .loota-heat, .loota-key-fly { animation: none; }
 }
+
+/* Speech bubbles over people in an in-world scene: a tail pointing down at the speaker. */
+.loota-bubble::after { content: ""; position: absolute; left: 50%; bottom: -7px; margin-left: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: inherit; }
+.loota-bubble.bg-paper { border-top-color: var(--color-paper); }
+.loota-bubble.bg-gold { border-top-color: var(--color-gold); }

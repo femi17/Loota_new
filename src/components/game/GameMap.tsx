@@ -279,6 +279,10 @@ export function GameMap({
     ride: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
     /** The repair shop for a broken-down vehicle: found (or recalled), with the way there. */
     findRepairShop: (kind: VehicleKind) => void;
+    /** Go into a repair shop: the open-roof shop on the map, the camera looking in (an in-world scene). */
+    enterShop: (job: RepairJob) => void;
+    /** Walk out of the shop: back to the street. */
+    leaveShop: () => void;
     getOff: () => void;
     refuel: () => void;
     eat: () => void;
@@ -378,6 +382,8 @@ export function GameMap({
   const [lampActions, setLampActions] = useState<LampActions | null>(null);
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
+  /** Inside a place on the map (an in-world scene): the street's buttons step aside. */
+  const [inside, setInside] = useState(false);
   const [rentalActions, setRentalActions] = useState<RentalActions | null>(null);
   const [rentOpen, setRentOpen] = useState<RentalOffer | null>(null);
   /** The scenes at a petrol station, a place to eat, and on leaving hospital. */
@@ -1368,6 +1374,8 @@ export function GameMap({
           })),
         ride: (kind, how) => void chooseVehicle(kind, how),
         findRepairShop: (kind) => void findRepairShop(kind, true),
+        enterShop: (job) => openShopScene(job),
+        leaveShop: () => closeShopScene(),
         getOff: () => void getOff(),
         refuel: () => void refuelHere(),
         eat() {
@@ -4268,17 +4276,235 @@ export function GameMap({
           repairMarkers.delete(id);
         }
         for (const j of repairs) {
-          if (repairMarkers.has(j.id)) continue;
+          if (repairMarkers.has(j.id) || !network) continue; // (placed at the kerb once the roads are known)
+          const { origin } = shopPlacement(j);
           const keeper = models.buildAvatar(keeperLook(j.keeper));
           keeper.root.add(layer.billboard(models.makeNameplate(j.kind === "bicycle" ? "BICYCLE REPAIRS" : "MECHANIC", "#B8322A")));
           const k = 1.6 * layer.enlargement();
-          const east = (m: number) => j.lng + (m * k) / (111320 * Math.cos((j.lat * Math.PI) / 180));
+          const east = (m: number) => origin.lng + (m * k) / (111320 * Math.cos((origin.lat * Math.PI) / 180));
           repairMarkers.set(j.id, [
-            layer.add({ object: keeper.root, lng: j.lng, lat: j.lat, heading: 0 }),
-            layer.add({ object: models.makeVehicleModel(j.kind === "bicycle" ? "bicycle" : "motorbike"), lng: east(1), lat: j.lat, heading: 0 }),
-            layer.add({ object: models.makeVehicleModel(j.kind === "bicycle" ? "bicycle" : "car"), lng: east(-1.3), lat: j.lat, heading: 0.4 }),
+            layer.add({ object: keeper.root, lng: origin.lng, lat: origin.lat, heading: 0 }),
+            layer.add({ object: models.makeVehicleModel(j.kind === "bicycle" ? "bicycle" : "motorbike"), lng: east(1), lat: origin.lat, heading: 0 }),
+            layer.add({ object: models.makeVehicleModel(j.kind === "bicycle" ? "bicycle" : "car"), lng: east(-1.3), lat: origin.lat, heading: 0.4 }),
           ]);
         }
+      }
+
+      // ---- In-world scenes (owner, 18 Oct 2026: "not a modal; an open-roof building where we can see inside").
+      // Going into a shop happens on the map: the shop stands at the kerb with no roof, the camera glides down to
+      // look in, the hunter walks in past the keeper; what they say floats over their heads and the replies sit
+      // in a strip at the bottom (EventScene's world mode). The people inside are drawn bigger than on the street.
+      const SCENE_SCALE = 1.7;
+      const SCENE_ZOOM = 19.3;
+      const SCENE_PITCH = 48;
+      const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the shop sits above it
+      type Walker = { av: ReturnType<typeof models.buildAvatar>; x: number; z: number; tx: number; tz: number; face: number };
+      type InWorld = {
+        job: RepairJob;
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+        keeper: Walker;
+        you: Walker;
+        vehicle: import("three").Group;
+        sparkles: import("three").Group;
+        facing: number;
+        opened: number;
+        closing: number | null;
+        cam: { lng: number; lat: number; bearing: number; zoom: number; pitch: number };
+      };
+      let inWorld: InWorld | null = null;
+
+      /** A spot inside (model units) on the map, at the shop's current size. */
+      function insideAt(w: InWorld, x: number, z: number) {
+        const s = layer.enlargement() * (w.entity.scaleBy ?? 1);
+        const f = w.facing;
+        const east = (x * Math.cos(f) + z * Math.sin(f)) * s;
+        const south = (-x * Math.sin(f) + z * Math.cos(f)) * s;
+        return {
+          lng: w.entity.lng + east / (111320 * Math.cos((w.entity.lat * Math.PI) / 180)),
+          lat: w.entity.lat - south / 110574,
+          metresPerUnit: s,
+        };
+      }
+
+      /**
+       * Where a shop stands: at the kerb of the road nearest its spot (within the 60 m the server allows), its
+       * doorway to the street. Worked out once the roads are known, then kept.
+       */
+      const placements = new Map<number, { origin: LngLat; facing: number; door: LngLat }>();
+      function shopPlacement(job: RepairJob) {
+        const known = placements.get(job.id);
+        if (known) return known;
+        const at = { lng: job.lng, lat: job.lat };
+        const rp = network ? roads.snapToNetwork(network, at, 0) : null;
+        const road = network && rp ? roads.positionOf(network, rp) : null;
+        if (!road || geo.distanceM([road.lng, road.lat], [at.lng, at.lat]) > 50) {
+          return { origin: at, facing: geo.headingOf([at.lng, at.lat], [traveller.pos.lng, traveller.pos.lat]), door: at };
+        }
+        const right = besideBus(road, road.heading, 1, 0);
+        const side = (right.lng - road.lng) * (at.lng - road.lng) + (right.lat - road.lat) * (at.lat - road.lat) < 0 ? -1 : 1;
+        const origin = besideBus(road, road.heading, side * 8, 0);
+        const placed = { origin, facing: geo.headingOf([origin.lng, origin.lat], [road.lng, road.lat]), door: { lng: road.lng, lat: road.lat } };
+        placements.set(job.id, placed);
+        return placed;
+      }
+
+      function openShopScene(job: RepairJob) {
+        if (inWorld || ride || visit) return;
+        const { origin, facing } = shopPlacement(job);
+        const group = models.makeOpenShop(job.kind === "bicycle" ? "bicycle" : "workshop", job.shop); // the people go in it too
+        const walker = (look: AvatarLook, spot: { x: number; z: number }, face: number): Walker => {
+          const av = models.buildAvatar(look);
+          av.root.position.set(spot.x, 0.14, spot.z);
+          av.root.rotation.y = face;
+          group.add(av.root);
+          return { av, x: spot.x, z: spot.z, tx: spot.x, tz: spot.z, face };
+        };
+        const S = models.SHOP_SPOTS;
+        const returning = !!job.readyAt;
+        const keeper = walker(keeperLook(job.keeper), returning && job.readyAt! > Date.now() ? S.work : S.keeper, 0);
+        const you = walker(JSON.parse(lookKey) as AvatarLook, S.outside, Math.PI);
+        you.tx = S.customer.x;
+        you.tz = S.customer.z;
+        const vehicle = models.makeVehicleModel(job.kind);
+        vehicle.rotation.y = Math.PI / 2;
+        vehicle.position.set(returning ? S.stand.x : S.outside.x + 1.4, 0.14, returning ? S.stand.z : S.outside.z);
+        group.add(vehicle);
+        const sparkles = models.makeSparkles();
+        sparkles.position.set(S.stand.x, 0.14, S.stand.z);
+        sparkles.visible = false;
+        group.add(sparkles);
+        const entity = layer.add({ object: group, lng: origin.lng, lat: origin.lat, heading: facing, scaleBy: 0.01 });
+        inWorld = {
+          job,
+          entity,
+          keeper,
+          you,
+          vehicle,
+          sparkles,
+          facing,
+          opened: performance.now(),
+          closing: null,
+          cam: { lng: traveller.pos.lng, lat: traveller.pos.lat, bearing: camBearing, zoom: map.getZoom(), pitch: map.getPitch() },
+        };
+        for (const e of repairMarkers.get(job.id) ?? []) e.object.visible = false; // the keeper is inside now
+        me.object.visible = false; // you're the one walking in
+        traveller.v = 0;
+        controls.current.go = false;
+        touchGo = false;
+        map.setMaxZoom(20);
+        setInside(true);
+        setRepairOpen(job);
+      }
+
+      /** Walk out: back through the door, the camera rises to the street, the shop goes. */
+      function closeShopScene() {
+        const w = inWorld;
+        if (!w || w.closing !== null) return;
+        w.closing = performance.now();
+        w.you.tx = models.SHOP_SPOTS.outside.x;
+        w.you.tz = models.SHOP_SPOTS.outside.z;
+        setRepairOpen(null);
+      }
+
+      function endShopScene() {
+        const w = inWorld;
+        if (!w) return;
+        layer.remove(w.entity);
+        for (const e of repairMarkers.get(w.job.id) ?? []) e.object.visible = true;
+        me.object.visible = true;
+        inWorld = null;
+        map.setMaxZoom(GAME_ZOOM);
+        map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+        setInside(false);
+        for (const el of document.querySelectorAll<HTMLElement>("[data-bubble]")) el.style.visibility = "hidden";
+      }
+
+      const ease = (k: number) => k * k * (3 - 2 * k);
+
+      /** One frame inside: the shop growing in, people walking and working, the camera, the bubbles. */
+      function shopSceneStep(now: number, dt: number, t: number) {
+        const w = inWorld!;
+        const S = models.SHOP_SPOTS;
+        const opening = ease(Math.min(1, (now - w.opened) / 1400));
+        const leaving = w.closing === null ? 0 : ease(Math.min(1, (now - w.closing) / 1600));
+        w.entity.scaleBy = SCENE_SCALE * Math.max(0.01, ease(Math.min(1, (now - w.opened) / 700)) * (1 - ease(Math.max(0, (leaving - 0.6) / 0.4))));
+
+        // The repair: the keeper works at the stand until it's ready, then comes back to the counter.
+        const job = w.job;
+        const ready = !!job.readyAt && Date.now() >= job.readyAt;
+        const working = !!job.readyAt && !ready;
+        const keeperSpot = working ? S.work : S.keeper;
+        w.keeper.tx = keeperSpot.x;
+        w.keeper.tz = keeperSpot.z;
+        const step = (p: Walker, speed: number) => {
+          const dx = p.tx - p.x;
+          const dz = p.tz - p.z;
+          const d = Math.hypot(dx, dz);
+          const go = Math.min(d, speed * dt);
+          if (d > 0.02) {
+            p.x += (dx / d) * go;
+            p.z += (dz / d) * go;
+            p.face = Math.atan2(dx, dz);
+          }
+          p.av.root.position.set(p.x, 0.14, p.z);
+          p.av.root.rotation.y = p.face;
+          models.animateAvatar(p.av, { mode: "walk", phase: "idle", moving: d > 0.02 ? 0.8 : 0, distance: go }, dt, t);
+          return d <= 0.02;
+        };
+        const youThere = step(w.you, 2.6);
+        const keeperThere = step(w.keeper, 2.2);
+        if (youThere && w.closing === null) w.you.face = Math.atan2(w.keeper.x - w.you.x, w.keeper.z - w.you.z); // talking to the keeper
+        if (keeperThere && !working) w.keeper.face = Math.atan2(w.you.x - w.keeper.x, w.you.z - w.keeper.z);
+        if (keeperThere && working) {
+          // Bent over the vehicle with a spanner.
+          w.keeper.face = Math.PI / 2;
+          w.keeper.av.rig.rotation.x = 0.45;
+          w.keeper.av.armR.rotation.x = -1.4 + Math.sin(t * 9) * 0.45;
+          w.keeper.av.armL.rotation.x = -1.1 + Math.sin(t * 9 + 1.5) * 0.25;
+        }
+        // The vehicle: wheeled in beside you, then on the stand; broken (leaning) until mended.
+        if (w.closing === null && !youThere && !job.readyAt) w.vehicle.position.set(w.you.x + 1.4, 0.14, w.you.z);
+        else if (w.closing !== null && ready) w.vehicle.position.set(w.you.x + 1.4, 0.14, w.you.z); // you take it with you
+        else w.vehicle.position.set(S.stand.x, 0.14, S.stand.z);
+        w.vehicle.rotation.z = ready ? 0 : 0.28;
+        w.sparkles.visible = ready && w.closing === null;
+        w.sparkles.rotation.y += dt * 1.5;
+
+        // The camera: down from the street to look in from the doorway, and back up again on leaving.
+        const k = w.closing === null ? opening : 1 - leaving;
+        const centre = insideAt(w, 0, -S.depth * 0.62); // looking a little past the middle: the shop sits low, above the replies
+        const back = { lng: traveller.pos.lng, lat: traveller.pos.lat };
+        const target = geo.compassFromHeading(w.facing + Math.PI);
+        const turn = ((target - w.cam.bearing) % 360 + 540) % 360 - 180;
+        map.jumpTo({
+          center: [back.lng + (centre.lng - back.lng) * k, back.lat + (centre.lat - back.lat) * k],
+          bearing: w.cam.bearing + turn * k,
+          zoom: w.cam.zoom + (SCENE_ZOOM - w.cam.zoom) * k,
+          pitch: w.cam.pitch + (SCENE_PITCH - w.cam.pitch) * k,
+          padding: { top: 0, left: 0, right: 0, bottom: SCENE_PAD * k },
+        });
+        if (w.closing !== null) camBearing = w.cam.bearing + turn * k;
+
+        // The bubbles over their heads.
+        const bubble = (sel: string, p: Walker) => {
+          const el = document.querySelector<HTMLElement>(`[data-bubble="${sel}"]`);
+          if (!el) return;
+          const spot = insideAt(w, p.x, p.z);
+          const screen = layer.screenOf(spot.lng, spot.lat, 3.1 * spot.metresPerUnit);
+          if (!screen || w.closing !== null) {
+            el.style.visibility = "hidden";
+            return;
+          }
+          // Over their head, kept on screen (below the status chips).
+          const half = el.offsetWidth / 2 + 8;
+          el.style.left = `${Math.max(half, Math.min(window.innerWidth - half, screen.x))}px`;
+          el.style.top = `${Math.max(el.offsetHeight + 100, screen.y)}px`;
+          el.style.visibility = "visible";
+        };
+        bubble("them", w.keeper);
+        bubble("you", w.you);
+
+        if (w.closing !== null && leaving >= 1) endShopScene();
       }
 
       async function refreshRepairs() {
@@ -4317,7 +4543,15 @@ export function GameMap({
         if (now - lastRepairCheck < 500) return;
         lastRepairCheck = now;
         const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
-        const shop = ride || visit ? null : (repairs.find((j) => geo.distanceM(at, [j.lng, j.lat]) <= 40) ?? null);
+        if (repairs.length && repairs.some((j) => !repairMarkers.has(j.id))) showRepairs(); // once the roads are known
+        // At the shop's door (and within the 60 m of its spot the server allows).
+        const shop =
+          ride || visit || inWorld
+            ? null
+            : (repairs.find((j) => {
+                const { door } = shopPlacement(j);
+                return geo.distanceM(at, [door.lng, door.lat]) <= 30 && geo.distanceM(at, [j.lng, j.lat]) <= 58;
+              }) ?? null);
         setHud((h) => (h.repairHere?.id === shop?.id && h.repairHere?.readyAt === shop?.readyAt ? h : { ...h, repairHere: shop }));
       }
 
@@ -4330,6 +4564,7 @@ export function GameMap({
           if (!r.ok || !r.job) return r.reason === "coins" ? "coins" : r.reason === "far" ? "far" : "error";
           const done = toJob(r.job);
           repairs = repairs.map((j) => (j.id === done.id ? done : j));
+          if (inWorld?.job.id === done.id) inWorld.job = done; // the keeper gets to work
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           void refreshVehicles();
@@ -5204,7 +5439,7 @@ export function GameMap({
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && !sceneHold && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
+        const canMove = !frozen && !sceneHold && !inWorld && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
@@ -5295,7 +5530,8 @@ export function GameMap({
         const want = geo.compassFromHeading(traveller.heading) + lookOffset;
         const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
         camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
-        map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom: ride ? rideZoom() : undefined });
+        if (inWorld) shopSceneStep(now, dt, t);
+        else map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom: ride ? rideZoom() : undefined });
 
         if (!ride && !visit && now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
@@ -5983,7 +6219,7 @@ export function GameMap({
           </div>
 
           {/* Right: the tools, as icons */}
-          <nav className="flex shrink-0 flex-col gap-2" aria-label="Tools">
+          <nav className={`flex shrink-0 flex-col gap-2 ${inside ? "invisible" : ""}`} aria-label="Tools">
             <button
               type="button"
               data-tool="directions"
@@ -6050,7 +6286,7 @@ export function GameMap({
         </div>
       </div>
 
-      {hud.street && (
+      {hud.street && !inside && (
         <div
           className="pointer-events-none absolute bottom-[112px] left-1/2 sm:bottom-[100px] flex max-w-[calc(100%-200px)] -translate-x-1/2 items-center gap-1.5 rounded-full bg-paper px-4 py-1.5 text-sm font-bold text-ink shadow sm:max-w-md"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -6213,7 +6449,13 @@ export function GameMap({
       )}
       {discharge && <NurseScene discharge={discharge} you={JSON.parse(lookKey) as AvatarLook} onClose={() => setDischarge(null)} />}
       {repairOpen && repairActions && (
-        <RepairScene job={repairOpen} you={JSON.parse(lookKey) as AvatarLook} actions={repairActions} onClose={() => setRepairOpen(null)} />
+        <RepairScene
+          job={repairOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={repairActions}
+          world={inside}
+          onClose={() => (inside ? actions.current?.leaveShop() : setRepairOpen(null))}
+        />
       )}
       {lampOpen && lampActions && (
         <LampPanel
@@ -6280,7 +6522,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {(hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.heat?.chest || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.heat?.chest || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -6321,7 +6563,7 @@ export function GameMap({
           {hud.repairHere && (
             <button
               type="button"
-              onClick={() => setRepairOpen(hud.repairHere)}
+              onClick={() => hud.repairHere && actions.current?.enterShop(hud.repairHere)}
               aria-label={`Go into ${hud.repairHere.shop}`}
               title={hud.repairHere.shop}
               className={`${here} gap-1.5`}

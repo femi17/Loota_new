@@ -31,6 +31,8 @@ export class ThreeMapLayer implements CustomLayerInterface {
   private readonly camera = new THREE.Camera();
   private renderer?: THREE.WebGLRenderer;
   private map?: Map;
+  /** The map's last projection (for screenOf). */
+  private lastMatrix: number[] | null = null;
 
   constructor(
     private readonly getFocus: () => LngLat,
@@ -90,8 +92,22 @@ export class ThreeMapLayer implements CustomLayerInterface {
     this.map = undefined;
   }
 
+  /**
+   * Where a point `altitude` metres above the map shows on screen, in CSS pixels from the map's top left
+   * (as drawn in the last frame); null if it's behind the camera.
+   */
+  screenOf(lng: number, lat: number, altitude: number): { x: number; y: number } | null {
+    if (!this.map || !this.lastMatrix) return null;
+    const m = MercatorCoordinate.fromLngLat([lng, lat], altitude);
+    const v = new THREE.Vector4(m.x, m.y, m.z, 1).applyMatrix4(new THREE.Matrix4().fromArray(this.lastMatrix));
+    if (v.w <= 0) return null;
+    const canvas = this.map.getCanvas();
+    return { x: ((v.x / v.w + 1) / 2) * canvas.clientWidth, y: ((1 - v.y / v.w) / 2) * canvas.clientHeight };
+  }
+
   render(_gl: WebGL2RenderingContext, options: CustomRenderMethodInput) {
     if (!this.renderer) return;
+    this.lastMatrix = options.defaultProjectionData.mainMatrix as unknown as number[];
     const focus = this.getFocus();
     const origin = MercatorCoordinate.fromLngLat([focus.lng, focus.lat], 0);
     const metre = origin.meterInMercatorCoordinateUnits();

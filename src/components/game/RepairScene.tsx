@@ -28,7 +28,20 @@ export type RepairActions = {
 const NAME: Record<VehicleKind, string> = { bicycle: "bicycle", motorbike: "motorbike", car: "car" };
 
 /** Walking into a repair shop: the keeper greets you, looks at the vehicle, names the price and the wait. */
-export function RepairScene({ job: initial, you, actions, onClose }: { job: RepairJob; you: AvatarLook; actions: RepairActions; onClose: () => void }) {
+export function RepairScene({
+  job: initial,
+  you,
+  actions,
+  world = false,
+  onClose,
+}: {
+  job: RepairJob;
+  you: AvatarLook;
+  actions: RepairActions;
+  /** Played out in the shop on the map (EventScene's world mode). */
+  world?: boolean;
+  onClose: () => void;
+}) {
   const [job, setJob] = useState(initial);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
@@ -138,6 +151,7 @@ export function RepairScene({ job: initial, you, actions, onClose }: { job: Repa
       choices={choices}
       busy={busy}
       work={job.readyAt ? { left, total: job.waitS } : null}
+      world={world}
       onClose={onClose}
     />
   );

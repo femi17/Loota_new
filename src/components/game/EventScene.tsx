@@ -26,6 +26,7 @@ export function EventScene({
   busy = false,
   work = null,
   overlay = null,
+  world = false,
   onClose,
 }: {
   stage: SceneStage;
@@ -43,6 +44,12 @@ export function EventScene({
   work?: { left: number; total: number } | null;
   /** Drawn over the place, in its 320 × 180 picture (the pump's display, a plate of food). */
   overlay?: ReactNode;
+  /**
+   * In the world (owner, 18 Oct 2026): the place is drawn on the map itself (an open-roof building, the people
+   * inside), so there's no picture here: what they say floats over their heads (`data-bubble`, placed by the map
+   * every frame) and the replies sit in a strip at the bottom, leaving the scene in view.
+   */
+  world?: boolean;
   onClose: () => void;
 }) {
   const last = lines.at(-1);
@@ -72,6 +79,72 @@ export function EventScene({
   }, [lines.length, shown]);
 
   const working = !!work && work.left > 0;
+  if (world) {
+    const lastThem = lines.findLastIndex((l) => l.who === "them");
+    const lastYou = lines.findLastIndex((l) => l.who === "you");
+    const themText = lastThem >= 0 ? (lastThem === lines.length - 1 ? lines[lastThem].text.slice(0, shown) : lines[lastThem].text) : null;
+    // What you said shows until they've answered and a moment more (the newest two lines).
+    const youText = lastYou >= 0 && lastYou >= lines.length - 2 ? lines[lastYou].text : null;
+    return (
+      <div role="dialog" aria-label={title} className="pointer-events-none absolute inset-0 z-20">
+        {themText !== null && (
+          <div
+            data-bubble="them"
+            className="loota-bubble absolute left-0 top-0 w-max max-w-[min(78vw,340px)] -translate-x-1/2 -translate-y-full rounded-2xl bg-paper px-3 py-2 text-sm text-ink shadow-lg"
+            style={{ visibility: "hidden" }}
+            aria-live="polite"
+          >
+            <span className="mb-0.5 block text-[11px] font-bold text-[#B8322A]">{them.name}</span>
+            {themText}
+            {lastThem === lines.length - 1 && !done && <span className="loota-caret">▍</span>}
+          </div>
+        )}
+        {youText && (
+          <div
+            data-bubble="you"
+            className="loota-bubble absolute left-0 top-0 w-max max-w-[min(60vw,260px)] -translate-x-1/2 -translate-y-full rounded-2xl bg-gold px-3 py-2 text-sm font-semibold text-ink shadow-lg"
+            style={{ visibility: "hidden" }}
+          >
+            {youText}
+          </div>
+        )}
+        <div
+          className="pointer-events-auto absolute inset-x-0 bottom-0 flex flex-col gap-2 rounded-t-3xl bg-ink/90 p-3 backdrop-blur-sm sm:inset-x-auto sm:left-1/2 sm:w-[28rem] sm:-translate-x-1/2"
+          style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate font-display text-sm font-extrabold text-gold">{sign || title}</span>
+            <button type="button" onClick={onClose} aria-label="Leave" className="flex h-8 items-center rounded-lg border border-line px-2.5 text-xs font-bold text-paper">
+              Walk out
+            </button>
+          </div>
+          {work && work.total > 0 && (
+            <div className="flex items-center gap-2" aria-label="Repair under way">
+              <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink-2">
+                <div className="h-full rounded-full bg-gold transition-[width] duration-1000" style={{ width: `${Math.round((100 * (work.total - work.left)) / work.total)}%` }} />
+              </div>
+              <span className="text-xs text-muted">{work.left > 0 ? `Ready in ${Math.floor(work.left / 60)}:${String(work.left % 60).padStart(2, "0")}` : "Ready!"}</span>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {done &&
+              choices.map((c) => (
+                <button
+                  key={c.label}
+                  type="button"
+                  disabled={busy}
+                  onClick={c.onPick}
+                  className={`min-h-11 flex-auto rounded-xl px-4 text-sm font-bold disabled:opacity-50 ${c.primary ? "bg-gold text-ink" : "border-[1.5px] border-line text-paper"}`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            {!done && <span className="flex h-11 items-center text-sm text-muted">…</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="absolute inset-0 z-20 flex items-end justify-center bg-ink/70 sm:items-center">
       <div role="dialog" aria-label={title} className="flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-ink sm:max-w-lg sm:rounded-3xl">

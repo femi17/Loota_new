@@ -486,6 +486,8 @@ export function GameMap({
         keyboard: false, // the keyboard drives the hunter instead
         attributionControl: { compact: true },
       });
+      // For the browser tests (development only): the map, to read what it draws.
+      if (process.env.NODE_ENV !== "production") Object.assign(window, { __lootaMap: map });
 
       const layer = new ThreeMapLayer(() => traveller.pos, small ? 40 : 32);
       const avatar = models.buildAvatar(JSON.parse(lookKey) as AvatarLook);
@@ -3799,11 +3801,17 @@ export function GameMap({
         src.setData({ type: "FeatureCollection", features });
       }
 
-      /** The jam (if any) where the hunter is: slows motorbikes and cars. */
+      /** The jam (if any) where the hunter is, as the map draws it under them: slows motorbikes and cars. */
       function trafficHere(now: number) {
-        const here = network && onRoad ? roads.roadHere(network, onRoad) : null;
         const { lng, lat } = traveller.pos;
-        const jam = here ? jamOn(here.cls, here.stretch, here.urban, trafficLevel(now, lng, lat), now) : 0;
+        const level = trafficLevel(now, lng, lat);
+        let jam: Jam = 0;
+        if (network && onRoad && level > 0) {
+          for (const r of roads.roadsNear(network, traveller.pos, 12)) {
+            const j = jamOn(r.cls, r.stretch, r.urban, level, now);
+            if (j > jam) jam = j;
+          }
+        }
         const motor = traveller.mode === "car" || traveller.mode === "motorbike";
         const speed = jamSpeed(traveller.mode, jam);
         if (speed !== trafficSpeed) {
@@ -3938,7 +3946,8 @@ export function GameMap({
           updateSky(wall);
           drawTraffic(wall);
         }
-        if (now - lastTraffic > 1000) {
+        // Often: a car covers 30 m a second even in a go-slow, 150 m on a free road.
+        if (now - lastTraffic > 200) {
           lastTraffic = now;
           trafficHere(wall);
         }

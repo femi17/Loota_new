@@ -814,6 +814,28 @@ export function roadHere(net: RoadNetwork, rp: RoadPosition) {
   return e?.cls !== undefined ? { cls: e.cls, stretch: e.stretch ?? 0, urban: e.urban ?? 0 } : null;
 }
 
+/**
+ * The roads (our own, with traffic) within `withinM` of a point: what the map draws there. A car sits in the
+ * whole width of a jam drawn on the map, slip roads and short unnamed pieces included (owner, 18 Oct 2026: a car
+ * on an unnamed slip road inside Western Avenue's go-slow sped off while the map was still red), so the traffic
+ * that holds it is the worst on any road this near, not just the one piece it's on.
+ */
+export function roadsNear(net: RoadNetwork, pos: LngLat, withinM: number) {
+  const local = projector(pos);
+  const found: { cls: RoadClass; stretch: number; urban: number }[] = [];
+  for (const e of net.edges) {
+    if (e.cls === undefined) continue;
+    const a = local(net.nodes[e.a]);
+    const b = local(net.nodes[e.b]);
+    if (Math.min(a.x, b.x) > withinM || Math.max(a.x, b.x) < -withinM || Math.min(a.y, b.y) > withinM || Math.max(a.y, b.y) < -withinM) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const f = Math.max(0, Math.min(1, -(a.x * dx + a.y * dy) / (dx * dx + dy * dy || 1e-9)));
+    if (Math.hypot(a.x + dx * f, a.y + dy * f) <= withinM) found.push({ cls: e.cls, stretch: e.stretch ?? 0, urban: e.urban ?? 0 });
+  }
+  return found;
+}
+
 /** The street name of the road the player is on, if the network knows names (our own roads do). */
 export function streetName(net: RoadNetwork, rp: RoadPosition): string | null | undefined {
   return net.edges[rp.edge]?.name;

@@ -15,6 +15,7 @@ import { MealScene, todaysMenu, type MealActions, type MealOffer } from "./MealS
 import type { SceneMoment } from "./EventScene";
 import { NurseScene, type Discharge } from "./NurseScene";
 import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene";
+import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
 import { OFFICER, RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
@@ -179,6 +180,9 @@ type HunterUpdate = {
 
 /** Who brings a rented bicycle or okada (the same renter for the same request, on the map and in the scene). */
 const RENTERS = ["Musa", "Kunle", "Mama Ronke", "Tunde", "Aunty Joy", "Chidi", "Danjuma", "Iya Bola"];
+/** A landmark's guides, and the Lamp's messenger (in purple, like the lamp's glow). */
+const GUIDES = ["Guide Kemi", "Guide Tunde", "Guide Ifeanyi", "Guide Hauwa", "Guide Bayo"];
+const MESSENGER: AvatarLook = { skin: "#8D5524", hair: "bun", hairColour: "#1B120C", top: "hoodie", topColour: "#7C4DCC", bottomsColour: "#2A1747", extra: "none" };
 /** The pump attendant, the cook, the nurse and the paramedic in the scenes (the same one for the same place or visit). */
 const ATTENDANTS = ["Chidi", "Musa", "Segun", "Ibrahim", "Emeka", "Yusuf", "Sola"];
 const COOKS = ["Mama Nkechi", "Mama Bisi", "Iya Titi", "Mama Ngozi", "Iya Kemi", "Aunty Amaka", "Mama Ronke"];
@@ -287,6 +291,8 @@ export function GameMap({
     enterShop: (job: RepairJob) => void;
     /** Go into the ticket office or check-in hall where the player stands. */
     enterTicket: () => void;
+    /** A landmark's plaza or the Lamp's spot where the player stands, on the map; false if it can't be shown. */
+    openQuizPlace: (kind: "landmark" | "detour", name: string, host: AvatarLook) => boolean;
     /** Walk out of the place: back to the street. */
     leaveShop: () => void;
     /** What's happening in the scene, for the place on the map to show it. */
@@ -392,7 +398,9 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | null>(null);
+  /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
+  const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
   const [ticketOpen, setTicketOpen] = useState<TicketOffer | null>(null);
   const [ticketActions, setTicketActions] = useState<TicketActions | null>(null);
   /** The scenes tell the place on the map what's happening (one function for good: their timers depend on it). */
@@ -429,18 +437,82 @@ export function GameMap({
     setCheckingIn(false);
     setDjinnOpen({ chamber });
   };
-  /** The Claim button at a Detour's place: ask the question (once), then open the lamp on it. */
+  /** The Claim button at a Detour's place: the Lamp's messenger on the map (the lamp's panel if it can't be shown). */
   const claimDetour = async (detour: LampDetour) => {
     if (!lampActions || checkingIn) return;
+    if (actions.current?.openQuizPlace("detour", detour.place, MESSENGER)) {
+      const prize = detour.relic ? `the ${RELICS[detour.relic].name}` : `${detour.coins} coins`;
+      setQuizOpen({
+        offer: {
+          host: { name: "Zuri, the Lamp's messenger", look: MESSENGER },
+          title: detour.title,
+          sign: detour.place,
+          intro: `So, you followed the lamp. ${detour.story} Answer me right and ${prize} is yours. Ready?`,
+        },
+        actions: {
+          start: async () => {
+            const q = await lampActions.start(detour);
+            if (typeof q === "string") return q;
+            return { question: q.question, options: q.options, seconds: q.seconds, endsAt: q.endsAt };
+          },
+          answer: async (choice) => {
+            const r = await lampActions.answer(detour.id, choice);
+            if (typeof r === "string") return r;
+            if (r.outcome === "won") return { good: true, line: `You got it! ${r.relic ? `The ${RELICS[r.relic].name} is yours: it's in your bag.` : `${r.coins} coins are yours.`}` };
+            if (r.outcome === "full") return { good: false, line: "Ah, others got here first: it's all been claimed." };
+            if (r.outcome === "late") return { good: false, line: `Too slow! The answer was ${r.answer}. The lamp moves on.` };
+            return { good: false, line: `No o. It was ${r.answer}. The lamp moves on.` };
+          },
+        },
+      });
+      return;
+    }
     setCheckingIn(true);
     const q = await lampActions.start(detour);
     setCheckingIn(false);
     setLampOpen({ quiz: q });
   };
   const [adviceOpen, setAdviceOpen] = useState(false);
-  /** The Check in button: ask the server for a question (once), then show it. */
+  /**
+   * The Check in button: the landmark's guide on the map (the question asked when you're ready, so the greeting
+   * doesn't eat the clock); the panel if the place can't be shown.
+   */
   const checkIn = async (landmark: Landmark) => {
     if (!landmarkActions || checkingIn) return;
+    const guide = GUIDES[landmark.id % GUIDES.length];
+    const look: AvatarLook = { ...keeperLook(guide), topColour: "#F4B41A", extra: "cap" }; // a guide's yellow vest and cap
+    if (actions.current?.openQuizPlace("landmark", landmark.name, look)) {
+      let checkinId: string | null = null;
+      setQuizOpen({
+        offer: {
+          host: { name: guide, look },
+          title: `Checking in at ${landmark.name}`,
+          sign: landmark.name,
+          intro: `Welcome to ${landmark.name}! I'm ${guide}, a guide here. Answer one question about this place and earn ${landmark.reward} coins. Ready?`,
+        },
+        actions: {
+          start: async () => {
+            const q = await landmarkActions.start(landmark);
+            if (typeof q === "string") return q;
+            checkinId = q.checkinId;
+            return { question: q.question, options: q.options, seconds: q.seconds, endsAt: q.endsAt };
+          },
+          answer: async (choice) => {
+            if (!checkinId) return "Something went wrong. Try again.";
+            const r = await landmarkActions.answer(checkinId, choice);
+            if (typeof r === "string") return r;
+            if (r.correct) {
+              return {
+                good: true,
+                line: `Correct! ${r.fact} Here are your ${r.reward} coins.${r.lead ? " And a whisper for you: there's a hidden find nearby. It's in your lamp." : ""}`,
+              };
+            }
+            return { good: false, line: `${r.late ? "Time's up!" : "Not quite."} It's ${r.answer}. ${r.fact} Come back tomorrow and try again.` };
+          },
+        },
+      });
+      return;
+    }
     setCheckingIn(true);
     const q = await landmarkActions.start(landmark);
     setCheckingIn(false);
@@ -1391,6 +1463,7 @@ export function GameMap({
         findRepairShop: (kind) => void findRepairShop(kind, true),
         enterShop: (job) => openShopScene(job),
         enterTicket: () => enterTicket(),
+        openQuizPlace: (kind, name, host) => openQuizPlace(kind, name, host),
         leaveShop: () => closePlace(),
         sceneMoment: (m) => sceneMoment(m),
         getOff: () => void getOff(),
@@ -4350,7 +4423,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -4382,6 +4455,8 @@ export function GameMap({
         sparkles?: import("three").Object3D;
         buka?: ReturnType<typeof models.makeOpenBuka>;
         hall?: ReturnType<typeof models.makeTicketHall>;
+        shrine?: ReturnType<typeof models.makeLampShrine>;
+        star?: import("three").Object3D;
         terminal?: ReturnType<typeof models.makeTerminal>;
         /** When the bag went on the scale (check-in). */
         bagAt?: number;
@@ -4747,6 +4822,28 @@ export function GameMap({
         },
       });
 
+      /** A landmark's plaza (the guide by the star) or the Lamp's spot (the messenger by the glowing lamp), where you stand. */
+      function openQuizPlace(kind: "landmark" | "detour", name: string, host: AvatarLook) {
+        if (!network) return false;
+        const S = models.PLAZA_SPOTS;
+        const plaza = kind === "landmark" ? models.makeLandmarkPlaza(name) : null;
+        const shrine = kind === "detour" ? models.makeLampShrine() : null;
+        return openPlace({
+          kind: "quiz",
+          key: `quiz:${kind}:${traveller.pos.lng.toFixed(5)},${traveller.pos.lat.toFixed(5)}`,
+          at: { ...traveller.pos },
+          group: (plaza ?? shrine)!.group,
+          spots: S,
+          kerbM: 6,
+          keeper: { look: host, at: S.keeper },
+          you: { from: S.outside, to: S.customer },
+          // The landmark's own marker on the map is the plaza's star now.
+          hidden: kind === "landmark" ? [...landmarkMarkers.values()].filter((m) => geo.distanceM([m.entity.lng, m.entity.lat], [traveller.pos.lng, traveller.pos.lat]) < 600).map((m) => m.entity) : [],
+          closeScene: () => setQuizOpen(null),
+          extra: { shrine: shrine ?? undefined, star: plaza?.star },
+        });
+      }
+
       /** Walk out: back to the street (riding, if you rented), the camera rises, the place folds away. */
       function closePlace() {
         const w = inWorld;
@@ -4784,6 +4881,10 @@ export function GameMap({
         if (m.type === "plate") w.buka?.plate(m.state);
         if (m.type === "meter") w.petrol?.meter(m.n);
         if (m.type === "ticket") w.hall?.ticket(true);
+        if (m.type === "won") {
+          w.shrine?.reward(true);
+          w.servedAt = performance.now(); // (the moment of winning: the host cheers)
+        }
         if (m.type === "bag") w.bagAt = performance.now();
         if (m.type === "rented") {
           w.you.tx = w.spots.stand.x + 0.2;
@@ -4889,6 +4990,21 @@ export function GameMap({
           // Your bag: by you, then on the scale for a moment, then along the belt and away.
           const since = w.bagAt === undefined ? -1 : (now - w.bagAt) / 1000;
           w.terminal.bag(since < 0 ? "you" : since < 1.2 ? "scale" : since < 4.2 ? (since - 1.2) / 3 : null);
+        }
+        if (w.shrine) {
+          // Purple smoke curling up from the lamp; the prize turning over it once won.
+          w.shrine.smoke.forEach((s, i) => {
+            const k = ((t * 0.45 + i * 0.25) % 1 + 1) % 1;
+            s.position.y = 1.2 + k * 1.6;
+            s.position.x = models.PLAZA_SPOTS.stand.x + 0.7 + Math.sin(t * 2 + i) * 0.25;
+            (s.material as import("three").MeshBasicMaterial).opacity = 0.5 * (1 - k);
+          });
+          w.shrine.prize.rotation.y += dt * 2;
+          w.shrine.prize.position.y = 1.9 + Math.sin(t * 3) * 0.12;
+        }
+        if (w.star) w.star.rotation.y += dt * (w.moment?.type === "won" ? 6 : 1.2);
+        if (w.kind === "quiz" && w.moment?.type === "won" && keeperThere && now - w.servedAt < 1800) {
+          w.keeper.av.armL.rotation.x = w.keeper.av.armR.rotation.x = -Math.PI; // hands up: well done!
         }
         if (w.lights) w.lights.forEach((l, i) => (l.visible = Math.floor(t * 4 + i) % 2 === 0)); // the patrol van's lights
         if (w.buka) {
@@ -6910,6 +7026,16 @@ export function GameMap({
           world={inside === "meal"}
           onMoment={onMoment}
           onClose={() => (inside === "meal" ? actions.current?.leaveShop() : setMealOpen(null))}
+        />
+      )}
+      {quizOpen && (
+        <QuizScene
+          offer={quizOpen.offer}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={quizOpen.actions}
+          world={inside === "quiz"}
+          onMoment={onMoment}
+          onClose={() => (inside === "quiz" ? actions.current?.leaveShop() : setQuizOpen(null))}
         />
       )}
       {ticketOpen && ticketActions && (

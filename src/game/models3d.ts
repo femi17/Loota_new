@@ -1418,3 +1418,84 @@ export function makeTerminal(airport: string, departures: string[]) {
   place("you");
   return { group, bag: place };
 }
+
+/** A landmark's plaza or the Lamp's spot, by the road where you are: the host stands by it, you come up to talk. */
+export const PLAZA_SPOTS: PlaceSpots = {
+  width: 9,
+  depth: 6,
+  keeper: { x: -1.2, z: -2.4 },
+  customer: { x: 1.2, z: -1.6 },
+  stand: { x: -0.2, z: -3.6 },
+  work: { x: -1.2, z: -2.4 },
+  outside: { x: 1.6, z: 2.4 },
+};
+
+/** A palm tree. */
+function palm(x: number, z: number) {
+  const g = new THREE.Group();
+  const trunk = mesh(new THREE.CylinderGeometry(0.14, 0.22, 3.2, 8), "#8B6A43", 0, 1.6, 0);
+  trunk.rotation.z = 0.08;
+  g.add(trunk);
+  for (let i = 0; i < 6; i++) {
+    const leaf = mesh(new THREE.BoxGeometry(1.8, 0.06, 0.4), "#2E7D4F", 0.8, 3.15, 0);
+    const holder = new THREE.Group();
+    holder.rotation.y = (i / 6) * Math.PI * 2;
+    leaf.rotation.z = -0.35;
+    holder.add(leaf);
+    holder.position.y = 0;
+    g.add(holder);
+  }
+  g.position.set(x, 0, z);
+  return g;
+}
+
+/** A landmark's plaza: paving, a stone plinth with the gold star, the board with its name, palms and a bench. */
+export function makeLandmarkPlaza(name: string) {
+  const group = new THREE.Group();
+  const { width: W, depth: D } = PLAZA_SPOTS;
+  group.add(mesh(new THREE.BoxGeometry(W, 0.12, D), "#D8CFC0", 0, 0.06, -D / 2));
+  for (let i = 0; i < 4; i++) group.add(mesh(new THREE.BoxGeometry(W, 0.02, 0.05), "#C2B8A6", 0, 0.13, -0.8 - i * 1.4));
+  const marker = makeLandmarkMarker();
+  marker.group.position.set(PLAZA_SPOTS.stand.x, 0.12, PLAZA_SPOTS.stand.z - 0.6);
+  group.add(marker.group);
+  const board = signBoard(name, "#7A5230", 3.2, 0.7);
+  board.position.set(2.2, 1.5, -D + 0.6);
+  group.add(board, mesh(new THREE.BoxGeometry(0.1, 1.2, 0.1), "#4A3A2A", 1, 0.6, -D + 0.58), mesh(new THREE.BoxGeometry(0.1, 1.2, 0.1), "#4A3A2A", 3.4, 0.6, -D + 0.58));
+  group.add(palm(-3.6, -4.6), palm(3.8, -2.2));
+  group.add(mesh(new THREE.BoxGeometry(2, 0.12, 0.5), "#7A5230", -2.8, 0.55, -1.2), mesh(new THREE.BoxGeometry(0.1, 0.5, 0.4), "#5B6475", -3.6, 0.3, -1.2), mesh(new THREE.BoxGeometry(0.1, 0.5, 0.4), "#5B6475", -2, 0.3, -1.2));
+  return { group, star: marker.star };
+}
+
+/**
+ * Where the Lamp sends you (a Detour): a rug by the road, a brass lamp glowing on a stool, purple smoke curling up;
+ * `reward(true)` lifts the prize out of the lamp, glowing.
+ */
+export function makeLampShrine() {
+  const group = new THREE.Group();
+  const { stand } = PLAZA_SPOTS;
+  const rug = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.05, 2.2), material("#7A2232"));
+  rug.position.set(stand.x, 0.03, stand.z);
+  group.add(rug, mesh(new THREE.BoxGeometry(3.0, 0.06, 1.8), "#C9A227", stand.x, 0.04, stand.z), mesh(new THREE.BoxGeometry(2.7, 0.07, 1.5), "#7A2232", stand.x, 0.05, stand.z));
+  group.add(mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.7, 10), "#4A2E14", stand.x, 0.4, stand.z));
+  const lamp = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.32, 14, 10), glow("#F4B41A"));
+  body.scale.set(1.3, 0.7, 0.9);
+  const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.09, 0.6, 8), glow("#F4B41A"));
+  spout.rotation.z = -1.1;
+  spout.position.set(0.45, 0.12, 0);
+  lamp.add(body, spout);
+  lamp.position.set(stand.x, 0.95, stand.z);
+  group.add(lamp);
+  const smoke: THREE.Mesh[] = [];
+  for (let i = 0; i < 4; i++) {
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 6), new THREE.MeshBasicMaterial({ color: "#B48CFF", transparent: true, opacity: 0.5 }));
+    puff.position.set(stand.x + 0.7, 1.3, stand.z);
+    group.add(puff);
+    smoke.push(puff);
+  }
+  const prize = new THREE.Mesh(new THREE.OctahedronGeometry(0.4, 0), glow("#C3A6FF"));
+  prize.position.set(stand.x, 1.8, stand.z);
+  prize.visible = false;
+  group.add(prize);
+  return { group, smoke, prize, reward: (shown: boolean) => (prize.visible = shown) };
+}

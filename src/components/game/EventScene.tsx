@@ -18,7 +18,8 @@ export type SceneMoment =
   | { type: "filled" }
   | { type: "rented" }
   | { type: "ticket" }
-  | { type: "bag" };
+  | { type: "bag" }
+  | { type: "won" };
 
 /**
  * A moment in the game as a little 2D scene (owner, 17 Oct 2026): the place, the person there, and a short
@@ -38,6 +39,7 @@ export function EventScene({
   overlay = null,
   world = false,
   leaveLabel = "Walk out",
+  countdown = null,
   onClose,
 }: {
   stage: SceneStage;
@@ -64,6 +66,8 @@ export function EventScene({
   world?: boolean;
   /** In the world, the button that leaves ("Walk out" of a place; on the road, "Ride on"). */
   leaveLabel?: string;
+  /** A question against the clock (in the world): seconds left of the total. */
+  countdown?: { left: number; total: number } | null;
   onClose: () => void;
 }) {
   const last = lines.at(-1);
@@ -147,6 +151,17 @@ export function EventScene({
                 <div className="h-full rounded-full bg-gold transition-[width] duration-1000" style={{ width: `${Math.round((100 * (work.total - work.left)) / work.total)}%` }} />
               </div>
               <span className="text-xs text-muted">{work.left > 0 ? `Ready in ${Math.floor(work.left / 60)}:${String(work.left % 60).padStart(2, "0")}` : "Ready!"}</span>
+            </div>
+          )}
+          {countdown && countdown.total > 0 && (
+            <div className="flex items-center gap-2" aria-label="Time left">
+              <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink-2">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-200 ${countdown.left <= 5 ? "bg-danger" : "bg-gold"}`}
+                  style={{ width: `${Math.round((100 * countdown.left) / countdown.total)}%` }}
+                />
+              </div>
+              <span className={`text-xs font-bold ${countdown.left <= 5 ? "text-danger" : "text-muted"}`}>{countdown.left} s left</span>
             </div>
           )}
           <div className="flex flex-wrap gap-2">

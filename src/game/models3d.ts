@@ -647,3 +647,42 @@ export function makeLandmarkMarker() {
   );
   return { group, star };
 }
+
+/**
+ * A traffic light on a pole: a dark head with red, amber and green lamps on both faces and a cap that glows
+ * the same colour. `show(light)` lights one (src/game/signals.ts) and dims the others.
+ */
+export function makeTrafficLight() {
+  const group = new THREE.Group();
+  const lit = { red: "#FF3B30", amber: "#FFB020", green: "#2EE07A" } as const;
+  const off = { red: "#4A1C1C", amber: "#4A3A14", green: "#163A24" } as const;
+  const lamps = (["red", "amber", "green"] as const).map((c) => ({ c, m: new THREE.MeshBasicMaterial({ color: off[c] }) }));
+  const lamp = new THREE.CylinderGeometry(0.2, 0.2, 0.08, 14);
+  group.add(
+    mesh(new THREE.CylinderGeometry(0.09, 0.11, 4.4, 8), "#3A3F47", 0, 2.2, 0),
+    mesh(new THREE.BoxGeometry(0.6, 1.6, 0.42), "#1B1F24", 0, 4.5, 0),
+  );
+  // The cap glows in the lit colour too, so the light reads from above.
+  const capMaterial = new THREE.MeshBasicMaterial({ color: off.green });
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.12, 0.52), capMaterial);
+  cap.position.y = 5.34;
+  group.add(cap);
+  lamps.forEach(({ m }, i) => {
+    for (const side of [1, -1]) {
+      const l = new THREE.Mesh(lamp, m);
+      l.rotation.x = Math.PI / 2;
+      l.position.set(0, 5 - i * 0.5, 0.23 * side);
+      group.add(l);
+    }
+  });
+  let shown = "";
+  return {
+    group,
+    show(light: "red" | "amber" | "green") {
+      if (light === shown) return;
+      shown = light;
+      for (const { c, m } of lamps) m.color.set(c === light ? lit[c] : off[c]);
+      capMaterial.color.set(lit[light]);
+    },
+  };
+}

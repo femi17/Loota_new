@@ -13,6 +13,8 @@ import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
 import { MealScene, type MealActions, type MealOffer } from "./MealScene";
 import { NurseScene, type Discharge } from "./NurseScene";
+import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
+import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
 import { RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
@@ -130,6 +132,8 @@ type Hud = {
   clock: { text: string; night: boolean; rush: boolean } | null;
   /** On a motorbike or in a car in a traffic jam: 1 slow, 2 at a standstill. */
   jam: Jam;
+  /** Stopped at a red light: seconds until green. */
+  redLight: number | null;
   /** At a landmark (within its check-in area): what checking in would pay. */
   landmarkHere: { landmark: Landmark; canTry: boolean } | null;
   /** A rental waiting at a bus stop, or a taxi on its way: where, how far, and the button once there. */
@@ -340,6 +344,7 @@ export function GameMap({
     landmarkHere: null,
     clock: null,
     jam: 0,
+    redLight: null,
     lamp: { has: false, unseen: false },
     detourHere: null,
     journey: null,
@@ -1941,7 +1946,7 @@ export function GameMap({
         trip: TransitTrip;
         label: string; // where the player asked to go (a bus drops them at the stop nearest it)
         then: Place | null; // where they're headed after getting off: directions are mapped again on arrival
-        way: { stops: WayStop[]; speed: number /* m per ms between stops */ } | null; // a bus's stops, once loaded
+        way: { stops: WayStop[]; plan: RideSchedule } | null; // a bus's stops, and the jams and red lights on the way (bus or taxi), once loaded
         riders: Rider[];
         cum: number[];
         offset: number; // the server's clock minus this device's, in ms
@@ -2061,7 +2066,7 @@ export function GameMap({
         controls.current.go = false;
         touchGo = false;
         setHud((h) => (h.stopHere ? { ...h, stopHere: null } : h));
-        if (next.mode === "bus" && next.metres <= BUS_RANGE_M) void planBusStops(ride); // long-distance buses run express
+        if ((next.mode === "bus" && next.metres <= BUS_RANGE_M) || next.mode === "taxi") void planRideWay(ride); // long-distance buses run express
       }
 
       // ---- The bus stops on the way: some passengers get off, others get on.
@@ -2077,8 +2082,16 @@ export function GameMap({
         };
       }
 
-      /** Bus stops within 30 m of the bus's path (not the first or last 150 m), in order. */
-      async function planBusStops(r: Ride) {
+      /**
+       * A city bus's stops within 30 m of its path (not the first or last 150 m), in order; then for a bus or a
+       * taxi, how it spends the ride: crawling through jams, waiting at stops and red lights.
+       */
+      async function planRideWay(r: Ride) {
+        if (r.trip.mode === "taxi") {
+          const plan = await trafficPlan(r, []);
+          if (!disposed && ride === r) r.way = { stops: [], plan };
+          return;
+        }
         const path = r.trip.path;
         const lngs = path.map((p) => p[0]);
         const lats = path.map((p) => p[1]);
@@ -2128,27 +2141,32 @@ export function GameMap({
           st.dwell = 0;
           st.on = st.off = 0;
         }
-        const speed = total / Math.max(1, rideMs - stopped);
-        let waited = 0;
-        for (const st of stops) {
-          st.at = st.s / speed + waited;
-          waited += st.dwell;
-        }
-        r.way = { stops, speed };
+        const plan = await trafficPlan(r, stops);
+        if (disposed || ride !== r) return;
+        for (const h of plan.holds) if (h.kind === "stop") stops[h.ref].at = h.at;
+        r.way = { stops, plan };
       }
 
-      /** Where the bus is `elapsed` ms after leaving, and the stop it's standing at, if any. */
-      function busAt(r: Ride, elapsed: number): { s: number; at: WayStop | null; next: WayStop | null } {
+      /** The jams (as the map draws them) and the traffic lights along a ride, and the timings they make. */
+      async function trafficPlan(r: Ride, stops: WayStop[]) {
+        const path = r.trip.path as [number, number][];
+        const keys = [...new Set(path.map(([lng, lat]) => roadCellKey(Math.floor(lng / ROAD_CELL_DEG), Math.floor(lat / ROAD_CELL_DEG))))];
+        await Promise.all(keys.map((k) => ensureSquare(k)));
+        const cells = keys.map((k) => roadSquares.get(k)).filter((c): c is RoadCellData => typeof c === "object");
+        const total = r.cum[r.cum.length - 1] || 1;
+        const rideMs = r.arrives - r.departs;
+        const leaves = r.departs - r.offset; // on this device's clock, which the lights and jams follow
+        const jams = jamsAlongPath(cells, path, r.cum, (s) => leaves + (s / total) * rideMs);
+        const lights = signalsOnPath(await loadSignals(), path, r.cum).map((x) => ({ s: x.s, id: x.signal.group }));
+        return planRide(r.cum, jams, stops.map((st) => ({ s: st.s, dwell: st.dwell })), lights, waitForGreen, leaves, rideMs);
+      }
+
+      /** Where the bus or taxi is `elapsed` ms after leaving: the stop or red light it's at, the next stop, the jam it's in. */
+      function busAt(r: Ride, elapsed: number): { s: number; at: WayStop | null; next: WayStop | null; light: Hold | null; jam: number } {
         const way = r.way!;
-        const total = r.cum[r.cum.length - 1];
-        let waited = 0;
-        for (const st of way.stops) {
-          if (!st.dwell) continue;
-          if (elapsed < st.at) return { s: Math.min(total, (elapsed - waited) * way.speed), at: null, next: st };
-          if (elapsed < st.at + st.dwell) return { s: st.s, at: st, next: st };
-          waited += st.dwell;
-        }
-        return { s: Math.min(total, (elapsed - waited) * way.speed), at: null, next: null };
+        const p = rideAt(way.plan, r.cum, elapsed);
+        const stop = (h: Hold | null) => (h?.kind === "stop" ? way.stops[h.ref] : null);
+        return { s: p.s, at: stop(p.at), next: stop(p.nextStop), light: p.at?.kind === "signal" ? p.at : null, jam: p.jam };
       }
 
       /** A point `right` metres to the bus's right (the kerb) and `ahead` metres forward of `p`. */
@@ -2292,16 +2310,20 @@ export function GameMap({
           lead.scaleBy = PLANE_GROUND_SCALE + (PLANE_AIR_SCALE - PLANE_GROUND_SCALE) * k * k * (3 - 2 * k);
           r.plane.body.rotation.x = height < 1 ? (r.s < total / 2 ? -0.12 : 0.1) : 0;
         }
-        const left = clock((r.arrives - serverNow) / 1000);
+        // Through many red lights a bus or taxi may get there a little after the server's time (never before).
+        const endsAt = r.departs + Math.max(r.arrives - r.departs, r.way?.plan.ends ?? 0);
+        const left = clock((endsAt - serverNow) / 1000);
+        // Held up: a red light, or a jam on this stretch.
+        const traffic = bus?.light ? "🚦 Red light · " : bus?.jam === 2 ? "Go-slow · " : bus?.jam === 1 ? "Slow traffic · " : "";
         if (bus?.at) {
           const { name, off, on } = bus.at;
           showRide(`Stopped at ${name} · ${off} getting off, ${on} getting on`, false);
         } else if (r.trip.mode === "bus") {
-          showRide(`${bus?.next ? `Next stop: ${bus.next.name} · ` : ""}you get off at ${r.trip.to} in ${left}`, false);
+          showRide(`${traffic}${bus?.next && !traffic ? `Next stop: ${bus.next.name} · ` : ""}you get off at ${r.trip.to} in ${left}`, false);
         } else {
-          showRide(`${r.trip.mode === "plane" ? "Lands" : "Arrives"} in ${left} · ${geo.formatDistance(total - r.s)} to go`, false);
+          showRide(`${traffic}${r.trip.mode === "plane" ? "Lands" : "Arrives"} in ${left} · ${geo.formatDistance(total - r.s)} to go`, false);
         }
-        if (f >= 1 && !r.finishing && now - r.lastTry > 2000) void finishRide(now);
+        if (f >= 1 && serverNow >= endsAt && !r.finishing && now - r.lastTry > 2000) void finishRide(now);
         return true;
       }
 
@@ -2424,6 +2446,8 @@ export function GameMap({
         r.offset = Date.parse(res.trip.now) - Date.now();
         r.departs = Date.parse(res.trip.departsAt);
         r.arrives = Date.parse(res.trip.arrivesAt);
+        r.way = null;
+        void planRideWay(r); // its stops, jams and lights at the new time
         const next = res.boarded ? null : Math.max(0, Math.round((r.departs - (Date.now() + r.offset)) / 1000));
         ru.outcome = { boarded: !!res.boarded, score: res.score ?? 0, of: res.of ?? ru.questions.length, next };
         ru.outcomeAt = now;
@@ -3820,7 +3844,86 @@ export function GameMap({
         wasNight = night;
       }
 
+      // ---- Traffic lights (src/game/signals.ts): the real ones, the same colour for every player.
+      // Shown in 3D at the kerb; cars, motorbikes and bicycles stop at red (walkers cross).
+      let allSignals: Signal[] = [];
+      let signalsHere: Signal[] = [];
+      let signalsFrom: LngLat | null = null;
+      const lights = new Map<number, { entity: import("@/game/ThreeMapLayer").MapEntity; model: ReturnType<typeof models.makeTrafficLight> }>();
+      let lastLights = -Infinity;
+      let redShown: number | null = null;
+      let redAt = -Infinity;
+      let redWarnedAt = -Infinity;
+      void loadSignals().then((s) => {
+        allSignals = s;
+        signalsFrom = null;
+      });
+
+      /** Beside the road, facing along it (the light's spot is in the junction). */
+      function kerbOf(s: Signal) {
+        const rp = network ? roads.snapToNetwork(network, s, 0) : null;
+        const p = network && rp ? roads.positionOf(network, rp) : null;
+        if (!p || geo.distanceM([p.lng, p.lat], [s.lng, s.lat]) > 25) return { lng: s.lng, lat: s.lat, heading: 0 };
+        return { ...besideBus(p, p.heading, 5 * layer.enlargement(), 0), heading: p.heading };
+      }
+
+      function lightsTick(now: number) {
+        if (redShown !== null && now - redAt > 400) showRed(null); // moved on, or stopped trying
+        if (now - lastLights < 250) return;
+        lastLights = now;
+        const pos = traveller.pos;
+        if (!signalsFrom || geo.distanceM([signalsFrom.lng, signalsFrom.lat], [pos.lng, pos.lat]) > 100) {
+          signalsFrom = { ...pos };
+          signalsHere = signalsNear(allSignals, pos, 700);
+          const keep = new Set(signalsHere.map((s) => s.id));
+          for (const [id, l] of lights) {
+            if (keep.has(id)) continue;
+            layer.remove(l.entity);
+            lights.delete(id);
+          }
+        }
+        const wall = Date.now();
+        for (const s of signalsHere) {
+          let l = lights.get(s.id);
+          if (!l) {
+            if (!network && !ride) continue; // once the roads are known, to stand at the kerb
+            const at = kerbOf(s);
+            const model = models.makeTrafficLight();
+            l = { entity: layer.add({ object: model.group, lng: at.lng, lat: at.lat, heading: at.heading }), model };
+            lights.set(s.id, l);
+          }
+          l.model.show(signalState(s.group, wall).light);
+        }
+      }
+
+      /** A red (or amber) light just ahead that this step would run: how long until green. */
+      function redLightAhead(step: number) {
+        if (traveller.mode === "walk" || !signalsHere.length) return null;
+        const ahead = signalAhead(signalsHere, traveller.pos, traveller.heading, 40);
+        // Stop 6 m short of it; already at it (it changed as you got there): go on.
+        if (!ahead || ahead.ahead < 4 || ahead.ahead - step > 6) return null;
+        const wait = waitForGreen(ahead.signal.group, Date.now());
+        return wait > 0 ? wait : null;
+      }
+
+      function showRed(seconds: number | null) {
+        if (seconds === redShown) return;
+        redShown = seconds;
+        setHud((h) => ({ ...h, redLight: seconds }));
+      }
+
+      function holdAtRed(wait: number, now: number) {
+        traveller.v = 0;
+        redAt = now;
+        showRed(Math.max(1, Math.ceil(wait / 1000)));
+        if (now - redWarnedAt > 60_000) {
+          redWarnedAt = now;
+          say("🚦 Red light! Wait for green.");
+        }
+      }
+
       function skyAndTrafficTick(now: number) {
+        lightsTick(now);
         const wall = Date.now();
         if (now - lastSky > 30_000) {
           lastSky = now;
@@ -5123,11 +5226,15 @@ export function GameMap({
                 say(`A Lockdown dome blocks the way for ${left} more min. Attack it with other hunters to break it, or wait it out.`, true);
               }
             }
-            if (turned && !blockedBy) setTurn(0);
-            if (passed && !blockedBy) justPassed = passed;
-            else if (justPassed && !blockedBy) justPassed.metresSince += distance;
-            onRoad = blockedBy ? before : position;
-            if (deadEnd && !blockedBy) {
+            // A red light ahead: stop at the line until it's green.
+            const red = blockedBy ? null : redLightAhead(distance);
+            if (red) holdAtRed(red, now);
+            const held = !!blockedBy || !!red;
+            if (turned && !held) setTurn(0);
+            if (passed && !held) justPassed = passed;
+            else if (justPassed && !held) justPassed.metresSince += distance;
+            onRoad = held ? before : position;
+            if (deadEnd && !held) {
               traveller.v = 0;
               if (now - lastDeadEndCheck > 2000) {
                 // Often just the edge of what's loaded: reload the roads and keep going if they continue.
@@ -5503,6 +5610,12 @@ export function GameMap({
                     <span aria-hidden="true">{hud.clock.night ? "🌙" : "☀️"}</span>
                     {hud.clock.text}
                     {hud.clock.rush && <span className="text-[#F28C28]">· rush hour</span>}
+                  </div>
+                )}
+                {hud.redLight !== null && (
+                  <div className={`${chip} bg-danger`} aria-label={`Red light: green in ${hud.redLight} seconds`} title="Stopped at a red light">
+                    <span aria-hidden="true">🚦</span>
+                    Red light · {hud.redLight} s
                   </div>
                 )}
                 {hud.jam > 0 && (

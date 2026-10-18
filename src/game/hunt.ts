@@ -70,21 +70,43 @@ export type SearchResult =
 export type AnswerResult =
   | { ok: true; result: "next"; trial: TrialView }
   | { ok: true; result: "failed"; reason: "wrong" | "timeout"; correct: string; lng: number; lat: number; saved?: boolean }
-  | { ok: true; result: "key"; keysHeld: number; keys: number; riddle: string }
-  | { ok: true; result: "finished"; keysHeld: number; keys: number; place: number; winner: boolean }
+  | { ok: true; result: "key"; keysHeld: number; keys: number; riddle: string; bonuses?: Bonus[] }
+  | { ok: true; result: "finished"; keysHeld: number; keys: number; place: number; winner: boolean; bonuses?: Bonus[] }
   | { ok: false; reason: "no_trial" };
+
+/** A bonus for a key: first to it (+100), in golden minutes (+50), a showdown won (+50, against `rival`). */
+export type Bonus = { kind: "first" | "golden" | "showdown"; coins: number; rival?: string | null };
+
+/** The player's hunt in one card (hunt_recap). */
+export type HuntRecap = {
+  title: string;
+  prize: string;
+  winners: number;
+  place: number | null;
+  keys: number;
+  keysHeld: number;
+  joinedAt: string;
+  finishedAt: string | null;
+  hunters: number;
+  perKey: { key: number; at: string; minutes: number; tries: number }[];
+  medals: { kind: Bonus["kind"]; key: number; coins: number; rival: string | null }[];
+  bonusCoins: number;
+  roadEvents: number;
+};
 
 export type BoardRow = { rank: number; username: string; keysHeld: number; place: number | null; me: boolean };
 
 /** Something that just happened in the hunt (hunt_feed); `metres`: how far from the player it was. */
 export type FeedEvent = {
   at: string;
-  kind: "key" | "trial" | "finished" | "joined";
+  kind: "key" | "trial" | "finished" | "joined" | "first" | "showdown";
   who: string;
   mine: boolean;
   key: number | null;
   place: number | null;
   metres: number | null;
+  /** A showdown: who was beaten. */
+  text: string | null;
 };
 
 /** The race around the player (hunt_feed): news, the rivals chasing the same key within 2 km, the pressure. */
@@ -96,6 +118,11 @@ export type HuntFeed = {
   events: FeedEvent[];
   rivals: { name: string; lng: number; lat: number; metres: number }[];
   inMyArea: number;
+  /** Golden minutes: until when, if on; when the next begin. */
+  golden: string | null;
+  goldenNext: string | null;
+  /** A tip for a hunter falling behind (once per key). */
+  tip: { key: number; direction: string; band: string } | null;
 };
 
 export type TrialCategory = "maths" | "sequences" | "general" | "nigeria";

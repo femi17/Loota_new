@@ -7,6 +7,8 @@ import {
   ordinal,
   type AnswerResult,
   type BoardRow,
+  type Bonus,
+  type HuntRecap,
   type FeedEvent,
   type HuntFeed,
   type HuntState,
@@ -37,13 +39,17 @@ function newsOf(e: FeedEvent) {
   if (e.kind === "key") return `🔑 ${e.who} found Key ${e.key}${where}`;
   if (e.kind === "trial") return `⚔️ ${e.who} is in the Key ${e.key} trial${where}`;
   if (e.kind === "finished") return `🏁 ${e.who} finished ${ordinal(e.place ?? 0)}!`;
+  if (e.kind === "first") return `🥇 ${e.who} was FIRST to Key ${e.key}! +100 coins`;
+  if (e.kind === "showdown") return `⚔️ ${e.who} won a showdown at Key ${e.key}${e.text ? ` against ${e.text}` : ""}!`;
   return `👋 ${e.who} joined the hunt`;
 }
 
 type Ending =
   | { kind: "failed"; reason: "wrong" | "timeout"; correct: string; saved: boolean }
-  | { kind: "key"; keysHeld: number; keys: number; riddle: string }
-  | { kind: "finished"; place: number; winner: boolean };
+  | { kind: "key"; keysHeld: number; keys: number; riddle: string; bonuses: Bonus[] }
+  | { kind: "finished"; place: number; winner: boolean; bonuses: Bonus[] };
+
+const BONUS_TEXT: Record<Bonus["kind"], string> = { first: "🥇 First to this key", golden: "✨ Golden minutes", showdown: "⚔️ Showdown won" };
 
 const REFRESH_MS = 30_000;
 
@@ -65,6 +71,12 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
   const [now, setNow] = useState(() => Date.now());
   const [revealed, setRevealed] = useState<string | null>(null); // the riddle being revealed (the start of the hunt)
   const feedSince = useRef<string | null>(null);
+  const [tip, setTip] = useState<HuntFeed["tip"]>(null);
+  const [rival, setRival] = useState<string | null>(null); // a showdown: someone else in this key's trial
+  const [recap, setRecap] = useState<HuntRecap | null>(null);
+  const recentTrials = useRef<{ who: string; key: number; at: number }[]>([]);
+  const wasGolden = useRef(false);
+  const skew = useRef(0); // the server's clock minus this device's
   const lastRank = useRef<number | null>(null);
 
   function toast(text: string) {
@@ -77,6 +89,8 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     actions.current?.setFrozen(true);
     setEnding(null);
     setTrial(view);
+    const near = recentTrials.current.find((x) => x.key === view.key && Date.now() - x.at < 90_000);
+    if (near) setRival(near.who);
   }
 
   async function refresh() {
@@ -161,7 +175,14 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
       if (stopped || !f) return;
       const first = feedSince.current === null;
       feedSince.current = f.now;
+      skew.current = Date.parse(f.now) - Date.now();
       setFeed(f);
+      for (const e of f.events) {
+        if (e.kind === "trial" && !e.mine && e.key != null) {
+          recentTrials.current = [...recentTrials.current.filter((x) => Date.now() - x.at < 90_000), { who: e.who, key: e.key, at: Date.parse(e.at) - skew.current }];
+          setRival((r) => r ?? (trialKeyRef.current === e.key ? e.who : null)); // they started the trial I'm in
+        }
+      }
       if (!first) {
         let keys = false;
         for (const e of f.events) {
@@ -170,6 +191,12 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
           if (e.kind === "key" || e.kind === "finished") keys = true;
         }
         if (keys) void refreshRef.current();
+      }
+      if (f.golden && !wasGolden.current && !first) toast("✨ Golden minutes! For 10 minutes the detector reaches twice as far, and every key pays +50.");
+      wasGolden.current = !!f.golden;
+      if (f.tip) {
+        setTip(f.tip);
+        toast(`🧭 A tip for the chase: Key ${f.tip.key}'s area lies ${f.tip.direction} of you, ${f.tip.band}.`);
       }
       if (f.rank != null && lastRank.current != null && f.rank !== lastRank.current) {
         toast(f.rank < lastRank.current ? `📈 You moved up to ${ordinal(f.rank)}!` : `📉 You dropped to ${ordinal(f.rank)}.`);
@@ -183,6 +210,11 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
       window.clearInterval(timer);
     };
   }, [racing, huntId]);
+
+  const trialKeyRef = useRef<number | null>(null);
+  useEffect(() => {
+    trialKeyRef.current = trial?.key ?? null;
+  });
 
   const searchRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
@@ -240,10 +272,13 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
       actions.current?.placeAt(r.lng, r.lat);
       setEnding({ kind: "failed", reason: r.reason, correct: r.correct, saved: !!r.saved });
     } else if (r.result === "key") {
-      setEnding({ kind: "key", keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle });
+      setEnding({ kind: "key", keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle, bonuses: r.bonuses ?? [] });
+      setRival(null);
+      setTip(null);
       window.dispatchEvent(new Event("loota:key-earned"));
     } else {
-      setEnding({ kind: "finished", place: r.place, winner: r.winner });
+      setEnding({ kind: "finished", place: r.place, winner: r.winner, bonuses: r.bonuses ?? [] });
+      setRival(null);
       window.dispatchEvent(new Event("loota:key-earned"));
     }
     window.dispatchEvent(new Event("loota:hunt-changed"));
@@ -258,6 +293,11 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     if (was?.kind === "failed" && !was.saved) {
       actions.current?.say("You were thrown 2 km away. Travel back to the key and search again: you'll get new questions.", true);
     }
+  }
+
+  async function openRecap() {
+    const { data } = await supabase.rpc("hunt_recap", { p_hunt: huntId });
+    if (data) setRecap(data as HuntRecap);
   }
 
   async function toggleBoard() {
@@ -374,6 +414,34 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
                 {state.place != null && state.place <= state.winners ? " You're a winner! The Loota team will contact you about your prize." : ""}
               </p>
             )}
+            {racing && feed && (() => {
+              const until = feed.golden ? Date.parse(feed.golden) - skew.current : null;
+              const next = feed.goldenNext ? Date.parse(feed.goldenNext) - skew.current : null;
+              const left = until ? Math.max(0, Math.round((until - now) / 1000)) : null;
+              const soon = next ? Math.round((next - now) / 1000) : null;
+              const mm = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+              if (left) {
+                return (
+                  <p className="rounded-xl bg-[#3B2F0A] p-2 text-xs font-bold text-gold ring-1 ring-gold" aria-label="Golden minutes">
+                    ✨ Golden minutes · {mm(left)} left: the detector reaches twice as far, keys pay +50
+                  </p>
+                );
+              }
+              if (soon != null && soon > 0 && soon <= 15 * 60) {
+                return <p className="text-xs font-bold text-gold/80" aria-label="Golden minutes soon">✨ Golden minutes in {mm(soon)}</p>;
+              }
+              return null;
+            })()}
+            {racing && tip && tip.key === state.keysHeld + 1 && (
+              <p className="rounded-xl bg-[#14324A] p-2 text-xs font-bold text-paper" aria-label="A tip">
+                🧭 A tip: Key {tip.key}&apos;s area lies {tip.direction} of where you were, {tip.band}.
+              </p>
+            )}
+            {done && (
+              <button type="button" onClick={() => void openRecap()} className="h-10 rounded-xl bg-gold font-bold text-ink">
+                📜 Your hunt, in one card
+              </button>
+            )}
             {state.phase === "ended" && !done && <p className="text-muted">This hunt is over. {state.winnersFound} hunters finished.</p>}
             {feedback && (
               <p role="status" className={`rounded-xl p-2 font-bold ${feedback.hot ? "bg-[#7a2e12] text-paper" : "bg-[#173b5c] text-paper"}`}>
@@ -443,7 +511,8 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
         </div>
       )}
 
-      {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} onAnswer={(choice) => answer(trial.attempt, choice)} />}
+      {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} onAnswer={(choice) => answer(trial.attempt, choice)} />}
+      {recap && <RecapCard recap={recap} onClose={() => setRecap(null)} />}
 
       {ending && (
         <div className="pointer-events-auto fixed inset-0 z-20 flex items-center justify-center bg-ink/80 p-4">
@@ -472,6 +541,7 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
                   {ending.keysHeld} of {ending.keys} keys. Your next riddle:
                 </p>
                 <p className="font-display text-lg">&ldquo;{ending.riddle}&rdquo;</p>
+                <Bonuses bonuses={ending.bonuses} />
               </>
             )}
             {ending.kind === "finished" && (
@@ -483,6 +553,18 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
                   You collected every key and finished <b>{ordinal(ending.place)}</b>.
                 </p>
                 {ending.winner && <p className="text-muted">The Loota team will contact you about your prize.</p>}
+                <Bonuses bonuses={ending.bonuses} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEnding(null);
+                    actions.current?.setFrozen(false);
+                    void openRecap();
+                  }}
+                  className="h-12 rounded-2xl border-[1.5px] border-gold font-bold text-paper"
+                >
+                  📜 Your hunt, in one card
+                </button>
               </>
             )}
             <button type="button" onClick={closeEnding} className="h-12 rounded-2xl bg-gold font-bold text-ink">
@@ -499,7 +581,7 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
  * One question of a Key Trial, with its countdown. Running out of time counts as a miss. Some kinds show something
  * first to memorise (then hide it), some show it alongside (a row to count), and jumbled words come as letter tiles.
  */
-function KeyTrial({ trial, onAnswer }: { trial: TrialView; onAnswer: (choice: number) => Promise<void> | void }) {
+function KeyTrial({ trial, rival, onAnswer }: { trial: TrialView; rival: string | null; onAnswer: (choice: number) => Promise<void> | void }) {
   const [left, setLeft] = useState(trial.secondsLeft);
   const memorise = (trial.showSeconds ?? 0) > 0;
   const memorising = memorise && left > trial.seconds; // the first seconds: look, then it's hidden
@@ -544,6 +626,11 @@ function KeyTrial({ trial, onAnswer }: { trial: TrialView; onAnswer: (choice: nu
             Question {trial.index + 1} of {trial.count}
           </span>
         </div>
+        {rival && (
+          <p className="loota-wonder-banner rounded-xl bg-danger/20 px-3 py-2 text-center text-sm font-extrabold text-paper ring-1 ring-danger" aria-label="Showdown">
+            ⚔️ Showdown! {rival} is in this trial too: finish first for +50
+          </p>
+        )}
         {memorising ? (
           <div className="flex flex-col items-center gap-3 py-2" aria-label="Memorise">
             <p className="text-sm font-extrabold uppercase tracking-widest text-gold">Memorise!</p>
@@ -590,6 +677,85 @@ function KeyTrial({ trial, onAnswer }: { trial: TrialView; onAnswer: (choice: nu
         <p className="text-center text-xs text-muted">
           {memorising ? "Look closely…" : `${Math.ceil(answerLeft)} s left · one wrong answer or running out of time throws you 2 km away`}
         </p>
+      </div>
+    </div>
+  );
+}
+
+/** What a key earned on top: first to it, golden minutes, a showdown won. */
+function Bonuses({ bonuses }: { bonuses: Bonus[] }) {
+  if (!bonuses.length) return null;
+  return (
+    <ul className="flex flex-col gap-1 rounded-2xl bg-[#3B2F0A] p-3 text-sm font-bold text-gold" aria-label="Bonuses">
+      {bonuses.map((b) => (
+        <li key={b.kind} className="loota-wonder-banner">
+          {BONUS_TEXT[b.kind]}
+          {b.kind === "showdown" && b.rival ? ` against ${b.rival}` : ""}: +{b.coins} coins
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The player's hunt in one card: place, each key's time, medals, bonus coins; shareable. */
+function RecapCard({ recap, onClose }: { recap: HuntRecap; onClose: () => void }) {
+  const total = recap.finishedAt ? Math.round((Date.parse(recap.finishedAt) - Date.parse(recap.joinedAt)) / 60000) : null;
+  const medalIcon = { first: "🥇", golden: "✨", showdown: "⚔️" } as const;
+  const lines = [
+    `🗝 ${recap.title}`,
+    recap.place ? `I finished ${ordinal(recap.place)} of ${recap.hunters} hunters${total != null ? ` in ${total} min` : ""}!` : `${recap.keysHeld} of ${recap.keys} keys so far.`,
+    ...recap.perKey.map((k) => `Key ${k.key}: ${k.minutes} min${k.tries > 1 ? ` (${k.tries} tries)` : ""}`),
+    recap.medals.length ? `Medals: ${recap.medals.map((m) => medalIcon[m.kind]).join(" ")}` : "",
+    "Play Loota.",
+  ].filter(Boolean);
+  async function share() {
+    const text = lines.join("\n");
+    try {
+      if (navigator.share) await navigator.share({ text });
+      else await navigator.clipboard.writeText(text);
+    } catch {
+      // cancelled
+    }
+  }
+  return (
+    <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-ink/85 p-5">
+      <div role="dialog" aria-label="Your hunt" className="loota-wonder-banner flex w-full max-w-sm flex-col gap-3 rounded-3xl bg-[#F5ECD8] p-6 text-[#3A2410]">
+        <p className="text-xs font-extrabold uppercase tracking-widest text-[#8A5A00]">{recap.title}</p>
+        <p className="font-display text-5xl font-extrabold leading-none">{recap.place ? ordinal(recap.place) : `${recap.keysHeld}/${recap.keys}`}</p>
+        <p className="text-sm">
+          {recap.place ? `of ${recap.hunters} hunters` : "keys so far"}
+          {total != null ? ` · ${total} minutes` : ""}
+          {recap.place != null && recap.place <= recap.winners ? " · a winner!" : ""}
+        </p>
+        <ol className="flex flex-col gap-1 border-t border-[#3A2410]/20 pt-2 text-sm">
+          {recap.perKey.map((k) => (
+            <li key={k.key} className="flex justify-between">
+              <span>🗝 Key {k.key}</span>
+              <span className="font-bold">
+                {k.minutes} min{k.tries > 1 ? ` · ${k.tries} tries` : ""}
+              </span>
+            </li>
+          ))}
+        </ol>
+        {recap.medals.length > 0 && (
+          <p className="text-sm" aria-label="Medals">
+            {recap.medals.map((m, i) => (
+              <span key={i} className="mr-2">
+                {medalIcon[m.kind]} Key {m.key}
+              </span>
+            ))}
+            <b>+{recap.bonusCoins} coins</b>
+          </p>
+        )}
+        {recap.roadEvents > 0 && <p className="text-xs text-[#5A4020]">{recap.roadEvents} adventures on the road</p>}
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={() => void share()} className="h-11 flex-1 rounded-2xl bg-[#3A2410] font-bold text-[#F5ECD8]">
+            Share
+          </button>
+          <button type="button" onClick={onClose} className="h-11 flex-1 rounded-2xl border-[1.5px] border-[#3A2410] font-bold">
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );

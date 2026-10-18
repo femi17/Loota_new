@@ -3561,7 +3561,10 @@ export function GameMap({
         }
       }
 
-      /** Ask for a bicycle or motorbike: a renter brings one to the nearest bus stop. */
+      /**
+       * Ask for a bicycle or motorbike: a renter brings one to a side street near you (never by a highway or a
+       * main road; owner, 18 Oct 2026), or to the nearest bus stop where there's no such street.
+       */
       async function requestBikePickup(kind: "bicycle" | "motorbike") {
         if (rental) {
           say("Return your rental first (vehicle button, then Get off), then ask for another.", true);
@@ -3569,9 +3572,15 @@ export function GameMap({
         }
         await savePosition();
         const at = { ...traveller.pos };
-        const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: at.lng, p_lat: at.lat, p_limit: 1 });
-        const stop = (data as TransitStop[] | null)?.[0];
-        const spot = stop && stop.metres <= 2000 ? { name: stop.name, lng: stop.lng, lat: stop.lat, metres: stop.metres } : { name: "where you are", ...at, metres: 0 };
+        const street = network ? roads.streetSpot(network, at) : null;
+        let spot: { name: string; lng: number; lat: number; metres: number };
+        if (street) {
+          spot = { name: street.name ?? "a side street", lng: street.lng, lat: street.lat, metres: Math.round(street.metres) };
+        } else {
+          const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: at.lng, p_lat: at.lat, p_limit: 1 });
+          const stop = (data as TransitStop[] | null)?.[0];
+          spot = stop && stop.metres <= 2000 ? { name: stop.name, lng: stop.lng, lat: stop.lat, metres: stop.metres } : { name: "where you are", ...at, metres: 0 };
+        }
         const { data: res } = await supabase.rpc("request_pickup", { p_kind: kind, p_lng: spot.lng, p_lat: spot.lat, p_name: spot.name });
         const r = res as { ok: boolean; reason?: string; pickup?: PickupJson } | null;
         if (disposed) return;

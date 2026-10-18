@@ -836,6 +836,56 @@ export function roadsNear(net: RoadNetwork, pos: LngLat, withinM: number) {
   return found;
 }
 
+const STREETS = new Set<RoadClass>(["residential", "living_street", "unclassified", "tertiary"]);
+const MAIN_ROADS = new Set<RoadClass>([
+  "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link",
+]);
+
+/**
+ * A spot on an ordinary street near `pos` (a residential street, an unclassified or tertiary road, at ground
+ * level), at least `clearM` from any main road, so a bike renter waits in a side street, not by a highway
+ * (owner, 18 Oct 2026). The nearest such spot within `maxM`; a named street wins if it's no more than 80 m
+ * further. Null when there's none (or the roads came from the map tiles, which don't know road kinds).
+ */
+export function streetSpot(net: RoadNetwork, pos: LngLat, maxM = 600, clearM = 35): (LngLat & { name: string | null; metres: number }) | null {
+  const local = projector(pos);
+  const kx = 111320 * Math.cos((pos.lat * Math.PI) / 180);
+  const main: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
+  for (const e of net.edges) {
+    if (!e.cls || !MAIN_ROADS.has(e.cls)) continue;
+    const a = local(net.nodes[e.a]);
+    const b = local(net.nodes[e.b]);
+    if (Math.min(Math.hypot(a.x, a.y), Math.hypot(b.x, b.y)) < maxM + clearM + 200) main.push({ a, b });
+  }
+  const offMain = (p: { x: number; y: number }) =>
+    main.every(({ a, b }) => {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const f = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1e-9)));
+      return Math.hypot(a.x + dx * f - p.x, a.y + dy * f - p.y) >= clearM;
+    });
+  let best: { x: number; y: number; name: string | null; metres: number; score: number } | null = null;
+  for (const e of net.edges) {
+    if (!e.cls || !STREETS.has(e.cls) || e.level !== 0) continue;
+    const a = local(net.nodes[e.a]);
+    const b = local(net.nodes[e.b]);
+    if (Math.min(Math.hypot(a.x, a.y), Math.hypot(b.x, b.y)) > maxM + e.length) continue;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    // The nearest point of the piece, and its middle: the first one clear of main roads.
+    const f = Math.max(0, Math.min(1, -(a.x * dx + a.y * dy) / (dx * dx + dy * dy || 1e-9)));
+    for (const t of [f, 0.5]) {
+      const p = { x: a.x + dx * t, y: a.y + dy * t };
+      const metres = Math.hypot(p.x, p.y);
+      if (metres > maxM || !offMain(p)) continue;
+      const score = metres + (e.name ? 0 : 80);
+      if (!best || score < best.score) best = { ...p, name: e.name ?? null, metres, score };
+      break;
+    }
+  }
+  return best ? { lng: pos.lng + best.x / kx, lat: pos.lat + best.y / 110574, name: best.name, metres: best.metres } : null;
+}
+
 /** The street name of the road the player is on, if the network knows names (our own roads do). */
 export function streetName(net: RoadNetwork, rp: RoadPosition): string | null | undefined {
   return net.edges[rp.edge]?.name;

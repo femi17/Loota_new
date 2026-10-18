@@ -2802,6 +2802,10 @@ export function GameMap({
           const why: Record<string, string> = {
             coins: `You need ${result.fare ?? quote.fare} coins for this fare.`,
             far: `Get to ${stopTitle(quote.from)} first: you need to be at the stop.`,
+            desk:
+              quote.from.kind === "plane"
+                ? `Check in at ${stopTitle(quote.from)}'s desk: you need to be at it.`
+                : `Buy your ticket at ${stopTitle(quote.from)}'s ticket office: you need to be at its counter.`,
             vehicle: "Return your rental first (vehicle button, then Get off), then board.",
             dome: "A Lockdown dome covers that stop. Pick somewhere else.",
             path: "Couldn't plan that route. Try another stop.",
@@ -4734,7 +4738,15 @@ export function GameMap({
       const CLERKS = ["Mrs Okafor", "Mr Adeyemi", "Miss Bello", "Mr Danjuma", "Mrs Eze"];
       let pendingTicket: TransitQuote | null = null; // chosen in the travel panel, to buy at the office
       const boards = new Map<number, string[]>(); // each station's or airport's departures, for its board
-      const ticketDoor = (st: TransitStop) => placeAtKerb(`ticket:${st.id}`, st, 9, st.kind === "plane" ? 1900 : 140);
+      /** The desk the server knows (it insists on it), else the road nearest the stop. */
+      const deskOf = (st: TransitStop) =>
+        st.desk_lng != null && st.desk_lat != null
+          ? { at: { lng: st.desk_lng, lat: st.desk_lat }, withinM: 60 }
+          : { at: { lng: st.lng, lat: st.lat }, withinM: st.kind === "plane" ? 1900 : 140 };
+      const ticketDoor = (st: TransitStop) => {
+        const d = deskOf(st);
+        return placeAtKerb(`ticket:${st.id}`, d.at, 9, d.withinM);
+      };
 
       function openTicketPlace(st: TransitStop, quote: TransitQuote | null) {
         if (st.kind !== "train" && st.kind !== "plane") return;
@@ -4748,8 +4760,8 @@ export function GameMap({
         const opened = openPlace({
           kind: "ticket",
           key: `ticket:${st.id}`,
-          at: st,
-          withinM: plane ? 1900 : 140,
+          at: deskOf(st).at,
+          withinM: deskOf(st).withinM,
           kerbM: 9,
           group: (hall ?? terminal)!.group,
           spots: S,

@@ -101,8 +101,9 @@ try {
   await t.page.close();
 
   // ---- 2. The plane: chosen in the travel panel, checked in at the terminal
-  const los = (await admin.from("transit_stops").select("id, name, lng, lat").eq("kind", "plane").eq("code", "LOS").single()).data;
-  const flyer = await player("plane", los);
+  const los = (await admin.from("transit_stops").select("id, name, lng, lat, desk_lng, desk_lat").eq("kind", "plane").eq("code", "LOS").single()).data;
+  // At the terminal's door (the check-in desk the server insists on).
+  const flyer = await player("plane", { lng: los.desk_lng, lat: los.desk_lat });
   const p = await open(flyer);
   await p.page.evaluate(() => document.querySelector('[data-tool="transit"]')?.click());
   await p.clickWhenThere("Flights within");

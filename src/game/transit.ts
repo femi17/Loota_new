@@ -60,6 +60,12 @@ export type TransitStop = {
   /** Airports: the city and country they serve. */
   city?: string | null;
   country?: string | null;
+  /**
+   * A station's ticket office or an airport's check-in desk, where the server insists the trip is bought (from our
+   * road data: scripts/compute-desks.mts); none abroad, where the old rule stands (within reach of the stop).
+   */
+  desk_lng?: number | null;
+  desk_lat?: number | null;
   metres: number;
 };
 

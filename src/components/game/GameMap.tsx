@@ -16,6 +16,7 @@ import type { SceneMoment } from "./EventScene";
 import { NurseScene, type Discharge } from "./NurseScene";
 import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene";
 import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
+import { CoinShop, confirmPayment } from "./CoinShop";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
 import { OFFICER, RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
@@ -403,6 +404,20 @@ export function GameMap({
   const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
+  /** Buying coins (tap your coins); `notice`: how a payment on Paystack's own page went. */
+  const [coinShop, setCoinShop] = useState<{ notice: { text: string; good: boolean } | null } | null>(null);
+  // Back from Paystack's own page (/play?paid=…): check the payment with Paystack through our server, then show it.
+  useEffect(() => {
+    const reference = new URLSearchParams(window.location.search).get("paid");
+    if (!reference) return;
+    const url = new URL(window.location.href);
+    for (const k of ["paid", "reference", "trxref"]) url.searchParams.delete(k);
+    window.history.replaceState(null, "", url.toString());
+    void confirmPayment(reference).then((r) => {
+      if (r.ok) setHud((h) => ({ ...h, coins: r.balance }));
+      setCoinShop({ notice: r.ok ? { text: `+${r.coins.toLocaleString("en-NG")} coins! Thank you.`, good: true } : { text: r.message, good: false } });
+    });
+  }, []);
   const [ticketOpen, setTicketOpen] = useState<TicketOffer | null>(null);
   const [ticketActions, setTicketActions] = useState<TicketActions | null>(null);
   /** The scenes tell the place on the map what's happening (one function for good: their timers depend on it). */
@@ -6459,12 +6474,18 @@ export function GameMap({
             </div>
             <span className="w-7 text-right text-sm font-bold">{hud.energy}</span>
           </div>
-          <span className="pointer-events-auto flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold" aria-label={`${hud.coins} coins`} title="Coins">
+          <button
+            type="button"
+            onClick={() => setCoinShop({ notice: null })}
+            className="pointer-events-auto flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-ink px-3 text-sm font-bold"
+            aria-label={`${hud.coins} coins: buy more`}
+            title="Coins: buy more"
+          >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F4B41A" strokeWidth="2.4" aria-hidden="true">
               <circle cx="12" cy="12" r="8.5" />
             </svg>
             {hud.coins.toLocaleString("en-NG")}
-          </span>
+          </button>
           <button
             type="button"
             onClick={() => setBagOpen(true)}
@@ -7141,6 +7162,14 @@ export function GameMap({
           world={inside === "meal"}
           onMoment={onMoment}
           onClose={() => (inside === "meal" ? actions.current?.leaveShop() : setMealOpen(null))}
+        />
+      )}
+      {coinShop && (
+        <CoinShop
+          coins={hud.coins}
+          notice={coinShop.notice}
+          onPaid={(balance) => setHud((h) => ({ ...h, coins: balance }))}
+          onClose={() => setCoinShop(null)}
         />
       )}
       {quizOpen && (

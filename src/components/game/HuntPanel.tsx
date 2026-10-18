@@ -57,7 +57,24 @@ const REFRESH_MS = 30_000;
  * The hunt card (riddle, keys, Search here, leaderboard) and the Key Trial.
  * Answers are checked only by the server; this never knows them.
  */
-export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions: RefObject<HuntActions | null>; onHide: () => void }) {
+/**
+ * The trial on the map (owner, 18 Oct 2026: scenes in the world): the card tells the map as a trial begins
+ * ("loota:trial", on), as each answer is right ("loota:trial-step") and how it ends ("loota:trial", off, with the
+ * outcome); `scene` while the map shows it: the card steps aside and the questions sit in a strip at the bottom.
+ */
+const trialEvent = (detail: { on: boolean; outcome?: "key" | "finished" | "failed" | "error" }) => window.dispatchEvent(new CustomEvent("loota:trial", { detail }));
+
+export function HuntPanel({
+  huntId,
+  actions,
+  onHide,
+  scene = false,
+}: {
+  huntId: string;
+  actions: RefObject<HuntActions | null>;
+  onHide: () => void;
+  scene?: boolean;
+}) {
   const supabase = useRef(createClient()).current;
   const [state, setState] = useState<HuntState | null>(null);
   const [open, setOpen] = useState(true);
@@ -89,6 +106,7 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     actions.current?.setFrozen(true);
     setEnding(null);
     setTrial(view);
+    trialEvent({ on: true });
     const near = recentTrials.current.find((x) => x.key === view.key && Date.now() - x.at < 90_000);
     if (near) setRival(near.who);
   }
@@ -259,25 +277,33 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
     const r = data as AnswerResult | null;
     if (!r || !r.ok) {
       setTrial(null);
+      trialEvent({ on: false, outcome: "error" });
       actions.current?.setFrozen(false);
       void refresh();
       return;
     }
     if (r.result === "next") {
+      window.dispatchEvent(new Event("loota:trial-step")); // right: on to the next question
       setTrial(r.trial);
       return;
     }
     setTrial(null);
+    trialEvent({ on: false, outcome: r.result });
     if (r.result === "failed") {
       actions.current?.placeAt(r.lng, r.lat);
       setEnding({ kind: "failed", reason: r.reason, correct: r.correct, saved: !!r.saved });
     } else if (r.result === "key") {
-      setEnding({ kind: "key", keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle, bonuses: r.bonuses ?? [] });
+      // On the map, a moment for the Keeper's cheer before the key's card.
+      const won = { kind: "key" as const, keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle, bonuses: r.bonuses ?? [] };
+      if (scene) window.setTimeout(() => setEnding(won), 1700);
+      else setEnding(won);
       setRival(null);
       setTip(null);
       window.dispatchEvent(new Event("loota:key-earned"));
     } else {
-      setEnding({ kind: "finished", place: r.place, winner: r.winner, bonuses: r.bonuses ?? [] });
+      const won = { kind: "finished" as const, place: r.place, winner: r.winner, bonuses: r.bonuses ?? [] };
+      if (scene) window.setTimeout(() => setEnding(won), 1700);
+      else setEnding(won);
       setRival(null);
       window.dispatchEvent(new Event("loota:key-earned"));
     }
@@ -315,7 +341,7 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
 
   return (
     <>
-      <section className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-ink p-3" aria-label="Hunt">
+      <section className={`pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-ink p-3 ${scene ? "hidden" : ""}`} aria-label="Hunt">
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={open}>
             <span className="flex shrink-0 gap-0.5" aria-label={`${state.keysHeld} of ${state.keys} keys`}>
@@ -511,7 +537,7 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
         </div>
       )}
 
-      {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} onAnswer={(choice) => answer(trial.attempt, choice)} />}
+      {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} world={scene} onAnswer={(choice) => answer(trial.attempt, choice)} />}
       {recap && <RecapCard recap={recap} onClose={() => setRecap(null)} />}
 
       {ending && (
@@ -581,7 +607,18 @@ export function HuntPanel({ huntId, actions, onHide }: { huntId: string; actions
  * One question of a Key Trial, with its countdown. Running out of time counts as a miss. Some kinds show something
  * first to memorise (then hide it), some show it alongside (a row to count), and jumbled words come as letter tiles.
  */
-function KeyTrial({ trial, rival, onAnswer }: { trial: TrialView; rival: string | null; onAnswer: (choice: number) => Promise<void> | void }) {
+function KeyTrial({
+  trial,
+  rival,
+  world = false,
+  onAnswer,
+}: {
+  trial: TrialView;
+  rival: string | null;
+  /** On the map (the Keeper of the Key by the chest): a strip at the bottom, the scene in view above. */
+  world?: boolean;
+  onAnswer: (choice: number) => Promise<void> | void;
+}) {
   const [left, setLeft] = useState(trial.secondsLeft);
   const memorise = (trial.showSeconds ?? 0) > 0;
   const memorising = memorise && left > trial.seconds; // the first seconds: look, then it's hidden
@@ -617,6 +654,77 @@ function KeyTrial({ trial, rival, onAnswer }: { trial: TrialView; rival: string 
 
   const answerLeft = Math.min(left, trial.seconds);
   const share = answerLeft / trial.seconds;
+  if (world) {
+    // The Keeper asks; you answer in the strip.
+    return (
+      <div
+        data-scene-strip=""
+        role="dialog"
+        aria-label="Key Trial"
+        className="pointer-events-auto fixed inset-x-0 bottom-0 z-20 flex flex-col gap-2 rounded-t-3xl bg-ink/92 p-3 backdrop-blur-sm sm:inset-x-auto sm:left-1/2 sm:w-[28rem] sm:-translate-x-1/2"
+        style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="font-display text-sm font-extrabold text-gold">Key Trial · Key {trial.key}</span>
+          <span className="text-xs text-muted">
+            Question {trial.index + 1} of {trial.count}
+          </span>
+        </div>
+        {rival && (
+          <p className="loota-wonder-banner rounded-lg bg-danger/20 px-2 py-1 text-center text-xs font-extrabold text-paper ring-1 ring-danger" aria-label="Showdown">
+            ⚔️ Showdown! {rival} is in this trial too: finish first for +50
+          </p>
+        )}
+        {memorising ? (
+          <div className="flex flex-col items-center gap-1 py-1" aria-label="Memorise">
+            <p className="text-xs font-extrabold uppercase tracking-widest text-gold">The Keeper: memorise!</p>
+            <p className="loota-count text-center font-display text-3xl font-extrabold leading-snug tracking-wide">{trial.show}</p>
+            <p className="text-xs text-muted">Hidden in {Math.ceil(left - trial.seconds)}…</p>
+          </div>
+        ) : (
+          <>
+            {trial.show && !memorise && <p className="text-center text-2xl leading-relaxed tracking-wide" aria-label="Count these">{trial.show}</p>}
+            {scramble ? (
+              <div className="flex flex-wrap items-center justify-center gap-1">
+                <span className="mr-1 text-xs font-bold text-muted">Unscramble:</span>
+                <span className="flex flex-wrap justify-center gap-1" aria-label={`Letters: ${scramble.join(" ")}`}>
+                  {scramble.map((ch, i) => (
+                    <span key={i} className="flex size-8 items-center justify-center rounded-md bg-[#F5ECD8] font-display text-lg font-extrabold text-[#3A2410] shadow">
+                      {ch}
+                    </span>
+                  ))}
+                </span>
+              </div>
+            ) : (
+              <p className="rounded-xl bg-ink-2 px-3 py-2 text-sm leading-snug">
+                <span className="mr-1.5 font-bold text-gold">The Keeper:</span>
+                {trial.prompt}
+              </p>
+            )}
+            <div className="h-2 overflow-hidden rounded bg-line" role="timer" aria-label={`${Math.ceil(answerLeft)} seconds left`}>
+              <div className={`h-full ${share < 0.3 ? "bg-danger" : "bg-gold"}`} style={{ width: `${share * 100}%` }} />
+            </div>
+          </>
+        )}
+        <div className={`grid grid-cols-2 gap-2 ${memorising ? "invisible" : ""}`}>
+          {trial.choices.map((choice, i) => (
+            <button
+              key={i}
+              type="button"
+              disabled={sent !== null || memorising}
+              onClick={() => choose(i)}
+              className={`min-h-11 rounded-xl border-2 px-2 py-1 font-bold ${/^\p{Extended_Pictographic}/u.test(choice) ? "text-3xl" : "text-sm"} ${
+                sent === i ? "border-gold bg-gold text-ink" : "border-line bg-ink text-paper"
+              } disabled:cursor-default`}
+            >
+              {choice}
+            </button>
+          ))}
+        </div>
+        <p className="text-center text-[11px] text-muted">{memorising ? "Look closely…" : `${Math.ceil(answerLeft)} s left · a wrong answer or the time running out throws you 2 km away`}</p>
+      </div>
+    );
+  }
   return (
     <div className="pointer-events-auto fixed inset-0 z-20 flex items-center justify-center bg-ink/80 p-4">
       <div role="dialog" aria-label="Key Trial" className="flex w-full max-w-lg flex-col gap-4 rounded-3xl bg-ink-2 p-6">

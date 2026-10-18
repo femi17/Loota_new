@@ -398,7 +398,7 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
   const [ticketOpen, setTicketOpen] = useState<TicketOffer | null>(null);
@@ -4423,7 +4423,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -4456,6 +4456,7 @@ export function GameMap({
         buka?: ReturnType<typeof models.makeOpenBuka>;
         hall?: ReturnType<typeof models.makeTicketHall>;
         shrine?: ReturnType<typeof models.makeLampShrine>;
+        circle?: ReturnType<typeof models.makeKeyCircle>;
         star?: import("three").Object3D;
         terminal?: ReturnType<typeof models.makeTerminal>;
         /** When the bag went on the scale (check-in). */
@@ -4844,6 +4845,47 @@ export function GameMap({
         });
       }
 
+      // ---- The key's trial on the map: the Keeper of the Key by the open chest in a ring of standing stones, where
+      // the chest rose; the questions in a strip (HuntPanel's KeyTrial, world mode). The Keeper raises their arms
+      // at each right answer; won, they cheer a moment before you leave with the key; failed, you're thrown away.
+      const KEEPER: AvatarLook = { skin: "#5C3A1E", hair: "bald", hairColour: "#1B120C", top: "hoodie", topColour: "#1E3A6E", bottomsColour: "#1E3A6E", extra: "none" };
+      function openTrialPlace() {
+        if (inWorld || !network) return;
+        const S = models.TRIAL_SPOTS;
+        const circle = models.makeKeyCircle();
+        openPlace({
+          kind: "trial",
+          key: `trial:${traveller.pos.lng.toFixed(5)},${traveller.pos.lat.toFixed(5)}`,
+          at: chest?.spot ?? { ...traveller.pos },
+          group: circle.group,
+          spots: S,
+          kerbM: 7,
+          keeper: { look: KEEPER, at: S.keeper },
+          you: { from: S.outside, to: S.customer },
+          hidden: chest ? [chest.entity] : [],
+          closeScene: () => {},
+          extra: { circle },
+        });
+      }
+      function trialEvent(e: Event) {
+        const { on, outcome } = (e as CustomEvent<{ on: boolean; outcome?: string }>).detail;
+        if (on) return openTrialPlace();
+        if (inWorld?.kind !== "trial") return;
+        if (outcome === "key" || outcome === "finished") {
+          // Well done: the Keeper cheers, then you leave with the key.
+          inWorld.moment = { type: "won" };
+          inWorld.servedAt = performance.now();
+          window.setTimeout(() => closePlace(), 1600);
+        } else closePlace();
+      }
+      function trialStep() {
+        if (inWorld?.kind !== "trial") return;
+        inWorld.moment = { type: "won" };
+        inWorld.servedAt = performance.now();
+      }
+      window.addEventListener("loota:trial", trialEvent);
+      window.addEventListener("loota:trial-step", trialStep);
+
       /** Walk out: back to the street (riding, if you rented), the camera rises, the place folds away. */
       function closePlace() {
         const w = inWorld;
@@ -5003,7 +5045,12 @@ export function GameMap({
           w.shrine.prize.position.y = 1.9 + Math.sin(t * 3) * 0.12;
         }
         if (w.star) w.star.rotation.y += dt * (w.moment?.type === "won" ? 6 : 1.2);
-        if (w.kind === "quiz" && w.moment?.type === "won" && keeperThere && now - w.servedAt < 1800) {
+        if (w.circle) {
+          // Torches flicker; the key's light breathes over the chest.
+          w.circle.flames.forEach((f, i) => f.scale.set(1, 0.8 + 0.35 * Math.abs(Math.sin(t * 9 + i * 1.7)), 1));
+          (w.circle.glow.material as import("three").MeshBasicMaterial).opacity = 0.18 + 0.1 * Math.sin(t * 2.4);
+        }
+        if ((w.kind === "quiz" || w.kind === "trial") && w.moment?.type === "won" && keeperThere && now - w.servedAt < 1800) {
           w.keeper.av.armL.rotation.x = w.keeper.av.armR.rotation.x = -Math.PI; // hands up: well done!
         }
         if (w.lights) w.lights.forEach((l, i) => (l.visible = Math.floor(t * 4 + i) % 2 === 0)); // the patrol van's lights
@@ -6291,6 +6338,8 @@ export function GameMap({
         areaChannels.clear();
         window.removeEventListener("loota:hunt-changed", pulseSoon);
         window.removeEventListener("loota:key-earned", keyWon);
+        window.removeEventListener("loota:trial", trialEvent);
+        window.removeEventListener("loota:trial-step", trialStep);
         map.remove();
       };
     })().catch(() => setFailed(true));
@@ -6770,8 +6819,8 @@ export function GameMap({
             {/* The hunt (riddle, keys, Search here) */}
             {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
             {huntId && huntShown && (
-              <div className={inside ? "hidden" : "contents"}>
-                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} />
+              <div className={inside && inside !== "trial" ? "hidden" : "contents"}>
+                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} />
               </div>
             )}
           </div>

@@ -20,14 +20,6 @@ let browser;
 let fails = 0;
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
-/** The answer to a maths prompt like "36 + 32 = ?". */
-function solve(prompt) {
-  const m = /(\d+)\s*([+−\-×x÷/])\s*(\d+)/.exec(prompt);
-  if (!m) return null;
-  const a = +m[1], b = +m[3];
-  return { "+": a + b, "−": a - b, "-": a - b, "×": a * b, x: a * b, "÷": a / b, "/": a / b }[m[2]];
-}
-
 // The key: a spot on a road in Yaba (a bus stop stands by the road).
 const spot = { lng: 3.378214, lat: 6.500147 };
 const fromSpot = (m) => ({ lng: spot.lng, lat: spot.lat + m / 110574 });
@@ -99,17 +91,16 @@ try {
   await wait(3000);
   const trial = await text('[aria-label="Key Trial"]');
   check("the Key Trial starts", /Key Trial · Key 1/.test(trial ?? ""), trial);
-  for (let q = 0; q < 2; q++) {
-    const t = await page.evaluate(() => {
-      const d = document.querySelector('[aria-label="Key Trial"]');
-      return d ? { prompt: d.querySelector("p.font-display")?.textContent ?? "", choices: [...d.querySelectorAll("button")].map((b) => b.textContent) } : null;
-    });
-    if (!t) break;
-    const answer = solve(t.prompt);
-    const pick = t.choices.findIndex((c) => Number(c) === answer);
-    await page.evaluate((i) => [...document.querySelector('[aria-label="Key Trial"]').querySelectorAll("button")][i]?.click(), Math.max(0, pick));
+  // The right answers, from the attempt (the questions mix kinds: sums, memory, counting, words).
+  const { data: attempt } = await admin.from("trial_attempts").select("questions").eq("user_id", id).order("started_at", { ascending: false }).limit(1).single();
+  for (let q = 0; q < attempt.questions.length; q++) {
+    // (A memory question shows its things first: the answers come once they're hidden.)
+    for (let i = 0; i < 20 && (await page.evaluate(() => !!document.querySelector('[aria-label="Key Trial"] [aria-label="Memorise"]'))); i++) await wait(500);
+    const choice = String(attempt.questions[q].choices[attempt.questions[q].answer]);
+    await page.evaluate((c) => [...document.querySelector('[aria-label="Key Trial"]').querySelectorAll("button")].find((b) => b.textContent === c)?.click(), choice);
     await wait(2500);
   }
+  await wait(1500); // (on the map the Keeper cheers before the key's card)
   const result = await text('[aria-label="Key Trial result"]');
   check("Key 1 earned", /Key 1 earned!/.test(result ?? ""), result);
   check("…and the key flies into the bag", await page.evaluate(() => window.__flew));

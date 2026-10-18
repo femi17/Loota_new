@@ -1499,3 +1499,57 @@ export function makeLampShrine() {
   group.add(prize);
   return { group, smoke, prize, reward: (shown: boolean) => (prize.visible = shown) };
 }
+
+/** The key's trial: the Keeper by the open chest in a ring of standing stones; you stand before them. */
+export const TRIAL_SPOTS: PlaceSpots = {
+  width: 10,
+  depth: 8,
+  keeper: { x: -1.4, z: -4.2 },
+  customer: { x: 1.2, z: -2.6 },
+  stand: { x: 0, z: -4.4 },
+  work: { x: -1.4, z: -4.2 },
+  outside: { x: 1.6, z: 2.4 },
+};
+
+/**
+ * Where a hunt key is won: a ring of standing stones on trodden earth, two torches burning, the chest open in the
+ * middle with the key's gold light rising out of it. `flames` flicker; `glow` is the light over the chest.
+ */
+export function makeKeyCircle() {
+  const group = new THREE.Group();
+  const { stand } = TRIAL_SPOTS;
+  const ground = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 0.1, 32), material("#8C7A5B"));
+  ground.position.set(stand.x, 0.05, stand.z);
+  group.add(ground);
+  const inner = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.05, 6, 40), glow("#F4B41A"));
+  inner.rotation.x = Math.PI / 2;
+  inner.position.set(stand.x, 0.12, stand.z);
+  group.add(inner);
+  // The standing stones (a gap at the front, where you come in)
+  for (let i = 0; i < 9; i++) {
+    const a = Math.PI * 0.62 + (i / 8) * Math.PI * 1.76;
+    const h = 1.6 + (i % 3) * 0.35;
+    const stone = mesh(new THREE.BoxGeometry(0.6, h, 0.45), "#8A8F96", stand.x + Math.cos(a) * 4, h / 2, stand.z - Math.sin(a) * 4);
+    stone.rotation.y = -a;
+    group.add(stone);
+  }
+  // Two torches either side of the chest
+  const flames: THREE.Mesh[] = [];
+  for (const x of [-2.4, 2.4]) {
+    group.add(mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.8, 6), "#4A2E14", stand.x + x, 0.9, stand.z - 0.8));
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 8), glow("#FF8A1F"));
+    flame.position.set(stand.x + x, 2.05, stand.z - 0.8);
+    group.add(flame);
+    flames.push(flame);
+  }
+  // The chest, open, its gold light rising
+  const chest = makeChest();
+  chest.ring.visible = false;
+  chest.group.position.set(stand.x, 0.1, stand.z);
+  chest.group.scale.setScalar(0.8);
+  group.add(chest.group);
+  const light = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, 2.6, 16, 1, true), new THREE.MeshBasicMaterial({ color: "#FFD45C", transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
+  light.position.set(stand.x, 2.2, stand.z);
+  group.add(light);
+  return { group, flames, glow: light };
+}

@@ -7,7 +7,7 @@ import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
-import { CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
@@ -17,6 +17,7 @@ import { NurseScene, type Discharge } from "./NurseScene";
 import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene";
 import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { CoinShop, confirmPayment } from "./CoinShop";
+import { PumpScene, type PumpActions, type PumpOffer } from "./PumpScene";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
@@ -188,6 +189,7 @@ const MESSENGER: AvatarLook = { skin: "#8D5524", hair: "bun", hairColour: "#1B12
 /** The pump attendant, the cook, the nurse and the paramedic in the scenes (the same one for the same place or visit). */
 const ATTENDANTS = ["Chidi", "Musa", "Segun", "Ibrahim", "Emeka", "Yusuf", "Sola"];
 const COOKS = ["Mama Nkechi", "Mama Bisi", "Iya Titi", "Mama Ngozi", "Iya Kemi", "Aunty Amaka", "Mama Ronke"];
+const VULCANIZERS = ["Baba Sule", "Emeka", "Kunle", "Alhaji Musa", "Chinedu"];
 const NURSES = ["Nurse Funmi", "Nurse Aisha", "Nurse Grace", "Nurse Ifeoma", "Nurse Zainab"];
 const PARAMEDICS = ["Paramedic Tobi", "Paramedic Usman", "Paramedic Ada", "Paramedic Kelechi"];
 function nameFor(list: string[], seed: string) {
@@ -286,7 +288,9 @@ export function GameMap({
   const controls = useRef({ go: false, sprint: false });
   const actions = useRef<{
     vehicles: () => OwnedVehicle[];
-    ride: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
+    ride: (kind: VehicleKind, how: "own" | "rent" | "buy", addons?: AddonId[]) => void;
+    /** Buy a vehicle's gear or a licence; resolves when done (the vehicles list is fresh). */
+    buyAddon: (kind: VehicleKind, id: AddonId) => Promise<void>;
     /** The repair shop for a broken-down vehicle: found (or recalled), with the way there. */
     findRepairShop: (kind: VehicleKind) => void;
     /** Go into a repair shop: the open-roof shop on the map, the camera looking in (an in-world scene). */
@@ -402,7 +406,9 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | null>(null);
+  const [pumpOpen, setPumpOpen] = useState<PumpOffer | null>(null);
+  const [pumpActions, setPumpActions] = useState<PumpActions | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
   /** Buying coins (tap your coins); `notice`: how a payment on Paystack's own page went. */
@@ -1020,8 +1026,13 @@ export function GameMap({
         lng: number;
         lat: number;
         in_use: boolean;
+        light: boolean;
+        helmet: boolean;
+        registered: boolean;
+        insured: boolean;
       };
       let owned: VehicleRow[] = [];
+      let licences = { rider: false, driver: false };
       let rental: { kind: VehicleKind; startedAt: number; rate: number } | null = null;
       let busy = false;
 
@@ -1058,10 +1069,24 @@ export function GameMap({
       let vehicleFactor = 1;
       let weatherFactor = 1;
       let trafficSpeed = 1; // in a jam: cars crawl, motorbikes weave through (src/game/clock.ts)
+      let darkFactor = 1; // your own bicycle after dark without a light (darkTick)
       let sandFactor = 1; // in someone's sandstorm (the Sandstorm Crown): half speed, whatever you ride
       function applySpeed() {
         traveller.speedFactor =
-          vehicleFactor * sandFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : trafficSpeed);
+          vehicleFactor * sandFactor * darkFactor * (traveller.mode === "walk" || traveller.mode === "bicycle" ? weatherFactor : trafficSpeed);
+      }
+      // After dark, your own bicycle without a light: you crawl (you can't see the road). Rentals come with a light.
+      let lastDark = -Infinity;
+      function darkTick(now: number) {
+        if (now - lastDark < 2000) return;
+        lastDark = now;
+        const bike = traveller.mode === "bicycle" && !rental ? ownInUse() : null;
+        const blind = !!bike && !bike.light && isNight(Date.now(), traveller.pos.lng, traveller.pos.lat);
+        const factor = blind ? 0.6 : 1;
+        if (factor === darkFactor) return;
+        darkFactor = factor;
+        applySpeed();
+        if (blind) say("It's dark and your bicycle has no light: you ride slowly, and the police may stop you. Buy a light in the vehicle panel.", true);
       }
 
       /** New fuel for the vehicle the player is on (a save, a refuel, a Jerry Can relic). */
@@ -1114,12 +1139,15 @@ export function GameMap({
       }
 
       async function refreshVehicles() {
-        const [{ data: vehicles }, { data: rentals }] = await Promise.all([
-          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, lng, lat, in_use"),
+        const [{ data: vehicles }, { data: rentals }, { data: papers }] = await Promise.all([
+          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, lng, lat, in_use, light, helmet, registered, insured"),
           supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
+          supabase.from("profiles").select("rider_licence, driver_licence").maybeSingle(),
         ]);
         if (disposed) return;
         owned = (vehicles ?? []) as VehicleRow[];
+        const p = papers as { rider_licence: boolean; driver_licence: boolean } | null;
+        licences = { rider: !!p?.rider_licence, driver: !!p?.driver_licence };
         const active = rentals?.[0] as { kind: VehicleKind; started_at: string } | undefined;
         rental = active ? { kind: active.kind, startedAt: new Date(active.started_at).getTime(), rate: VEHICLES[active.kind].ratePerMinute } : null;
         showVehicle();
@@ -1131,7 +1159,30 @@ export function GameMap({
       }
 
       /** Ride your own, rent, or buy. Resolves to "ok", or why not (the server's reason, "busy", "walk"…). */
-      async function chooseVehicle(kind: VehicleKind, how: "own" | "rent" | "buy"): Promise<string> {
+      /** Whether a vehicle has this piece of gear or papers (licences are the player's). */
+      function hasPaper(v: VehicleRow, id: AddonId) {
+        if (id === "rider_licence") return licences.rider;
+        if (id === "driver_licence") return licences.driver;
+        return id === "light" ? v.light : id === "helmet" ? v.helmet : id === "registration" ? v.registered : v.insured;
+      }
+
+      /** Buy a vehicle's gear or a licence (buy_addon). */
+      async function buyAddon(kind: VehicleKind, id: AddonId, quiet = false) {
+        const { data } = await supabase.rpc("buy_addon", { p_addon: id, p_kind: kind });
+        const r = data as { ok: boolean; reason?: string; price?: number; balance?: number } | null;
+        const name = ADDONS[kind].find((a) => a.id === id)?.name ?? id;
+        if (r?.ok) {
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          if (!quiet) say(`${name} bought for your ${vehicleName(kind)}.`);
+        } else if (!quiet || r?.reason === "coins") {
+          say(r?.reason === "coins" ? `Not enough coins for the ${name.toLowerCase()} (${r.price} coins).` : `Couldn't buy the ${name.toLowerCase()} just now.`, true);
+        }
+        await refreshVehicles();
+        lastDark = -Infinity; // a light changes riding after dark
+      }
+
+      async function chooseVehicle(kind: VehicleKind, how: "own" | "rent" | "buy", addons: AddonId[] = []): Promise<string> {
         if (busy || traveller.phase !== "idle") return "busy";
         if (how === "rent") {
           if (kind === "car") {
@@ -1167,6 +1218,10 @@ export function GameMap({
             const balance = bought.balance;
             if (balance != null) setHud((h) => ({ ...h, coins: balance }));
             await refreshVehicles();
+            // Its gear and papers, ticked with it.
+            for (const id of addons) await buyAddon(kind, id, true);
+            const missing = ADDONS[kind].filter((a) => !addons.includes(a.id)).map((a) => a.name.toLowerCase());
+            if (missing.length) say(`No ${missing.join(" or ")} yet: police checkpoints fine what's missing. Get them in the vehicle panel.`, true);
           }
 
           const { data } = await supabase.rpc("start_vehicle", {
@@ -1479,8 +1534,10 @@ export function GameMap({
             fuel: v.fuel,
             inUse: v.in_use,
             state: v.broken_at ? (v.repair_ready_at ? "repairing" : "broken") : v.kind !== "bicycle" && v.fuel <= 0 ? "empty" : "ready",
+            papers: ADDONS[v.kind].map((a) => ({ ...a, have: hasPaper(v, a.id) })),
           })),
-        ride: (kind, how) => void chooseVehicle(kind, how),
+        ride: (kind, how, addons) => void chooseVehicle(kind, how, addons),
+        buyAddon: (kind, id) => buyAddon(kind, id),
         findRepairShop: (kind) => void findRepairShop(kind, true),
         enterShop: (job) => openShopScene(job),
         enterTicket: () => enterTicket(),
@@ -3141,6 +3198,7 @@ export function GameMap({
       const showKeg = () => setHud((h) => ({ ...h, keg: keg ? { ...keg } : null }));
 
       setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg") });
+      setPumpActions({ pump: () => act("pump", true) });
       setMealActions({
         eat: async () => {
           const place = spotHere(["eat"]);
@@ -3148,8 +3206,20 @@ export function GameMap({
         },
       });
 
-      async function act(id: LimitAction): Promise<boolean> {
+      async function act(id: LimitAction, direct = false): Promise<boolean> {
         if (busy) return false;
+        if (id === "pump" && !direct) {
+          // The vulcanizer (PumpScene): soft tyres pumped (8 s), or a flat patched and pumped (20 s).
+          const spot = spotHere(["tyres", "fuel"]);
+          const bike = ownInUse();
+          if (!spot || bike?.kind !== "bicycle") return false;
+          const flat = bike.tyre <= 0;
+          const place = spot.kind === "fuel" ? `${spot.name}: air and tyres` : spot.name;
+          const offer = { place, keeper: nameFor(VULCANIZERS, String(spot.id)), flat, price: flat ? 20 : 5, seconds: flat ? 20 : 8 };
+          openPumpPlace(offer, spot);
+          setPumpOpen(offer);
+          return true;
+        }
         if (id === "eat") {
           // Sit down with the cook (MealScene).
           const place = spotHere(["eat"]);
@@ -4074,6 +4144,7 @@ export function GameMap({
 
       function skyAndTrafficTick(now: number) {
         lightsTick(now);
+        darkTick(now);
         const wall = Date.now();
         if (now - lastSky > 30_000) {
           lastSky = now;
@@ -4449,7 +4520,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -4484,6 +4555,7 @@ export function GameMap({
         shrine?: ReturnType<typeof models.makeLampShrine>;
         circle?: ReturnType<typeof models.makeKeyScene>;
         vault?: ReturnType<typeof models.makeDjinnVault>;
+        vulcanizer?: ReturnType<typeof models.makeVulcanizer>;
         star?: import("three").Object3D;
         terminal?: ReturnType<typeof models.makeTerminal>;
         /** When the bag went on the scale (check-in). */
@@ -4949,6 +5021,28 @@ export function GameMap({
         if (opened && w) w.keeper.av.root.scale.setScalar(1.6); // bigger than life
       }
 
+      /** At the vulcanizer's: your bicycle on the stand, the compressor, the vulcanizer. */
+      function openPumpPlace(offer: PumpOffer, spot: LngLat & { id: number }) {
+        const S = models.VULCANIZER_SPOTS;
+        const v = models.makeVulcanizer(offer.place.length > 22 ? "Vulcanizer" : offer.place);
+        const bike = models.makeVehicleModel("bicycle");
+        bike.rotation.y = Math.PI / 2;
+        bike.position.set(S.stand.x, 0.1, S.stand.z);
+        v.group.add(bike);
+        return openPlace({
+          kind: "pump",
+          key: `pump:${spot.id}`,
+          at: spot,
+          group: v.group,
+          spots: S,
+          kerbM: 6,
+          keeper: { look: { ...keeperLook(offer.keeper), topColour: "#5B4636", extra: "cap" }, at: S.keeper },
+          you: { from: S.outside, to: S.customer },
+          closeScene: () => setPumpOpen(null),
+          extra: { vulcanizer: v, vehicle: bike },
+        });
+      }
+
       /** Walk out: back to the street (riding, if you rented), the camera rises, the place folds away. */
       function closePlace() {
         const w = inWorld;
@@ -5029,6 +5123,9 @@ export function GameMap({
           if (working) keeperSpot = S.work;
         } else if (w.kind === "meal" && m?.type === "served" && now - w.servedAt < 4000) {
           keeperSpot = S.work; // bringing the plate to the table
+        } else if (w.kind === "pump" && m?.type === "pumping") {
+          keeperSpot = S.work; // at the bicycle, working on the tyre
+          working = true;
         } else if (w.kind === "fuel" && (m?.type === "pumping" || m?.type === "meter")) {
           keeperSpot = S.work; // at the pump, nozzle in the tank
           working = true;
@@ -5082,7 +5179,7 @@ export function GameMap({
         if (keeperThere && working) {
           // Bent over the vehicle with a spanner, or holding the nozzle in the tank.
           w.keeper.face = Math.PI / 2;
-          if (w.kind === "repair") {
+          if (w.kind === "repair" || w.kind === "pump") {
             w.keeper.av.rig.rotation.x = 0.45;
             w.keeper.av.armR.rotation.x = -1.4 + Math.sin(t * 9) * 0.45;
             w.keeper.av.armL.rotation.x = -1.1 + Math.sin(t * 9 + 1.5) * 0.25;
@@ -5103,6 +5200,10 @@ export function GameMap({
           w.sparkles.rotation.y += dt * 1.5;
         }
         if (w.petrol) w.petrol.hose.visible = keeperThere && working;
+        if (w.vulcanizer && w.vehicle) {
+          w.vulcanizer.running(keeperThere && working, t); // the compressor shakes while it runs
+          w.vehicle.rotation.z = m?.type === "filled" ? 0 : 0.18; // leaning on the stand until done
+        }
         if (w.terminal) {
           // Your bag: by you, then on the scale for a moment, then along the belt and away.
           const since = w.bagAt === undefined ? -1 : (now - w.bagAt) / 1000;
@@ -5976,11 +6077,11 @@ export function GameMap({
       let lastRoadRoll = performance.now(); // the first chance comes after ~45 s on the move
       let rolling = false;
       async function roadTick(now: number) {
-        if (!huntId || rolling || sceneHold || ride || visit || traveller.phase !== "idle" || traveller.v < 1) return;
+        if (rolling || sceneHold || ride || visit || traveller.phase !== "idle" || traveller.v < 1) return;
         if (now - lastRoadRoll < 45000) return;
         rolling = true;
         lastRoadRoll = now;
-        const { data } = await supabase.rpc("road_event_roll", { p_hunt: huntId });
+        const { data } = await supabase.rpc("road_event_roll", { p_hunt: huntId ?? null }); // in a hunt or in free roam
         rolling = false;
         const e = (data as { ok: boolean; event: RoadEvent | null } | null)?.event;
         if (disposed || !e) return;
@@ -7093,9 +7194,12 @@ export function GameMap({
           riding={hud.vehicle ? { kind: hud.vehicle.kind, source: hud.vehicle.source } : null}
           coins={hud.coins}
           busy={hud.busy}
-          onRide={(kind, how) => {
-            actions.current?.ride(kind, how);
+          onRide={(kind, how, addons) => {
+            actions.current?.ride(kind, how, addons);
             setGarage(null);
+          }}
+          onAddon={(kind, id) => {
+            void actions.current?.buyAddon(kind, id).then(() => setGarage(actions.current?.vehicles() ?? []));
           }}
           onGetOff={() => {
             actions.current?.getOff();
@@ -7178,6 +7282,16 @@ export function GameMap({
           notice={coinShop.notice}
           onPaid={(balance) => setHud((h) => ({ ...h, coins: balance }))}
           onClose={() => setCoinShop(null)}
+        />
+      )}
+      {pumpOpen && pumpActions && (
+        <PumpScene
+          offer={pumpOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={pumpActions}
+          world={inside === "pump"}
+          onMoment={onMoment}
+          onClose={() => (inside === "pump" ? actions.current?.leaveShop() : setPumpOpen(null))}
         />
       )}
       {quizOpen && (

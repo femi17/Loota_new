@@ -3,10 +3,18 @@
 import { useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
 import { keeperLook, keeperWrap, lookForId, type AvatarLook } from "@/lib/avatar";
-import type { VehicleKind } from "@/game/economy";
+import { PAPER_FINE, PAPER_NAME, type AddonId, type VehicleKind } from "@/game/economy";
 
 /** Something on the road during a hunt (road_event_roll): the question comes without its answer. */
-export type RoadEvent = { id: number; kind: "checkpoint" | "traveller" | "seller"; npc: string; prompt: string | null; choices: string[] | null };
+export type RoadEvent = {
+  id: number;
+  kind: "checkpoint" | "traveller" | "seller";
+  npc: string;
+  prompt: string | null;
+  choices: string[] | null;
+  /** At a checkpoint: the gear and papers the officer finds missing (a fine each). */
+  missing?: AddonId[];
+};
 
 export type RoadEventResult = {
   outcome: "passed" | "fined" | "helped" | "declined" | "won" | "lost";
@@ -46,7 +54,22 @@ export function RoadEventScene({
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [lines, setLines] = useState<SceneLine[]>(() => {
-    if (event.kind === "checkpoint") return [{ who: "them", text: `Good evening! Police checkpoint. Before you go, a quick question: ${event.prompt}` }];
+    if (event.kind === "checkpoint") {
+      const missing = event.missing ?? [];
+      if (missing.length) {
+        const list = missing.map((m) => PAPER_NAME[m]);
+        const named = list.length > 1 ? `${list.slice(0, -1).join(", ")} or ${list.at(-1)}` : list[0];
+        return [
+          {
+            who: "them",
+            text: missing.includes("light")
+              ? `Stop there! Riding in the dark with no light? You can't be seen, it's dangerous. That's a ${PAPER_FINE}-coin fine.`
+              : `Good evening! Police checkpoint: your papers, please… No ${named}? That's ${PAPER_FINE * missing.length} coins: ${PAPER_FINE} for each. Sort them out before you ride again.`,
+          },
+        ];
+      }
+      return [{ who: "them", text: `Good evening! Police checkpoint: your papers, please… Licence, registration, all in order. Before you go, a quick question: ${event.prompt}` }];
+    }
     if (event.kind === "seller") return [{ who: "them", text: `Customer! Wait small: answer my riddle and I'll give you 25 coins. ${event.prompt}` }];
     return [{ who: "them", text: "Please, please! My phone died and I'm lost. Can you help me? I'll make it worth your while." }];
   });
@@ -62,7 +85,9 @@ export function RoadEventScene({
       return;
     }
     const mine = { who: "you" as const, text: said };
-    if (r.outcome === "passed") say(mine, { who: "them", text: "Correct! Everything is in order. Drive safely, and good luck with your hunt." });
+    if (r.outcome === "passed") say(mine, { who: "them", text: "Correct! Everything is in order. Drive safely." });
+    else if (r.outcome === "fined" && (event.missing ?? []).length)
+      say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Get your papers sorted at the vehicle panel before I see you again, o.` });
     else if (r.outcome === "fined" && choice === -2) say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Wait here while I write your receipt.` });
     else if (r.outcome === "fined") say(mine, { who: "them", text: `Wrong! It's "${r.correct}". That's a ${r.fine}-coin fine, and wait here while I write it.` });
     else if (r.outcome === "won") say(mine, { who: "them", text: "Correct! You're sharp o. Take your 25 coins." });
@@ -72,7 +97,9 @@ export function RoadEventScene({
         who: "them",
         text: r.hint
           ? `Thank you, God bless you! Listen: I passed a crowd of treasure hunters to the ${r.hint.direction} of here, ${r.hint.band} away. That's where Key ${r.hint.key} is, I'm sure of it.`
-          : "Thank you, God bless you! Safe journey.",
+          : r.reward
+            ? `Thank you, God bless you! Take these ${r.reward} coins for your trouble. Safe journey.`
+            : "Thank you, God bless you! Safe journey.",
       });
     else say(mine, { who: "them", text: event.kind === "traveller" ? "No wahala. Safe journey." : "Okay o. Another time." });
   }
@@ -84,6 +111,8 @@ export function RoadEventScene({
       { label: "Of course, let me help (15 s)", primary: true, onPick: () => void answer(1, "Of course, let me help you.") },
       { label: "Sorry, I'm in a hurry", onPick: () => void answer(0, "Sorry, I'm in a hurry.") },
     ];
+  else if (event.kind === "checkpoint" && (event.missing ?? []).length)
+    choices = [{ label: `Pay the fine · ${PAPER_FINE * (event.missing ?? []).length} coins`, primary: true, onPick: () => void answer(-2, "Sorry, officer. Here's the fine.") }];
   else
     choices = [
       ...(event.choices ?? []).map((c, i) => ({ label: c, primary: true, onPick: () => void answer(i, c) })),

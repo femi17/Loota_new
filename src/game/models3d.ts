@@ -1860,3 +1860,63 @@ export function makeKeyScene(scene: string, sign: string) {
   const light = keyChest(group);
   return { group, flames, glow: light };
 }
+
+export const VULCANIZER_SPOTS: PlaceSpots = {
+  width: 9,
+  depth: 6,
+  keeper: { x: -2, z: -3.4 },
+  customer: { x: 2.2, z: -2 },
+  stand: { x: 0.3, z: -3.2 },
+  work: { x: -0.9, z: -3.3 },
+  outside: { x: 1.5, z: 2.4 },
+};
+
+/**
+ * A vulcanizer's spot by the road: the compressor with its gauge and hose, a pile of old tyres, the basin of water
+ * for finding punctures, a board with a rim and the sign, a bench. `running(on)` shakes the compressor.
+ */
+export function makeVulcanizer(sign: string) {
+  const group = new THREE.Group();
+  group.add(mesh(new THREE.BoxGeometry(9, 0.1, 6), "#9C8E7C", 0, 0.05, -3));
+  // The compressor
+  const compressor = new THREE.Group();
+  compressor.add(
+    mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.6, 14), "#D62828", 0, 0.75, 0),
+    mesh(new THREE.BoxGeometry(0.7, 0.5, 0.6), "#3A3F47", 0, 1.75, 0),
+    mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.06, 14), "#F4F1EA", 0.36, 1.75, 0),
+  );
+  compressor.children[0].rotation.z = Math.PI / 2;
+  compressor.position.set(-2.4, 0, -4.8);
+  group.add(compressor);
+  const hose = mesh(new THREE.BoxGeometry(2.2, 0.06, 0.06), "#1D1D1D", -1, 0.35, -4);
+  hose.rotation.y = -0.5;
+  group.add(hose);
+  // Old tyres, a basin of water, a bench
+  for (let i = 0; i < 4; i++) {
+    const t = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.15, 8, 18), material("#2A2A2A"));
+    t.rotation.x = Math.PI / 2;
+    t.position.set(3.2, 0.25 + i * 0.28, -4.6);
+    group.add(t);
+  }
+  const water = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.4, 0.3, 14), material("#5B6475"));
+  water.position.set(1.8, 0.25, -4.9);
+  const surface = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 14), glow("#7FC1EE"));
+  surface.position.set(1.8, 0.4, -4.9);
+  group.add(water, surface, mesh(new THREE.BoxGeometry(1.8, 0.12, 0.45), "#7A5230", -3.4, 0.5, -2.2));
+  // The board: a rim hanging, the sign
+  group.add(mesh(new THREE.BoxGeometry(0.12, 2.4, 0.12), "#4A3A2A", -0.8, 1.2, -5.6), mesh(new THREE.BoxGeometry(0.12, 2.4, 0.12), "#4A3A2A", 1.6, 1.2, -5.6));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.06, 6, 18), material("#9AA1AC"));
+  rim.position.set(0.4, 1.4, -5.55);
+  group.add(rim);
+  const board = signBoard(sign, "#F07A28", 2.6, 0.55);
+  board.position.set(0.4, 2.3, -5.55);
+  group.add(board);
+  let shake = 0;
+  return {
+    group,
+    running(on: boolean, t: number) {
+      shake = on ? Math.sin(t * 40) * 0.03 : 0;
+      compressor.position.x = -2.4 + shake;
+    },
+  };
+}

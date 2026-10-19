@@ -1,9 +1,16 @@
 "use client";
 
-import { CALL_OUT_PRICE, REPAIR, VEHICLE_KINDS, VEHICLES, type VehicleKind } from "@/game/economy";
+import { useState } from "react";
+import { ADDONS, CALL_OUT_PRICE, REPAIR, VEHICLE_KINDS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
 
-/** A vehicle the player owns: ridden, or in their pocket (it goes everywhere with them). */
-export type OwnedVehicle = { kind: VehicleKind; fuel: number; inUse: boolean; state: "ready" | "empty" | "broken" | "repairing" };
+/** A vehicle the player owns: ridden, or in their pocket (it goes everywhere with them); its gear and papers. */
+export type OwnedVehicle = {
+  kind: VehicleKind;
+  fuel: number;
+  inUse: boolean;
+  state: "ready" | "empty" | "broken" | "repairing";
+  papers: { id: AddonId; name: string; price: number; have: boolean }[];
+};
 export type Riding = { kind: VehicleKind; source: "owned" | "rented" } | null;
 
 /** Choose how to travel: take your own vehicle out of your pocket, rent one, or buy one. */
@@ -13,6 +20,7 @@ export function VehiclePanel({
   coins,
   busy,
   onRide,
+  onAddon,
   onGetOff,
   onMechanic,
   onRepairShop,
@@ -23,7 +31,10 @@ export function VehiclePanel({
   riding: Riding;
   coins: number;
   busy: boolean;
-  onRide: (kind: VehicleKind, how: "own" | "rent" | "buy") => void;
+  /** `addons`: with a new vehicle, its gear and papers to buy too. */
+  onRide: (kind: VehicleKind, how: "own" | "rent" | "buy", addons?: AddonId[]) => void;
+  /** Buy a missing piece of gear or a licence for a vehicle you own. */
+  onAddon: (kind: VehicleKind, id: AddonId) => void;
   onGetOff: () => void;
   /** Call out a mechanic to a broken-down vehicle: they come to the player, wherever they are. */
   onMechanic: () => void;
@@ -34,6 +45,9 @@ export function VehiclePanel({
   onClose: () => void;
 }) {
   const button = "h-11 rounded-xl px-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-40";
+  // With a new vehicle: its gear and papers, ticked to buy along with it.
+  const [extras, setExtras] = useState<Record<string, boolean>>({});
+  const ticked = (kind: VehicleKind, id: AddonId) => extras[`${kind}:${id}`] ?? true;
 
   return (
     <div className="absolute inset-0 z-10 flex items-end justify-center bg-ink/60 sm:items-center" onClick={onClose}>
@@ -83,6 +97,44 @@ export function VehiclePanel({
                   )}
                 </div>
                 <p className="text-sm text-muted">{info.note}</p>
+                {mine ? (
+                  // Gear and papers: what it has, and what's missing (police checkpoints fine what's missing).
+                  <div className="flex flex-wrap gap-1.5" aria-label={`${info.name}: gear and papers`}>
+                    {mine.papers.map((p) =>
+                      p.have ? (
+                        <span key={p.id} className="flex h-8 items-center rounded-lg bg-[#1E9E62]/20 px-2 text-xs font-bold text-[#3DD68C]">
+                          ✓ {p.name}
+                        </span>
+                      ) : (
+                        <button
+                          key={p.id}
+                          type="button"
+                          disabled={busy || coins < p.price}
+                          onClick={() => onAddon(kind, p.id)}
+                          className="flex h-8 items-center rounded-lg border-[1.5px] border-gold px-2 text-xs font-bold text-paper disabled:opacity-40"
+                        >
+                          + {p.name} · {p.price}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1" aria-label={`${info.name}: gear and papers to buy with it`}>
+                    {ADDONS[kind].map((a) => (
+                      <label key={a.id} className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={ticked(kind, a.id)}
+                          onChange={(e) => setExtras((x) => ({ ...x, [`${kind}:${a.id}`]: e.target.checked }))}
+                          className="size-4 accent-[#F4B41A]"
+                        />
+                        <span>
+                          <b>{a.name}</b> · {a.price} coins <span className="text-muted">({a.why})</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
                 {mine && !onIt && mine.state !== "ready" && (
                   <p className="text-sm text-gold">
                     {mine.state === "empty"
@@ -110,8 +162,13 @@ export function VehiclePanel({
                         </button>
                       )
                     ) : (
-                      <button type="button" disabled={busy || coins < info.price} onClick={() => onRide(kind, "buy")} className={`${button} bg-gold text-ink`}>
-                        Buy · {info.price.toLocaleString("en-NG")} coins
+                      <button
+                        type="button"
+                        disabled={busy || coins < info.price}
+                        onClick={() => onRide(kind, "buy", ADDONS[kind].filter((a) => ticked(kind, a.id)).map((a) => a.id))}
+                        className={`${button} bg-gold text-ink`}
+                      >
+                        Buy · {(info.price + ADDONS[kind].filter((a) => ticked(kind, a.id)).reduce((s, a) => s + a.price, 0)).toLocaleString("en-NG")} coins
                       </button>
                     )}
                     {kind === "car" ? (

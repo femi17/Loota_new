@@ -112,7 +112,8 @@ type Hud = {
   /** At a bus stop, station or airport: what the transport button offers. */
   stopHere: { icon: string; label: string } | null;
   /** At a station's ticket office or an airport's check-in desk: the button to go in. */
-  ticketHere: { kind: "train" | "plane"; name: string } | null;
+  /** At a train station or airport: its ticket office or check-in (`away`: metres to its door; 0 at it). */
+  ticketHere: { kind: "train" | "plane"; name: string; away: number } | null;
   /** What can be done where the player stands: eat, rest, refuel, kegs, tyres, repairs. */
   actions: { id: LimitAction; icon: string; short: string; label: string }[];
   /** A warning that needs acting on (tired, fuel low, soft tyres, a worn engine), with the nearest place that helps. */
@@ -5226,38 +5227,81 @@ export function GameMap({
 
       /** At a ticket office or check-in desk's door: the button to go in. */
       let lastTicketCheck = 0;
+      // At a station (owner, 19 Oct 2026: "the buy ticket for train… not showing a scene or anything when I got to the
+      // ticket location"): the button shows as soon as the server counts you at the station, with how far the office
+      // door is, and a "TICKETS" sign hangs over the door so you can see where it is.
+      let ticketSign: { id: number; entity: import("@/game/ThreeMapLayer").MapEntity } | null = null;
+      function showTicketSign(st: TransitStop | null, door: LngLat | null) {
+        if (ticketSign && (!st || ticketSign.id !== st.id)) {
+          layer.remove(ticketSign.entity);
+          ticketSign = null;
+        }
+        if (!st || !door) return;
+        if (ticketSign) {
+          ticketSign.entity.lng = door.lng;
+          ticketSign.entity.lat = door.lat;
+          return;
+        }
+        const group = models.makeSignPost();
+        const plate = layer.billboard(models.makeNameplate(st.kind === "plane" ? "🛫 CHECK-IN" : "🎫 TICKETS", "#1E9E62"));
+        plate.position.y = 5;
+        plate.scale.setScalar(1.6);
+        group.add(plate);
+        ticketSign = { id: st.id, entity: layer.add({ object: group, lng: door.lng, lat: door.lat }) };
+      }
       function ticketTick(now: number) {
         if (now - lastTicketCheck < 500) return;
         lastTicketCheck = now;
-        let here: { kind: "train" | "plane"; name: string } | null = null;
+        let here: { kind: "train" | "plane"; name: string; away: number } | null = null;
+        let station: TransitStop | null = null;
+        let at: LngLat | null = null;
         if (!ride && !visit && !inWorld && network && near) {
           for (const st of near.here) {
             if (st.kind !== "train" && st.kind !== "plane") continue;
             const { door } = ticketDoor(st);
-            if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]) <= TICKET_AT_M) {
-              here = { kind: st.kind, name: st.kind === "plane" ? st.name : `${st.name} station` };
-              if (!boards.has(st.id)) {
-                boards.set(st.id, []);
-                const id = st.id;
-                void supabase.rpc("transit_destinations", { p_stop: id }).then(({ data }) => {
-                  boards.set(id, ((data ?? []) as { name: string }[]).map((d) => d.name));
-                });
-              }
-              break;
+            const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]);
+            here = { kind: st.kind, name: st.kind === "plane" ? st.name : `${st.name} station`, away: away <= TICKET_AT_M ? 0 : Math.round(away / 10) * 10 };
+            station = st;
+            at = door;
+            if (!boards.has(st.id)) {
+              boards.set(st.id, []);
+              const id = st.id;
+              void supabase.rpc("transit_destinations", { p_stop: id }).then(({ data }) => {
+                boards.set(id, ((data ?? []) as { name: string }[]).map((d) => d.name));
+              });
             }
+            break;
           }
         }
+        showTicketSign(inWorld ? null : station, at);
         setHud((h) => (JSON.stringify(h.ticketHere) === JSON.stringify(here) ? h : { ...h, ticketHere: here }));
       }
 
-      /** The gold button: into the ticket office (with the trip chosen in the travel panel, if it's from here). */
+      /**
+       * The gold button: into the ticket office (with the trip chosen in the travel panel, if it's from here). A few
+       * steps from its door you walk straight in; further, the way to it is drawn.
+       */
       function enterTicket() {
-        const st = near?.here.find((s) => {
-          if (s.kind !== "train" && s.kind !== "plane") return false;
-          const { door } = ticketDoor(s);
-          return geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]) <= TICKET_AT_M;
-        });
-        if (st) openTicketPlace(st, pendingTicket?.from.id === st.id ? pendingTicket : null);
+        const st = near?.here.find((s) => s.kind === "train" || s.kind === "plane");
+        if (!st) return;
+        const { door } = ticketDoor(st);
+        const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]);
+        const quote = pendingTicket?.from.id === st.id ? pendingTicket : null;
+        if (away <= TICKET_AT_M) {
+          openTicketPlace(st, quote);
+          return;
+        }
+        const office = st.kind === "plane" ? `${st.name}'s check-in` : `${st.name} station's ticket office`;
+        if (away <= 110 && !ride && !visit) {
+          // Walk over to the door and in (the server is told where you are first: it checks you're at the desk).
+          traveller.pos = { lng: door.lng, lat: door.lat };
+          traveller.v = 0;
+          if (network) onRoad = roads.snapToNetwork(network, traveller.pos, traveller.heading);
+          void savePosition(true).then(() => openTicketPlace(st, quote));
+          return;
+        }
+        void planDirections({ lng: door.lng, lat: door.lat }, office);
+        say(`${office[0].toUpperCase()}${office.slice(1)} is ${geo.formatDistance(away)} away: follow the line to the green sign.`, true);
       }
 
       /** From the travel panel: go in if at the door, else the way to it. */
@@ -7953,6 +7997,7 @@ export function GameMap({
               className={`${here} gap-1.5`}
             >
               {hud.ticketHere.kind === "plane" ? "🛫 Check in" : "🎫 Ticket office"}
+              {hud.ticketHere.away > 0 && <span className="text-xs font-semibold text-ink/70">· {hud.ticketHere.away} m</span>}
             </button>
           )}
           {hud.repairHere && (

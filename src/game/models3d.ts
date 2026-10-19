@@ -191,6 +191,14 @@ export function makeSpinItem(icon: string, colour: string) {
   };
 }
 
+/** A post by a door with a panel on top, for a sign (a nameplate the map turns to the camera) to hang over. */
+export function makeSignPost(colour = "#1E9E62") {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.CylinderGeometry(0.08, 0.08, 4, 6), "#5B6475", 0, 2, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.7, 0.5, 0.08), colour, 0, 4.1, 0));
+  return g;
+}
+
 /** A red jerry can with its handle and spout (about 45 cm tall), held by the handle. */
 export function makeJerryCan() {
   const g = new THREE.Group();

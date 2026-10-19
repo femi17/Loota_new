@@ -83,12 +83,14 @@ try {
   check("…Play", await clickWhenThere("Play · win 25"));
   await wait(800);
   check("…the board: 64 squares, the white queen on g4", await page.evaluate(() => document.querySelectorAll("[data-square]").length === 64 && !!document.querySelector('[data-square="g4"][aria-label*="white q"]')));
+  const clock = await page.evaluate(() => document.querySelector('[aria-label="Time left"]')?.textContent ?? null);
+  check("…the clock running: 30 s", /(29|30) s left/.test(clock ?? ""), clock);
   await shot("1-chess");
   await click('[data-square="g4"]');
   await wait(300);
   let c0 = await coins();
   await click('[data-square="c8"]');
-  const mate = await until(/Checkmate!/);
+  const mate = await until(/You sabi this game/);
   check("Qc8: checkmate, 25 coins", /Checkmate! Qc8#/.test(mate ?? "") && (await coins()) === c0 + 25, mate?.slice(0, 160));
   await shot("2-mate");
   await clickWhenThere("Go on");
@@ -109,7 +111,7 @@ try {
   let ready = false;
   for (let i = 0; i < 20 && !ready; i++) {
     await wait(300);
-    ready = await page.evaluate(() => [...document.querySelectorAll("[data-cup-slot]")].every((b) => !b.disabled));
+    ready = await page.evaluate(() => { const cups = [...document.querySelectorAll("[data-cup-slot]")]; return cups.length === 3 && cups.every((b) => !b.disabled); });
   }
   check("…the shuffle ends: pick a cup", ready);
   c0 = await coins();
@@ -143,6 +145,19 @@ try {
   await clickWhenThere("Go on");
   await wait(1500);
 
+  // ---- Too slow: a chess game with a short clock, left alone until the time runs out
+  await plant("seller", "Pa Adewale", { type: "chess", fen: "4k3/4pp2/8/6P1/6Q1/8/5PPP/6K1 w - - 0 1", answer: "g4c8", san: "Qc8#", seconds: 8 });
+  const slow = await rideUntilStopped();
+  check("another chess player", /Mate in one/i.test(slow ?? ""), slow);
+  await clickWhenThere("Play · win 25");
+  c0 = await coins();
+  const timeUp = await until(/It was Qc8#/, 40);
+  check("left alone: time up, too slow, nothing paid", /Time! Too slow, my friend. It was Qc8#/.test(timeUp ?? "") && (await coins()) === c0, timeUp?.slice(0, 160));
+  check("…the board locked", await page.evaluate(() => { document.querySelector('[data-square="g4"]')?.click(); document.querySelector('[data-square="c8"]')?.click(); return !document.querySelector('[data-square="c8"][aria-label*="white"]'); }));
+  await shot("6b-time-up");
+  await clickWhenThere("Go on");
+  await wait(1500);
+
   // ---- A traveller, helped, offers a game: lost on purpose
   await plant("traveller", "Blessing", { type: "cups", start: 0, swaps: [[0, 1], [1, 2], [0, 1], [0, 2], [1, 2]], ms: 520, answer: "1" });
   const tr = await rideUntilStopped();
@@ -154,7 +169,7 @@ try {
   ready = false;
   for (let i = 0; i < 30 && !ready; i++) {
     await wait(300);
-    ready = await page.evaluate(() => [...document.querySelectorAll("[data-cup-slot]")].every((b) => !b.disabled));
+    ready = await page.evaluate(() => { const cups = [...document.querySelectorAll("[data-cup-slot]")]; return cups.length === 3 && cups.every((b) => !b.disabled); });
   }
   c0 = await coins();
   await click('[data-cup-slot="2"]'); // not where it went (the middle)

@@ -8,16 +8,49 @@ import { useEffect, useRef, useState } from "react";
  * server (road_event_play); `result` is what the server said.
  */
 export type RoadGame =
-  | { type: "chess"; fen: string }
-  | { type: "cups"; start: number; swaps: [number, number][]; ms: number }
-  | { type: "pairs"; cards: string[]; misses: number };
+  | { type: "chess"; fen: string; seconds?: number }
+  | { type: "cups"; start: number; swaps: [number, number][]; ms: number; seconds?: number }
+  | { type: "pairs"; cards: string[]; misses: number; seconds?: number };
 
-export type RoadGameResult = { won: boolean; reward: number; answer: string | null; san: string | null };
+/** `late`: the move came after the clock ran out (owner: "some form of urgency"). */
+export type RoadGameResult = { won: boolean; reward: number; answer: string | null; san: string | null; late?: boolean };
 
-export function RoadGameBoard({ game, result, onMove }: { game: RoadGame; result: RoadGameResult | null; onMove: (move: string) => void }) {
-  if (game.type === "chess") return <ChessGame fen={game.fen} result={result} onMove={onMove} />;
-  if (game.type === "cups") return <CupsGame start={game.start} swaps={game.swaps} ms={game.ms} result={result} onMove={onMove} />;
-  return <PairsGame cards={game.cards} misses={game.misses} result={result} onMove={onMove} />;
+/** The seconds on the clock once the game is ready to play (the cups: once the shuffle ends). */
+export const gameSeconds = (g: RoadGame) => g.seconds ?? (g.type === "chess" ? 30 : g.type === "pairs" ? 50 : 6);
+/** What's sent when the time runs out: nothing that wins. */
+export const timeoutMove = (g: RoadGame) => (g.type === "pairs" ? "[]" : "timeout");
+
+/**
+ * The game. `onReady`: it can be played now (the clock starts): straight away for chess and pairs, when the shuffle
+ * ends for the cups. `locked`: the time is up.
+ */
+export function RoadGameBoard({
+  game,
+  result,
+  locked = false,
+  onReady,
+  onMove,
+}: {
+  game: RoadGame;
+  result: RoadGameResult | null;
+  locked?: boolean;
+  onReady?: () => void;
+  onMove: (move: string) => void;
+}) {
+  if (game.type === "chess") return <ChessGame fen={game.fen} result={result} locked={locked} onReady={onReady} onMove={onMove} />;
+  if (game.type === "cups") return <CupsGame start={game.start} swaps={game.swaps} ms={game.ms} result={result} locked={locked} onReady={onReady} onMove={onMove} />;
+  return <PairsGame cards={game.cards} misses={game.misses} result={result} locked={locked} onReady={onReady} onMove={onMove} />;
+}
+
+/** Tell the scene once, when the game can be played. */
+function useReady(onReady: (() => void) | undefined, ready = true) {
+  const told = useRef(false);
+  useEffect(() => {
+    if (ready && !told.current) {
+      told.current = true;
+      onReady?.();
+    }
+  }, [ready, onReady]);
 }
 
 /** What each game is, in a few words (the person who offers it says it). */
@@ -49,7 +82,20 @@ function boardOf(fen: string): (string | null)[][] {
     });
 }
 
-function ChessGame({ fen, result, onMove }: { fen: string; result: RoadGameResult | null; onMove: (move: string) => void }) {
+function ChessGame({
+  fen,
+  result,
+  locked,
+  onReady,
+  onMove,
+}: {
+  fen: string;
+  result: RoadGameResult | null;
+  locked: boolean;
+  onReady?: () => void;
+  onMove: (move: string) => void;
+}) {
+  useReady(onReady);
   const [board, setBoard] = useState(() => boardOf(fen));
   const [from, setFrom] = useState<string | null>(null);
   const [played, setPlayed] = useState<string | null>(null);
@@ -57,7 +103,7 @@ function ChessGame({ fen, result, onMove }: { fen: string; result: RoadGameResul
   const isWhite = (p: string | null) => !!p && p === p.toUpperCase();
 
   function tap(s: string) {
-    if (played) return;
+    if (played || locked) return;
     if (isWhite(at(s))) {
       setFrom(s === from ? null : s);
       return;
@@ -114,7 +160,9 @@ function ChessGame({ fen, result, onMove }: { fen: string; result: RoadGameResul
           }),
         )}
       </div>
-      <p className="text-[11px] text-muted">{played ? (result ? (result.won ? `✓ ${result.san}` : `The mate was ${result.san}`) : "…") : from ? `${from}: now tap where it goes` : "Tap a white piece, then where it goes"}</p>
+      <p className="text-[11px] text-muted">
+        {result ? (result.won ? `✓ ${result.san}` : `The mate was ${result.san}`) : locked ? "Time!" : played ? "…" : from ? `${from}: now tap where it goes` : "Tap a white piece, then where it goes"}
+      </p>
     </div>
   );
 }
@@ -126,12 +174,16 @@ function CupsGame({
   swaps,
   ms,
   result,
+  locked,
+  onReady,
   onMove,
 }: {
   start: number;
   swaps: [number, number][];
   ms: number;
   result: RoadGameResult | null;
+  locked: boolean;
+  onReady?: () => void;
   onMove: (move: string) => void;
 }) {
   // slotOf[cup] = where that cup stands (0 left, 1 middle, 2 right); the coin is under cup `start`.
@@ -139,6 +191,7 @@ function CupsGame({
   const [phase, setPhase] = useState<"show" | "shuffle" | "pick" | "picked">("show");
   const [picked, setPicked] = useState<number | null>(null);
   const timer = useRef(0);
+  useReady(onReady, phase === "pick");
   useEffect(() => {
     let i = -1;
     const step = () => {
@@ -179,7 +232,7 @@ function CupsGame({
               key={cup}
               type="button"
               data-cup-slot={slot}
-              disabled={phase !== "pick"}
+              disabled={phase !== "pick" || locked}
               onClick={() => {
                 setPicked(slot);
                 setPhase("picked");
@@ -202,7 +255,21 @@ function CupsGame({
         })}
       </div>
       <p className="text-[11px] text-muted">
-        {phase === "show" ? "Watch the coin…" : phase === "shuffle" ? "Follow it!" : phase === "pick" ? "Which cup? Tap it" : result ? (result.won ? "✓ Found it" : "Not that one") : "…"}
+        {phase === "show"
+          ? "Watch the coin…"
+          : phase === "shuffle"
+            ? "Follow it!"
+            : result
+              ? result.won
+                ? "✓ Found it"
+                : result.late
+                  ? "Time!"
+                  : "Not that one"
+              : locked
+                ? "Time!"
+                : phase === "pick"
+                  ? "Which cup? Tap it, quick!"
+                  : "…"}
       </p>
     </div>
   );
@@ -210,7 +277,22 @@ function CupsGame({
 
 // ---- Pairs -------------------------------------------------------------------------------------------------------
 
-function PairsGame({ cards, misses, result, onMove }: { cards: string[]; misses: number; result: RoadGameResult | null; onMove: (move: string) => void }) {
+function PairsGame({
+  cards,
+  misses,
+  result,
+  locked,
+  onReady,
+  onMove,
+}: {
+  cards: string[];
+  misses: number;
+  result: RoadGameResult | null;
+  locked: boolean;
+  onReady?: () => void;
+  onMove: (move: string) => void;
+}) {
+  useReady(onReady);
   const [flips, setFlips] = useState<number[]>([]);
   const [open, setOpen] = useState<number[]>([]);
   const [matched, setMatched] = useState<Set<number>>(new Set());
@@ -218,7 +300,7 @@ function PairsGame({ cards, misses, result, onMove }: { cards: string[]; misses:
   const [over, setOver] = useState(false);
 
   function flip(i: number) {
-    if (over || open.length >= 2 || open.includes(i) || matched.has(i)) return;
+    if (over || locked || open.length >= 2 || open.includes(i) || matched.has(i)) return;
     const nowOpen = [...open, i];
     const log = [...flips, i];
     setOpen(nowOpen);

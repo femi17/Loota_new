@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
 import { keeperLook, keeperWrap, lookForId, type AvatarLook } from "@/lib/avatar";
 import { PAPER_FINE, PAPER_NAME, type AddonId, type VehicleKind } from "@/game/economy";
-import { RoadGameBoard, gameIntro, type RoadGame, type RoadGameResult } from "./RoadGames";
+import { RoadGameBoard, gameIntro, gameSeconds, timeoutMove, type RoadGame, type RoadGameResult } from "./RoadGames";
 
 /** Something on the road during a hunt (road_event_roll): the question comes without its answer. */
 export type RoadEvent = {
@@ -39,6 +39,8 @@ const RELIC_GIFT: Record<string, string> = { jerry_can: "a Jerry Can relic: a fu
 export type RoadEventActions = {
   /** checkpoint: a choice, or −2 to pay the fine; traveller: 1 to help, 0 not; seller: a choice, or −1 no thanks. */
   answer: (event: RoadEvent, choice: number) => Promise<RoadEventResult | null>;
+  /** Play tapped: the server starts the game's clock. */
+  start: (event: RoadEvent) => Promise<boolean>;
   /** Play the game: one move (a chess move like "g4c8", a cup 0–2, the cards turned), judged by the server. */
   play: (event: RoadEvent, move: string) => Promise<RoadGameResult | null>;
   /** The scene is over: the hunter may move again (unless held). */
@@ -71,6 +73,29 @@ export function RoadEventScene({
   const [game, setGame] = useState<"offered" | "playing" | "over" | null>(event.kind === "seller" && event.game ? "offered" : null);
   const [gameResult, setGameResult] = useState<RoadGameResult | null>(null);
   const reward = event.kind === "seller" ? 25 : 20;
+  // The clock (owner: "some form of urgency"): it runs once the game can be played; at nought the board locks.
+  const [deadline, setDeadline] = useState<number | null>(null);
+  const [left, setLeft] = useState<number | null>(null);
+  const [timeUp, setTimeUp] = useState(false);
+  const ready = useCallback(() => {
+    if (event.game) setDeadline(Date.now() + gameSeconds(event.game) * 1000);
+  }, [event.game]);
+  useEffect(() => {
+    if (deadline === null || game !== "playing") return;
+    const tick = () => {
+      const s = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setLeft(s);
+      if (s === 0 && !timeUp) {
+        setTimeUp(true);
+        void play(timeoutMove(event.game!), true);
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 200);
+    return () => window.clearInterval(timer);
+    // play is stable enough for this: it's only called once, at nought
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deadline, game, timeUp]);
   const [lines, setLines] = useState<SceneLine[]>(() => {
     if (event.kind === "checkpoint") {
       const missing = event.missing ?? [];
@@ -149,7 +174,11 @@ export function RoadEventScene({
     else say(mine, { who: "them", text: event.kind === "traveller" ? "No wahala. Safe journey." : "Okay o. Another time." });
   }
 
-  async function play(move: string) {
+  const sent = useRef(false); // one move only (a move and the clock at nought can come together)
+  /** `outOfTime`: sent because the clock reached nought (said as such, whatever the server makes of it). */
+  async function play(move: string, outOfTime = false) {
+    if (sent.current) return;
+    sent.current = true;
     setBusy(true);
     const r = await actions.play(event, move);
     setBusy(false);
@@ -159,13 +188,19 @@ export function RoadEventScene({
       say({ who: "them", text: "Eh, never mind. Go on." });
       return;
     }
+    if (outOfTime) r.late = true;
     setGameResult(r);
     const g = event.game!;
     const cup = ["left", "middle", "right"][Number(r.answer ?? 0)] ?? "other";
     say({
       who: "them",
-      text:
-        g.type === "chess"
+      text: r.late
+        ? g.type === "chess"
+          ? `Time! Too slow, my friend. It was ${r.san}.`
+          : g.type === "cups"
+            ? `Time! Too slow. It was under the ${cup} cup.`
+            : "Time! Too slow: the pairs beat you this time."
+        : g.type === "chess"
           ? r.won
             ? `Checkmate! ${r.san}. You sabi this game o. Take your ${r.reward} coins.`
             : `Ah no, that's not mate. It was ${r.san}: look at the board.`
@@ -182,7 +217,17 @@ export function RoadEventScene({
   let choices: SceneChoice[];
   if (game === "offered")
     choices = [
-      { label: `Play · win ${reward}`, primary: true, onPick: () => setGame("playing") },
+      {
+        label: `Play · win ${reward}`,
+        primary: true,
+        onPick: () => {
+          setBusy(true);
+          void actions.start(event).then(() => {
+            setBusy(false);
+            setGame("playing");
+          });
+        },
+      },
       event.kind === "seller"
         ? { label: "No thanks", onPick: () => void answer(-1, "No thanks, I'm in a hurry.") }
         : { label: "Go on", onPick: onClose },
@@ -236,7 +281,12 @@ export function RoadEventScene({
       choices={choices}
       busy={busy}
       world={world}
-      game={event.game && (game === "playing" || game === "over") ? <RoadGameBoard game={event.game} result={gameResult} onMove={(m) => void play(m)} /> : null}
+      game={
+        event.game && (game === "playing" || game === "over") ? (
+          <RoadGameBoard game={event.game} result={gameResult} locked={timeUp} onReady={ready} onMove={(m) => void play(m)} />
+        ) : null
+      }
+      countdown={game === "playing" && left !== null && event.game ? { left, total: gameSeconds(event.game) } : null}
       leaveLabel={vehicle ? "Ride on" : "Walk on"}
       onClose={onClose}
     />

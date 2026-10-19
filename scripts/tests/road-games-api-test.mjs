@@ -24,7 +24,11 @@ try {
   await c.auth.signInWithPassword({ email, password });
   const coins = async () => (await admin.from("profiles").select("coins").eq("id", id).single()).data.coins;
   const plant = async (kind, game, npc = "Test") => (await admin.from("road_events").insert({ user_id: id, kind, npc, game }).select("id").single()).data.id;
-  const play = async (ev, move) => (await c.rpc("road_event_play", { p_event: ev, p_move: move })).data;
+  // Play tapped (the clock starts), then the move.
+  const play = async (ev, move, tap = true) => {
+    if (tap) await c.rpc("road_event_game_start", { p_event: ev });
+    return (await c.rpc("road_event_play", { p_event: ev, p_move: move })).data;
+  };
 
   // ---- The game the player is sent has no answer
   const cups = { type: "cups", start: 0, swaps: [[0, 1], [1, 2]], ms: 520, answer: "2" };
@@ -80,6 +84,23 @@ try {
   check("…and only once", (await play(ev, "2"))?.reason === "gone");
   const tr = (await admin.from("road_events").select("outcome").eq("id", ev).single()).data;
   check("…the traveller still counted as helped", tr.outcome === "helped");
+
+  // ---- Against the clock
+  ev = await plant("seller", chess, "Baba Sola");
+  const st = (await c.rpc("road_event_game_start", { p_event: ev })).data;
+  check("Play starts the clock: 30 seconds for mate in one", st?.ok && Math.round(st.seconds) === 30, JSON.stringify(st));
+  await admin.from("road_events").update({ game_started_at: new Date(Date.now() - 40_000).toISOString() }).eq("id", ev);
+  c0 = await coins();
+  r = await play(ev, "g4c8", false);
+  check("the mate, but 40 s after Play: too late, lost", r?.won === false && r.late === true && (await coins()) === c0, JSON.stringify(r));
+  ev = await plant("seller", chess, "Baba Sola");
+  r = await play(ev, "g4c8", false);
+  check("a move without tapping Play: lost", r?.won === false && r.late === true);
+  ev = await plant("seller", { ...cups, seconds: 6 });
+  const cs = (await c.rpc("road_event_game_start", { p_event: ev })).data;
+  check("the cups: 6 s to pick, after the coin shown and the shuffle", Math.abs(cs.seconds - (6 + 1.5 + 2 * 0.52)) < 0.01, String(cs.seconds));
+  ev = await plant("seller", { type: "pairs", cards, misses: 6, seconds: 50 });
+  check("pairs: 50 s", Math.round((await c.rpc("road_event_game_start", { p_event: ev })).data.seconds) === 50);
 
   // ---- The games dealt are sound
   let cupsOk = true;

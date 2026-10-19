@@ -6498,13 +6498,17 @@ export function GameMap({
           }
           return r;
         },
+        start: async (e) => {
+          const { data } = await supabase.rpc("road_event_game_start", { p_event: e.id });
+          return !!(data as { ok: boolean } | null)?.ok;
+        },
         play: async (e, move) => {
           const { data } = await supabase.rpc("road_event_play", { p_event: e.id, p_move: move });
           const r = data as ({ ok: boolean; balance?: number } & RoadGameResult) | null;
           if (disposed || !r?.ok) return null;
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
-          return { won: r.won, reward: r.reward, answer: r.answer, san: r.san };
+          return { won: r.won, reward: r.reward, answer: r.answer, san: r.san, late: r.late };
         },
         close: () => roadDone(),
       });

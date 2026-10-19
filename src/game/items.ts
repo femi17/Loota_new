@@ -7,7 +7,7 @@ export type RelicId = "rain_charm" | "shield" | "radar" | "fast_pass" | "second_
 export const RELICS: Record<RelicId, { name: string; colour: string; effect: string; rarity: "Common" | "Rare" | "Legendary" }> = {
   shield: { name: "Shield", colour: "#3DD68C", effect: "Blocks one weather or traffic effect.", rarity: "Common" },
   second_wind: { name: "Second Wind", colour: "#FF8A3D", effect: "Restores 50 energy.", rarity: "Common" },
-  jerry_can: { name: "Jerry Can", colour: "#E5484D", effect: "Restores 30% fuel.", rarity: "Common" },
+  jerry_can: { name: "Jerry Can", colour: "#E5484D", effect: "A full jerry can: a motorbike or car's tank to 65%, even one that ran dry at the roadside (stand beside it).", rarity: "Common" },
   rain_charm: { name: "Rain Charm", colour: "#8FC7E8", effect: "Rain over 5 km for 10 minutes. Slows walkers and bikes.", rarity: "Common" },
   radar: { name: "Radar", colour: "#F4B41A", effect: "Points to the nearest relic for 5 minutes.", rarity: "Rare" },
   fast_pass: { name: "Fast Pass", colour: "#C3A6FF", effect: "Skip the wait for one bus or train, or a plane's check-in queue.", rarity: "Rare" },

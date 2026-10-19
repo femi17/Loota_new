@@ -119,6 +119,8 @@ type Hud = {
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
   keg: { fuel: number; usesLeft: number } | null;
+  /** Tyre kits (pump and patches) the player has. */
+  tyreKits: number;
   /** The Djinn's Wager, while one is on (design doc 7.6): where the player is in it, and whether they've seen the summons. */
   djinn: {
     stage: DjinnStage;
@@ -165,7 +167,7 @@ type Hud = {
 };
 
 /** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
-type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic";
+type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic" | "jerry_relic" | "tyre_kit";
 
 /** A direction and rough distance (bearing: compass degrees). */
 type Pointer = { bearing: number; metres: number };
@@ -313,6 +315,8 @@ export function GameMap({
     eat: () => void;
     /** Use a relic from the bag; resolves to a message for the bag. */
     useRelic: (id: string) => Promise<string>;
+    /** Use a small item (the tyre kit). */
+    useItem: (item: "tyre_kit") => Promise<string>;
     /** Use a Wonder from the bag (`to`: where the Carpet of Kings flies); resolves to a message. */
     useWonder: (id: string, to?: LngLat) => Promise<string>;
     /** Attack the dome the hunter is standing at the edge of. */
@@ -370,6 +374,7 @@ export function GameMap({
     advice: null,
     care: null,
     keg: null,
+    tyreKits: 0,
     pickup: null,
     landmarkHere: null,
     clock: null,
@@ -1226,7 +1231,7 @@ export function GameMap({
         nextStrandGuide = now + 3000;
         const s = strandedVehicle();
         if (!s || trip || inWorld || ride || visit || now < strandGuideOff || traveller.mode !== "walk" || busy || !onRoad) return;
-        if (keg && keg.fuel > 0) {
+        if (fuelInHand()) {
           if (metresTo(s) <= 25) return; // there: pour it in
           nextStrandGuide = now + 20000; // one try every 20 s if no road route is found
           adviseCarryBack();
@@ -1292,12 +1297,12 @@ export function GameMap({
       /** After filling a jerry can (or with one already full): the way back to the vehicle at the roadside. */
       function adviseCarryBack() {
         const s = strandedVehicle();
-        if (!s || !keg || keg.fuel <= 0) return;
+        if (!s || !fuelInHand()) return;
         const name = vehicleName(s.kind);
         const away = metresTo(s);
         adviceKey = "fuel";
         advicePlace = { name: `your ${name}`, lng: s.lng, lat: s.lat };
-        const text = `Carry the jerry can back to your ${name}, ${geo.formatDistance(away)} away, and pour it in (the gold button there).`;
+        const text = `Carry the ${keg && keg.fuel > 0 ? "jerry can" : "Jerry Can relic"} back to your ${name}, ${geo.formatDistance(away)} away, and pour it in (the gold button there).`;
         setHud((h) => ({ ...h, advice: { key: "fuel", title: "Carry the fuel back", text, where: `Your ${name} · ${geo.formatDistance(away)}`, place: advicePlace } }));
         say(text, true);
         void planDirections({ lng: s.lng, lat: s.lat }, `your ${name}`, true);
@@ -1679,17 +1684,45 @@ export function GameMap({
         }
       }
 
-      // Relics count for the bag button (relics with uses left).
+      // Relics count for the bag button (relics with uses left); a Jerry Can relic and tyre kits, for the buttons here.
+      let jerryRelicId: string | null = null;
+      let tyreKits = 0;
       function countRelics() {
         void supabase
           .from("player_relics")
-          .select("expires_at")
+          .select("id, relic, expires_at")
           .gt("charges", 0)
           .then(({ data }) => {
             if (disposed || !data) return;
             const now = Date.now();
-            setHud((h) => ({ ...h, relics: data.filter((r) => new Date(r.expires_at).getTime() > now).length }));
+            const live = data.filter((r) => new Date(r.expires_at).getTime() > now);
+            jerryRelicId = live.find((r) => r.relic === "jerry_can")?.id ?? null;
+            setHud((h) => ({ ...h, relics: live.length }));
+            computeActions();
           });
+        void supabase
+          .from("player_items")
+          .select("item, qty")
+          .then(({ data }) => {
+            if (disposed || !data) return;
+            tyreKits = data.find((i) => i.item === "tyre_kit")?.qty ?? 0;
+            setHud((h) => (h.tyreKits === tyreKits ? h : { ...h, tyreKits }));
+            computeActions();
+          });
+      }
+      /** Fuel to carry to a vehicle at the roadside: a jerry can with fuel in it, or a Jerry Can relic. */
+      const fuelInHand = () => (!!keg && keg.fuel > 0) || !!jerryRelicId;
+      async function applyItem(item: "tyre_kit"): Promise<string> {
+        const { data } = await supabase.rpc("use_item", { p_item: item });
+        const r = data as { ok: boolean; reason?: string; flat?: boolean; left?: number } | null;
+        if (disposed) return "";
+        countRelics();
+        if (!r?.ok)
+          return r?.reason === "full" ? "Your tyres are fine: keep the kit for a flat." : r?.reason === "no_vehicle" ? "The tyre kit is for your bicycle." : "No tyre kit left.";
+        await refreshVehicles();
+        warned.tyre = 100;
+        clearAdvice("tyre");
+        return r.flat ? "Flat patched and pumped with your tyre kit: good as new." : "Tyres pumped with your tyre kit.";
       }
       countRelics();
 
@@ -1723,6 +1756,7 @@ export function GameMap({
           void act("eat");
         },
         useRelic: (id) => useRelic(id),
+        useItem: (item) => applyItem(item),
         useWonder: (id, to) => useWonder(id, to),
         attackDome: () => void attackDome(),
         turn(dir) {
@@ -1939,6 +1973,8 @@ export function GameMap({
               passive: "Shields work by themselves: the next rain or traffic effect that would slow you uses one up instead.",
               not_yet: "Fast Pass is for bus waits and check-in queues, which are coming soon. Keep it until then.",
               no_vehicle: "Jerry Can fills your own motorbike or car. Get on it first (Vehicles), then use the can.",
+              far: "Walk to your vehicle at the roadside first (the way is drawn), then use the Jerry Can beside it.",
+              full: "Your tank has 65% or more: a jerry can won't fill it further. Keep it for when it runs dry.",
               gone: "That relic has no uses left.",
               position: "Move a little first, then try again.",
               no_hunt: "The Lockdown Orb works during a live hunt you've joined: it locks the area of your current key.",
@@ -1957,6 +1993,18 @@ export function GameMap({
           return "Second Wind: +50 energy.";
         }
         if (r.relic === "jerry_can" && r.fuel != null) {
+          const kind = (r as { kind?: VehicleKind }).kind;
+          if ((r as { remounted?: boolean }).remounted && kind) {
+            // Back on the vehicle that stood at the roadside, and on the way you were going.
+            traveller.mode = kind;
+            saved = { ...traveller.pos };
+            await refreshVehicles();
+            afterModeChange();
+            clearAdvice("fuel");
+            warned.fuel = 100;
+            const onTo = resumeGoing();
+            return `Jerry Can poured: your ${vehicleName(kind)} has ${Math.round(r.fuel)}% fuel, and you're back on it${onTo ? `. On to ${onTo}` : ""}.`;
+          }
           onFuel(r.fuel);
           return `Jerry Can: your tank is at ${Math.round(r.fuel)}%.`;
         }
@@ -3386,7 +3434,15 @@ export function GameMap({
           // Pour it: by the vehicle at the roadside, or into the one ridden (a can takes a tank to 65% at most).
           const dry = atStranded ? stranded : motorRidden && motorRidden.fuel < KEG_CAPACITY ? motorRidden : pocketed((v) => v.fuel < KEG_CAPACITY && !v.broken_at);
           if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour can", label: `Pour the jerry can into your ${vehicleName(dry.kind)}` });
+          // Beside the vehicle that ran dry, with no fuel in a can but a Jerry Can relic: use that.
+          if (atStranded && stranded && !(keg && keg.fuel > 0) && jerryRelicId) {
+            list.push({ id: "jerry_relic", icon: "⛽", short: "Jerry Can", label: `Use your Jerry Can relic: your ${vehicleName(stranded.kind)}'s tank to ${KEG_CAPACITY}%` });
+          }
           const bike = riding?.kind === "bicycle" ? riding : null; // pumping is for the bicycle you're on
+          // A tyre kit fixes it anywhere (at a vulcanizer, the vulcanizer does).
+          if (bike && bike.tyre < 95 && tyreKits > 0 && !spotHere(["tyres", "fuel"])) {
+            list.push({ id: "tyre_kit", icon: "🛠", short: bike.tyre <= 0 ? "Tyre kit: flat" : "Tyre kit", label: "Fix your tyres with your tyre kit" });
+          }
           if (spotHere(["tyres", "fuel"]) && bike && bike.tyre < 95) {
             list.push(bike.tyre <= 0 ? { id: "pump", icon: "🛞", short: "Fix flat · 20", label: "Fix the flat · 20 coins" } : { id: "pump", icon: "🛞", short: "Pump · 5", label: "Pump the tyres · 5 coins" });
           }
@@ -3416,6 +3472,18 @@ export function GameMap({
 
       async function act(id: LimitAction, direct = false): Promise<boolean> {
         if (busy) return false;
+        if (id === "jerry_relic" || id === "tyre_kit") {
+          setBusy(true);
+          try {
+            if (id === "jerry_relic" && jerryRelicId) await savePosition(); // the server checks you're beside it
+            const said = id === "jerry_relic" ? ((jerryRelicId && (await actions.current?.useRelic(jerryRelicId))) ?? "") : await applyItem("tyre_kit");
+            if (said) say(said, true);
+            return true;
+          } finally {
+            setBusy(false);
+            computeActions();
+          }
+        }
         if (id === "pump" && !direct) {
           // The vulcanizer (PumpScene): soft tyres pumped (8 s), or a flat patched and pumped (20 s).
           const spot = spotHere(["tyres", "fuel"]);
@@ -3463,7 +3531,7 @@ export function GameMap({
         setBusy(true);
         try {
           await savePosition(); // the server checks where the player is
-          const rpc: Record<Exclude<LimitAction, "eat" | "refuel">, string> = {
+          const rpc: Record<Exclude<LimitAction, "eat" | "refuel" | "jerry_relic" | "tyre_kit">, string> = {
             rest: "start_rest",
             rest_here: "rest_here",
             buy_keg: "buy_keg",
@@ -3604,9 +3672,15 @@ export function GameMap({
         });
         const name = kind ? vehicleName(kind) : "vehicle";
         if (why === "fuel") {
-          if (keg && keg.fuel > 0) {
+          if (fuelInHand()) {
             if (trip) setGoing({ lng: trip.to.lng, lat: trip.to.lat, name: trip.name });
-            say(`Out of fuel! Your ${name} stands at the roadside. Pour in your jerry can (the gold button).`, true);
+            endDirections();
+            say(
+              keg && keg.fuel > 0
+                ? `Out of fuel! Your ${name} stands at the roadside. Pour in your jerry can (the gold button).`
+                : `Out of fuel! Your ${name} stands at the roadside. You have a Jerry Can relic: use it right here (the gold button).`,
+              true,
+            );
           } else {
             // On foot to the nearest petrol station, by road, with (or for) a jerry can, and back. The way the player was
             // going waits until then.
@@ -6417,6 +6491,10 @@ export function GameMap({
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           if (r.holdS) stuckUntil = Math.max(stuckUntil, performance.now() + r.holdS * 1000);
           if (r.hint) say(`🧭 Key ${r.hint.key}'s area: ${r.hint.direction} of where you met ${e.npc}, ${r.hint.band} away.`, true);
+          if (r.gift && r.gift.kind !== "coins") {
+            countRelics(); // a relic, a tyre kit
+            if (r.gift.kind === "keg") void loadCondition(); // a full jerry can
+          }
           return r;
         },
         play: async (e, move) => {
@@ -7507,6 +7585,8 @@ export function GameMap({
           leads={hud.leads}
           owned={bagOwned}
           keg={hud.keg}
+          tyreKits={hud.tyreKits}
+          onUseItem={(item) => actions.current?.useItem(item) ?? Promise.resolve("The map isn't ready yet.")}
           coins={hud.coins}
           onAddon={async (kind, id) => {
             await actions.current?.buyAddon(kind, id);

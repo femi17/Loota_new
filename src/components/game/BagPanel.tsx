@@ -55,6 +55,8 @@ export function BagPanel({
   owned,
   coins,
   keg,
+  tyreKits,
+  onUseItem,
   onAddon,
   onUse,
   onWonder,
@@ -66,6 +68,9 @@ export function BagPanel({
   coins: number;
   /** The jerry can, if the player has one (fuel in % of a tank). */
   keg: { fuel: number; usesLeft: number } | null;
+  /** Tyre kits (pump and patches): a bicycle's flat fixed anywhere. */
+  tyreKits: number;
+  onUseItem: (item: "tyre_kit") => Promise<string>;
   /** Buy a missing piece of gear or a licence. */
   onAddon: (kind: VehicleKind, id: AddonId) => Promise<void>;
   onUse: (id: string) => Promise<string>;
@@ -258,6 +263,29 @@ export function BagPanel({
                   </div>
                 )}
               </div>
+
+              {/* Tyre kits, from people you helped */}
+              {tyreKits > 0 && (
+                <div className="flex items-center gap-3 rounded-2xl bg-ink-2 p-3">
+                  <span className="flex size-10 items-center justify-center rounded-xl bg-gold/15 text-xl" aria-hidden="true">🛠</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold leading-tight">Tyre kit{tyreKits > 1 ? ` ×${tyreKits}` : ""}</p>
+                    <p className="text-xs text-muted">Pump and patches: your bicycle&apos;s tyres pumped, or a flat fixed, anywhere.</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={async () => {
+                      setBusy("tyre_kit");
+                      setMessage(await onUseItem("tyre_kit"));
+                      setBusy(null);
+                    }}
+                    className="h-10 shrink-0 rounded-xl bg-gold px-4 text-sm font-bold text-ink disabled:opacity-50"
+                  >
+                    {busy === "tyre_kit" ? "…" : "Use"}
+                  </button>
+                </div>
+              )}
 
               {owned.length > 0 && (
                 <p className="px-1 text-[11px] leading-relaxed text-muted">

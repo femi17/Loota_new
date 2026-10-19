@@ -25,7 +25,16 @@ export type RoadEventResult = {
   fine: number;
   reward: number;
   hint: { direction: string; band: string; key: number } | null;
+  /** A thank-you from a traveller (owner: "not limited to giving only coins"). */
+  gift?:
+    | { kind: "coins"; amount: number }
+    | { kind: "relic"; relic: "jerry_can" | "second_wind" | "shield" }
+    | { kind: "keg"; fresh: boolean }
+    | { kind: "item"; item: "tyre_kit" }
+    | null;
 };
+
+const RELIC_GIFT: Record<string, string> = { jerry_can: "a Jerry Can relic: a full can of fuel, for when your tank runs dry", second_wind: "a Second Wind relic: 50 energy when you're tired", shield: "a Shield relic: it keeps the rain and traffic off you once" };
 
 export type RoadEventActions = {
   /** checkpoint: a choice, or −2 to pay the fine; traveller: 1 to help, 0 not; seller: a choice, or −1 no thanks. */
@@ -114,11 +123,25 @@ export function RoadEventScene({
     else if (r.outcome === "won") say(mine, { who: "them", text: "Correct! You're sharp o. Take your 25 coins." });
     else if (r.outcome === "lost") say(mine, { who: "them", text: `Ah no! It was "${r.correct}". Better luck next time.` });
     else if (r.outcome === "helped") {
+      const g = r.gift ?? null;
+      const present = !g
+        ? ""
+        : g.kind === "relic"
+          ? ` Take this: ${RELIC_GIFT[g.relic]}. It's in your inventory.`
+          : g.kind === "keg"
+            ? g.fresh
+              ? " Take my jerry can, it's full of fuel: I don't need it any more."
+              : " Let me fill your jerry can for you: it's full now."
+            : g.kind === "item"
+              ? " Take this tyre kit, pump and patches: fix a flat yourself, anywhere."
+              : ` Take these ${g.amount} coins for your trouble.`;
       const thanks = r.hint
-        ? `Thank you, God bless you! Listen: I passed a crowd of treasure hunters to the ${r.hint.direction} of here, ${r.hint.band} away. That's where Key ${r.hint.key} is, I'm sure of it.`
-        : r.reward
-          ? `Thank you, God bless you! Take these ${r.reward} coins for your trouble.`
-          : "Thank you, God bless you!";
+        ? `Thank you, God bless you! Listen: I passed a crowd of treasure hunters to the ${r.hint.direction} of here, ${r.hint.band} away. That's where Key ${r.hint.key} is, I'm sure of it.${present}`
+        : present
+          ? `Thank you, God bless you!${present}`
+          : r.reward
+            ? `Thank you, God bless you! Take these ${r.reward} coins for your trouble.`
+            : "Thank you, God bless you!";
       // The traveller has a game to offer, for a little more.
       say(mine, { who: "them", text: event.game ? `${thanks} Before you go, a game? ${gameIntro(event.game)}: 20 coins if you do.` : `${thanks} Safe journey.` });
       if (event.game) setGame("offered");

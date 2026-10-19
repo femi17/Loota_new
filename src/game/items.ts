@@ -19,6 +19,17 @@ export const RELICS: Record<RelicId, { name: string; colour: string; effect: str
   },
 };
 
+/** Each relic's picture (the inventory, the strike when one is used on others). */
+export const RELIC_ICON: Record<RelicId, string> = {
+  shield: "🛡️",
+  second_wind: "💨",
+  jerry_can: "⛽",
+  rain_charm: "🌧️",
+  radar: "📡",
+  fast_pass: "🎟️",
+  lockdown_orb: "🔮",
+};
+
 /** How often each relic turns up (weights). */
 export const RELIC_WEIGHTS: [RelicId, number][] = [
   ["shield", 30],

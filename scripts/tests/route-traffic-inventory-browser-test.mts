@@ -142,15 +142,15 @@ try {
   const text = await page.evaluate((nl: string) => document.querySelector('[role="dialog"][aria-label="Inventory"]')?.textContent?.split(nl).join(" | ") ?? null, NL);
   check(
     "…gear and papers: the helmet ✓, the licence and registration to buy",
-    /Gear and papers/.test(text ?? "") && /✓ Helmet/.test(text ?? "") && /\+ Rider's licence · 150/.test(text ?? "") && /\+ Registration \(plate number\) · 200/.test(text ?? ""),
+    /Helmet✓ Got it/.test(text ?? "") && /Rider's licence\+ Buy · 150 coins/.test(text ?? "") && /Registration \(plate number\)\+ Buy · 200 coins/.test(text ?? ""),
     text?.slice(0, 300),
   );
   await page.screenshot({ path: `${OUT}/routejam-2-inventory.png` });
-  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][aria-label="Inventory"] button')].find((b) => b.textContent?.startsWith("+ Rider's licence"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"][aria-label="Inventory"] button')].find((b) => b.textContent?.includes("Rider's licence"))?.click());
   await wait(3000);
   const after = await page.evaluate(() => document.querySelector('[role="dialog"][aria-label="Inventory"]')?.textContent ?? "");
   const licence = (await admin.from("profiles").select("rider_licence, coins").eq("id", id).single()).data;
-  check("…the rider's licence bought there: ✓, 150 coins", licence.rider_licence === true && licence.coins === 350 && /✓ Rider's licence/.test(after), JSON.stringify(licence));
+  check("…the rider's licence bought there: ✓, 150 coins", licence.rider_licence === true && licence.coins === 350 && /Rider's licence✓ Got it/.test(after), JSON.stringify(licence));
   await page.screenshot({ path: `${OUT}/routejam-3-licence.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {

@@ -144,6 +144,53 @@ export function buildAvatar(look: AvatarLook): Avatar3D {
   return { root, rig, legL, legR, armL, armR, vehicles, jerrycan, wt: Math.random() * 6, amp: 0 };
 }
 
+/**
+ * A relic or Wonder flying off after it was used on other players (Mario Kart style): its picture on a glowing disc
+ * that always faces the camera, in a ring of its colour. `spin(dt, size)` turns it and shrinks it as it goes.
+ */
+export function makeSpinItem(icon: string, colour: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 128;
+  const g = canvas.getContext("2d")!;
+  const glow = g.createRadialGradient(64, 64, 10, 64, 64, 64);
+  glow.addColorStop(0, "#FFFFFF");
+  glow.addColorStop(0.55, colour);
+  glow.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = glow;
+  g.fillRect(0, 0, 128, 128);
+  g.font = "64px 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(icon, 64, 68);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
+  sprite.scale.set(4.5, 4.5, 1);
+  sprite.renderOrder = 10;
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(2.4, 0.18, 8, 32),
+    new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.9, depthTest: false }),
+  );
+  ring.renderOrder = 9;
+  const group = new THREE.Group();
+  group.add(sprite, ring);
+  return {
+    group,
+    spin(dt: number, size: number) {
+      sprite.material.rotation += dt * 14; // spinning, like a shell knocked off a kart
+      ring.rotation.x += dt * 9;
+      ring.rotation.y += dt * 6;
+      group.scale.setScalar(Math.max(0.001, size));
+    },
+    dispose() {
+      texture.dispose();
+      sprite.material.dispose();
+      ring.geometry.dispose();
+      (ring.material as THREE.Material).dispose();
+    },
+  };
+}
+
 /** A red jerry can with its handle and spout (about 45 cm tall), held by the handle. */
 export function makeJerryCan() {
   const g = new THREE.Group();

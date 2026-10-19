@@ -49,6 +49,15 @@ export const ADDONS: Record<VehicleKind, { id: AddonId; name: string; price: num
     { id: "insurance", name: "Insurance", price: 250, why: "The law for every car." },
   ],
 };
+/** Each piece of gear and papers' picture (the inventory). */
+export const PAPER_ICON: Record<AddonId, string> = {
+  light: "🔦",
+  helmet: "⛑️",
+  rider_licence: "🪪",
+  driver_licence: "🪪",
+  registration: "🔢",
+  insurance: "🛡️",
+};
 /** How a checkpoint officer names what's missing. */
 export const PAPER_NAME: Record<AddonId, string> = {
   light: "light",

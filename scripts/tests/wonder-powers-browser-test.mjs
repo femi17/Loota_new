@@ -86,7 +86,9 @@ try {
   await wait(20000);
 
   // ---- The bag: the Wonders, each with its button (the Coin works by itself)
-  await clickText("Bag");
+  await clickText("Inventory"); // the inventory: its Wonders tab
+  await wait(800);
+  await clickText("Wonders");
   await wait(1500);
   const bag = await text('[aria-label="Your Wonders"]');
   check("the bag shows the 3 Wonders", /Eye of the Djinn/.test(bag ?? "") && /Carpet of Kings/.test(bag ?? "") && /Coin/.test(bag ?? ""), bag);
@@ -135,7 +137,9 @@ try {
   check("thawed: the chip and the frost go", !(await text('[aria-label="Frozen by the Hourglass of Ages"]')) && !(await page.evaluate(() => !!document.querySelector(".loota-frost"))));
 
   // ---- The Carpet of Kings: where to?, then away to Accra
-  await clickText("Bag");
+  await clickText("Inventory"); // the inventory: its Wonders tab
+  await wait(800);
+  await clickText("Wonders");
   await wait(1500);
   await clickText("Fly");
   await wait(300);

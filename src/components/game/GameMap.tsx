@@ -6,7 +6,7 @@ import Link from "next/link";
 import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
-import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
+import { PICKUP_RADIUS_M, RELIC_ICON, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
 import { ADDONS, CALL_OUT_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
@@ -451,6 +451,8 @@ export function GameMap({
   const [trapFlash, setTrapFlash] = useState(false);
   /** News of a Wonder (everyone hears of every use); `flash`: a Cataclysm hit you. */
   const [wonderBanner, setWonderBanner] = useState<{ n: number; icon: string; text: string; hit: boolean; flash: boolean } | null>(null);
+  /** A strike on screen: the thunder flash, the bolt and the item spinning off (see strike() in the map's code). */
+  const [strikeFx, setStrikeFx] = useState<{ n: number; icon: string } | null>(null);
   /** The Carpet of Kings is ready: asking where to fly. */
   const [carpetFor, setCarpetFor] = useState<string | null>(null);
   /** A key just won: it flies into the bag (the time it set off, so each one animates). */
@@ -1865,6 +1867,7 @@ export function GameMap({
             }[r.reason ?? ""] ?? "Couldn't use that relic."
           );
         }
+        if (r.relic === "lockdown_orb" || r.relic === "rain_charm") strike(RELIC_ICON[r.relic], RELICS[r.relic].colour, true); // it reaches others
         if (r.relic === "lockdown_orb") {
           lastDomes = 0;
           return "Dome raised over your key area for 20 minutes! Hunters outside can't get in unless enough of them attack it together. The Orb now hides somewhere new.";
@@ -1901,6 +1904,7 @@ export function GameMap({
         radarSeen = { relic: p.relic ?? null, key: p.key ?? null };
       }
 
+      let effectsReady = false;
       async function checkEffects() {
         await savePosition();
         const { data } = await supabase.rpc("my_effects");
@@ -1912,9 +1916,12 @@ export function GameMap({
         weatherFactor = slowed ? 0.8 : 1;
         applySpeed();
         setHud((h) => ({ ...h, rain: rain.length ? { slowed } : null }));
+        const effectsChecked = effectsReady; // rain already falling when the game opened is no news
+        effectsReady = true;
         for (const e of rain) {
           if (effectsSeen.has(e.id)) continue;
           effectsSeen.add(e.id);
+          if (!e.mine && effectsChecked) strike(RELIC_ICON.rain_charm, RELICS.rain_charm.colour, false);
           const minutes = Math.max(1, Math.round((new Date(e.endsAt).getTime() - Date.now()) / 60000));
           const who = e.mine ? "Your Rain Charm" : "Someone's Rain Charm";
           if (e.outcome === "slowed") say(`${who}: rain here for ${minutes} more min. Walkers and bikes are 20% slower in it.`, true);
@@ -1943,10 +1950,13 @@ export function GameMap({
       let lastDomeWarning = 0;
       let lastSiegeHit = 0;
 
+      let domesReady = false; // domes already up when the game opened are no news
       async function refreshDomes() {
         const { data } = await supabase.rpc("domes_near");
         const list = (data ?? []) as Omit<Dome, "entity">[];
         if (disposed) return;
+        const wasReady = domesReady;
+        domesReady = true;
         if (container.current) container.current.dataset.domes = String(list.length); // for checking
         const seen = new Set(list.map((d) => d.id));
         for (const [id, d] of domes) {
@@ -1957,6 +1967,7 @@ export function GameMap({
         }
         for (const d of list) {
           const known = domes.get(d.id);
+          if (!known && !d.mine && wasReady) strike(RELIC_ICON.lockdown_orb, RELICS.lockdown_orb.colour, false);
           if (known) Object.assign(known, d);
           else domes.set(d.id, { ...d, entity: layer.add({ object: models.makeDome(d.radiusM), lng: d.lng, lat: d.lat, scale: 1 }) });
         }
@@ -5862,6 +5873,53 @@ export function GameMap({
       let bannerN = 0;
       let bannerTimer = 0;
 
+      // ---- A strike (owner, 19 Oct 2026: "think of Mario Kart"): a relic or Wonder used on other players. On screen a
+      // thunder flash, a bolt and the item spinning off; on the map the item spinning out from the player, up and away,
+      // smaller and smaller until it's gone. For the one who used it, and for everyone it reaches.
+      type Flight = { entity: import("@/game/ThreeMapLayer").MapEntity; item: ReturnType<typeof models.makeSpinItem>; start: number; from: LngLat; dir: { e: number; n: number } };
+      const flights: Flight[] = [];
+      const FLIGHT_MS = 2800;
+      let strikeTimer = 0;
+      let lastStrike = 0;
+      function strike(icon: string, colour: string, mine: boolean) {
+        const now = performance.now();
+        if (now - lastStrike < 1200) return; // one at a time
+        lastStrike = now;
+        setStrikeFx({ n: Date.now(), icon });
+        window.clearTimeout(strikeTimer);
+        strikeTimer = window.setTimeout(() => setStrikeFx(null), 1700);
+        const el = container.current;
+        if (el) {
+          el.classList.remove("loota-strike-shake");
+          void el.offsetWidth; // restart the shake
+          el.classList.add("loota-strike-shake");
+        }
+        // Yours flies off ahead of you; someone else's spins past you and away, off to one side.
+        const h = traveller.heading + (mine ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 0.9));
+        const item = models.makeSpinItem(icon, colour);
+        const from = { ...traveller.pos };
+        flights.push({ entity: layer.add({ object: item.group, lng: from.lng, lat: from.lat }), item, start: now, from, dir: { e: Math.sin(h), n: -Math.cos(h) } });
+      }
+      function flightsTick(now: number, dt: number) {
+        for (let i = flights.length - 1; i >= 0; i--) {
+          const f = flights[i];
+          const p = (now - f.start) / FLIGHT_MS;
+          if (p >= 1) {
+            layer.remove(f.entity);
+            f.item.dispose();
+            flights.splice(i, 1);
+            continue;
+          }
+          const d = 30 + 320 * p * p; // faster and faster, away
+          f.entity.lng = f.from.lng + (f.dir.e * d) / (111320 * Math.cos((f.from.lat * Math.PI) / 180));
+          f.entity.lat = f.from.lat + (f.dir.n * d) / 110574;
+          f.item.group.position.y = 4 + 30 * Math.sin(Math.PI * Math.min(1, p * 1.1)); // up in an arc
+          f.item.spin(dt, (p < 0.12 ? p / 0.12 : 1) * (1 - p) * 1.4);
+        }
+      }
+      /** Wonders that reach other players (the rest only help their holder). */
+      const STRIKES = new Set(["cataclysm_orb", "orb_of_oblivion", "orb_of_return", "eye_of_the_djinn", "hourglass_of_ages", "thiefs_hand", "djinns_bargain", "sandstorm_crown", "mirror_of_many"]);
+
       /** A banner for each piece of news, one after another. */
       function showWonder(wonder: string, text: string, hit: boolean) {
         banners.push({ icon: wonderOf(wonder).icon, text, hit, flash: hit && wonder === "cataclysm_orb" });
@@ -5903,10 +5961,15 @@ export function GameMap({
         }
         let moved = false;
         let keys = false;
+        let struck = false;
         for (const e of n.events) {
           // The holder heard when they used it; a Coin that saved you is told by what it saved you from.
           if (e.mine) continue;
           if (firstLook && Date.now() - at(e.at) > 120_000) continue; // old news
+          if (!struck && STRIKES.has(e.wonder)) {
+            struck = true;
+            strike(wonderOf(e.wonder).icon, "#9B5DE5", false);
+          }
           if (e.hitMe && MOVES.has(e.wonder)) moved = true;
           if (CHANGES_KEYS.has(e.wonder)) keys = true;
           const text = e.savedMe
@@ -5954,6 +6017,7 @@ export function GameMap({
         const wonder = r.wonder ?? "";
         const message = `${r.message ?? ""}${r.finished ? " That was the last key: you've finished the hunt!" : ""}`;
         showWonder(wonder, message, false);
+        if (STRIKES.has(wonder)) strike(wonderOf(wonder).icon, "#9B5DE5", true);
         if (wonder === "carpet_of_kings" && r.lng != null && r.lat != null) {
           pocketed(); // the carpet carries only you; your vehicle rides in your pocket
           snapReachM = 3000; // set down beside the place: onto its nearest road
@@ -6449,6 +6513,7 @@ export function GameMap({
           updateGuide();
         }
 
+        flightsTick(now, dt);
         // On foot while the vehicle stands at the roadside: the jerry can in hand.
         avatar.jerrycan.visible = traveller.mode === "walk" && !!keg && owned.some((v) => v.stranded_at);
         models.animateAvatar(
@@ -7349,6 +7414,7 @@ export function GameMap({
         <BagPanel
           leads={hud.leads}
           owned={bagOwned}
+          keg={hud.keg}
           coins={hud.coins}
           onAddon={async (kind, id) => {
             await actions.current?.buyAddon(kind, id);
@@ -7562,6 +7628,15 @@ export function GameMap({
       {hud.wonders.sand && <div className="loota-sand pointer-events-none absolute inset-0" aria-hidden="true" />}
       {hud.wonders.frozen && <div className="loota-frost pointer-events-none absolute inset-0" aria-hidden="true" />}
       {wonderBanner?.flash && <div key={`flash-${wonderBanner.n}`} className="loota-cataclysm-flash pointer-events-none absolute inset-0 z-30" aria-hidden="true" />}
+      {strikeFx && (
+        <div key={strikeFx.n} className="pointer-events-none absolute inset-0 z-30 overflow-hidden" aria-hidden="true" data-strike>
+          <div className="loota-strike-flash absolute inset-0" />
+          <svg className="loota-strike-bolt absolute left-1/2 top-0 h-[62%] -translate-x-1/2" viewBox="0 0 100 300" fill="none">
+            <path d="M62 0 L28 128 L54 128 L22 300 L84 104 L56 104 L80 0 Z" fill="#FFF6B0" stroke="#F4B41A" strokeWidth="4" strokeLinejoin="round" />
+          </svg>
+          <span className="loota-strike-item absolute left-1/2 top-1/2 text-7xl">{strikeFx.icon}</span>
+        </div>
+      )}
       {wonderBanner && (
         <div
           key={wonderBanner.n}

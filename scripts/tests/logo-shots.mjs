@@ -48,6 +48,14 @@ try {
   await page.goto("http://localhost:3000/lobby", { waitUntil: "networkidle2", timeout: 120000 });
   check("the lobby: the logo", (await logos()) >= 1);
   await page.screenshot({ path: `${OUT}/logo-3-lobby.png` });
+  // The map in free roam: the logo in the top bar, with the way back to the lobby.
+  await page.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
+  await new Promise((r) => setTimeout(r, 15000));
+  check("the map (free roam): the logo in the top bar", await page.evaluate(() => {
+    const img = document.querySelector('a[aria-label="Back to the lobby"] img[alt="Loota"]');
+    return !!img && img.complete && img.naturalWidth > 0 && img.getBoundingClientRect().top < 80;
+  }));
+  await page.screenshot({ path: `${OUT}/logo-3b-play.png` });
 
   const { data: hunt, error } = await admin.from("hunts")
     .insert({ title: "Logo test (automated)", prize: "none", winners: 3, starts_at: new Date(Date.now() + 40_000).toISOString(), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, questions_per_trial: 2, seconds_per_question: 15 })

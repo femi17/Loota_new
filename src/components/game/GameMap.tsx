@@ -3,6 +3,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
+import { LootaLogo } from "@/components/Logo";
 import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
@@ -6973,10 +6974,16 @@ export function GameMap({
       </div>
 
       <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-col gap-2" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        {/* Top bar: back, energy, coins, bag, help */}
+        {/* Top bar: back (with the logo), energy, coins, bag, help */}
         <div className="flex items-center gap-2">
-          <Link href="/lobby" aria-label="Back to the lobby" title="Back to the lobby" className={`${tool} bg-ink text-paper`}>
+          <Link
+            href="/lobby"
+            aria-label="Back to the lobby"
+            title="Back to the lobby"
+            className="pointer-events-auto flex h-11 shrink-0 items-center gap-0.5 rounded-xl bg-ink pl-1 pr-2 text-paper"
+          >
             <BackIcon />
+            <LootaLogo height={32} priority />
           </Link>
           <div className="pointer-events-auto flex h-11 min-w-0 flex-1 items-center gap-2 rounded-xl bg-ink px-3 sm:max-w-xs" aria-label={`Energy ${hud.energy} of 100`} title="Energy">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="#1E9E62" aria-hidden="true" className="shrink-0">

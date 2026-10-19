@@ -77,6 +77,8 @@ export type Avatar3D = {
   armL: THREE.Group;
   armR: THREE.Group;
   vehicles: Record<"bicycle" | "motorbike" | "car", Vehicle3D>;
+  /** A jerry can in the right hand (hidden until the hunter carries fuel to a vehicle out of it). */
+  jerrycan: THREE.Group;
   wt: number;
   amp: number;
 };
@@ -126,6 +128,11 @@ export function buildAvatar(look: AvatarLook): Avatar3D {
   ];
   const armL = limb(rig, -0.34, 1.72, arm());
   const armR = limb(rig, 0.34, 1.72, arm());
+  const jerrycan = makeJerryCan();
+  jerrycan.scale.setScalar(1.6); // big enough to read on the map
+  jerrycan.position.set(0.12, -1.2, 0);
+  jerrycan.visible = false;
+  armR.add(jerrycan);
 
   // Vehicles, hidden until the hunter rides one
   const vehicles = { bicycle: buildBicycle(), motorbike: buildMotorbike(), car: buildCar() };
@@ -134,7 +141,20 @@ export function buildAvatar(look: AvatarLook): Avatar3D {
     root.add(v.group);
   }
 
-  return { root, rig, legL, legR, armL, armR, vehicles, wt: Math.random() * 6, amp: 0 };
+  return { root, rig, legL, legR, armL, armR, vehicles, jerrycan, wt: Math.random() * 6, amp: 0 };
+}
+
+/** A red jerry can with its handle and spout (about 45 cm tall), held by the handle. */
+export function makeJerryCan() {
+  const g = new THREE.Group();
+  const red = "#E53935";
+  g.add(mesh(new THREE.BoxGeometry(0.16, 0.42, 0.32), red, 0, 0, 0));
+  g.add(mesh(new THREE.BoxGeometry(0.17, 0.05, 0.2), "#8E1B1B", 0, 0.24, -0.02)); // the handle
+  const spout = mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.12, 8), "#F4B41A", 0, 0.25, 0.13);
+  spout.rotation.x = 0.5;
+  g.add(spout);
+  g.add(mesh(new THREE.BoxGeometry(0.165, 0.3, 0.02), "#8E1B1B", 0, -0.01, 0)); // the pressed X on its side
+  return g;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +326,8 @@ export function animateAvatar(
   legL.rotation.x = swing;
   legR.rotation.x = -swing;
   armL.rotation.x = -swing;
-  armR.rotation.x = swing;
+  // Carrying a full jerry can: that arm hangs straight, swaying only a little.
+  armR.rotation.x = av.jerrycan.visible ? swing * 0.15 : swing;
   rig.position.y = Math.abs(Math.sin(av.wt)) * 0.07 * (av.amp / 0.85);
 }
 

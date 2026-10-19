@@ -1,14 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { ADDONS, CALL_OUT_PRICE, REPAIR, VEHICLE_KINDS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, KEG_CAPACITY, REPAIR, VEHICLE_KINDS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { formatDistance } from "@/game/geo";
 
-/** A vehicle the player owns: ridden, or in their pocket (it goes everywhere with them); its gear and papers. */
+/**
+ * A vehicle the player owns: ridden, or in their pocket (it goes everywhere with them), or parked at the roadside
+ * where it ran out of fuel (`stranded`, `away` metres from the player); its gear and papers.
+ */
 export type OwnedVehicle = {
   kind: VehicleKind;
   fuel: number;
   inUse: boolean;
-  state: "ready" | "empty" | "broken" | "repairing";
+  state: "ready" | "empty" | "broken" | "repairing" | "stranded";
+  away?: number | null;
   papers: { id: AddonId; name: string; price: number; have: boolean }[];
 };
 export type Riding = { kind: VehicleKind; source: "owned" | "rented" } | null;
@@ -61,6 +66,7 @@ export function VehiclePanel({
   onGetOff,
   onMechanic,
   onRepairShop,
+  onWayTo,
   onTaxi,
   onClose,
 }: {
@@ -77,6 +83,8 @@ export function VehiclePanel({
   onMechanic: () => void;
   /** Take a broken-down vehicle to a repair shop nearby (cheaper; the way there is drawn). */
   onRepairShop: (kind: VehicleKind) => void;
+  /** The way (by road) to a vehicle parked at the roadside. */
+  onWayTo: (kind: VehicleKind) => void;
   /** Cars aren't rented: a taxi is called instead. */
   onTaxi: () => void;
   onClose: () => void;
@@ -155,8 +163,10 @@ export function VehiclePanel({
                 )}
                 {mine && !onIt && mine.state !== "ready" && (
                   <p className="text-sm text-gold">
-                    {mine.state === "empty"
-                      ? "Empty tank: any petrol station fills it in your pocket, or pour in a keg."
+                    {mine.state === "stranded"
+                      ? `Out of fuel, parked at the roadside${mine.away != null ? ` ${formatDistance(mine.away)} from you` : ""}. Fill a jerry can at a petrol station, carry it there and pour it in: that takes the tank to ${KEG_CAPACITY}%.`
+                      : mine.state === "empty"
+                      ? "Empty tank: any petrol station fills it in your pocket, or pour in a jerry can."
                       : mine.state === "broken"
                         ? "Broken down. Take it to a repair shop nearby, or call a mechanic to come to you (dearer, but quick)."
                         : "Being repaired. Take it out once it's ready."}
@@ -165,7 +175,11 @@ export function VehiclePanel({
                 {!onIt && (
                   <div className="flex flex-wrap gap-2">
                     {mine ? (
-                      mine.state === "broken" ? (
+                      mine.state === "stranded" ? (
+                        <button type="button" disabled={busy} onClick={() => onWayTo(kind)} className={`${button} bg-gold text-ink`}>
+                          🧭 The way to it
+                        </button>
+                      ) : mine.state === "broken" ? (
                         <>
                           <button type="button" disabled={busy} onClick={() => onRepairShop(kind)} className={`${button} bg-gold text-ink`}>
                             🔧 Repair shop nearby · {REPAIR[kind].price} coins

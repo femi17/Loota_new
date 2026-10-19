@@ -12,6 +12,10 @@ export const VEHICLE_KINDS = Object.keys(VEHICLES) as VehicleKind[];
 
 /** Coins per % of a tank. */
 export const FUEL_PRICE = 2;
+/** A jerry can (the keg) holds this much of a tank, and pouring one takes a tank to this at most. Must match keg_capacity(). */
+export const KEG_CAPACITY = 65;
+/** A jerry can, at a petrol station. Must match buy_keg(). */
+export const KEG_PRICE = 25;
 export const MEAL_PRICE = 30;
 export const MEAL_ENERGY = 40;
 

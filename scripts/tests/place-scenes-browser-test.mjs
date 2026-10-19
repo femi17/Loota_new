@@ -1,6 +1,6 @@
 // The petrol station, the place to eat and the hospital as scenes on the map (phone; open-roof places, the talk in
 // bubbles and a strip at the bottom): Refuel opens the attendant (the meter runs,
-// the tank fills, a keg for the road), Eat opens the cook (the day's menu, the plate cleared, +energy), and leaving
+// the tank fills, a jerry can for the road), Eat opens the cook (the day's menu, the plate cleared, +energy), and leaving
 // hospital brings the nurse (the bill, the damaged bicycle). The test player is deleted.
 //   SHOTS=<folder> node scripts/tests/place-scenes-browser-test.mjs
 import { createRequire } from "node:module";
@@ -91,7 +91,7 @@ try {
   const bike = (await admin.from("player_vehicles").select("fuel").eq("user_id", id).eq("kind", "motorbike").single()).data;
   check("…200 coins, the tank at 100%", (await coins()) === before - 200 && bike.fuel >= 99, `${before - (await coins())} · ${bike.fuel}`);
   await shot("2-filled");
-  check("a keg for the road", await clickWhenThere("Yes, a keg"));
+  check("a jerry can for the road", await clickWhenThere("Yes, a jerry can"));
   await wait(2500);
   const keg = (await admin.from("player_kegs").select("uses_left").eq("user_id", id)).data;
   check("…bought (25 coins)", keg.length === 1 && (await coins()) === before - 225, JSON.stringify(keg));

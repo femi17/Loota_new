@@ -7,7 +7,7 @@ import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
-import { ADDONS, CALL_OUT_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
@@ -293,6 +293,8 @@ export function GameMap({
     buyAddon: (kind: VehicleKind, id: AddonId) => Promise<void>;
     /** The repair shop for a broken-down vehicle: found (or recalled), with the way there. */
     findRepairShop: (kind: VehicleKind) => void;
+    /** The way by road to a vehicle parked at the roadside (out of fuel). */
+    wayToParked: (kind: VehicleKind) => void;
     /** Go into a repair shop: the open-roof shop on the map, the camera looking in (an in-world scene). */
     enterShop: (job: RepairJob) => void;
     /** Go into the ticket office or check-in hall where the player stands. */
@@ -779,9 +781,19 @@ export function GameMap({
             forks = found.forks;
           }
         }
-        // Very far, or outside the areas we host: the routing service (a straight line if that fails).
+        // Very far, or outside the areas we host: the routing service. Never a straight line across the map (owner, 19 Oct
+        // 2026: "a line drawn in the middle of nowhere" can't be travelled): no road route, no line; try again shortly.
         if (!route) ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
         if (disposed || id !== planId) return;
+        if (fallback) {
+          endDirections();
+          say(`Couldn't find the way by road to ${name} just now. Trying again…`, true);
+          const retry = planId;
+          window.setTimeout(() => {
+            if (!disposed && planId === retry) void planDirections(to, name, quiet);
+          }, 15_000);
+          return;
+        }
         const end = route.coords[route.coords.length - 1];
         if (route.total < 30 && geo.distanceM([traveller.pos.lng, traveller.pos.lat], end) < 30) {
           endDirections();
@@ -1024,6 +1036,8 @@ export function GameMap({
         engine: number;
         broken_at: string | null;
         repair_ready_at: string | null;
+        /** Out of fuel, parked at the roadside at lng/lat (not in the pocket) until a jerry can is poured in. */
+        stranded_at: string | null;
         lng: number;
         lat: number;
         in_use: boolean;
@@ -1043,6 +1057,9 @@ export function GameMap({
       };
       const vehicleName = (kind: VehicleKind) => VEHICLES[kind].name.toLowerCase();
       const ownInUse = () => owned.find((v) => v.in_use) ?? null;
+      /** A motorbike or car that ran dry and stands at the roadside where it stopped. */
+      const strandedVehicle = () => owned.find((v) => !!v.stranded_at) ?? null;
+      const metresTo = (p: LngLat) => geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]);
       const meterText = () => {
         if (!rental) return null;
         const minutes = Math.max(1, Math.ceil((Date.now() - rental.startedAt) / 60_000));
@@ -1141,7 +1158,7 @@ export function GameMap({
 
       async function refreshVehicles() {
         const [{ data: vehicles }, { data: rentals }, { data: papers }] = await Promise.all([
-          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, lng, lat, in_use, light, helmet, registered, insured"),
+          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured"),
           supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
           supabase.from("profiles").select("rider_licence, driver_licence").maybeSingle(),
         ]);
@@ -1152,6 +1169,60 @@ export function GameMap({
         const active = rentals?.[0] as { kind: VehicleKind; started_at: string } | undefined;
         rental = active ? { kind: active.kind, startedAt: new Date(active.started_at).getTime(), rate: VEHICLES[active.kind].ratePerMinute } : null;
         showVehicle();
+        showParked();
+      }
+
+      // ---- Out of fuel: the vehicle stays parked at the roadside where it ran dry (owner, 19 Oct 2026) ----
+      // On the map by the kerb (the right-hand side of the road), with a tag, until a jerry can is poured in.
+      const parked = new Map<VehicleKind, { at: string; onRoad: boolean; entity: import("@/game/ThreeMapLayer").MapEntity }>();
+      let lastParked = 0;
+      function showParked() {
+        const want = owned.filter((v) => v.stranded_at);
+        for (const [kind, p] of parked) {
+          const v = want.find((w) => w.kind === kind);
+          if (!v || `${v.lng},${v.lat}` !== p.at || (!p.onRoad && network)) {
+            layer.remove(p.entity);
+            parked.delete(kind);
+          }
+        }
+        for (const v of want) {
+          if (parked.has(v.kind)) continue;
+          const object = models.makeVehicleModel(v.kind);
+          const tag = layer.billboard(models.makeNameplate("NO FUEL", "#B23A3A"));
+          tag.position.y = v.kind === "car" ? 2.6 : 2.2;
+          object.add(tag);
+          let at = { lng: v.lng, lat: v.lat };
+          let heading = 0;
+          const near = network ? roads.snapToNetwork(network, at, 0) : null;
+          const p = near && network ? roads.positionOf(network, near) : null;
+          if (p && geo.distanceM([p.lng, p.lat], [v.lng, v.lat]) < 60) {
+            // By the kerb on the right, facing along the road.
+            const right = { e: -Math.cos(p.heading), n: -Math.sin(p.heading) };
+            const off = (v.kind === "car" ? 2.2 : 1.6) * layer.enlargement(); // models are drawn enlarged: so is the kerb
+            at = { lng: p.lng + (right.e * off) / (111320 * Math.cos((p.lat * Math.PI) / 180)), lat: p.lat + (right.n * off) / 110574 };
+            heading = p.heading;
+          }
+          parked.set(v.kind, { at: `${v.lng},${v.lat}`, onRoad: !!p, entity: layer.add({ object, lng: at.lng, lat: at.lat, heading }) });
+        }
+      }
+      function parkedTick(now: number) {
+        if (now - lastParked < 2000) return;
+        lastParked = now;
+        if ([...parked.values()].some((p) => !p.onRoad) && network) showParked(); // placed before the roads had loaded
+      }
+
+      /** After filling a jerry can (or with one already full): the way back to the vehicle at the roadside. */
+      function adviseCarryBack() {
+        const s = strandedVehicle();
+        if (!s || !keg || keg.fuel <= 0) return;
+        const name = vehicleName(s.kind);
+        const away = metresTo(s);
+        adviceKey = "fuel";
+        advicePlace = { name: `your ${name}`, lng: s.lng, lat: s.lat };
+        const text = `Carry the jerry can back to your ${name}, ${geo.formatDistance(away)} away, and pour it in (the gold button there).`;
+        setHud((h) => ({ ...h, advice: { key: "fuel", title: "Carry the fuel back", text, where: `Your ${name} · ${geo.formatDistance(away)}`, place: advicePlace } }));
+        say(text, true);
+        void planDirections({ lng: s.lng, lat: s.lat }, `your ${name}`, true);
       }
 
       function afterModeChange() {
@@ -1236,8 +1307,10 @@ export function GameMap({
             traveller.mode = "walk"; // the server put you on foot
             await refreshVehicles();
             if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
+            else if (started?.reason === "stranded")
+              say(`Your ${vehicleName(kind)} is parked at the roadside with an empty tank. Bring it fuel in a jerry can from a petrol station (🧭 in Vehicles shows the way).`, true);
             else if (started?.reason === "fuel")
-              say(`Your ${vehicleName(kind)}'s tank is empty. Any petrol station fills it while it's in your pocket, or pour in fuel from a keg.`, true);
+              say(`Your ${vehicleName(kind)}'s tank is empty. Any petrol station fills it while it's in your pocket, or pour in a jerry can.`, true);
             else if (started?.reason === "far_pickup") say("Walk to the renter first: they're waiting at the bus stop.", true);
             else if (started?.reason === "pickup") say(`Ask for a ${vehicleName(kind)} first (Rent in Vehicles): a renter brings one to a bus stop near you.`, true);
             else if (started?.reason === "taxi") say("Cars come as taxis: call one from Taxi, bus, train or plane.", true);
@@ -1320,6 +1393,21 @@ export function GameMap({
           setBusy(false);
           computeActions();
         }
+      }
+
+      /** Fill the jerry can at the petrol station (FuelScene): as far as the coins go, up to KEG_CAPACITY. */
+      async function fillKegHere(): Promise<{ ok: true; cost: number; fuel: number } | { ok: false; reason: string }> {
+        await savePosition(); // the server checks the player is at the station
+        const { data } = await supabase.rpc("fill_keg");
+        const r = data as { ok: boolean; reason?: string; fuel?: number; cost?: number; balance?: number } | null;
+        if (disposed) return { ok: false, reason: "gone" };
+        if (!r?.ok) return { ok: false, reason: r?.reason ?? "error" };
+        keg = { fuel: r.fuel ?? KEG_CAPACITY, usesLeft: keg?.usesLeft ?? 50 };
+        showKeg();
+        const balance = r.balance;
+        if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+        computeActions();
+        return { ok: true, cost: r.cost ?? 0, fuel: r.fuel ?? KEG_CAPACITY };
       }
 
       async function eatHere(place: string, quiet = false): Promise<{ ok: true; energy: number } | { ok: false; reason: string }> {
@@ -1534,12 +1622,17 @@ export function GameMap({
             kind: v.kind,
             fuel: v.fuel,
             inUse: v.in_use,
-            state: v.broken_at ? (v.repair_ready_at ? "repairing" : "broken") : v.kind !== "bicycle" && v.fuel <= 0 ? "empty" : "ready",
+            state: v.stranded_at ? "stranded" : v.broken_at ? (v.repair_ready_at ? "repairing" : "broken") : v.kind !== "bicycle" && v.fuel <= 0 ? "empty" : "ready",
+            away: v.stranded_at ? Math.round(metresTo(v)) : null,
             papers: ADDONS[v.kind].map((a) => ({ ...a, have: hasPaper(v, a.id) })),
           })),
         ride: (kind, how, addons) => void chooseVehicle(kind, how, addons),
         buyAddon: (kind, id) => buyAddon(kind, id),
         findRepairShop: (kind) => void findRepairShop(kind, true),
+        wayToParked: (kind) => {
+          const v = owned.find((o) => o.kind === kind && o.stranded_at);
+          if (v) void planDirections({ lng: v.lng, lat: v.lat }, `your ${vehicleName(kind)}`);
+        },
         enterShop: (job) => openShopScene(job),
         enterTicket: () => enterTicket(),
         openVault: (chamber) => openVault(chamber),
@@ -3002,8 +3095,15 @@ export function GameMap({
         return best;
       }
 
-      async function spotAhead(kinds: Spot["kind"][]): Promise<{ spot: Spot; behind: boolean } | null> {
+      async function spotAhead(kinds: Spot["kind"][], closest = false): Promise<{ spot: Spot; behind: boolean; nearest?: boolean } | null> {
         const at = { ...traveller.pos };
+        if (closest) {
+          // The nearest of them, whichever way (on foot, e.g. from a dry tank).
+          const { data } = await supabase.rpc("places_near", { p_kinds: kinds, p_lng: at.lng, p_lat: at.lat, p_limit: 20 });
+          const list = ((data ?? []) as Spot[]).map((sp) => ({ ...sp, metres: Math.round(geo.distanceM([at.lng, at.lat], [sp.lng, sp.lat])) }));
+          if (disposed || !list.length) return null;
+          return { spot: list.sort((a, b) => a.metres - b.metres)[0], behind: false, nearest: true };
+        }
         const route = trip?.route ?? null;
         const k = 111320 * Math.cos((at.lat * Math.PI) / 180);
         // Look around the hunter and further on, so places ahead are found even where many lie behind.
@@ -3050,13 +3150,21 @@ export function GameMap({
       /**
        * `none`: what to say instead when no such place is within `maxM` (e.g. "rest where you are").
        */
-      async function advise(key: string, title: string, text: string, kinds: Spot["kind"][] | null, maxM = Infinity, none?: { text: string; where: string }) {
-        let found = kinds ? await spotAhead(kinds) : null;
+      async function advise(
+        key: string,
+        title: string,
+        text: string,
+        kinds: Spot["kind"][] | null,
+        maxM = Infinity,
+        none?: { text: string; where: string },
+        nearest = false,
+      ) {
+        let found = kinds ? await spotAhead(kinds, nearest) : null;
         if (disposed) return;
         if (found && found.spot.metres > maxM) found = null;
         const spot = found?.spot ?? null;
         const full = found
-          ? `${text} ${found.behind ? "None ahead; the nearest is back the way you came" : trip ? "Next on your way" : "Next ahead"}: ${found.spot.name}, ${geo.formatDistance(found.spot.metres)}.`
+          ? `${text} ${found.nearest ? "The nearest" : found.behind ? "None ahead; the nearest is back the way you came" : trip ? "Next on your way" : "Next ahead"}: ${found.spot.name}, ${geo.formatDistance(found.spot.metres)}.`
           : none?.text ?? text;
         adviceKey = key;
         advicePlace = spot ? { name: spot.name, lng: spot.lng, lat: spot.lat } : null;
@@ -3108,7 +3216,7 @@ export function GameMap({
         if (mine && mine.kind !== "bicycle") {
           if (mine.fuel < 10 && warned.fuel > 10) {
             warned.fuel = 10;
-            void advise("fuel", "Fuel almost gone", `Fuel almost gone! If the tank runs dry your ${vehicleName(mine.kind)} goes into your pocket until a petrol station or a keg fills it.`, ["fuel"]);
+            void advise("fuel", "Fuel almost gone", `Fuel almost gone! If the tank runs dry your ${vehicleName(mine.kind)} stops at the roadside, and you walk to a petrol station and back with a jerry can.`, ["fuel"]);
           } else if (mine.fuel < 25 && warned.fuel > 25) {
             warned.fuel = 25;
             void advise("fuel", "Fuel low", "Fuel is getting low. Fill up at a petrol station.", ["fuel"]);
@@ -3145,7 +3253,7 @@ export function GameMap({
       function thirstyVehicle() {
         const riding = ownInUse();
         if (riding && riding.kind !== "bicycle" && riding.fuel < 99) return riding;
-        return owned.find((v) => !v.in_use && v.kind !== "bicycle" && v.fuel <= 0) ?? null;
+        return owned.find((v) => !v.in_use && !v.stranded_at && v.kind !== "bicycle" && v.fuel <= 0) ?? null;
       }
 
       /** What can be done here: by the place the hunter is at, and the vehicles next to them. */
@@ -3156,7 +3264,9 @@ export function GameMap({
           // (an empty tank, a breakdown). The server picks the same vehicle.
           const riding = ownInUse();
           const motorRidden = riding && riding.kind !== "bicycle" ? riding : null;
-          const pocketed = (want: (v: VehicleRow) => boolean) => owned.find((v) => !v.in_use && v.kind !== "bicycle" && want(v)) ?? null;
+          const pocketed = (want: (v: VehicleRow) => boolean) => owned.find((v) => !v.in_use && !v.stranded_at && v.kind !== "bicycle" && want(v)) ?? null;
+          const stranded = strandedVehicle();
+          const atStranded = !!stranded && metresTo(stranded) <= 25;
           const eatSpot = spotHere(["eat"]);
           if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
           const chill = spotHere(["rest", "eat"]);
@@ -3173,12 +3283,18 @@ export function GameMap({
               short: "Refuel",
               label: thirsty.in_use ? `Refuel at ${station.name}` : `Fill your ${vehicleName(thirsty.kind)}'s tank (in your pocket) at ${station.name}`,
             });
+          } else if (station && stranded && !(keg && keg.fuel >= KEG_CAPACITY)) {
+            // The vehicle is back at the roadside: the attendant fills a jerry can to carry to it.
+            list.push({ id: "refuel", icon: "⛽", short: "Jerry can", label: `Fuel in a jerry can for your ${vehicleName(stranded.kind)}` });
           }
           const lowOnFuel = (motorRidden && motorRidden.fuel < 40) || !!pocketed((v) => v.fuel <= 0);
-          if (station && !keg && lowOnFuel) list.push({ id: "buy_keg", icon: "🛢", short: "Buy keg · 25", label: "Buy a fuel keg · 25 coins" });
-          if (station && keg && keg.fuel < 30) list.push({ id: "fill_keg", icon: "🛢", short: `Fill keg · ${2 * (30 - Math.floor(keg.fuel))}`, label: `Fill your keg · ${2 * (30 - Math.floor(keg.fuel))} coins` });
-          const dry = motorRidden && motorRidden.fuel <= 70 ? motorRidden : pocketed((v) => v.fuel <= 0); // a keg holds 30%
-          if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour keg", label: `Pour the keg into your ${vehicleName(dry.kind)}` });
+          // A jerry can (the attendant sells and fills one for a vehicle at the roadside: the Jerry can button above).
+          const canFill = keg ? 2 * (KEG_CAPACITY - Math.floor(keg.fuel)) : 0;
+          if (station && !stranded && !keg && lowOnFuel) list.push({ id: "buy_keg", icon: "🛢", short: `Jerry can · ${KEG_PRICE}`, label: `Buy a jerry can · ${KEG_PRICE} coins` });
+          if (station && !stranded && keg && keg.fuel < KEG_CAPACITY) list.push({ id: "fill_keg", icon: "🛢", short: `Fill can · ${canFill}`, label: `Fill your jerry can · ${canFill} coins` });
+          // Pour it: by the vehicle at the roadside, or into the one ridden (a can takes a tank to 65% at most).
+          const dry = atStranded ? stranded : motorRidden && motorRidden.fuel < KEG_CAPACITY ? motorRidden : pocketed((v) => v.fuel < KEG_CAPACITY && !v.broken_at);
+          if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour can", label: `Pour the jerry can into your ${vehicleName(dry.kind)}` });
           const bike = riding?.kind === "bicycle" ? riding : null; // pumping is for the bicycle you're on
           if (spotHere(["tyres", "fuel"]) && bike && bike.tyre < 95) {
             list.push(bike.tyre <= 0 ? { id: "pump", icon: "🛞", short: "Fix flat · 20", label: "Fix the flat · 20 coins" } : { id: "pump", icon: "🛞", short: "Pump · 5", label: "Pump the tyres · 5 coins" });
@@ -3198,7 +3314,7 @@ export function GameMap({
 
       const showKeg = () => setHud((h) => ({ ...h, keg: keg ? { ...keg } : null }));
 
-      setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg") });
+      setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg"), fillKeg: () => fillKegHere() });
       setPumpActions({ pump: () => act("pump", true) });
       setMealActions({
         eat: async () => {
@@ -3234,9 +3350,20 @@ export function GameMap({
         if (id === "refuel") {
           // The pump attendant (FuelScene).
           const station = spotHere(["fuel"]);
-          const v = thirstyVehicle();
+          const thirsty = thirstyVehicle();
+          const s = thirsty ? null : strandedVehicle(); // back at the roadside: a jerry can to carry to it
+          const v = thirsty ?? s;
           if (station && v && v.kind !== "bicycle") {
-            const offer = { station: station.name, attendant: nameFor(ATTENDANTS, String(station.id)), kind: v.kind, fuel: v.fuel, pocket: !v.in_use, hasKeg: !!keg };
+            const offer = {
+              station: station.name,
+              attendant: nameFor(ATTENDANTS, String(station.id)),
+              kind: v.kind,
+              fuel: v.fuel,
+              pocket: !v.in_use,
+              hasKeg: !!keg,
+              kegFuel: keg?.fuel ?? 0,
+              stranded: s ? { metres: Math.round(metresTo(s)) } : null,
+            };
             openFuelPlace(offer, station, station.id);
             setFuelOpen(offer);
           }
@@ -3266,17 +3393,26 @@ export function GameMap({
             usesLeft?: number;
             spoilt?: boolean;
             kind?: VehicleKind;
+            kegFuel?: number;
+            remounted?: boolean;
+            lng?: number;
+            lat?: number;
           } | null;
           if (disposed) return false;
+          if (!r?.ok && r?.reason === "far") {
+            const s = strandedVehicle();
+            say(`Carry the jerry can to your ${s ? vehicleName(s.kind) : "vehicle"} first: it's ${s ? geo.formatDistance(metresTo(s)) : "back"} away at the roadside.`, true);
+            return false;
+          }
           if (!r?.ok) {
             const why: Record<string, string> = {
               not_here: "You need to be right at the place for that.",
               coins: "Not enough coins for that.",
-              have_one: "You already have a keg.",
+              have_one: "You already have a jerry can.",
               full: "It's already full.",
               no_vehicle: "None of your vehicles needs that.",
-              no_keg: "Buy a keg first.",
-              empty: "Your keg is empty: fill it at a petrol station.",
+              no_keg: "Buy a jerry can first.",
+              empty: "Your jerry can is empty: fill it at a petrol station.",
             };
             say(why[r?.reason ?? ""] ?? "Couldn't do that just now.", true);
             return false;
@@ -3293,15 +3429,29 @@ export function GameMap({
             say(`You sit down ${traveller.mode === "bicycle" ? "by your bicycle" : "by the road"}. Energy comes back while you rest (faster at a park or a place to eat); move on when you're ready.`);
           } else if (id === "buy_keg") {
             keg = { fuel: 0, usesLeft: r.usesLeft ?? 50 };
-            say("You bought a fuel keg (good for 50 trips). Fill it here, carry it to your vehicle and pour it in.");
+            say(`You bought a jerry can (good for 50 trips). Fill it here: it carries enough for ${KEG_CAPACITY}% of a tank.`);
           } else if (id === "fill_keg") {
-            keg = { fuel: r.fuel ?? 30, usesLeft: keg?.usesLeft ?? 50 };
-            say(`Keg filled: ${Math.round(r.fuel ?? 30)}% of a tank for ${r.cost} coins. Carry it to your vehicle and pour it in.`);
+            keg = { fuel: r.fuel ?? KEG_CAPACITY, usesLeft: keg?.usesLeft ?? 50 };
+            say(`Jerry can filled: ${Math.round(r.fuel ?? KEG_CAPACITY)}% of a tank for ${r.cost} coins. Pour it in when the tank runs dry.`);
+            adviseCarryBack();
           } else if (id === "pour_keg") {
-            keg = r.spoilt ? null : { fuel: 0, usesLeft: r.usesLeft ?? 0 };
-            await refreshVehicles();
+            keg = r.spoilt ? null : { fuel: r.kegFuel ?? 0, usesLeft: r.usesLeft ?? 0 };
             const name = r.kind ? vehicleName(r.kind) : "vehicle";
-            say(`Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your keg's last use: it's worn out." : ` Your keg has ${r.usesLeft} uses left.`}`);
+            if (r.remounted && r.kind) {
+              // Back on the vehicle that stood at the roadside.
+              traveller.mode = r.kind;
+              saved = { ...traveller.pos };
+              endDirections();
+            }
+            await refreshVehicles();
+            if (r.remounted) afterModeChange();
+            warned.fuel = 100;
+            say(
+              r.remounted
+                ? `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel, and you're back on it. A jerry can only goes so far: fill up at a petrol station.`
+                : `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your jerry can's last use: it's worn out." : ` Your jerry can has ${r.usesLeft} uses left.`}`,
+              true,
+            );
             clearAdvice("fuel");
           } else if (id === "pump") {
             await refreshVehicles();
@@ -3350,7 +3500,7 @@ export function GameMap({
       /** An empty tank or a breakdown: the vehicle stays where it stopped; the hunter is on foot. */
       function vehicleStopped(why: "fuel" | "broken") {
         const kind = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
-        if (kind) pocketAnim(kind, false);
+        if (kind && why === "broken") pocketAnim(kind, false); // out of fuel, it stays at the roadside (showParked)
         traveller.mode = "walk";
         traveller.v = 0;
         void refreshVehicles().then(() => {
@@ -3359,12 +3509,22 @@ export function GameMap({
         });
         const name = kind ? vehicleName(kind) : "vehicle";
         if (why === "fuel") {
-          void advise(
-            "fuel",
-            "Out of fuel",
-            `Out of fuel! Your ${name} goes into your pocket. Any petrol station fills it there${keg && keg.fuel > 0 ? ", or pour in your keg right now" : ""}.`,
-            ["fuel"],
-          );
+          if (keg && keg.fuel > 0) {
+            say(`Out of fuel! Your ${name} stands at the roadside. Pour in your jerry can (the gold button).`, true);
+          } else {
+            // On foot to the nearest petrol station, by road, with (or for) a jerry can, and back.
+            void advise(
+              "fuel",
+              "Out of fuel",
+              `Out of fuel! Your ${name} is parked at the roadside. Walk to a petrol station ${keg ? "with your jerry can" : "(they sell jerry cans)"}, fill it, carry it back and pour it in: a jerry can takes the tank to ${KEG_CAPACITY}%.`,
+              ["fuel"],
+              Infinity,
+              undefined,
+              true,
+            ).then(() => {
+              if (advicePlace && adviceKey === "fuel") void planDirections({ lng: advicePlace.lng, lat: advicePlace.lat }, advicePlace.name, true);
+            });
+          }
         } else {
           say(`Your ${name} has broken down and goes into your pocket. Take it to a repair shop nearby, or call a mechanic to you.`, true);
           if (kind) void findRepairShop(kind, false);
@@ -4146,6 +4306,7 @@ export function GameMap({
       function skyAndTrafficTick(now: number) {
         lightsTick(now);
         darkTick(now);
+        parkedTick(now);
         const wall = Date.now();
         if (now - lastSky > 30_000) {
           lastSky = now;
@@ -4734,7 +4895,10 @@ export function GameMap({
           kerbM: 10,
           keeper: { look: { ...keeperLook(offer.attendant), topColour: "#1E9E62", extra: "cap" }, at: S.keeper },
           you: { from: { x: S.stand.x + 1.3, z: S.stand.z }, to: S.customer },
-          closeScene: () => setFuelOpen(null),
+          closeScene: () => {
+            setFuelOpen(null);
+            adviseCarryBack();
+          },
           extra: { petrol, vehicle },
         });
       }
@@ -6285,6 +6449,8 @@ export function GameMap({
           updateGuide();
         }
 
+        // On foot while the vehicle stands at the roadside: the jerry can in hand.
+        avatar.jerrycan.visible = traveller.mode === "walk" && !!keg && owned.some((v) => v.stranded_at);
         models.animateAvatar(
           avatar,
           {
@@ -6701,7 +6867,7 @@ export function GameMap({
                   </div>
                 )}
                 {hud.keg && (
-                  <div className={`${chip} bg-ink`} aria-label={`Fuel keg ${Math.round(hud.keg.fuel)}%, ${hud.keg.usesLeft} uses left`} title={`Fuel keg · ${hud.keg.usesLeft} uses left`}>
+                  <div className={`${chip} bg-ink`} aria-label={`Jerry can ${Math.round(hud.keg.fuel)}%, ${hud.keg.usesLeft} uses left`} title={`Jerry can · ${hud.keg.usesLeft} uses left`}>
                     <span aria-hidden="true">🛢</span>
                     {hud.keg.fuel > 0 ? `${Math.round(hud.keg.fuel)}%` : "empty"}
                   </div>
@@ -7223,6 +7389,10 @@ export function GameMap({
           }}
           onRepairShop={(kind) => {
             actions.current?.findRepairShop(kind);
+            setGarage(null);
+          }}
+          onWayTo={(kind) => {
+            actions.current?.wayToParked(kind);
             setGarage(null);
           }}
           onTaxi={() => {

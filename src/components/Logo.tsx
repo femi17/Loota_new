@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export function KeyIcon({ size = 24 }: { size?: number }) {
@@ -9,11 +10,32 @@ export function KeyIcon({ size = 24 }: { size?: number }) {
   );
 }
 
-export function Logo() {
+/** The logo's own proportions (public/brand, made by scripts/build-logo.mjs from the owner's artwork). */
+const LOGO_RATIO = 265 / 240;
+const TONES = { light: "/brand/loota-light.png", dark: "/brand/loota-dark.png", gold: "/brand/loota-gold.png" } as const;
+
+/**
+ * The Loota logo (owner, 19 Oct 2026): the script "Loota". Cream on the dark screens, brown on the parchment cards,
+ * gold for the big moments.
+ */
+export function LootaLogo({ height = 40, tone = "light", className = "", priority = false }: { height?: number; tone?: keyof typeof TONES; className?: string; priority?: boolean }) {
   return (
-    <Link href="/" className="inline-flex items-center gap-2 text-paper no-underline">
-      <span className="text-gold"><KeyIcon /></span>
-      <span className="font-display text-xl font-extrabold tracking-wider">LOOTA</span>
+    <Image
+      src={TONES[tone]}
+      alt="Loota"
+      width={Math.round(height * LOGO_RATIO)}
+      height={height}
+      priority={priority}
+      className={`select-none ${className}`}
+      draggable={false}
+    />
+  );
+}
+
+export function Logo({ height = 52 }: { height?: number }) {
+  return (
+    <Link href="/" className="inline-flex items-center no-underline" aria-label="Loota home">
+      <LootaLogo height={height} priority />
     </Link>
   );
 }

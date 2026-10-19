@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { LootaLogo } from "@/components/Logo";
 import { createClient } from "@/lib/supabase/client";
 import {
   CATEGORY_NAMES,
@@ -346,6 +347,7 @@ export function HuntPanel({
     <>
       <section className={`pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-ink p-3 ${scene ? "hidden" : ""}`} aria-label="Hunt">
         <div className="flex items-center gap-2">
+          <LootaLogo height={26} priority className="shrink-0" />
           <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={open}>
             <span className="flex shrink-0 gap-0.5" aria-label={`${state.keysHeld} of ${state.keys} keys`}>
               {Array.from({ length: state.keys }, (_, i) => (
@@ -518,6 +520,7 @@ export function HuntPanel({
       {/* The last ten seconds before the start, then GO! */}
       {((startsIn !== null && startsIn > 0 && startsIn <= 10) || go) && (
         <div className="pointer-events-none fixed inset-0 z-30 flex flex-col items-center justify-center bg-ink/60" aria-live="assertive">
+          <LootaLogo height={96} tone="gold" priority className="mb-3 drop-shadow-[0_0_24px_rgba(244,180,26,0.45)]" />
           <p className="text-sm font-bold uppercase tracking-widest text-paper/80">{go ? state.title : "The hunt starts in"}</p>
           <p key={go ? "go" : startsIn} className="loota-count font-display text-[9rem] font-extrabold leading-none text-gold">
             {go ? "GO!" : startsIn}
@@ -529,6 +532,7 @@ export function HuntPanel({
       {revealed && !go && (
         <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-ink/85 p-5">
           <div role="dialog" aria-label="The first riddle" className="loota-wonder-banner flex w-full max-w-md flex-col gap-4 rounded-3xl bg-[#F5ECD8] p-6 text-center text-[#3A2410]">
+            <LootaLogo height={64} tone="dark" className="mx-auto" />
             <p className="text-xs font-extrabold uppercase tracking-widest text-[#8A5A00]">The hunt is on · Key 1 of {state.keys}</p>
             <p className="font-display text-2xl font-extrabold leading-snug">&ldquo;{revealed}&rdquo;</p>
             {state.category && <p className="text-sm">At the key: a Key Trial in {CATEGORY_NAMES[state.category]}.</p>}
@@ -834,6 +838,7 @@ function RecapCard({ recap, onClose }: { recap: HuntRecap; onClose: () => void }
   return (
     <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-ink/85 p-5">
       <div role="dialog" aria-label="Your hunt" className="loota-wonder-banner flex w-full max-w-sm flex-col gap-3 rounded-3xl bg-[#F5ECD8] p-6 text-[#3A2410]">
+        <LootaLogo height={52} tone="dark" />
         <p className="text-xs font-extrabold uppercase tracking-widest text-[#8A5A00]">{recap.title}</p>
         <p className="font-display text-5xl font-extrabold leading-none">{recap.place ? ordinal(recap.place) : `${recap.keysHeld}/${recap.keys}`}</p>
         <p className="text-sm">

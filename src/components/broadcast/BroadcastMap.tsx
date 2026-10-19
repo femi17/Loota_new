@@ -2,6 +2,7 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
+import { LootaLogo } from "@/components/Logo";
 import { normalizeLook } from "@/lib/avatar";
 import { ordinal } from "@/game/hunt";
 import type { Mode } from "@/game/movement";
@@ -355,7 +356,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             ) : (
               <span className="rounded bg-line px-2 py-0.5 uppercase">{hunt.phase}</span>
             )}
-            <span className="text-gold">LOOTA</span>
+            <LootaLogo height={30} tone="gold" />
           </div>
           <h1 className="font-display text-2xl font-extrabold leading-tight">{hunt.title}</h1>
           <p className="text-sm">

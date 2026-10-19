@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPlayer } from "@/lib/player";
+import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 
 /** Only the owner may change hunts; everything below uses the secret key after this check. */
 async function owner() {
@@ -44,6 +45,60 @@ async function nearestRoad(point: { lng: number; lat: number }) {
   }
 }
 
+const metresBetween = (a: { lng: number; lat: number }, b: { lng: number; lat: number }) =>
+  Math.hypot((a.lng - b.lng) * 111320 * Math.cos((a.lat * Math.PI) / 180), (a.lat - b.lat) * 110574);
+
+/**
+ * The scene a key's place should be (src/game/keyScenes.ts), from what's within 150 m of its spot: one of our
+ * landmarks (a monument's plaza), a motor park, or from OpenStreetMap a market, park, beach, school, stadium or palace
+ * (the nearest wins); the stone circle when there's nothing (or OpenStreetMap doesn't answer in time).
+ */
+async function guessScene(spot: { lng: number; lat: number }): Promise<{ scene: KeyScene; why: string }> {
+  const db = createAdminClient();
+  const box = { w: spot.lng - 0.002, e: spot.lng + 0.002, s: spot.lat - 0.002, n: spot.lat + 0.002 };
+  const { data: landmarks } = await db.from("landmarks").select("name, lng, lat").gte("lng", box.w).lte("lng", box.e).gte("lat", box.s).lte("lat", box.n);
+  const lm = (landmarks ?? []).find((l) => metresBetween(l, spot) <= 150);
+  if (lm) return { scene: "landmark", why: `by ${lm.name}` };
+  const { data: parks } = await db.from("transit_stops").select("name, lng, lat").eq("kind", "bus").eq("park", true).gte("lng", box.w).lte("lng", box.e).gte("lat", box.s).lte("lat", box.n);
+  const park = (parks ?? []).find((p) => metresBetween(p, spot) <= 150);
+  if (park) return { scene: "motor_park", why: `by ${park.name}` };
+  // Parks and gardens are in our own places (the chill spots): no need to ask OpenStreetMap.
+  const { data: rest } = await db.from("places").select("name, lng, lat").eq("kind", "rest").gte("lng", box.w).lte("lng", box.e).gte("lat", box.s).lte("lat", box.n);
+  const garden = (rest ?? []).find((p) => metresBetween(p, spot) <= 150);
+  if (garden) return { scene: "park", why: `by ${garden.name}` };
+  try {
+    const q = `[out:json][timeout:25];(nwr(around:150,${spot.lat},${spot.lng})[amenity~"^(marketplace|school|college|university)$"];nwr(around:150,${spot.lat},${spot.lng})[leisure~"^(park|garden|stadium|pitch)$"];nwr(around:150,${spot.lat},${spot.lng})[natural=beach];nwr(around:150,${spot.lat},${spot.lng})[historic=palace];nwr(around:150,${spot.lat},${spot.lng})[building=palace];);out center tags;`;
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json", "User-Agent": "loota-game-admin/1.0" },
+      body: new URLSearchParams({ data: q }),
+      signal: AbortSignal.timeout(25000), // the public server can be slow
+    });
+    const data = (await res.json()) as { elements?: { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }[] };
+    let best: { scene: KeyScene; m: number; name: string } | null = null;
+    for (const el of data.elements ?? []) {
+      const t = el.tags ?? {};
+      const at = el.center ?? (el.lat != null && el.lon != null ? { lat: el.lat, lon: el.lon } : null);
+      if (!at) continue;
+      const scene: KeyScene | null =
+        t.amenity === "marketplace" ? "market"
+        : ["school", "college", "university"].includes(t.amenity ?? "") ? "school"
+        : t.leisure === "stadium" || t.leisure === "pitch" ? "stadium"
+        : t.leisure === "park" || t.leisure === "garden" ? "park"
+        : t.natural === "beach" ? "beach"
+        : t.historic === "palace" || t.building === "palace" ? "palace"
+        : null;
+      if (!scene) continue;
+      const m = metresBetween({ lng: at.lon, lat: at.lat }, spot);
+      if (!best || m < best.m) best = { scene, m, name: t.name ?? KEY_SCENE_INFO[scene].label.toLowerCase() };
+    }
+    if (best) return { scene: best.scene, why: `by ${best.name}` };
+    return { scene: "circle", why: "nothing particular within 150 m" };
+  } catch {
+    return { scene: "circle", why: "OpenStreetMap didn't answer in time: choose a scene by hand if it should be one" };
+  }
+}
+
 export async function createHunt(form: FormData) {
   const player = await owner();
   const startsAt = lagosTime(text(form, "starts"));
@@ -77,6 +132,10 @@ export async function addKey(form: FormData) {
   // The road service is a free public one and is sometimes down: then keep the spot as typed.
   const spot = (await nearestRoad(spotTyped!)) ?? { ...spotTyped!, movedM: null };
 
+  // The key's place as a scene: chosen, or guessed from what's there.
+  const chosen = text(form, "scene");
+  const picked = isKeyScene(chosen) ? { scene: chosen, why: "chosen" } : await guessScene(spot!);
+
   const db = createAdminClient();
   const { count } = await db.from("hunt_keys").select("n", { count: "exact", head: true }).eq("hunt_id", hunt);
   const { error } = await db.from("hunt_keys").insert({
@@ -90,14 +149,29 @@ export async function addKey(form: FormData) {
     approach_clue: text(form, "clue") || null,
     spot_lng: spot!.lng,
     spot_lat: spot!.lat,
+    scene: picked.scene,
   });
   if (error) back(`Couldn't add the key: ${error.message}`, true);
   revalidatePath("/admin");
+  const scene = ` Its place: ${KEY_SCENE_INFO[picked.scene].label} (${picked.why}).`;
   back(
     spot.movedM === null
-      ? `Key ${(count ?? 0) + 1} added. The road check is unavailable right now, so the spot is exactly as pasted: make sure it's on or beside a road (hunters must get within 40 m).`
-      : `Key ${(count ?? 0) + 1} added. Its spot was moved ${spot.movedM} m onto the nearest road.`,
+      ? `Key ${(count ?? 0) + 1} added. The road check is unavailable right now, so the spot is exactly as pasted: make sure it's on or beside a road (hunters must get within 40 m).${scene}`
+      : `Key ${(count ?? 0) + 1} added. Its spot was moved ${spot.movedM} m onto the nearest road.${scene}`,
   );
+}
+
+/** Change the scene of a key's place (it only changes how the place looks, so even in a published hunt). */
+export async function setKeyScene(form: FormData) {
+  await owner();
+  const hunt = text(form, "hunt");
+  const n = whole(form, "n");
+  const scene = text(form, "scene");
+  if (!UUID.test(hunt) || !Number.isInteger(n) || !isKeyScene(scene)) back("Unknown key or scene.", true);
+  const { error } = await createAdminClient().from("hunt_keys").update({ scene }).eq("hunt_id", hunt).eq("n", n);
+  if (error) back(`Couldn't change the scene: ${error.message}`, true);
+  revalidatePath("/admin");
+  back(`Key ${n}'s place is now: ${KEY_SCENE_INFO[scene as KeyScene].label}.`);
 }
 
 export async function removeLastKey(form: FormData) {

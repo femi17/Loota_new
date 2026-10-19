@@ -17,6 +17,7 @@ import { NurseScene, type Discharge } from "./NurseScene";
 import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene";
 import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { CoinShop, confirmPayment } from "./CoinShop";
+import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
 import { OFFICER, RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
@@ -405,6 +406,8 @@ export function GameMap({
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
   /** Buying coins (tap your coins); `notice`: how a payment on Paystack's own page went. */
+  /** Who asks the Key Trial at the key's place on the map. */
+  const [trialKeeper, setTrialKeeper] = useState("The Keeper");
   const [coinShop, setCoinShop] = useState<{ notice: { text: string; good: boolean } | null } | null>(null);
   // Back from Paystack's own page (/play?paid=…): check the payment with Paystack through our server, then show it.
   useEffect(() => {
@@ -4479,7 +4482,7 @@ export function GameMap({
         buka?: ReturnType<typeof models.makeOpenBuka>;
         hall?: ReturnType<typeof models.makeTicketHall>;
         shrine?: ReturnType<typeof models.makeLampShrine>;
-        circle?: ReturnType<typeof models.makeKeyCircle>;
+        circle?: ReturnType<typeof models.makeKeyScene>;
         vault?: ReturnType<typeof models.makeDjinnVault>;
         star?: import("three").Object3D;
         terminal?: ReturnType<typeof models.makeTerminal>;
@@ -4880,11 +4883,15 @@ export function GameMap({
       // ---- The key's trial on the map: the Keeper of the Key by the open chest in a ring of standing stones, where
       // the chest rose; the questions in a strip (HuntPanel's KeyTrial, world mode). The Keeper raises their arms
       // at each right answer; won, they cheer a moment before you leave with the key; failed, you're thrown away.
-      const KEEPER: AvatarLook = { skin: "#5C3A1E", hair: "bald", hairColour: "#1B120C", top: "hoodie", topColour: "#1E3A6E", bottomsColour: "#1E3A6E", extra: "none" };
+      // Each key's place is its own scene (owner, 19 Oct 2026): a market with its market woman, a monument's plaza with a
+      // guide, a beach with a fisherman… chosen for the key in /admin; the stone circle and the Keeper elsewhere.
       function openTrialPlace() {
         if (inWorld || !network) return;
         const S = models.TRIAL_SPOTS;
-        const circle = models.makeKeyCircle();
+        const scene: KeyScene = chest?.scene ?? "circle";
+        const info = KEY_SCENE_INFO[scene];
+        const circle = models.makeKeyScene(scene, info.sign);
+        setTrialKeeper(info.keeper.name);
         openPlace({
           kind: "trial",
           key: `trial:${traveller.pos.lng.toFixed(5)},${traveller.pos.lat.toFixed(5)}`,
@@ -4892,7 +4899,7 @@ export function GameMap({
           group: circle.group,
           spots: S,
           kerbM: 7,
-          keeper: { look: KEEPER, at: S.keeper },
+          keeper: { look: info.keeper.look, at: S.keeper },
           you: { from: S.outside, to: S.customer },
           hidden: chest ? [chest.entity] : [],
           closeScene: () => {},
@@ -5857,12 +5864,12 @@ export function GameMap({
       void refreshLandmarks();
 
       // ---- The metal detector (a live hunt): feel for the key's heat; its chest rises out of the ground within 60 m ----
-      type Pulse = { ok: boolean; reason?: string; inArea?: boolean; key?: number; heat?: number; spot?: LngLat | null };
+      type Pulse = { ok: boolean; reason?: string; inArea?: boolean; key?: number; heat?: number; spot?: (LngLat & { scene?: string }) | null };
       let pulseAt = -Infinity;
       let pulseEvery = 6000;
       let pulsing = false;
       let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady" } | null = null;
-      let chest: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number } | null = null;
+      let chest: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number; scene: KeyScene } | null = null;
       let chestHere = false;
       let lastBeat = 0;
       const pulseSoon = () => {
@@ -5883,12 +5890,13 @@ export function GameMap({
         setHud((h) => (JSON.stringify(h.heat) === JSON.stringify(view) ? h : { ...h, heat: view }));
       }
 
-      function showChest(spot: LngLat, key: number) {
+      function showChest(spot: LngLat & { scene?: string }, key: number) {
         if (chest && chest.key === key) return;
         hideChest();
         const model = models.makeChest();
         model.body.position.y = -1.6;
-        chest = { entity: layer.add({ object: model.group, lng: spot.lng, lat: spot.lat, heading: 0 }), body: model.body, ring: model.ring, spot, key, born: performance.now() };
+        const scene = isKeyScene(spot.scene) ? spot.scene : "circle"; // where the key is: its scene for the trial
+        chest = { entity: layer.add({ object: model.group, lng: spot.lng, lat: spot.lat, heading: 0 }), body: model.body, ring: model.ring, spot, key, born: performance.now(), scene };
         say("✨ Something glints in the ground… the key's chest rises! Get to it.", true);
       }
 
@@ -6907,7 +6915,7 @@ export function GameMap({
             {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
             {huntId && huntShown && (
               <div className={inside && inside !== "trial" ? "hidden" : "contents"}>
-                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} />
+                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} keeper={trialKeeper} />
               </div>
             )}
           </div>

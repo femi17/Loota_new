@@ -69,11 +69,14 @@ export function HuntPanel({
   actions,
   onHide,
   scene = false,
+  keeper = "The Keeper",
 }: {
   huntId: string;
   actions: RefObject<HuntActions | null>;
   onHide: () => void;
   scene?: boolean;
+  /** Who asks the trial on the map (the key's place: the market woman, the guide, the Keeper of the Key…). */
+  keeper?: string;
 }) {
   const supabase = useRef(createClient()).current;
   const [state, setState] = useState<HuntState | null>(null);
@@ -537,7 +540,7 @@ export function HuntPanel({
         </div>
       )}
 
-      {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} world={scene} onAnswer={(choice) => answer(trial.attempt, choice)} />}
+      {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} world={scene} keeper={keeper} onAnswer={(choice) => answer(trial.attempt, choice)} />}
       {recap && <RecapCard recap={recap} onClose={() => setRecap(null)} />}
 
       {ending && (
@@ -611,10 +614,13 @@ function KeyTrial({
   trial,
   rival,
   world = false,
+  keeper = "The Keeper",
   onAnswer,
 }: {
   trial: TrialView;
   rival: string | null;
+  /** Who asks, on the map. */
+  keeper?: string;
   /** On the map (the Keeper of the Key by the chest): a strip at the bottom, the scene in view above. */
   world?: boolean;
   onAnswer: (choice: number) => Promise<void> | void;
@@ -677,7 +683,7 @@ function KeyTrial({
         )}
         {memorising ? (
           <div className="flex flex-col items-center gap-1 py-1" aria-label="Memorise">
-            <p className="text-xs font-extrabold uppercase tracking-widest text-gold">The Keeper: memorise!</p>
+            <p className="text-xs font-extrabold uppercase tracking-widest text-gold">{keeper}: memorise!</p>
             <p className="loota-count text-center font-display text-3xl font-extrabold leading-snug tracking-wide">{trial.show}</p>
             <p className="text-xs text-muted">Hidden in {Math.ceil(left - trial.seconds)}…</p>
           </div>
@@ -697,7 +703,7 @@ function KeyTrial({
               </div>
             ) : (
               <p className="rounded-xl bg-ink-2 px-3 py-2 text-sm leading-snug">
-                <span className="mr-1.5 font-bold text-gold">The Keeper:</span>
+                <span className="mr-1.5 font-bold text-gold">{keeper}:</span>
                 {trial.prompt}
               </p>
             )}

@@ -7,7 +7,8 @@ import { FormMessage } from "@/components/FormField";
 import { getPlayer } from "@/lib/player";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
-import { addKey, createHunt, deleteDraft, removeLastKey, setPublished, summonDjinn } from "./actions";
+import { KEY_SCENES, KEY_SCENE_INFO, isKeyScene } from "@/game/keyScenes";
+import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setPublished, summonDjinn } from "./actions";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
 
@@ -42,6 +43,7 @@ type KeyRow = {
   approach_clue: string | null;
   spot_lng: number;
   spot_lat: number;
+  scene: string;
 };
 type HuntRow = {
   id: string;
@@ -178,10 +180,27 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
               {keys.map((k) => (
                 <li key={k.n} className="rounded-2xl bg-ink-2 p-4 text-sm">
                   <p className="font-bold">
-                    Key {k.n} · {CATEGORY_NAMES[k.category]}
+                    Key {k.n} · {CATEGORY_NAMES[k.category]} · {isKeyScene(k.scene) ? KEY_SCENE_INFO[k.scene].label : k.scene}
                   </p>
                   <p>&ldquo;{k.riddle}&rdquo;</p>
                   {k.approach_clue && <p className="text-muted">Final approach: {k.approach_clue}</p>}
+                  <form action={setKeyScene} className="my-1 flex flex-wrap items-center gap-2">
+                    <input type="hidden" name="hunt" value={h.id} />
+                    <input type="hidden" name="n" value={k.n} />
+                    <label className="text-xs text-muted" htmlFor={`scene-${h.id}-${k.n}`}>
+                      Its place
+                    </label>
+                    <select id={`scene-${h.id}-${k.n}`} name="scene" defaultValue={k.scene} className="h-9 rounded-lg bg-ink px-2 text-xs">
+                      {KEY_SCENES.map((s) => (
+                        <option key={s} value={s}>
+                          {KEY_SCENE_INFO[s].label} · {KEY_SCENE_INFO[s].keeper.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="submit" className="h-9 rounded-lg border border-line px-3 text-xs font-bold">
+                      Change
+                    </button>
+                  </form>
                   <p className="text-xs text-muted">
                     Area {k.area_lat.toFixed(5)}, {k.area_lng.toFixed(5)} (within {k.area_radius_m} m) · Spot{" "}
                     <a
@@ -213,6 +232,16 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                       {Object.entries(CATEGORY_NAMES).map(([value, name]) => (
                         <option key={value} value={value}>
                           {name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="The key's place" hint="What the place where it's won looks like, and who asks the trial there.">
+                    <select name="scene" className={field} defaultValue="auto">
+                      <option value="auto">Automatic (from what&apos;s around the spot)</option>
+                      {KEY_SCENES.map((s) => (
+                        <option key={s} value={s}>
+                          {KEY_SCENE_INFO[s].label} · {KEY_SCENE_INFO[s].keeper.name}
                         </option>
                       ))}
                     </select>

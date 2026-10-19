@@ -1681,3 +1681,182 @@ export function makeDjinnVault(place: string, cipher: string, rows: number, cols
     },
   };
 }
+
+/** The open chest with the key's gold light rising, at the middle of a key's scene. */
+function keyChest(group: THREE.Group) {
+  const { stand } = TRIAL_SPOTS;
+  const chest = makeChest();
+  chest.ring.visible = false;
+  chest.group.position.set(stand.x, 0.1, stand.z);
+  chest.group.scale.setScalar(0.8);
+  const light = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, 2.6, 16, 1, true), new THREE.MeshBasicMaterial({ color: "#FFD45C", transparent: true, opacity: 0.25, side: THREE.DoubleSide }));
+  light.position.set(stand.x, 2.2, stand.z);
+  group.add(chest.group, light);
+  return light;
+}
+
+/** A disc of ground under a scene. */
+function ground(colour: string, r = 5) {
+  const g = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.1, 32), material(colour));
+  g.position.set(0, 0.05, TRIAL_SPOTS.stand.z + 0.4);
+  return g;
+}
+
+function tree(x: number, z: number, r = 1.2) {
+  const g = new THREE.Group();
+  g.add(mesh(new THREE.CylinderGeometry(0.15, 0.22, 2, 8), "#6B4A2B", 0, 1, 0));
+  const leaves = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), material("#2E7D4F"));
+  leaves.position.y = 2.4;
+  g.add(leaves);
+  g.position.set(x, 0, z);
+  return g;
+}
+
+function umbrella(x: number, z: number, colour: string, r = 1.3, h = 2.4) {
+  const g = new THREE.Group();
+  const top = new THREE.Mesh(new THREE.ConeGeometry(r, 0.5, 8, 1, true), material(colour));
+  top.position.y = h;
+  g.add(top, mesh(new THREE.CylinderGeometry(0.04, 0.04, h, 6), "#5B6475", 0, h / 2, 0));
+  g.position.set(x, 0, z);
+  return g;
+}
+
+/**
+ * Where a key is won, as the place it is (src/game/keyScenes.ts): a market, a monument's plaza, a beach, a park, a
+ * motor park, a school, a football pitch, a palace, or the stone circle anywhere else. Each has the open chest with the
+ * key's light in the middle (TRIAL_SPOTS.stand); `flames` flicker where there are any; `glow` is the key's light.
+ */
+export function makeKeyScene(scene: string, sign: string) {
+  if (scene === "circle" || !scene) {
+    const c = makeKeyCircle();
+    return { group: c.group, flames: c.flames, glow: c.glow };
+  }
+  const group = new THREE.Group();
+  const flames: THREE.Mesh[] = [];
+  const { stand } = TRIAL_SPOTS;
+  const board = (text: string, colour: string, x: number, z: number, w = 2.6) => {
+    const b = signBoard(text, colour, w, 0.55);
+    b.position.set(x, 2.3, z);
+    group.add(b, mesh(new THREE.BoxGeometry(0.08, 2.1, 0.08), "#4A3A2A", x - w / 2 + 0.2, 1.05, z - 0.02), mesh(new THREE.BoxGeometry(0.08, 2.1, 0.08), "#4A3A2A", x + w / 2 - 0.2, 1.05, z - 0.02));
+  };
+
+  if (scene === "market") {
+    group.add(ground("#C9A27A"));
+    // Stalls round the chest: tables under bright umbrellas, piled with tomatoes, peppers and yams; baskets
+    const stalls: [number, number, string][] = [
+      [-3.2, -6.2, "#E5484D"],
+      [0, -7.6, "#F4B41A"],
+      [3.2, -6.2, "#1E9E62"],
+      [3.6, -2.6, "#2F6FEB"],
+    ];
+    for (const [x, z, colour] of stalls) {
+      group.add(table(x, z, 1.8, 1), umbrella(x, z, colour, 1.3));
+      for (let i = 0; i < 5; i++) {
+        const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), material(i % 2 ? "#D62828" : "#F28C28"));
+        fruit.position.set(x - 0.5 + i * 0.25, 1.25, z);
+        group.add(fruit);
+      }
+      group.add(mesh(new THREE.CylinderGeometry(0.1, 0.14, 0.5, 8), "#8A5A36", x + 0.6, 1.3, z - 0.2));
+    }
+    for (const [x, z] of [
+      [-3.8, -2.6],
+      [-1.6, -1.6],
+    ])
+      group.add(mesh(new THREE.CylinderGeometry(0.35, 0.28, 0.45, 12), "#C89B5A", x, 0.3, z));
+    board(sign || "Market", "#F07A28", 0, -8.6, 2.8);
+  } else if (scene === "landmark") {
+    const plaza = makeLandmarkPlaza(sign || "Monument");
+    plaza.group.position.z = -1;
+    group.add(plaza.group);
+  } else if (scene === "beach") {
+    group.add(ground("#E8D3A2"));
+    // The sea along the back, a canoe drawn up, palms and a beach umbrella with a chair
+    const sea = new THREE.Mesh(new THREE.BoxGeometry(14, 0.08, 3), new THREE.MeshLambertMaterial({ color: "#2F8FD6", transparent: true, opacity: 0.85 }));
+    sea.position.set(0, 0.06, stand.z - 4.6);
+    group.add(sea, mesh(new THREE.BoxGeometry(14, 0.1, 0.3), "#F4F1EA", 0, 0.08, stand.z - 3.1));
+    const canoe = mesh(new THREE.BoxGeometry(3.4, 0.45, 0.8), "#7A4B22", -2.6, 0.3, stand.z - 2.2);
+    canoe.rotation.y = 0.35;
+    group.add(canoe, palm(-4, -1.6), palm(4.2, -6.4), umbrella(3.2, -2.4, "#E5484D", 1.2, 2.2), mesh(new THREE.BoxGeometry(0.6, 0.12, 1.2), "#F4F1EA", 3.2, 0.45, -1.6));
+  } else if (scene === "park") {
+    group.add(ground("#6FB559"));
+    // Trees, a fountain, flower beds, a bench
+    group.add(tree(-3.6, -6.6), tree(3.8, -6.8, 1.4), tree(-4.2, -2.2, 1));
+    const fountain = new THREE.Group();
+    fountain.add(mesh(new THREE.CylinderGeometry(1, 1.1, 0.5, 18), "#C9C2B4", 0, 0.3, 0));
+    const water = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.06, 18), glow("#7FC1EE"));
+    water.position.y = 0.55;
+    fountain.add(water, mesh(new THREE.CylinderGeometry(0.1, 0.14, 1.2, 8), "#C9C2B4", 0, 0.9, 0));
+    fountain.position.set(3, 0, -2.4);
+    group.add(fountain);
+    for (const x of [-1.8, 1.8]) group.add(mesh(new THREE.BoxGeometry(1.4, 0.25, 0.6), "#E85D9E", x, 0.2, -7.6));
+    group.add(mesh(new THREE.BoxGeometry(2, 0.12, 0.5), "#7A5230", -2.6, 0.55, -4.8), mesh(new THREE.BoxGeometry(2, 0.6, 0.1), "#7A5230", -2.6, 0.85, -5.05));
+    board(sign || "Park", "#1E9E62", 0, -8.6);
+  } else if (scene === "motor_park") {
+    group.add(ground("#6E6A64"));
+    // A danfo waiting, the shelter, a stack of tyres, the motor park's sign
+    const bus = makeBus();
+    bus.rotation.y = Math.PI / 2;
+    bus.scale.setScalar(0.85);
+    bus.position.set(0, 0, stand.z - 3.4);
+    group.add(bus);
+    group.add(
+      mesh(new THREE.BoxGeometry(0.15, 2.2, 0.15), "#5B6475", -4.4, 1.1, -2),
+      mesh(new THREE.BoxGeometry(0.15, 2.2, 0.15), "#5B6475", -4.4, 1.1, -4),
+      mesh(new THREE.BoxGeometry(1.6, 0.12, 2.4), "#1E9E62", -4, 2.25, -3),
+      mesh(new THREE.BoxGeometry(0.4, 0.4, 1.8), "#7A5230", -4.2, 0.4, -3),
+    );
+    for (let i = 0; i < 3; i++) {
+      const t = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.14, 8, 18), material("#2A2A2A"));
+      t.rotation.x = Math.PI / 2;
+      t.position.set(3.8, 0.25 + i * 0.26, -2.2);
+      group.add(t);
+    }
+    board(sign || "Motor park", "#F4B41A", 2.6, -8.8);
+  } else if (scene === "school") {
+    group.add(ground("#B8925A"));
+    // The classroom block, the flagpole with the Nigerian flag, the gate
+    group.add(mesh(new THREE.BoxGeometry(9, 2.6, 1.6), "#F4F1EA", 0, 1.4, stand.z - 4), mesh(new THREE.BoxGeometry(9.2, 0.25, 1.9), "#B8322A", 0, 2.8, stand.z - 4));
+    for (let i = 0; i < 6; i++) group.add(mesh(new THREE.BoxGeometry(0.8, 0.7, 0.05), "#9FC6E8", -3.5 + i * 1.4, 1.6, stand.z - 3.17));
+    group.add(mesh(new THREE.CylinderGeometry(0.05, 0.05, 4, 6), "#9AA1AC", 3.6, 2, -2.4));
+    ["#008751", "#FFFFFF", "#008751"].forEach((c, i) => group.add(mesh(new THREE.BoxGeometry(0.3, 0.6, 0.03), c, 3.78 + i * 0.3, 3.6, -2.4)));
+    group.add(mesh(new THREE.BoxGeometry(0.4, 2, 0.4), "#7A5230", -3.6, 1, 0.4), mesh(new THREE.BoxGeometry(0.4, 2, 0.4), "#7A5230", -1.4, 1, 0.4));
+    board(sign || "Government College", "#1E3A6E", 0, stand.z - 4.9, 4.4);
+  } else if (scene === "stadium") {
+    group.add(ground("#3E9B4F"));
+    // The lines, a goal with its net, a corner flag, the stands behind
+    group.add(mesh(new THREE.BoxGeometry(9, 0.02, 0.1), "#FFFFFF", 0, 0.12, -1.2), mesh(new THREE.BoxGeometry(0.1, 0.02, 6), "#FFFFFF", 0, 0.12, -4.2));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.05, 6, 32), material("#FFFFFF"));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(0, 0.12, -4.2);
+    group.add(ring);
+    const goal = new THREE.Group();
+    goal.add(mesh(new THREE.BoxGeometry(0.12, 1.8, 0.12), "#FFFFFF", -1.8, 0.9, 0), mesh(new THREE.BoxGeometry(0.12, 1.8, 0.12), "#FFFFFF", 1.8, 0.9, 0), mesh(new THREE.BoxGeometry(3.7, 0.12, 0.12), "#FFFFFF", 0, 1.8, 0));
+    const net = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.7), new THREE.MeshBasicMaterial({ color: "#FFFFFF", transparent: true, opacity: 0.35, side: THREE.DoubleSide }));
+    net.position.set(0, 0.9, -0.6);
+    goal.add(net);
+    goal.position.set(0, 0, stand.z - 3.6);
+    group.add(goal);
+    for (let i = 0; i < 3; i++) group.add(mesh(new THREE.BoxGeometry(11, 0.5, 0.9), i % 2 ? "#2F6FEB" : "#E5484D", 0, 0.25 + i * 0.5, stand.z - 5.2 - i * 0.9));
+    group.add(mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4, 6), "#F4F1EA", 4.4, 0.7, -1.2), mesh(new THREE.BoxGeometry(0.03, 0.35, 0.45), "#F4B41A", 4.4, 1.25, -1.0));
+  } else if (scene === "palace") {
+    group.add(ground("#B5651D"));
+    // The palace wall and its gate, talking drums, the royal umbrella over the chest, torches
+    group.add(mesh(new THREE.BoxGeometry(11, 2.6, 0.6), "#C1440E", 0, 1.3, stand.z - 3.6));
+    group.add(mesh(new THREE.BoxGeometry(2.2, 3.2, 0.7), "#7A2F0E", 0, 1.6, stand.z - 3.55), mesh(new THREE.BoxGeometry(1.6, 2.4, 0.72), "#3A1F0A", 0, 1.2, stand.z - 3.5));
+    for (let i = 0; i < 9; i++) group.add(mesh(new THREE.BoxGeometry(0.5, 0.35, 0.62), "#F4F1EA", -5 + i * 1.25, 2.75, stand.z - 3.6));
+    group.add(umbrella(stand.x, stand.z, "#F4B41A", 1.6, 3));
+    for (const x of [-2.6, -2]) {
+      const drum = mesh(new THREE.CylinderGeometry(0.25, 0.18, 0.9, 12), "#7A4B22", x, 0.5, -2.2);
+      group.add(drum, mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.04, 12), "#F4F1EA", x, 0.96, -2.2));
+    }
+    for (const x of [-2.8, 2.8]) {
+      group.add(mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.8, 6), "#4A2E14", x, 0.9, stand.z - 2.4));
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 8), glow("#FF8A1F"));
+      flame.position.set(x, 2.05, stand.z - 2.4);
+      group.add(flame);
+      flames.push(flame);
+    }
+  }
+  const light = keyChest(group);
+  return { group, flames, glow: light };
+}

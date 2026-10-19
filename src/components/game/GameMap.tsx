@@ -19,6 +19,7 @@ import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene
 import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { CoinShop, confirmPayment } from "./CoinShop";
 import { PumpScene, type PumpActions, type PumpOffer } from "./PumpScene";
+import { ServiceScene, type ServiceActions, type ServiceOffer } from "./ServiceScene";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
@@ -194,6 +195,7 @@ const MESSENGER: AvatarLook = { skin: "#8D5524", hair: "bun", hairColour: "#1B12
 const ATTENDANTS = ["Chidi", "Musa", "Segun", "Ibrahim", "Emeka", "Yusuf", "Sola"];
 const COOKS = ["Mama Nkechi", "Mama Bisi", "Iya Titi", "Mama Ngozi", "Iya Kemi", "Aunty Amaka", "Mama Ronke"];
 const VULCANIZERS = ["Baba Sule", "Emeka", "Kunle", "Alhaji Musa", "Chinedu"];
+const MECHANICS = ["Oga Tunde", "Mr Bayo", "Kalu", "Mallam Idris", "Uche"];
 const NURSES = ["Nurse Funmi", "Nurse Aisha", "Nurse Grace", "Nurse Ifeoma", "Nurse Zainab"];
 const PARAMEDICS = ["Paramedic Tobi", "Paramedic Usman", "Paramedic Ada", "Paramedic Kelechi"];
 function nameFor(list: string[], seed: string) {
@@ -416,7 +418,9 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | "service" | null>(null);
+  const [serviceOpen, setServiceOpen] = useState<ServiceOffer | null>(null);
+  const [serviceActions, setServiceActions] = useState<ServiceActions | null>(null);
   const [pumpOpen, setPumpOpen] = useState<PumpOffer | null>(null);
   const [pumpActions, setPumpActions] = useState<PumpActions | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
@@ -3464,6 +3468,7 @@ export function GameMap({
 
       setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg"), fillKeg: () => fillKegHere() });
       setPumpActions({ pump: () => act("pump", true) });
+      setServiceActions({ service: () => act("service", true) });
       setMealActions({
         eat: async () => {
           const place = spotHere(["eat"]);
@@ -3484,6 +3489,25 @@ export function GameMap({
             setBusy(false);
             computeActions();
           }
+        }
+        if (id === "service" && !direct) {
+          // The mechanic (ServiceScene): 20 s for a light service, up to 45 s for a worn-out or broken engine.
+          const spot = spotHere(["mechanic"]);
+          const riding = ownInUse();
+          const v = riding && riding.kind !== "bicycle" && riding.engine < 90 ? riding : owned.find((o) => !o.in_use && o.kind !== "bicycle" && !!o.broken_at) ?? null;
+          if (!spot || !v || v.kind === "bicycle") return false;
+          const offer: ServiceOffer = {
+            place: spot.name,
+            mechanic: nameFor(MECHANICS, String(spot.id)),
+            kind: v.kind,
+            engine: v.engine,
+            broken: !!v.broken_at,
+            price: 60,
+            seconds: v.broken_at ? 45 : Math.min(45, Math.max(20, Math.round(20 + (90 - v.engine) * 0.5))),
+          };
+          openServicePlace(offer, spot);
+          setServiceOpen(offer);
+          return true;
         }
         if (id === "pump" && !direct) {
           // The vulcanizer (PumpScene): soft tyres pumped (8 s), or a flat patched and pumped (20 s).
@@ -4849,7 +4873,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | "service";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -5378,6 +5402,31 @@ export function GameMap({
         });
       }
 
+      /** At the mechanic's: the open workshop, your motorbike or car on the stand, the mechanic at the engine. */
+      function openServicePlace(offer: ServiceOffer, spot: LngLat & { id: number }) {
+        const S = models.SHOP_SPOTS;
+        const group = models.makeOpenShop("workshop", offer.place.length > 22 ? "Mechanic" : offer.place);
+        const vehicle = models.makeVehicleModel(offer.kind);
+        vehicle.rotation.y = Math.PI / 2;
+        vehicle.position.set(S.stand.x, 0.14, S.stand.z);
+        group.add(vehicle);
+        const sparkles = models.makeSparkles();
+        sparkles.position.set(S.stand.x, 0.14, S.stand.z);
+        sparkles.visible = false;
+        group.add(sparkles);
+        return openPlace({
+          kind: "service",
+          key: `service:${spot.id}`,
+          at: spot,
+          group,
+          spots: { ...S },
+          keeper: { look: { ...keeperLook(offer.mechanic), topColour: "#2F4A6E", extra: "cap" }, at: S.keeper },
+          you: { from: S.outside, to: S.customer },
+          closeScene: () => setServiceOpen(null),
+          extra: { vehicle, sparkles },
+        });
+      }
+
       /** Walk out: back to the street (riding, if you rented), the camera rises, the place folds away. */
       function closePlace() {
         const w = inWorld;
@@ -5458,6 +5507,9 @@ export function GameMap({
           if (working) keeperSpot = S.work;
         } else if (w.kind === "meal" && m?.type === "served" && now - w.servedAt < 4000) {
           keeperSpot = S.work; // bringing the plate to the table
+        } else if (w.kind === "service" && m?.type === "pumping") {
+          keeperSpot = S.work; // at the engine with a spanner
+          working = true;
         } else if (w.kind === "pump" && m?.type === "pumping") {
           keeperSpot = S.work; // at the bicycle, working on the tyre
           working = true;
@@ -5514,7 +5566,7 @@ export function GameMap({
         if (keeperThere && working) {
           // Bent over the vehicle with a spanner, or holding the nozzle in the tank.
           w.keeper.face = Math.PI / 2;
-          if (w.kind === "repair" || w.kind === "pump") {
+          if (w.kind === "repair" || w.kind === "pump" || w.kind === "service") {
             w.keeper.av.rig.rotation.x = 0.45;
             w.keeper.av.armR.rotation.x = -1.4 + Math.sin(t * 9) * 0.45;
             w.keeper.av.armL.rotation.x = -1.1 + Math.sin(t * 9 + 1.5) * 0.25;
@@ -5523,6 +5575,7 @@ export function GameMap({
           }
         }
         if (w.kind === "meal" && m?.type === "served" && keeperThere && keeperSpot === S.work) w.buka?.plate("full");
+        if (w.kind === "service" && w.sparkles) w.sparkles.visible = m?.type === "filled"; // like new
 
         // The event's things.
         if (w.kind === "repair" && w.job && w.vehicle && w.sparkles) {
@@ -7713,6 +7766,16 @@ export function GameMap({
           notice={coinShop.notice}
           onPaid={(balance) => setHud((h) => ({ ...h, coins: balance }))}
           onClose={() => setCoinShop(null)}
+        />
+      )}
+      {serviceOpen && serviceActions && (
+        <ServiceScene
+          offer={serviceOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={serviceActions}
+          world={inside === "service"}
+          onMoment={onMoment}
+          onClose={() => (inside === "service" ? actions.current?.leaveShop() : setServiceOpen(null))}
         />
       )}
       {pumpOpen && pumpActions && (

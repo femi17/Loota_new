@@ -147,18 +147,18 @@ try {
   const after = await bike();
   const poured = await body();
   check("…the tank at 65%, and back on it", Math.round(after.fuel) === 65 && after.in_use && !after.stranded_at && /you're back on it/.test(poured), JSON.stringify(after));
-  // Ride on (if the way ahead ends at a junction, which waits for a turn, go back the other way).
-  let m = 0, moved = null;
-  for (const key of ["ArrowUp", "ArrowDown"]) {
-    await page.keyboard.down(key);
-    await wait(4000);
-    await page.keyboard.up(key);
-    await wait(5000);
-    moved = await bike();
-    m = Math.hypot((moved.lng - b.lng) * 110400, (moved.lat - b.lat) * 110574);
-    if (m > 50) break;
+  // Ride on: the furthest it gets from where it stood (at the end of a road it turns, so where it ends up can be close).
+  let m = 0;
+  await page.keyboard.down("ArrowUp");
+  for (let i = 0; i < 10; i++) {
+    await wait(400);
+    const c = await page.evaluate(() => { const x = window.__lootaMap.getCenter(); return [x.lng, x.lat]; });
+    m = Math.max(m, Math.hypot((c[0] - b.lng) * 110400, (c[1] - b.lat) * 110574));
   }
-  check("…and it rides", m > 50 && moved.fuel < 65, `${Math.round(m)} m`);
+  await page.keyboard.up("ArrowUp");
+  await wait(5000);
+  const moved = await bike();
+  check("…and it rides", m > 50 && moved.fuel < 65, `${Math.round(m)} m at the furthest`);
   await shot("5-ride");
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {

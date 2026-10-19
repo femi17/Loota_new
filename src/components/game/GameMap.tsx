@@ -1049,6 +1049,7 @@ export function GameMap({
         insured: boolean;
       };
       let owned: VehicleRow[] = [];
+      let vehiclesLoaded = false; // owned is filled in (refreshVehicles)
       let licences = { rider: false, driver: false };
       let rental: { kind: VehicleKind; startedAt: number; rate: number } | null = null;
       let busy = false;
@@ -1166,6 +1167,7 @@ export function GameMap({
         ]);
         if (disposed) return;
         owned = (vehicles ?? []) as VehicleRow[];
+        vehiclesLoaded = true;
         const p = papers as { rider_licence: boolean; driver_licence: boolean } | null;
         licences = { rider: !!p?.rider_licence, driver: !!p?.driver_licence };
         const active = rentals?.[0] as { kind: VehicleKind; started_at: string } | undefined;
@@ -1232,6 +1234,43 @@ export function GameMap({
           adviseFuelWalk(vehicleName(s.kind));
         }
       }
+      // Where the player was going when the tank ran dry: set aside while they fetch fuel (kept across a reload), and
+      // taken up again once the jerry can is poured in (owner, 19 Oct 2026: "my old route… is gone").
+      const GOING_KEY = "loota:going-before-dry";
+      let goingBeforeDry: { lng: number; lat: number; name: string } | null = null;
+      try {
+        goingBeforeDry = JSON.parse(localStorage.getItem(GOING_KEY) ?? "null") as typeof goingBeforeDry;
+      } catch {
+        goingBeforeDry = null;
+      }
+      function setGoing(to: typeof goingBeforeDry) {
+        goingBeforeDry = to;
+        try {
+          if (to) localStorage.setItem(GOING_KEY, JSON.stringify(to));
+          else localStorage.removeItem(GOING_KEY);
+        } catch {
+          // Private browsing: kept for this visit only.
+        }
+      }
+      /** Back on the road after the jerry can: the journey's step, or the place the player was heading for. */
+      function resumeGoing(): string | null {
+        const to = goingBeforeDry;
+        setGoing(null);
+        endDirections();
+        if (journey) {
+          // The journey's current step, quietly (the pour message says where to).
+          const leg = journey.journey.legs[journey.step];
+          if (leg?.kind === "go") void planDirections({ lng: leg.to.lng, lat: leg.to.lat }, leg.to.name, true);
+          showJourney();
+          return journey.journey.place.name;
+        }
+        if (to) {
+          void planDirections({ lng: to.lng, lat: to.lat }, to.name, true);
+          return to.name;
+        }
+        return null;
+      }
+
       /** On foot from a dry tank: to the nearest petrol station, by road, with (or for) a jerry can. */
       function adviseFuelWalk(name: string, first = false) {
         void advise(
@@ -3488,18 +3527,22 @@ export function GameMap({
           } else if (id === "pour_keg") {
             keg = r.spoilt ? null : { fuel: r.kegFuel ?? 0, usesLeft: r.usesLeft ?? 0 };
             const name = r.kind ? vehicleName(r.kind) : "vehicle";
+            let onTo: string | null = null;
             if (r.remounted && r.kind) {
               // Back on the vehicle that stood at the roadside.
               traveller.mode = r.kind;
               saved = { ...traveller.pos };
-              endDirections();
             }
             await refreshVehicles();
-            if (r.remounted) afterModeChange();
+            if (r.remounted) {
+              afterModeChange();
+              clearAdvice("fuel");
+              onTo = resumeGoing(); // the way the player was going before the tank ran dry
+            }
             warned.fuel = 100;
             say(
               r.remounted
-                ? `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel, and you're back on it. A jerry can only goes so far: fill up at a petrol station.`
+                ? `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel, and you're back on it${onTo ? `. On to ${onTo}` : ""}. A jerry can only goes so far: fill up at a petrol station.`
                 : `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your jerry can's last use: it's worn out." : ` Your jerry can has ${r.usesLeft} uses left.`}`,
               true,
             );
@@ -3561,9 +3604,13 @@ export function GameMap({
         const name = kind ? vehicleName(kind) : "vehicle";
         if (why === "fuel") {
           if (keg && keg.fuel > 0) {
+            if (trip) setGoing({ lng: trip.to.lng, lat: trip.to.lat, name: trip.name });
             say(`Out of fuel! Your ${name} stands at the roadside. Pour in your jerry can (the gold button).`, true);
           } else {
-            // On foot to the nearest petrol station, by road, with (or for) a jerry can, and back.
+            // On foot to the nearest petrol station, by road, with (or for) a jerry can, and back. The way the player was
+            // going waits until then.
+            if (trip) setGoing({ lng: trip.to.lng, lat: trip.to.lat, name: trip.name });
+            endDirections();
             nextStrandGuide = performance.now() + 20000;
             adviseFuelWalk(name, true);
           }
@@ -4557,9 +4604,10 @@ export function GameMap({
       function journeyTick(now: number) {
         if (!journey || now - lastJourneyTick < 1000) return;
         lastJourneyTick = now;
-        if (!journeyResumed) {
+        if (!journeyResumed && vehiclesLoaded) {
           journeyResumed = true;
-          if (!ride) beginStep(); // after a reload: draw the current step again
+          // After a reload: draw the current step again (not while a vehicle waits at the roadside for fuel: that way first).
+          if (!ride && !strandedVehicle()) beginStep();
         }
         const { legs } = journey.journey;
         const leg = legs[journey.step];

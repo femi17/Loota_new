@@ -45,6 +45,7 @@ export function EventScene({
   world = false,
   leaveLabel = "Walk out",
   countdown = null,
+  game = null,
   onClose,
 }: {
   stage: SceneStage;
@@ -73,6 +74,8 @@ export function EventScene({
   leaveLabel?: string;
   /** A question against the clock (in the world): seconds left of the total. */
   countdown?: { left: number; total: number } | null;
+  /** A game being played (a chess board, the cups, cards), between what they say and the replies. */
+  game?: ReactNode;
   onClose: () => void;
 }) {
   const last = lines.at(-1);
@@ -158,6 +161,7 @@ export function EventScene({
               <span className="text-xs text-muted">{work.left > 0 ? `Ready in ${Math.floor(work.left / 60)}:${String(work.left % 60).padStart(2, "0")}` : "Ready!"}</span>
             </div>
           )}
+          {game}
           {countdown && countdown.total > 0 && (
             <div className="flex items-center gap-2" aria-label="Time left">
               <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink-2">

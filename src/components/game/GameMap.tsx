@@ -22,6 +22,7 @@ import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
 import { jamsAlongPath, planRide, rideAt, type Hold, type RideSchedule } from "@/game/rideSchedule";
 import { OFFICER, RoadEventScene, type RoadEvent, type RoadEventActions, type RoadEventResult } from "./RoadEventScene";
+import type { RoadGameResult } from "./RoadGames";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
@@ -5052,7 +5053,8 @@ export function GameMap({
           const c = models.makeCheckpointScene();
           group = c.group;
           lights = c.lights;
-        } else if (e.kind === "seller") group = models.makeStallScene(`${e.npc}'s snacks`);
+        } else if (e.kind === "seller" && e.game) group = models.makeGameTable(e.game.type);
+        else if (e.kind === "seller") group = models.makeStallScene(`${e.npc}'s snacks`);
         else group = models.makeTravellerScene();
         const riding = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
         if (riding) {
@@ -6416,6 +6418,14 @@ export function GameMap({
           if (r.holdS) stuckUntil = Math.max(stuckUntil, performance.now() + r.holdS * 1000);
           if (r.hint) say(`🧭 Key ${r.hint.key}'s area: ${r.hint.direction} of where you met ${e.npc}, ${r.hint.band} away.`, true);
           return r;
+        },
+        play: async (e, move) => {
+          const { data } = await supabase.rpc("road_event_play", { p_event: e.id, p_move: move });
+          const r = data as ({ ok: boolean; balance?: number } & RoadGameResult) | null;
+          if (disposed || !r?.ok) return null;
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          return { won: r.won, reward: r.reward, answer: r.answer, san: r.san };
         },
         close: () => roadDone(),
       });

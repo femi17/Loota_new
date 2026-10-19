@@ -1364,6 +1364,45 @@ export function makeStallScene(sign: string) {
   return group;
 }
 
+/**
+ * A game by the roadside (owner, 19 Oct 2026: games, not riddles): an old man's chess table with the board and a
+ * stool, a hustler's table with three cups and a coin, or children's cards laid out on a mat.
+ */
+export function makeGameTable(kind: "chess" | "cups" | "pairs") {
+  const group = new THREE.Group();
+  group.add(pavement(ROAD_EVENT_SPOTS.width));
+  if (kind === "pairs") {
+    // A mat on the pavement, twelve cards face down on it.
+    group.add(mesh(new THREE.BoxGeometry(2.4, 0.04, 1.6), "#2E7D4F", -1.4, 0.14, -2.3));
+    for (let i = 0; i < 12; i++) {
+      const card = mesh(new THREE.BoxGeometry(0.42, 0.03, 0.3), i % 5 === 0 ? "#F4F1EA" : "#2F6FEB", -2.25 + (i % 4) * 0.56, 0.18, -2.75 + Math.floor(i / 4) * 0.42);
+      group.add(card);
+    }
+    return group;
+  }
+  group.add(table(-1.6, -2.4, 1.4, 1.0, kind === "chess" ? "#6B4A2B" : "#7A5230"));
+  group.add(mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.55, 10), "#4A3422", -1.6, 0.28, -3.3)); // the stool
+  if (kind === "chess") {
+    // The board: eight by eight, and a few pieces still standing.
+    for (let r = 0; r < 8; r++) {
+      for (let f = 0; f < 8; f++) {
+        group.add(mesh(new THREE.BoxGeometry(0.11, 0.02, 0.11), (r + f) % 2 ? "#B07D4F" : "#EBD9B4", -1.6 - 0.385 + f * 0.11, 1.02, -2.4 - 0.385 + r * 0.11));
+      }
+    }
+    const pieces: [number, number, boolean, number][] = [[1, 1, true, 0.22], [6, 2, true, 0.16], [4, 6, false, 0.24], [6, 6, false, 0.14], [2, 5, false, 0.16], [5, 0, true, 0.2]];
+    for (const [f, r, white, tall] of pieces) {
+      group.add(mesh(new THREE.CylinderGeometry(0.03, 0.045, tall, 8), white ? "#F7F2E6" : "#1B1B1B", -1.6 - 0.385 + f * 0.11, 1.03 + tall / 2, -2.4 - 0.385 + r * 0.11));
+    }
+  } else {
+    // Three red cups upside down, and the coin.
+    for (const x of [-2.0, -1.6, -1.2]) {
+      group.add(mesh(new THREE.CylinderGeometry(0.11, 0.15, 0.26, 12), "#D62828", x, 1.13, -2.35));
+    }
+    group.add(mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.02, 12), "#F4B41A", -1.6, 1.02, -2.05));
+  }
+  return group;
+}
+
 /** A board of departures: a title and up to five lines, in amber on black. */
 function departuresBoard(title: string, rows: string[], width: number, height: number) {
   const canvas = document.createElement("canvas");

@@ -1,0 +1,35 @@
+-- 30 mate-in-one puzzles, generated and checked by scripts/build-chess-puzzles.mjs (chess.js): exactly one
+-- mating move each (White to move), at least one other check, no promotions. Mates by: {"Q":21,"R":6,"N":2,"P":1}.
+-- Rechecked by scripts/tests/chess-puzzles-check.mjs.
+insert into public.chess_puzzles (fen, solution, san) values
+  ('4k3/4pp2/8/6P1/6Q1/8/5PPP/6K1 w - - 0 1', 'g4c8', 'Qc8#'),
+  ('4k3/3ppp2/8/2N5/2B4p/8/5PPQ/6K1 w - - 0 1', 'h2b8', 'Qb8#'),
+  ('6k1/4pppp/2Rb2B1/3N1n2/P7/8/5PPP/6K1 w - - 0 1', 'c6c8', 'Rc8#'),
+  ('R3N1k1/3p1ppp/8/3P2b1/8/8/6PP/6K1 w - - 0 1', 'e8f6', 'Nf6#'),
+  ('4k3/4pp2/6B1/5r2/8/8/5PPP/2Q3K1 w - - 0 1', 'c1c8', 'Qc8#'),
+  ('2k5/ppp5/8/2q5/8/3p4/4QP1P/6K1 w - - 0 1', 'e2e8', 'Qe8#'),
+  ('4k3/4pp2/1n1B4/7r/4Q3/8/5PPP/6K1 w - - 0 1', 'e4e7', 'Qxe7#'),
+  ('6k1/4B1pp/8/6Nn/8/8/5PQP/6K1 w - - 0 1', 'g2a8', 'Qa8#'),
+  ('7k/4N1pp/7P/2B3R1/8/8/2p2PPP/6K1 w - - 0 1', 'h6g7', 'hxg7#'),
+  ('3rkr2/1N2pp2/8/3Q4/8/1p3B2/5PPP/6K1 w - - 0 1', 'd5d8', 'Qxd8#'),
+  ('2k2r2/1pp2Q2/8/R1r5/8/8/6PP/6K1 w - - 0 1', 'a5a8', 'Ra8#'),
+  ('7k/Q5pp/6n1/5N1r/8/p7/6P1/6K1 w - - 0 1', 'a7g7', 'Qxg7#'),
+  ('1nk5/ppp5/5P2/5r2/2B5/4Q3/5P1P/6K1 w - - 0 1', 'e3e8', 'Qe8#'),
+  ('1rk5/1pp5/8/1Q6/8/8/5PPP/6K1 w - - 0 1', 'b5e8', 'Qe8#'),
+  ('6k1/5ppp/5Q2/2p2p1r/8/8/5PP1/5RK1 w - - 0 1', 'f6d8', 'Qd8#'),
+  ('4k1NQ/4pp2/8/7r/8/6p1/5P1P/6K1 w - - 0 1', 'g8f6', 'Nf6#'),
+  ('4k3/3ppp2/7p/8/6Q1/8/5P2/6K1 w - - 0 1', 'g4g8', 'Qg8#'),
+  ('2k5/ppp2r2/2Q5/N5p1/8/5B2/5PPP/6K1 w - - 0 1', 'c6e8', 'Qe8#'),
+  ('4k2r/4pp2/5rN1/5p2/1B6/8/2Q2PP1/6K1 w - - 0 1', 'c2c8', 'Qc8#'),
+  ('2k2n2/1ppp4/8/1rPN4/8/8/5PPP/4R1K1 w - - 0 1', 'e1e8', 'Re8#'),
+  ('6kr/6pp/5pQ1/6b1/1p6/8/5PPP/6K1 w - - 0 1', 'g6e8', 'Qe8#'),
+  ('2k5/ppp5/4P3/1Q6/8/7B/5PP1/6K1 w - - 0 1', 'b5e8', 'Qe8#'),
+  ('4k3/4pp2/PQr5/Bn1N4/8/8/5PPP/6K1 w - - 0 1', 'b6d8', 'Qd8#'),
+  ('2k5/ppp5/4N3/4Q3/8/8/5PPP/6K1 w - - 0 1', 'e5c7', 'Qxc7#'),
+  ('6k1/6pp/8/p2N4/4Q3/8/5PPP/6K1 w - - 0 1', 'e4e8', 'Qe8#'),
+  ('7k/5ppp/5r2/p4rN1/8/7Q/5P1P/6K1 w - - 0 1', 'h3h7', 'Qxh7#'),
+  ('4n2k/5ppp/5B2/6b1/1p6/8/5PPP/4R1K1 w - - 0 1', 'e1e8', 'Rxe8#'),
+  ('7k/R4ppp/6q1/4N3/1P6/8/5PPP/6K1 w - - 0 1', 'a7a8', 'Ra8#'),
+  ('1B2N1k1/2Q3pp/5p2/8/4P3/8/5PPP/6K1 w - - 0 1', 'c7g7', 'Qxg7#'),
+  ('4k1n1/4pp2/2RR2p1/3r4/1P6/8/5P1P/6K1 w - - 0 1', 'c6c8', 'Rc8#')
+on conflict (fen) do nothing;

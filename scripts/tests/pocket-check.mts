@@ -13,7 +13,7 @@ for (const key of keys) {
   const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/roads/${ROAD_DATA_VERSION}/${key}.json.gz`);
   if (res.ok) cells.push(decodeRoadCell(await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).json()));
 }
-const net = roads.buildNetworkFromCells(cells, "walk", { lng, lat });
+const net = roads.buildNetworkFromCells(cells, (process.argv[4] ?? "walk") as never, { lng, lat });
 const pockets = roads.cutOffEdges(net);
 const at = roads.snapToNetwork(net, { lng, lat }, 0)!;
 const p = roads.positionOf(net, at);

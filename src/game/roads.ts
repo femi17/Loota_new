@@ -93,6 +93,15 @@ function projector(origin: LngLat) {
   return (p: { lng: number; lat: number }) => ({ x: (p.lng - origin.lng) * kx, y: (p.lat - origin.lat) * ky });
 }
 
+/** How close a segment (local metres) comes to the origin: a long straight country road can be one segment of
+ *  several km, both ends far away while you ride along its middle. */
+function reachOf(p: { x: number; y: number }, q: { x: number; y: number }) {
+  const dx = q.x - p.x;
+  const dy = q.y - p.y;
+  const along = Math.max(0, Math.min(1, -(p.x * dx + p.y * dy) / (dx * dx + dy * dy || 1e-9)));
+  return Math.hypot(p.x + dx * along, p.y + dy * along);
+}
+
 /** Build a road graph from tile features within `radiusM` of `centre`. */
 export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat, radiusM = 1500): RoadNetwork {
   const nodes: RoadNode[] = [];
@@ -117,7 +126,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     for (let i = 1; i < line.length; i++) {
       const p = local({ lng: line[i - 1][0], lat: line[i - 1][1] });
       const q = local({ lng: line[i][0], lat: line[i][1] });
-      if (Math.min(Math.hypot(p.x, p.y), Math.hypot(q.x, q.y)) > radiusM) continue;
+      if (reachOf(p, q) > radiusM) continue;
       const a = nodeAt(line[i - 1]);
       const b = nodeAt(line[i]);
       if (a === b) continue;
@@ -780,7 +789,7 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
         if (!pa || !pb) continue;
         const p = local(pa);
         const q = local(pb);
-        if (Math.min(Math.hypot(p.x, p.y), Math.hypot(q.x, q.y)) > radiusM) continue;
+        if (reachOf(p, q) > radiusM) continue;
         const a = nodeFor(way.points[i - 1]);
         const b = nodeFor(way.points[i]);
         if (a === b) continue;

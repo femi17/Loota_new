@@ -69,9 +69,9 @@ try {
   await open();
   await garage();
   const panel = await text('[aria-label="Vehicles"]');
-  check("the bicycle comes with a light, ticked: Buy · 640", /Bicycle light · 40 coins/.test(panel ?? "") && /Buy · 640 coins/.test(panel ?? ""), panel?.slice(0, 300));
-  check("…a motorbike lists its helmet, rider's licence and registration", /Helmet · 80 coins/.test(panel ?? "") && /Rider's licence · 150 coins/.test(panel ?? "") && /Registration \(plate number\) · 200 coins/.test(panel ?? ""));
-  check("…a car its driver's licence, registration and insurance", /Driver's licence · 300 coins/.test(panel ?? "") && /Insurance · 250 coins/.test(panel ?? ""));
+  check("the bicycle comes with a light, ticked: Buy · 640", /Bicycle light \| ✓ 40 coins/.test(panel ?? "") && /Buy · 640 coins/.test(panel ?? ""), panel?.slice(0, 300));
+  check("…a motorbike lists its helmet, rider's licence and registration", /Helmet \| ✓ 80 coins/.test(panel ?? "") && /Rider's licence \| ✓ 150 coins/.test(panel ?? "") && /Registration \(plate number\) \| ✓ 200 coins/.test(panel ?? ""));
+  check("…a car its driver's licence, registration and insurance", /Driver's licence \| ✓ 300 coins/.test(panel ?? "") && /Insurance \| ✓ 250 coins/.test(panel ?? ""));
   await shot("1-panel");
   check("buy the bicycle", await click('[aria-label="Vehicles"]', "Buy · 640"));
   await wait(4000);
@@ -97,12 +97,16 @@ try {
   await wait(12000);
   await garage();
   const card = await bikeCard();
-  check("the panel offers + Bicycle light · 40", /\+ Bicycle light · 40/.test(card ?? ""), card);
-  check("…bought there", await click('[aria-label="Bicycle: gear and papers"]', "+ Bicycle light"));
+  check("the panel offers + Bicycle light · 40", /Bicycle light \| \+ Buy · 40 coins/.test(card ?? ""), card);
+  check("…bought there", await page.evaluate(() => {
+    const b = [...document.querySelectorAll('[aria-label="Bicycle: gear and papers"] button')].find((e) => e.textContent?.includes("Bicycle light") && !e.disabled);
+    b?.click();
+    return !!b;
+  }));
   await wait(3000);
   b = await bicycle();
   const after = await bikeCard();
-  check("…the light on the bicycle, ✓ in the panel, 40 coins", b?.light === true && /✓ Bicycle light/.test(after ?? "") && (await coins()) === 320, `${after} · ${await coins()}`);
+  check("…the light on the bicycle, ✓ in the panel, 40 coins", b?.light === true && /Bicycle light \| ✓ Got it/.test(after ?? "") && (await coins()) === 320, `${after} · ${await coins()}`);
   await shot("3-light");
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {

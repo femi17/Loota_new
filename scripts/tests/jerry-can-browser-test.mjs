@@ -98,13 +98,21 @@ try {
   const nearest = stations.sort((x, y) => dist(x) - dist(y))[0];
   const toEnd = Math.hypot((way.end[0] - nearest.lng) * 110400, (way.end[1] - nearest.lat) * 110574);
   check(`…the nearest one (${nearest.name}, ${Math.round(dist(nearest))} m)`, toEnd < 120, `route ends ${Math.round(toEnd)} m from it`);
+  // The game reopened: the way to the station is drawn again by itself.
+  await open();
+  const again = await waitRoute();
+  const againEnd = again.end ? Math.hypot((again.end[0] - nearest.lng) * 110400, (again.end[1] - nearest.lat) * 110574) : Infinity;
+  check("reopening the game: the way to the station again, by itself", again.points > 2 && againEnd < 120, `${JSON.stringify(again)} · ${Math.round(againEnd)} m`);
 
   // ---- At the petrol station: a jerry can, filled
   await admin.from("player_positions").update({ lng: nearest.lng, lat: nearest.lat, mode: "walk", updated_at: ago(30) }).eq("user_id", id);
   await open();
   check("at the station: a Jerry can button", await tapHere("Jerry can"));
-  await wait(5000);
-  const scene = await page.evaluate((nl) => document.querySelector('[role="dialog"]')?.innerText.split(nl).join(" | ") ?? null, NL);
+  let scene = null; // (the attendant's line types itself out)
+  for (let i = 0; i < 30 && !/to the top/.test(scene ?? ""); i++) {
+    await wait(500);
+    scene = await page.evaluate((nl) => document.querySelector('[role="dialog"]')?.innerText.split(nl).join(" | ") ?? null, NL);
+  }
   check("…the attendant: your okada ran dry? a jerry can to carry back, to 65%", /ran dry on the road/.test(scene ?? "") && /65%/.test(scene ?? ""), scene);
   const c0 = await coins();
   check("…buy and fill it", await clickWhenThere("Jerry can and fuel · 155"));
@@ -113,6 +121,8 @@ try {
   const { data: keg } = await admin.from("player_kegs").select("fuel").eq("user_id", id).single();
   check("…65% of a tank in the can, 155 coins", keg.fuel === 65 && (await coins()) === c0 - 155, `${keg.fuel} · ${c0 - (await coins())}`);
   await shot("2-can");
+  const atPump = await page.evaluate(() => document.querySelector('[role="dialog"]')?.textContent ?? "");
+  check("…the attendant fills the can (your okada isn't at the pump)", /in your can/.test(atPump));
   await clickWhenThere("Thanks! I'll carry it back");
   await wait(6000);
   const back = await body();
@@ -122,6 +132,11 @@ try {
   check("…by road, to where it stands", wayBack.points > 2 && wayBack.longest < 400 && toBike < 60, `${JSON.stringify(wayBack)} · ${Math.round(toBike)} m`);
   await wait(3000);
   await shot("3-carry");
+  // The game reopened with fuel in the can: the way back is drawn again by itself.
+  await open();
+  const back2 = await waitRoute();
+  const back2End = back2.end ? Math.hypot((back2.end[0] - b.lng) * 110400, (back2.end[1] - b.lat) * 110574) : Infinity;
+  check("reopening the game with the can full: the way back again, by itself", back2.points > 2 && back2End < 60, `${JSON.stringify(back2)} · ${Math.round(back2End)} m`);
 
   // ---- Beside the motorbike: pour it in, ride on
   await admin.from("player_positions").update({ lng: b.lng, lat: b.lat, mode: "walk", updated_at: ago(30) }).eq("user_id", id);
@@ -132,12 +147,17 @@ try {
   const after = await bike();
   const poured = await body();
   check("…the tank at 65%, and back on it", Math.round(after.fuel) === 65 && after.in_use && !after.stranded_at && /you're back on it/.test(poured), JSON.stringify(after));
-  await page.keyboard.down("ArrowUp");
-  await wait(4000);
-  await page.keyboard.up("ArrowUp");
-  await wait(5000);
-  const moved = await bike();
-  const m = Math.hypot((moved.lng - b.lng) * 110400, (moved.lat - b.lat) * 110574);
+  // Ride on (if the way ahead ends at a junction, which waits for a turn, go back the other way).
+  let m = 0, moved = null;
+  for (const key of ["ArrowUp", "ArrowDown"]) {
+    await page.keyboard.down(key);
+    await wait(4000);
+    await page.keyboard.up(key);
+    await wait(5000);
+    moved = await bike();
+    m = Math.hypot((moved.lng - b.lng) * 110400, (moved.lat - b.lat) * 110574);
+    if (m > 50) break;
+  }
   check("…and it rides", m > 50 && moved.fuel < 65, `${Math.round(m)} m`);
   await shot("5-ride");
   check("no page errors", problems.length === 0, problems.join(" / "));

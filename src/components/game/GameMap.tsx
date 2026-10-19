@@ -1213,6 +1213,42 @@ export function GameMap({
         if ([...parked.values()].some((p) => !p.onRoad) && network) showParked(); // placed before the roads had loaded
       }
 
+      // While a vehicle stands at the roadside and the player is on foot, the way is always drawn (also after a reload): to
+      // the nearest petrol station while the jerry can is empty, back to the vehicle once it has fuel. Ending the
+      // directions or dismissing the advice turns it off for 5 minutes.
+      let strandGuideOff = 0;
+      let nextStrandGuide = 0;
+      function strandGuideTick(now: number) {
+        if (now < nextStrandGuide) return;
+        nextStrandGuide = now + 3000;
+        const s = strandedVehicle();
+        if (!s || trip || inWorld || ride || visit || now < strandGuideOff || traveller.mode !== "walk" || busy || !onRoad) return;
+        if (keg && keg.fuel > 0) {
+          if (metresTo(s) <= 25) return; // there: pour it in
+          nextStrandGuide = now + 20000; // one try every 20 s if no road route is found
+          adviseCarryBack();
+        } else if (!spotHere(["fuel"])) {
+          nextStrandGuide = now + 20000;
+          adviseFuelWalk(vehicleName(s.kind));
+        }
+      }
+      /** On foot from a dry tank: to the nearest petrol station, by road, with (or for) a jerry can. */
+      function adviseFuelWalk(name: string, first = false) {
+        void advise(
+          "fuel",
+          first ? "Out of fuel" : `Fuel for your ${name}`,
+          `${first ? "Out of fuel! " : ""}Your ${name} is parked at the roadside. Walk to a petrol station ${
+            keg ? "with your jerry can" : "(they sell jerry cans)"
+          }, fill it, carry it back and pour it in: a jerry can takes the tank to ${KEG_CAPACITY}%.`,
+          ["fuel"],
+          Infinity,
+          undefined,
+          true,
+        ).then(() => {
+          if (advicePlace && adviceKey === "fuel" && !trip) void planDirections({ lng: advicePlace.lng, lat: advicePlace.lat }, advicePlace.name, true);
+        });
+      }
+
       /** After filling a jerry can (or with one already full): the way back to the vehicle at the roadside. */
       function adviseCarryBack() {
         const s = strandedVehicle();
@@ -1675,7 +1711,10 @@ export function GameMap({
           setTurn(0);
           return true;
         },
-        endDirections,
+        endDirections: () => {
+          endDirections();
+          strandGuideOff = performance.now() + 300_000; // the player chose to go their own way
+        },
         follow() {
           lookOffset = 0;
         },
@@ -1690,6 +1729,7 @@ export function GameMap({
         pickupAction: () => void pickupAction(),
         cancelPickup: () => void cancelPickup(),
         dismissAdvice: () => {
+          if (adviceKey === "fuel") strandGuideOff = performance.now() + 300_000;
           advicePlace = null;
           setHud((h) => ({ ...h, advice: null }));
         },
@@ -3524,17 +3564,8 @@ export function GameMap({
             say(`Out of fuel! Your ${name} stands at the roadside. Pour in your jerry can (the gold button).`, true);
           } else {
             // On foot to the nearest petrol station, by road, with (or for) a jerry can, and back.
-            void advise(
-              "fuel",
-              "Out of fuel",
-              `Out of fuel! Your ${name} is parked at the roadside. Walk to a petrol station ${keg ? "with your jerry can" : "(they sell jerry cans)"}, fill it, carry it back and pour it in: a jerry can takes the tank to ${KEG_CAPACITY}%.`,
-              ["fuel"],
-              Infinity,
-              undefined,
-              true,
-            ).then(() => {
-              if (advicePlace && adviceKey === "fuel") void planDirections({ lng: advicePlace.lng, lat: advicePlace.lat }, advicePlace.name, true);
-            });
+            nextStrandGuide = performance.now() + 20000;
+            adviseFuelWalk(name, true);
           }
         } else {
           say(`Your ${name} has broken down and goes into your pocket. Take it to a repair shop nearby, or call a mechanic to you.`, true);
@@ -4318,6 +4349,7 @@ export function GameMap({
         lightsTick(now);
         darkTick(now);
         parkedTick(now);
+        strandGuideTick(now);
         const wall = Date.now();
         if (now - lastSky > 30_000) {
           lastSky = now;
@@ -4894,8 +4926,10 @@ export function GameMap({
       function openFuelPlace(offer: FuelOffer, at: LngLat, id: number) {
         const S = models.FUEL_SPOTS;
         const petrol = models.makeOpenPetrol(offer.station === "Petrol station" ? "Petrol" : offer.station);
-        const vehicle = models.makeVehicleModel(offer.kind);
-        vehicle.position.set(S.stand.x, 0.1, S.stand.z);
+        // The vehicle at the pump; or, when it stands at the roadside out of fuel, the jerry can the attendant fills.
+        const vehicle = offer.stranded ? models.makeJerryCan() : models.makeVehicleModel(offer.kind);
+        if (offer.stranded) vehicle.scale.setScalar(2.2);
+        vehicle.position.set(S.stand.x, offer.stranded ? 0.5 : 0.1, S.stand.z);
         petrol.group.add(vehicle);
         return openPlace({
           kind: "fuel",

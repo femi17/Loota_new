@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { RELIC_ICON, RELICS, type RelicId } from "@/game/items";
 import { wonderOf } from "@/game/wonders";
-import { KEG_CAPACITY, PAPER_ICON, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
-import { type OwnedVehicle } from "./VehiclePanel";
+import { KEG_CAPACITY, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { GearTiles, type OwnedVehicle } from "./VehiclePanel";
 import { BagIcon, CloseIcon, VehicleIcon } from "./HudIcons";
 
 type Relic = { id: string; relic: RelicId; charges: number; expires_at: string };
@@ -236,33 +236,7 @@ export function BagPanel({
                       </div>
                       <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${chip.style}`}>{chip.text}</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-1.5" aria-label={`${VEHICLES[v.kind].name}: gear and papers`}>
-                      {v.papers.map((p) =>
-                        p.have ? (
-                          <span key={p.id} className="flex h-12 items-center gap-2 rounded-xl bg-[#1E9E62]/15 px-2.5 text-[#3DD68C]">
-                            <span className="text-lg" aria-hidden="true">{PAPER_ICON[p.id]}</span>
-                            <span className="flex min-w-0 flex-1 flex-col leading-tight">
-                              <span className="truncate text-xs font-bold">{p.name}</span>
-                              <span className="text-[10px] font-semibold">✓ Got it</span>
-                            </span>
-                          </span>
-                        ) : (
-                          <button
-                            key={p.id}
-                            type="button"
-                            disabled={buying || coins < p.price}
-                            onClick={() => void addon(v.kind, p.id)}
-                            className="flex h-12 items-center gap-2 rounded-xl border-[1.5px] border-dashed border-gold/70 px-2.5 text-left text-paper disabled:opacity-40"
-                          >
-                            <span className="text-lg grayscale" aria-hidden="true">{PAPER_ICON[p.id]}</span>
-                            <span className="flex min-w-0 flex-1 flex-col leading-tight">
-                              <span className="truncate text-xs font-bold">{p.name}</span>
-                              <span className="text-[10px] font-bold text-gold">+ Buy · {p.price} coins</span>
-                            </span>
-                          </button>
-                        ),
-                      )}
-                    </div>
+                    <GearTiles kind={v.kind} papers={v.papers} coins={coins} busy={buying} onAddon={(k, id) => void addon(k, id)} />
                   </div>
                 );
               })}

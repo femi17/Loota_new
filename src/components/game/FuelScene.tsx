@@ -216,7 +216,7 @@ export function FuelScene({
       sign={offer.station}
       them={{ name: offer.attendant, look: { ...keeperLook(offer.attendant), topColour: "#1E9E62", extra: "cap" } }}
       you={you}
-      vehicle={{ kind: offer.kind, fixed: true, sparkle: pumped }}
+      vehicle={offer.stranded ? null : { kind: offer.kind, fixed: true, sparkle: pumped }}
       lines={lines}
       choices={choices}
       busy={busy}

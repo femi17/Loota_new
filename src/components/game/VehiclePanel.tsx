@@ -13,6 +13,43 @@ export type OwnedVehicle = {
 };
 export type Riding = { kind: VehicleKind; source: "owned" | "rented" } | null;
 
+/** A vehicle's gear and papers: what it has (✓), and what's missing to buy (police checkpoints fine what's missing). */
+export function PapersRow({
+  kind,
+  papers,
+  coins,
+  busy,
+  onAddon,
+}: {
+  kind: VehicleKind;
+  papers: OwnedVehicle["papers"];
+  coins: number;
+  busy: boolean;
+  onAddon: (kind: VehicleKind, id: AddonId) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5" aria-label={`${VEHICLES[kind].name}: gear and papers`}>
+      {papers.map((p) =>
+        p.have ? (
+          <span key={p.id} className="flex h-8 items-center rounded-lg bg-[#1E9E62]/20 px-2 text-xs font-bold text-[#3DD68C]">
+            ✓ {p.name}
+          </span>
+        ) : (
+          <button
+            key={p.id}
+            type="button"
+            disabled={busy || coins < p.price}
+            onClick={() => onAddon(kind, p.id)}
+            className="flex h-8 items-center rounded-lg border-[1.5px] border-gold px-2 text-xs font-bold text-paper disabled:opacity-40"
+          >
+            + {p.name} · {p.price}
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
 /** Choose how to travel: take your own vehicle out of your pocket, rent one, or buy one. */
 export function VehiclePanel({
   owned,
@@ -98,26 +135,7 @@ export function VehiclePanel({
                 </div>
                 <p className="text-sm text-muted">{info.note}</p>
                 {mine ? (
-                  // Gear and papers: what it has, and what's missing (police checkpoints fine what's missing).
-                  <div className="flex flex-wrap gap-1.5" aria-label={`${info.name}: gear and papers`}>
-                    {mine.papers.map((p) =>
-                      p.have ? (
-                        <span key={p.id} className="flex h-8 items-center rounded-lg bg-[#1E9E62]/20 px-2 text-xs font-bold text-[#3DD68C]">
-                          ✓ {p.name}
-                        </span>
-                      ) : (
-                        <button
-                          key={p.id}
-                          type="button"
-                          disabled={busy || coins < p.price}
-                          onClick={() => onAddon(kind, p.id)}
-                          className="flex h-8 items-center rounded-lg border-[1.5px] border-gold px-2 text-xs font-bold text-paper disabled:opacity-40"
-                        >
-                          + {p.name} · {p.price}
-                        </button>
-                      ),
-                    )}
-                  </div>
+                  <PapersRow kind={kind} papers={mine.papers} coins={coins} busy={busy} onAddon={onAddon} />
                 ) : (
                   <div className="flex flex-col gap-1" aria-label={`${info.name}: gear and papers to buy with it`}>
                     {ADDONS[kind].map((a) => (

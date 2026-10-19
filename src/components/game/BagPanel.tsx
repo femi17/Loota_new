@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { RELICS, type RelicId } from "@/game/items";
 import { wonderOf } from "@/game/wonders";
+import { VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { PapersRow, type OwnedVehicle } from "./VehiclePanel";
 
 type Relic = { id: string; relic: RelicId; charges: number; expires_at: string };
 /** A Wonder from the Djinn (design doc 7.7): held in secret. */
@@ -31,14 +33,22 @@ const WONDER_LABEL: Record<string, string> = {
   hourglass_of_ages: "Turn",
 };
 
-/** The player's bag: relics found while roaming, and using them. */
+/** The player's inventory: their vehicles' gear and papers (and buying what's missing), Wonders, and relics. */
 export function BagPanel({
   leads,
+  owned,
+  coins,
+  onAddon,
   onUse,
   onWonder,
   onClose,
 }: {
   leads: number;
+  /** The vehicles the player owns, with their gear and papers. */
+  owned: OwnedVehicle[];
+  coins: number;
+  /** Buy a missing piece of gear or a licence. */
+  onAddon: (kind: VehicleKind, id: AddonId) => Promise<void>;
   onUse: (id: string) => Promise<string>;
   /** Use a Wonder; null when the map takes over (the Carpet asks where to). */
   onWonder: (id: string, wonder: string) => Promise<string | null>;
@@ -51,6 +61,13 @@ export function BagPanel({
   const [sure, setSure] = useState<string | null>(null); // a Wonder is used once: tap twice
   const [message, setMessage] = useState<string | null>(null);
   const [version, setVersion] = useState(0); // reload after using one
+  const [buying, setBuying] = useState(false);
+
+  async function addon(kind: VehicleKind, id: AddonId) {
+    setBuying(true);
+    await onAddon(kind, id);
+    setBuying(false);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -102,12 +119,12 @@ export function BagPanel({
     <div className="absolute inset-0 z-10 flex items-end justify-center bg-ink/60 sm:items-center" onClick={onClose}>
       <div
         role="dialog"
-        aria-label="Your bag"
+        aria-label="Inventory"
         className="max-h-[80dvh] w-full overflow-y-auto rounded-t-3xl bg-ink p-5 sm:max-w-md sm:rounded-3xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-display text-2xl font-extrabold">Your bag</h2>
+          <h2 className="font-display text-2xl font-extrabold">Inventory</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="flex size-11 items-center justify-center rounded-xl bg-ink-2">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
               <path d="M6 6l12 12M18 6L6 18" />
@@ -168,6 +185,33 @@ export function BagPanel({
           </ul>
         )}
 
+        <section className="mb-4 flex flex-col gap-2" aria-label="Gear and papers">
+          <h3 className="font-display text-lg font-extrabold">Gear and papers</h3>
+          {owned.length === 0 ? (
+            <p className="text-sm text-muted">
+              No vehicle of your own yet. Buy one with the vehicle button on the right: its gear and papers (a light, a helmet, your
+              licence, registration, insurance) are offered with it, and you can get anything missing here later.
+            </p>
+          ) : (
+            <>
+              {owned.map((v) => (
+                <div key={v.kind} className="flex flex-col gap-1.5 rounded-2xl bg-ink-2 p-3">
+                  <p className="font-bold">
+                    {VEHICLES[v.kind].name}
+                    {v.inUse ? <span className="ml-2 text-xs font-normal text-muted">riding</span> : null}
+                  </p>
+                  <PapersRow kind={v.kind} papers={v.papers} coins={coins} busy={buying} onAddon={(k, id) => void addon(k, id)} />
+                </div>
+              ))}
+              <p className="text-xs text-muted">
+                Police checkpoints fine 20 coins for each thing missing. Licences are yours (one covers every motorbike, or every car); a
+                helmet, registration and insurance belong to each vehicle. Rented vehicles come with everything.
+              </p>
+            </>
+          )}
+        </section>
+
+        <h3 className="mb-2 font-display text-lg font-extrabold">Relics</h3>
         {relics === null ? (
           <p className="text-muted">Opening your bag…</p>
         ) : relics.length === 0 ? (

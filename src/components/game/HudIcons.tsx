@@ -77,9 +77,10 @@ export const LampIcon = ({ size }: { size?: number }) => (
   </Svg>
 );
 
+/** The inventory: a backpack (not a shopping bag: nothing is sold in it). */
 export const BagIcon = () => (
   <Svg>
-    <path d="M5 8h14l-1 12H6zM9 8V6a3 3 0 0 1 6 0v2" />
+    <path d="M6 10a6 6 0 0 1 12 0v9a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1zM10 4.6a2 2 0 0 1 4 0M9 14h6v4H9zM9 11h6" />
   </Svg>
 );
 

@@ -383,6 +383,7 @@ export function GameMap({
     heat: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
+  const [bagOwned, setBagOwned] = useState<OwnedVehicle[]>([]); // the inventory's vehicles, gear and papers
   const [helpOpen, setHelpOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [huntShown, setHuntShown] = useState(!huntHidden);
@@ -6399,7 +6400,7 @@ export function GameMap({
         map.addSource("night", { type: "geojson", data: world });
         map.addLayer({ id: "night-ground", type: "fill", source: "night", paint: { "fill-color": "#0B1630", "fill-opacity": 0 } }, firstRoad);
         map.addLayer({ id: "night-dim", type: "fill", source: "night", paint: { "fill-color": "#0B1630", "fill-opacity": 0 } }, firstSymbol);
-        // Traffic jams, over the roads and under the route.
+        // Traffic jams, over the roads. (Moved over the route below: a jam on your way shows inside the blue line.)
         map.addSource("traffic", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         map.addLayer(
           {
@@ -6409,8 +6410,8 @@ export function GameMap({
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
               "line-color": ["match", ["get", "jam"], 2, "#D62828", "#F28C28"],
-              "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2, 17, 6, 20, 14],
-              "line-opacity": 0.8,
+              "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2, 17, 6, 20, 9],
+              "line-opacity": 0.9,
             },
           },
           firstSymbol,
@@ -6436,6 +6437,8 @@ export function GameMap({
           },
           firstSymbol,
         );
+        // Jams over the route, narrower than it: on your way, an orange or red stripe inside the blue line.
+        map.moveLayer("traffic", firstSymbol);
         // The Eye of the Djinn (a Wonder): other hunters, and the key areas they chase.
         map.addSource("eye", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         const isArea: import("maplibre-gl").FilterSpecification = ["==", ["geometry-type"], "Polygon"];
@@ -6597,9 +6600,12 @@ export function GameMap({
           </button>
           <button
             type="button"
-            onClick={() => setBagOpen(true)}
-            aria-label={`Bag${hud.relics > 0 ? `: ${hud.relics} relics` : ""}`}
-            title="Bag"
+            onClick={() => {
+              setBagOwned(actions.current?.vehicles() ?? []);
+              setBagOpen(true);
+            }}
+            aria-label={`Inventory${hud.relics > 0 ? `: ${hud.relics} relics` : ""}`}
+            title="Inventory: gear, papers, relics"
             className={`${tool} relative bg-ink text-[#C3A6FF]`}
           >
             <BagIcon />
@@ -6984,7 +6990,7 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><LandmarkIcon /></span> Landmarks: check in for coins</li>
                   <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours, whispers and hidden finds during a hunt (it glows); the Djinn between hunts (it smokes purple)</li>
-                  <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Your bag: relics</li>
+                  <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Inventory: gear, papers, relics</li>
                 </ul>
                 <p className="mt-1 font-bold">How to move</p>
                 <p>
@@ -7176,6 +7182,12 @@ export function GameMap({
       {bagOpen && (
         <BagPanel
           leads={hud.leads}
+          owned={bagOwned}
+          coins={hud.coins}
+          onAddon={async (kind, id) => {
+            await actions.current?.buyAddon(kind, id);
+            setBagOwned(actions.current?.vehicles() ?? []);
+          }}
           onUse={(id) => actions.current?.useRelic(id) ?? Promise.resolve("The map isn't ready yet.")}
           onWonder={async (id, wonder) => {
             if (wonder === "carpet_of_kings") {

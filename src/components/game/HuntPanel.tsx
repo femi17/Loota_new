@@ -260,7 +260,10 @@ export function HuntPanel({
         setState((s) => (s ? { ...s, clue: r.clue } : s));
         setFeedback({ text: `Warm! You're in the right area. The key is ${r.band} from here.`, hot: true });
       } else if (r.ok) {
-        setFeedback({ text: `Cold. The key's area is ${r.band} from here.`, hot: false });
+        setFeedback({
+          text: `Cold: the key isn't here. Its area is ${r.band} away. Work out the place the riddle names, travel there, then search again.`,
+          hot: false,
+        });
       } else if (r.reason === "wait") {
         setFeedback({ text: "Give it a few seconds between searches.", hot: false });
       } else if (r.reason === "position") {
@@ -409,6 +412,11 @@ export function HuntPanel({
               <>
                 <p className="font-display text-base leading-snug">&ldquo;{state.riddle}&rdquo;</p>
                 {state.category && <p className="text-xs text-muted">Key Trial: {CATEGORY_NAMES[state.category]}</p>}
+                {!state.clue && (
+                  <p className="text-xs text-muted">
+                    No typing: the riddle names a real place. Go there on the map, then tap <b>Search here</b>.
+                  </p>
+                )}
                 {state.clue && (
                   <p className="rounded-xl bg-ink-2 p-2">
                     <b className="text-gold">Final approach: </b>
@@ -535,7 +543,10 @@ export function HuntPanel({
             <p className="text-xs font-extrabold uppercase tracking-widest text-[#8A5A00]">The hunt is on · Key 1 of {state.keys}</p>
             <p className="font-display text-2xl font-extrabold leading-snug">&ldquo;{revealed}&rdquo;</p>
             {state.category && <p className="text-sm">At the key: a Key Trial in {CATEGORY_NAMES[state.category]}.</p>}
-            <p className="text-sm text-[#5A4020]">Work out where it is, get there before the others, then search.</p>
+            <p className="text-sm text-[#5A4020]">
+              There&apos;s nothing to type: the riddle names a real place. Work out where it is, travel there on the map before the
+              others, then tap <b>Search here</b>.
+            </p>
             <button type="button" onClick={() => setRevealed(null)} className="h-12 rounded-2xl bg-[#3A2410] font-bold text-[#F5ECD8]">
               Let&apos;s go
             </button>

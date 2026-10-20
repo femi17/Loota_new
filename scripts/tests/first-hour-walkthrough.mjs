@@ -120,6 +120,11 @@ try {
   await wait(2000);
   await shot("hunt-card");
   note("HUNT CARD:", (await page.evaluate(() => document.querySelector('section[aria-label="Hunt"]')?.innerText ?? "")).replace(/\n+/g, " | ").slice(0, 400));
+  // Tapping Search here from home: the card should say the key isn't here and to go to the place
+  await clickText("Search here", "button");
+  await waitFor(/key isn't here/i, 20);
+  await shot("search-from-home");
+  note("SEARCH HERE FROM HOME:", (await page.evaluate(() => document.querySelector('section[aria-label="Hunt"] [role="status"]')?.innerText ?? "none")));
   // A newcomer guesses the airport: Directions, search it
   if (!(await page.$('input[type="search"]'))) await page.evaluate(() => document.querySelector('[data-tool="directions"]')?.click());
   await wait(800);

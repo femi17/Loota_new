@@ -1,0 +1,148 @@
+"use client";
+
+import { useState } from "react";
+import { BagIcon, BusIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
+import { LootaLogo } from "@/components/Logo";
+import { joinHunt } from "@/app/lobby/actions";
+
+/** A live hunt the player hasn't joined (the tour's last card, and the invitation on the map). */
+export type OpenHunt = { id: string; title: string; keys: number; prize: string };
+
+/**
+ * The first time on the map (owner, 20 Oct 2026, a new player's first hour): a few cards: welcome and the coins, how
+ * to move, what the buttons are, and what to do first (join the live hunt, or roam). Once per player on this device.
+ */
+export function WelcomeTour({ username, coins, openHunt, onDone }: { username: string; coins: number; openHunt: OpenHunt | null; onDone: () => void }) {
+  const [step, setStep] = useState(0);
+  const cards = [
+    {
+      title: `Welcome, ${username}!`,
+      body: (
+        <>
+          <p>
+            Loota is a treasure hunt on the real map of Nigeria. Solve riddles that point to real places, travel there, and beat the
+            Key Trial to win the keys.
+          </p>
+          <p className="rounded-xl bg-gold/15 p-3 font-bold text-gold">🪙 You have {coins.toLocaleString("en-NG")} coins to start: enough for meals, a rented bike, a tyre pump and a few roadside games.</p>
+        </>
+      ),
+    },
+    {
+      title: "Getting around",
+      body: (
+        <>
+          <p>
+            <b>Press and hold the lower part of the screen</b> to walk. Swipe left or right there to turn at the next junction, and
+            down to turn back. Hold <b>SPRINT</b> to go faster (it tires you).
+          </p>
+          <p className="text-muted">On a keyboard: hold ↑ to go, ← → to turn, ↓ to go back.</p>
+          <p>Walking uses energy: eat at a buka or rest at a park when it runs low.</p>
+        </>
+      ),
+    },
+    {
+      title: "Your buttons",
+      body: (
+        <ul className="flex flex-col gap-2.5">
+          {[
+            [<DirectionsIcon key="d" />, "Directions: search any place, the way is drawn"],
+            [<VehicleIcon key="v" kind={null} />, "Walk, rent or buy a bicycle, motorbike or car"],
+            [<BusIcon key="b" />, "Taxis, buses, trains and planes"],
+            [<LandmarkIcon key="l" />, "Landmarks: visit famous places for coins"],
+            [<LampIcon key="la" />, "The lamp: secrets during a hunt, and the Djinn"],
+            [<BagIcon key="i" />, "Inventory (top): gear, papers, relics"],
+          ].map(([icon, text], i) => (
+            <li key={i} className="flex items-center gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-ink-2 text-paper">{icon}</span>
+              <span className="text-sm">{text}</span>
+            </li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      title: openHunt ? "A hunt is live!" : "What to do first",
+      body: openHunt ? (
+        <>
+          <p>
+            <b>{openHunt.title}</b>: {openHunt.keys} keys to find. Prize: {openHunt.prize}.
+          </p>
+          <p className="text-muted">Join it and you get the first riddle. Work out the place, get there, then search for the key.</p>
+        </>
+      ) : (
+        <>
+          <p>No hunt is running right now. Explore: visit a landmark for coins, meet people on the road, and get yourself a ride.</p>
+          <p className="text-muted">When the next hunt goes live it will show on the map and in the lobby.</p>
+        </>
+      ),
+    },
+  ];
+  const last = step === cards.length - 1;
+  const card = cards[step];
+  return (
+    <div className="pointer-events-auto absolute inset-0 z-40 flex items-end justify-center bg-ink/70 p-3 sm:items-center" role="dialog" aria-label="Welcome to Loota">
+      <div className="loota-wonder-banner flex w-full max-w-md flex-col gap-4 rounded-3xl bg-ink p-5 text-paper ring-1 ring-line">
+        <div className="flex items-center justify-between">
+          <LootaLogo height={40} />
+          <button type="button" onClick={onDone} className="text-sm font-bold text-muted">
+            Skip
+          </button>
+        </div>
+        <h2 className="font-display text-2xl font-extrabold">{card.title}</h2>
+        <div className="flex flex-col gap-3 text-[15px] leading-relaxed">{card.body}</div>
+        <div className="flex items-center gap-1.5" aria-hidden="true">
+          {cards.map((_, i) => (
+            <span key={i} className={`h-1.5 rounded-full ${i === step ? "w-6 bg-gold" : "w-1.5 bg-line"}`} />
+          ))}
+        </div>
+        <div className="flex gap-2">
+          {step > 0 && (
+            <button type="button" onClick={() => setStep(step - 1)} className="h-12 rounded-2xl border-[1.5px] border-line px-5 font-bold">
+              Back
+            </button>
+          )}
+          {last && openHunt ? (
+            <form action={joinHunt} className="flex flex-1 gap-2" onSubmit={onDone}>
+              <input type="hidden" name="hunt" value={openHunt.id} />
+              <button type="submit" className="h-12 flex-1 rounded-2xl bg-gold font-bold text-ink">
+                Join the hunt
+              </button>
+              <button type="button" onClick={onDone} className="h-12 rounded-2xl border-[1.5px] border-line px-4 font-bold">
+                Later
+              </button>
+            </form>
+          ) : (
+            <button type="button" onClick={() => (last ? onDone() : setStep(step + 1))} className="h-12 flex-1 rounded-2xl bg-gold font-bold text-ink">
+              {last ? "Let's go" : "Next"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** On the map, when a hunt is live and the player isn't in it: the invitation (dismissed for this visit). */
+export function HuntInvite({ hunt, onDismiss }: { hunt: OpenHunt; onDismiss: () => void }) {
+  return (
+    <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-ink p-3 text-paper ring-1 ring-gold" role="status" aria-label="A hunt is live">
+      <span className="text-2xl" aria-hidden="true">🔑</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-bold uppercase tracking-wider text-gold">A hunt is live</p>
+        <p className="truncate text-sm font-bold">{hunt.title}</p>
+        <p className="text-xs text-muted">
+          {hunt.keys} keys · {hunt.prize}
+        </p>
+      </div>
+      <form action={joinHunt}>
+        <input type="hidden" name="hunt" value={hunt.id} />
+        <button type="submit" className="h-10 rounded-xl bg-gold px-4 text-sm font-bold text-ink">
+          Join
+        </button>
+      </form>
+      <button type="button" aria-label="Not now" onClick={onDismiss} className="flex size-8 items-center justify-center rounded-lg text-paper/70">
+        ✕
+      </button>
+    </div>
+  );
+}

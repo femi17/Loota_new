@@ -83,7 +83,7 @@ try {
   await page.screenshot({ path: `${OUT}/logo-5-riddle.png` });
   await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Let's go"))?.click());
   await wait(1500);
-  check("the hunt card: the logo at its head", await page.evaluate(() => !!document.querySelector('section[aria-label="Hunt"] img[alt="Loota"]')));
+  check("the hunt: the logo in the top bar", await page.evaluate(() => !!document.querySelector('a[aria-label="Back to the lobby"] img[alt="Loota"]')));
   await page.screenshot({ path: `${OUT}/logo-6-card.png` });
 } catch (e) {
   fails++;

@@ -347,7 +347,6 @@ export function HuntPanel({
     <>
       <section className={`pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-ink p-3 ${scene ? "hidden" : ""}`} aria-label="Hunt">
         <div className="flex items-center gap-2">
-          <LootaLogo height={26} priority className="shrink-0" />
           <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={open}>
             <span className="flex shrink-0 gap-0.5" aria-label={`${state.keysHeld} of ${state.keys} keys`}>
               {Array.from({ length: state.keys }, (_, i) => (

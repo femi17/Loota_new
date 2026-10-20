@@ -1,9 +1,10 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { LootaLogo } from "@/components/Logo";
+import { HuntInvite, WelcomeTour, type OpenHunt } from "./WelcomeTour";
 import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
@@ -277,6 +278,8 @@ export function GameMap({
   huntId,
   huntHidden,
   huntAsked,
+  openHunt = null,
+  newcomer = false,
 }: {
   playerId: string;
   username: string;
@@ -290,6 +293,10 @@ export function GameMap({
   huntHidden: boolean;
   /** Opened from the lobby's "Continue the hunt" (?hunt=…): show it even if it was hidden. */
   huntAsked: boolean;
+  /** A live hunt the player hasn't joined: an invitation on the map (and the welcome tour's last card). */
+  openHunt?: OpenHunt | null;
+  /** Welcomed with coins at onboarding: the welcome tour, the first time on the map (on this device). */
+  newcomer?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false });
@@ -395,6 +402,30 @@ export function GameMap({
     heat: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
+  // The first time on the map: the welcome tour (once per player on this device); a live hunt's invitation.
+  const tourKey = `loota:welcome:${playerId}`;
+  const tourSeen = useSyncExternalStore(
+    () => () => {},
+    () => {
+      try {
+        return localStorage.getItem(tourKey) === "1";
+      } catch {
+        return true; // private browsing: no tour rather than one every time
+      }
+    },
+    () => true, // on the server: none
+  );
+  const [tourDone, setTourDone] = useState(false);
+  const touring = newcomer && !tourSeen && !tourDone;
+  const [inviteOff, setInviteOff] = useState(false);
+  const endTour = () => {
+    setTourDone(true);
+    try {
+      localStorage.setItem(tourKey, "1");
+    } catch {
+      // Private browsing: it may show again next time.
+    }
+  };
   const [bagOwned, setBagOwned] = useState<OwnedVehicle[]>([]); // the inventory's vehicles, gear and papers
   const [helpOpen, setHelpOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -832,12 +863,21 @@ export function GameMap({
         marker.group.visible = true;
         showRoute(route.coords);
         if (!quiet) {
+          // Too far for the energy left on foot or by bicycle (a newcomer would faint halfway): say so, and what to do.
+          const drain = movement.MODES[traveller.mode].drain;
+          const reach = drain > 0 ? (traveller.energy / drain) * movement.baseSpeed(traveller.mode) : Infinity;
+          const tooFar = !fallback && route.total > reach;
           say(
             fallback
               ? `Road directions are unavailable right now. The arrow points to ${name}; steer your own way there.`
               : `Directions to ${name}: ${geo.formatDistance(route.total)}, ${travelTime(route.total)} by ${
                   traveller.mode === "walk" ? "foot" : VEHICLES[traveller.mode].name.toLowerCase()
-                }. Follow the blue line.`,
+                }. Follow the blue line.${
+                  tooFar
+                    ? ` ⚠ Your energy lasts about ${geo.formatDistance(Math.round(reach / 100) * 100)} ${traveller.mode === "walk" ? "on foot" : "on a bicycle"}: take a taxi or bus (the bus button), ${traveller.mode === "walk" ? "get a bike, " : ""}or eat and rest on the way.`
+                    : ""
+                }`,
+            tooFar,
           );
         }
         updateGuide();
@@ -7529,6 +7569,7 @@ export function GameMap({
 
             {/* The hunt (riddle, keys, Search here) */}
             {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
+            {!huntId && openHunt && !inviteOff && !inside && !touring && <HuntInvite hunt={openHunt} onDismiss={() => setInviteOff(true)} />}
             {huntId && huntShown && (
               <div className={inside && inside !== "trial" ? "hidden" : "contents"}>
                 <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} keeper={trialKeeper} />
@@ -7918,6 +7959,7 @@ export function GameMap({
       {hud.wonders.sand && <div className="loota-sand pointer-events-none absolute inset-0" aria-hidden="true" />}
       {hud.wonders.frozen && <div className="loota-frost pointer-events-none absolute inset-0" aria-hidden="true" />}
       {wonderBanner?.flash && <div key={`flash-${wonderBanner.n}`} className="loota-cataclysm-flash pointer-events-none absolute inset-0 z-30" aria-hidden="true" />}
+      {touring && <WelcomeTour username={username} coins={hud.coins} openHunt={huntId ? null : openHunt} onDone={endTour} />}
       {strikeFx && (
         <div key={strikeFx.n} className="pointer-events-none absolute inset-0 z-30 overflow-hidden" aria-hidden="true" data-strike>
           <div className="loota-strike-flash absolute inset-0" />

@@ -72,6 +72,7 @@ try {
   const chip1 = await heatChip();
   check("in the key's area: the heat chip", !!chip1, chip1);
   check("…and the glowing edges", await page.evaluate(() => !!document.querySelector(".loota-heat")));
+  check("…and Search here on the hunt card (only in the area)", await page.evaluate(() => [...document.querySelectorAll('section[aria-label="Hunt"] button')].some((b) => b.textContent?.trim() === "Search here")));
   await shot("1-area");
 
   // ---- 30 m off: the chest

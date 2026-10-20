@@ -71,6 +71,7 @@ export function HuntPanel({
   onHide,
   scene = false,
   keeper = "The Keeper",
+  inArea = false,
 }: {
   huntId: string;
   actions: RefObject<HuntActions | null>;
@@ -78,6 +79,8 @@ export function HuntPanel({
   scene?: boolean;
   /** Who asks the trial on the map (the key's place: the market woman, the guide, the Keeper of the Key…). */
   keeper?: string;
+  /** In the key's area (the metal detector feels its heat): only then can you search (owner, 20 Oct 2026). */
+  inArea?: boolean;
 }) {
   const supabase = useRef(createClient()).current;
   const [state, setState] = useState<HuntState | null>(null);
@@ -370,7 +373,7 @@ export function HuntPanel({
             </span>
             <span className="ml-auto text-muted" aria-hidden="true">{open ? "▴" : "▾"}</span>
           </button>
-          {state.phase === "live" && !done && (
+          {state.phase === "live" && !done && inArea && (
             <button
               type="button"
               disabled={searching}
@@ -412,9 +415,9 @@ export function HuntPanel({
               <>
                 <p className="font-display text-base leading-snug">&ldquo;{state.riddle}&rdquo;</p>
                 {state.category && <p className="text-xs text-muted">Key Trial: {CATEGORY_NAMES[state.category]}</p>}
-                {!state.clue && (
+                {!inArea && (
                   <p className="text-xs text-muted">
-                    No typing: the riddle names a real place. Go there on the map, then tap <b>Search here</b>.
+                    No typing: the riddle names a real place. Go there on the map: <b>Search here</b> appears when you reach the key&apos;s area.
                   </p>
                 )}
                 {state.clue && (
@@ -481,7 +484,7 @@ export function HuntPanel({
               </button>
             )}
             {state.phase === "ended" && !done && <p className="text-muted">This hunt is over. {state.winnersFound} hunters finished.</p>}
-            {feedback && (
+            {feedback && (inArea || !feedback.hot) && (
               <p role="status" className={`rounded-xl p-2 font-bold ${feedback.hot ? "bg-[#7a2e12] text-paper" : "bg-[#173b5c] text-paper"}`}>
                 {feedback.text}
               </p>
@@ -545,7 +548,7 @@ export function HuntPanel({
             {state.category && <p className="text-sm">At the key: a Key Trial in {CATEGORY_NAMES[state.category]}.</p>}
             <p className="text-sm text-[#5A4020]">
               There&apos;s nothing to type: the riddle names a real place. Work out where it is, travel there on the map before the
-              others, then tap <b>Search here</b>.
+              others: <b>Search here</b> appears when you arrive.
             </p>
             <button type="button" onClick={() => setRevealed(null)} className="h-12 rounded-2xl bg-[#3A2410] font-bold text-[#F5ECD8]">
               Let&apos;s go

@@ -6563,7 +6563,7 @@ export function GameMap({
         pulseEvery = 2500;
         const level = p.heat ?? 0;
         const key = p.key ?? 0;
-        if (!heat || heat.key !== key) say(`🔥 You're in Key ${key}'s area! Feel for the heat: the edges glow and pulse faster as you get closer.`, true);
+        if (!heat || heat.key !== key) say(`🔥 You're in Key ${key}'s area! Search here is on your hunt card now. Feel for the heat: the edges glow and pulse faster as you get closer.`, true);
         const trend = heat && heat.key === key ? (level > heat.level + 0.01 ? "warmer" : level < heat.level - 0.01 ? "colder" : heat.trend) : "steady";
         heat = { level, key, trend };
         if (p.spot) showChest(p.spot, key);
@@ -7572,7 +7572,7 @@ export function GameMap({
             {!huntId && openHunt && !inviteOff && !inside && !touring && <HuntInvite hunt={openHunt} onDismiss={() => setInviteOff(true)} />}
             {huntId && huntShown && (
               <div className={inside && inside !== "trial" ? "hidden" : "contents"}>
-                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} keeper={trialKeeper} />
+                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} keeper={trialKeeper} inArea={!!hud.heat} />
               </div>
             )}
           </div>

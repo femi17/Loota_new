@@ -163,7 +163,10 @@ export function HuntPanel({
     // "Open the chest" on the map: search right there (it starts the Key Trial).
     const openChest = () => void searchRef.current();
     window.addEventListener("loota:hunt-search", openChest);
+    // The map may be waiting to open a chest: after this render's effects, once searchRef holds the search.
+    const ready = window.setTimeout(() => window.dispatchEvent(new Event("loota:hunt-ready")), 0);
     return () => {
+      window.clearTimeout(ready);
       window.clearTimeout(timer);
       window.clearInterval(timer);
       window.removeEventListener("loota:hunt-changed", changed);
@@ -250,6 +253,7 @@ export function HuntPanel({
     const map = actions.current;
     if (!map || searching) return;
     setSearching(true);
+    setOpen(true); // its answer shows on the card
     try {
       const r = await map.search(huntId);
       if (!r) {

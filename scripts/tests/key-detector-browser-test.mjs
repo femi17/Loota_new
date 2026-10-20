@@ -75,19 +75,25 @@ try {
   check("…and Search here on the hunt card (only in the area)", await page.evaluate(() => [...document.querySelectorAll('section[aria-label="Hunt"] button')].some((b) => b.textContent?.trim() === "Search here")));
   await shot("1-area");
 
-  // ---- 30 m off: the chest
+  // ---- 25 m off: the chest (it rises within 60 m; Open the chest within 40 m)
   await page.goto("about:blank");
   await wait(1000);
   const close = fromSpot(25);
   await admin.from("player_positions").update({ lng: close.lng, lat: close.lat, updated_at: ago(30) }).eq("user_id", id);
   await open();
+  const { data: at } = await admin.from("player_positions").select("lng, lat").eq("user_id", id).single();
+  const away = Math.round(Math.hypot((at.lng - spot.lng) * 111320 * Math.cos((spot.lat * Math.PI) / 180), (at.lat - spot.lat) * 110574));
+  console.log(`(the hunter stands ${away} m from the spot)`);
   const chip2 = await heatChip();
   check("on top of it: burning", /Burning|Hot/.test(chip2 ?? ""), chip2);
   const button = await page.evaluate(() => !![...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Open the key's chest"));
   check("the chest has risen: Open the chest", button);
   await shot("2-chest");
 
-  // ---- Open it: the Key Trial; answer right
+  // ---- Open it with the hunt card put away (owner, 20 Oct 2026: nothing happened): the card comes back, the Key Trial starts
+  await page.evaluate(() => document.querySelector('button[aria-label^="Hide the hunt"]')?.click());
+  await wait(800);
+  check("the hunt card put away", await page.evaluate(() => !document.querySelector('section[aria-label="Hunt"]')));
   await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Open the key's chest")?.click());
   await wait(3000);
   const trial = await text('[aria-label="Key Trial"]');

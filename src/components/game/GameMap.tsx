@@ -439,6 +439,29 @@ export function GameMap({
     if (huntId) document.cookie = `loota_hidden_hunt=${huntId}; path=/; max-age=${60 * 60 * 24 * 30}; samesite=lax`;
     setHuntShown(false);
   };
+  /**
+   * "Open the chest": the hunt card searches right there and starts the Key Trial. With the card put away (owner,
+   * 20 Oct 2026: "I clicked open chest nothings happens") it comes back first and searches once it's ready.
+   */
+  const chestAsked = useRef(false);
+  const openChest = () => {
+    if (huntShown) {
+      window.dispatchEvent(new Event("loota:hunt-search"));
+      return;
+    }
+    chestAsked.current = true;
+    document.cookie = "loota_hidden_hunt=; path=/; max-age=0";
+    setHuntShown(true);
+  };
+  useEffect(() => {
+    const ready = () => {
+      if (!chestAsked.current) return;
+      chestAsked.current = false;
+      window.dispatchEvent(new Event("loota:hunt-search"));
+    };
+    window.addEventListener("loota:hunt-ready", ready);
+    return () => window.removeEventListener("loota:hunt-ready", ready);
+  }, []);
   const [journeyPlan, setJourneyPlan] = useState<{ place: Place; options: Journey[] | null; message: string | null } | null>(null);
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the vehicle panel, when open
   const [transitOpen, setTransitOpen] = useState(false);
@@ -8025,7 +8048,7 @@ export function GameMap({
           {hud.heat?.chest && (
             <button
               type="button"
-              onClick={() => window.dispatchEvent(new Event("loota:hunt-search"))}
+              onClick={openChest}
               aria-label="Open the key's chest"
               className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-full bg-gold px-4 font-display text-base font-extrabold text-ink shadow-lg ring-2 ring-[#FFD45C] active:scale-95"
             >

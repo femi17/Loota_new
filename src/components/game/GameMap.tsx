@@ -7264,6 +7264,7 @@ export function GameMap({
                     <span aria-hidden="true">🔥</span>
                     {hud.heat.level >= 0.85 ? "Burning!" : hud.heat.level >= 0.6 ? "Hot" : hud.heat.level >= 0.3 ? "Warm" : "In the area"}
                     {hud.heat.trend !== "steady" && <span className="font-semibold opacity-90">· {hud.heat.trend === "warmer" ? "↑ warmer" : "↓ colder"}</span>}
+                    {hud.heat.level >= 0.6 && !hud.heat.chest && <span className="font-semibold opacity-90">· the chest rises within 60 m</span>}
                   </div>
                 )}
                 {hud.wonders.frozen && (

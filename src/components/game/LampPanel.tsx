@@ -31,7 +31,7 @@ export type LampOrb = { id: string; lng: number; lat: number; metres: number; en
 
 /** The lamp holds one thing at a time (owner's call, 15 Oct 2026). */
 export type LampItem = ({ type: "detour" } & LampDetour) | ({ type: "whisper" } & LampWhisper) | ({ type: "orb" } & LampOrb);
-/** `inHunt`: false when the player isn't in a live hunt (finds only come during one). */
+/** `inHunt`: false when the player isn't in a live hunt (finds still come, at half the coins: owner, 22 Oct 2026). */
 export type LampState = { current: LampItem | null; inHunt?: boolean };
 
 export type LampQuestion = { detourId: string; title: string; question: string; options: string[]; seconds: number; endsAt: number };
@@ -254,7 +254,7 @@ export function LampPanel({
         ) : !item ? (
           <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">
             {state.inHunt === false
-              ? "The lamp sleeps between hunts. Detours, whispers and hidden finds come during a live hunt: join one in the lobby. Only the Djinn wakes it now."
+              ? "The lamp is quiet. Keep roaming: it glows when something stirs nearby. Between hunts, finds pay half: join a hunt in the lobby for full rewards."
               : "The lamp is quiet. Keep roaming: it glows when something stirs nearby."}
           </p>
         ) : item.type === "orb" ? (
@@ -301,6 +301,7 @@ export function LampPanel({
                 <p className="text-sm text-paper/85">{d.story}</p>
                 <p className="text-xs text-muted">
                   {d.place} · {here ? "you're here" : distance(d.metres)} · <span className="font-bold text-gold">{rewardText(d.coins, d.relic)}</span>
+                  {state.inHunt === false && !d.relic && <span className="text-muted"> (free roam: half)</span>}
                   {d.capacity !== null && (
                     <>
                       {" "}

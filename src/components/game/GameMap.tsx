@@ -1641,7 +1641,7 @@ export function GameMap({
       type ItemOnMap = { item: WorldItem; entity: import("@/game/ThreeMapLayer").MapEntity; model: import("@/game/models3d").ItemModel };
       type PickupResult =
         | { ok: false; reason: "gone" | "far" | "position"; lng?: number; lat?: number }
-        | { ok: true; kind: "coins" | "cache"; coins: number; balance: number }
+        | { ok: true; kind: "coins" | "cache"; coins: number; balance: number; freeRoam?: boolean } // half, outside a hunt
         | { ok: true; kind: "relic"; relic: RelicId }
         | { ok: true; kind: "intel"; lead: { lng: number; lat: number } | null };
 
@@ -1735,7 +1735,8 @@ export function GameMap({
         if (result.kind === "coins" || result.kind === "cache") {
           const balance = result.balance;
           setHud((h) => ({ ...h, coins: balance }));
-          say(result.kind === "cache" ? `You found a hidden coin cache! +${result.coins} coins.` : `+${result.coins} coins`);
+          const half = result.freeRoam ? " (free roam: half, full in a hunt)" : "";
+          say(result.kind === "cache" ? `You found a hidden coin cache! +${result.coins} coins${half}.` : `+${result.coins} coins${half}`);
         } else if (result.kind === "relic") {
           const relic = RELICS[result.relic];
           setHud((h) => ({ ...h, relics: h.relics + 1 }));

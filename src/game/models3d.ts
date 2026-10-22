@@ -1341,6 +1341,31 @@ export function makeTravellerScene() {
   return group;
 }
 
+/**
+ * A flat by the road (owner, 22 Oct 2026): a warning triangle behind, the spare tyre and a toolbox on the kerb, a
+ * shade tree. The vehicle is added where it stopped (ROAD_EVENT_SPOTS.stand).
+ */
+export function makeFlatScene() {
+  const group = new THREE.Group();
+  group.add(pavement(ROAD_EVENT_SPOTS.width));
+  // The shade tree
+  group.add(mesh(new THREE.CylinderGeometry(0.22, 0.3, 2.4, 8), "#6B4A2B", -3.6, 1.2, -3.2));
+  const leaves = new THREE.Mesh(new THREE.SphereGeometry(1.4, 10, 8), material("#2E7D4F"));
+  leaves.position.set(-3.6, 3, -3.2);
+  group.add(leaves);
+  // The warning triangle, in the road behind the vehicle
+  const triangle = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.05, 3), material("#E5484D"));
+  triangle.rotation.set(Math.PI / 2, 0, 0);
+  triangle.position.set(5.2, 0.4, 1.4);
+  group.add(triangle, mesh(new THREE.BoxGeometry(0.5, 0.04, 0.3), "#3A3A3A", 5.2, 0.02, 1.4));
+  // The spare tyre lying on the kerb, and the toolbox (the jack in it)
+  const spare = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.13, 10, 18), material("#1B1B1B"));
+  spare.rotation.x = Math.PI / 2;
+  spare.position.set(0.4, 0.14, -0.3);
+  group.add(spare, mesh(new THREE.BoxGeometry(0.6, 0.3, 0.32), "#C0392B", -0.5, 0.15, -0.4), mesh(new THREE.BoxGeometry(0.62, 0.05, 0.34), "#922B21", -0.5, 0.32, -0.4));
+  return group;
+}
+
 /** A street seller's stall by the road: an umbrella over a table of oranges and snacks, a cooler, a sign. */
 export function makeStallScene(sign: string) {
   const group = new THREE.Group();

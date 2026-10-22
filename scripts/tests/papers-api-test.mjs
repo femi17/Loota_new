@@ -67,11 +67,12 @@ try {
   r = (await rider.c.rpc("road_event_answer", { p_event: ok.id, p_choice: 1 })).data;
   check("papers in order, the right answer: passed, no fine", r?.outcome === "passed" && r.fine === 0);
 
-  // ---- A traveller helped in free roam: 15 coins
+  // ---- A traveller helped in free roam: a thank-you gift (15 coins, or since 19 Oct a relic, a jerry can or a tyre kit)
   const before = await coins(rider.id);
   const { data: tr } = await admin.from("road_events").insert({ user_id: rider.id, kind: "traveller", npc: "Blessing" }).select("id").single();
   r = (await rider.c.rpc("road_event_answer", { p_event: tr.id, p_choice: 1 })).data;
-  check("a traveller helped in free roam: 15 coins, no hunt hint", r?.outcome === "helped" && r.reward === 15 && !r.hint && (await coins(rider.id)) === before + 15, JSON.stringify(r).slice(0, 120));
+  const paid = r?.gift?.kind === "coins" ? 15 : 0;
+  check("a traveller helped in free roam: a gift, no hunt hint", r?.outcome === "helped" && !!r.gift && r.reward === paid && !r.hint && (await coins(rider.id)) === before + paid, JSON.stringify(r).slice(0, 120));
 } catch (e) {
   fails++;
   console.log("ERROR", e);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ADDONS, CALL_OUT_PRICE, KEG_CAPACITY, PAPER_ICON, REPAIR, VEHICLE_KINDS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, PAPER_ICON, REPAIR, VEHICLE_KINDS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
 import { formatDistance } from "@/game/geo";
 import { CloseIcon, VehicleIcon } from "./HudIcons";
 
@@ -13,7 +13,8 @@ export type OwnedVehicle = {
   kind: VehicleKind;
   fuel: number;
   inUse: boolean;
-  state: "ready" | "empty" | "broken" | "repairing" | "stranded";
+  /** `flat`: a motorbike or car with a flat tyre, parked at the roadside until it's changed. */
+  state: "ready" | "empty" | "broken" | "repairing" | "stranded" | "flat";
   away?: number | null;
   papers: { id: AddonId; name: string; price: number; have: boolean }[];
 };
@@ -105,7 +106,7 @@ export function VehiclePanel({
   // With a new vehicle: its gear and papers, ticked to buy along with it.
   const [extras, setExtras] = useState<Record<string, boolean>>({});
   const ticked = (kind: VehicleKind, id: AddonId) => extras[`${kind}:${id}`] ?? true;
-  const parked = owned.find((v) => v.state === "stranded") ?? null;
+  const parked = owned.find((v) => v.state === "stranded" || v.state === "flat") ?? null;
 
   return (
     <div className="absolute inset-0 z-10 flex items-end justify-center bg-ink/60 sm:items-center" onClick={onClose}>
@@ -144,20 +145,24 @@ export function VehiclePanel({
             </div>
           )}
 
-          {/* Out of fuel at the roadside: first, the way back with a jerry can */}
+          {/* Out of fuel at the roadside (first, the way back with a jerry can), or a flat there */}
           {parked && (
             <div className="mb-3 flex flex-col gap-3 rounded-2xl bg-danger/15 p-4 ring-1 ring-danger/50" aria-label="Parked at the roadside">
               <div className="flex items-center gap-3">
-                <span className="flex size-11 items-center justify-center rounded-xl bg-danger/25 text-2xl" aria-hidden="true">⛽</span>
+                <span className="flex size-11 items-center justify-center rounded-xl bg-danger/25 text-2xl" aria-hidden="true">{parked.state === "flat" ? "🛞" : "⛽"}</span>
                 <div className="min-w-0 flex-1">
-                  <p className="font-bold leading-tight">Your {VEHICLES[parked.kind].name.toLowerCase()} ran dry</p>
+                  <p className="font-bold leading-tight">
+                    Your {VEHICLES[parked.kind].name.toLowerCase()} {parked.state === "flat" ? "has a flat tyre" : "ran dry"}
+                  </p>
                   <p className="text-xs text-paper/75">
                     Parked at the roadside{parked.away != null ? `, ${formatDistance(parked.away)} from you` : ""}
                   </p>
                 </div>
               </div>
               <p className="text-xs leading-relaxed text-paper/80">
-                🛢 Fill a jerry can at a petrol station, carry it back and pour it in: it takes the tank to {KEG_CAPACITY}%.
+                {parked.state === "flat"
+                  ? `🛞 Go to it and tap Fix flat: change it yourself with a jack (free), or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`
+                  : `🛢 Fill a jerry can at a petrol station, carry it back and pour it in: it takes the tank to ${KEG_CAPACITY}%.`}
               </p>
               <button type="button" disabled={busy} onClick={() => onWayTo(parked.kind)} className="h-11 rounded-xl bg-gold text-sm font-bold text-ink disabled:opacity-40">
                 🧭 The way to it
@@ -177,6 +182,8 @@ export function VehiclePanel({
                   ? { text: `${info.price.toLocaleString("en-NG")} coins`, style: "bg-gold/15 text-gold" }
                   : mine.state === "stranded"
                     ? { text: "Parked · no fuel", style: "bg-danger/20 text-[#FF8A8A]" }
+                    : mine.state === "flat"
+                      ? { text: "Parked · flat tyre", style: "bg-danger/20 text-[#FF8A8A]" }
                     : mine.state === "broken"
                       ? { text: "Broken down", style: "bg-danger/20 text-[#FF8A8A]" }
                       : mine.state === "repairing"
@@ -238,9 +245,11 @@ export function VehiclePanel({
                     </div>
                   )}
 
-                  {mine && !onIt && (mine.state === "broken" || mine.state === "repairing" || mine.state === "empty") && (
+                  {mine && !onIt && (mine.state === "broken" || mine.state === "repairing" || mine.state === "empty" || mine.state === "flat") && (
                     <p className="text-xs text-gold">
-                      {mine.state === "empty"
+                      {mine.state === "flat"
+                        ? `A flat tyre, at the roadside${mine.away ? ` ${mine.away} m away` : ""}. Go to it and tap 🛞 Fix flat: free with a jack, or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`
+                        : mine.state === "empty"
                         ? "Empty tank: any petrol station fills it in your pocket, or pour in a jerry can."
                         : mine.state === "broken"
                           ? "Broken down. Take it to a repair shop nearby, or call a mechanic to come to you (dearer, but quick)."
@@ -251,7 +260,7 @@ export function VehiclePanel({
                   {!onIt && (
                     <div className="flex flex-wrap gap-2">
                       {mine ? (
-                        mine.state === "stranded" ? (
+                        mine.state === "stranded" || mine.state === "flat" ? (
                           <button type="button" disabled={busy} onClick={() => onWayTo(kind)} className={primary}>
                             🧭 The way to it
                           </button>

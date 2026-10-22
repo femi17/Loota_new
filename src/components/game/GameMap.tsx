@@ -9,7 +9,7 @@ import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELIC_ICON, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
-import { ADDONS, CALL_OUT_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, NOT_PAPERS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
@@ -20,6 +20,7 @@ import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene
 import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { CoinShop, confirmPayment } from "./CoinShop";
 import { PumpScene, type PumpActions, type PumpOffer } from "./PumpScene";
+import { FlatScene, type FlatActions, type FlatOffer } from "./FlatScene";
 import { ServiceScene, type ServiceActions, type ServiceOffer } from "./ServiceScene";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
@@ -171,7 +172,7 @@ type Hud = {
 };
 
 /** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
-type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic" | "jerry_relic" | "tyre_kit";
+type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic" | "jerry_relic" | "tyre_kit" | "flat";
 
 /** A direction and rough distance (bearing: compass degrees). */
 type Pointer = { bearing: number; metres: number };
@@ -473,11 +474,13 @@ export function GameMap({
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
   const [repairOpen, setRepairOpen] = useState<RepairJob | null>(null);
   /** Inside a place on the map (an in-world scene), and which: the street's buttons step aside. */
-  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | "service" | null>(null);
+  const [inside, setInside] = useState<"repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | "service" | "flat" | null>(null);
   const [serviceOpen, setServiceOpen] = useState<ServiceOffer | null>(null);
   const [serviceActions, setServiceActions] = useState<ServiceActions | null>(null);
   const [pumpOpen, setPumpOpen] = useState<PumpOffer | null>(null);
   const [pumpActions, setPumpActions] = useState<PumpActions | null>(null);
+  const [flatOpen, setFlatOpen] = useState<FlatOffer | null>(null); // a flat by the roadside
+  const [flatActions, setFlatActions] = useState<FlatActions | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
   /** Buying coins (tap your coins); `notice`: how a payment on Paystack's own page went. */
@@ -1056,7 +1059,7 @@ export function GameMap({
         engine?: number | null;
         energy?: number;
         fainted?: boolean;
-        stopped?: "fuel" | "broken" | null;
+        stopped?: "fuel" | "broken" | "flat" | null;
       };
       /** `force`: save even without having moved (e.g. to have the server confirm a faint). */
       async function savePosition(force = false) {
@@ -1113,7 +1116,10 @@ export function GameMap({
         engine: number;
         broken_at: string | null;
         repair_ready_at: string | null;
-        /** Out of fuel, parked at the roadside at lng/lat (not in the pocket) until a jerry can is poured in. */
+        /**
+         * Parked at the roadside at lng/lat (not in the pocket): out of fuel until a jerry can is poured in, or (a motorbike
+         * or car with tyre 0) with a flat until it's changed.
+         */
         stranded_at: string | null;
         lng: number;
         lat: number;
@@ -1122,6 +1128,8 @@ export function GameMap({
         helmet: boolean;
         registered: boolean;
         insured: boolean;
+        /** A jack and spare: change a flat yourself (owner, 22 Oct 2026). */
+        jack: boolean;
       };
       let owned: VehicleRow[] = [];
       let vehiclesLoaded = false; // owned is filled in (refreshVehicles)
@@ -1135,8 +1143,12 @@ export function GameMap({
       };
       const vehicleName = (kind: VehicleKind) => VEHICLES[kind].name.toLowerCase();
       const ownInUse = () => owned.find((v) => v.in_use) ?? null;
-      /** A motorbike or car that ran dry and stands at the roadside where it stopped. */
-      const strandedVehicle = () => owned.find((v) => !!v.stranded_at) ?? null;
+      /** A motorbike or car with a flat (it stands at the roadside until the tyre is changed). */
+      const isFlat = (v: VehicleRow) => v.kind !== "bicycle" && v.tyre <= 0;
+      /** A motorbike or car that ran dry and stands at the roadside where it stopped (not one waiting only for a new tyre). */
+      const strandedVehicle = () => owned.find((v) => !!v.stranded_at && !(isFlat(v) && v.fuel > 0)) ?? null;
+      /** One standing at the roadside with a flat. */
+      const flatVehicle = () => owned.find((v) => !!v.stranded_at && isFlat(v)) ?? null;
       const metresTo = (p: LngLat) => geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]);
       const meterText = () => {
         if (!rental) return null;
@@ -1236,7 +1248,7 @@ export function GameMap({
 
       async function refreshVehicles() {
         const [{ data: vehicles }, { data: rentals }, { data: papers }] = await Promise.all([
-          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured"),
+          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured, jack"),
           supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
           supabase.from("profiles").select("rider_licence, driver_licence").maybeSingle(),
         ]);
@@ -1267,7 +1279,7 @@ export function GameMap({
         for (const v of want) {
           if (parked.has(v.kind)) continue;
           const object = models.makeVehicleModel(v.kind);
-          const tag = layer.billboard(models.makeNameplate("NO FUEL", "#B23A3A"));
+          const tag = layer.billboard(models.makeNameplate(isFlat(v) ? "FLAT TYRE" : "NO FUEL", "#B23A3A"));
           tag.position.y = v.kind === "car" ? 2.6 : 2.2;
           object.add(tag);
           let at = { lng: v.lng, lat: v.lat };
@@ -1387,7 +1399,7 @@ export function GameMap({
       function hasPaper(v: VehicleRow, id: AddonId) {
         if (id === "rider_licence") return licences.rider;
         if (id === "driver_licence") return licences.driver;
-        return id === "light" ? v.light : id === "helmet" ? v.helmet : id === "registration" ? v.registered : v.insured;
+        return id === "light" ? v.light : id === "helmet" ? v.helmet : id === "registration" ? v.registered : id === "jack" ? v.jack : v.insured;
       }
 
       /** Buy a vehicle's gear or a licence (buy_addon). */
@@ -1444,7 +1456,7 @@ export function GameMap({
             await refreshVehicles();
             // Its gear and papers, ticked with it.
             for (const id of addons) await buyAddon(kind, id, true);
-            const missing = ADDONS[kind].filter((a) => !addons.includes(a.id)).map((a) => a.name.toLowerCase());
+            const missing = ADDONS[kind].filter((a) => !addons.includes(a.id) && !NOT_PAPERS.includes(a.id)).map((a) => a.name.toLowerCase());
             if (missing.length) say(`No ${missing.join(" or ")} yet: police checkpoints fine what's missing. Get them in the vehicle panel.`, true);
           }
 
@@ -1459,6 +1471,8 @@ export function GameMap({
             traveller.mode = "walk"; // the server put you on foot
             await refreshVehicles();
             if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
+            else if (started?.reason === "flat")
+              say(`Your ${vehicleName(kind)} has a flat and stands at the roadside. Go to it and change the tyre (🛞 Fix flat): free with your jack, or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`, true);
             else if (started?.reason === "stranded")
               say(`Your ${vehicleName(kind)} is parked at the roadside with an empty tank. Bring it fuel in a jerry can from a petrol station (🧭 in Vehicles shows the way).`, true);
             else if (started?.reason === "fuel")
@@ -1803,7 +1817,17 @@ export function GameMap({
             kind: v.kind,
             fuel: v.fuel,
             inUse: v.in_use,
-            state: v.stranded_at ? "stranded" : v.broken_at ? (v.repair_ready_at ? "repairing" : "broken") : v.kind !== "bicycle" && v.fuel <= 0 ? "empty" : "ready",
+            state: v.stranded_at
+              ? isFlat(v)
+                ? "flat"
+                : "stranded"
+              : v.broken_at
+                ? v.repair_ready_at
+                  ? "repairing"
+                  : "broken"
+                : v.kind !== "bicycle" && v.fuel <= 0
+                  ? "empty"
+                  : "ready",
             away: v.stranded_at ? Math.round(metresTo(v)) : null,
             papers: ADDONS[v.kind].map((a) => ({ ...a, have: hasPaper(v, a.id) })),
           })),
@@ -3476,6 +3500,11 @@ export function GameMap({
           const pocketed = (want: (v: VehicleRow) => boolean) => owned.find((v) => !v.in_use && !v.stranded_at && v.kind !== "bicycle" && want(v)) ?? null;
           const stranded = strandedVehicle();
           const atStranded = !!stranded && metresTo(stranded) <= 25;
+          // Beside a motorbike or car with a flat: change the tyre (a roadside mechanic, or your jack).
+          const flat = flatVehicle();
+          if (flat && metresTo(flat) <= 25 && traveller.mode === "walk") {
+            list.push({ id: "flat", icon: "🛞", short: "Fix flat", label: `Change your ${vehicleName(flat.kind)}'s flat tyre` });
+          }
           const eatSpot = spotHere(["eat"]);
           if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
           const chill = spotHere(["rest", "eat"]);
@@ -3533,6 +3562,36 @@ export function GameMap({
 
       setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg"), fillKeg: () => fillKegHere() });
       setPumpActions({ pump: () => act("pump", true) });
+      // Changing a flat (FlatScene): start it (the wait), then finish it: the tyre changed, and back on the vehicle.
+      setFlatActions({
+        start: async (how) => {
+          await savePosition();
+          const { data } = await supabase.rpc("start_flat_fix", { p_how: how });
+          const r = data as { ok: boolean; reason?: string; seconds?: number } | null;
+          return r ?? { ok: false, reason: "error" };
+        },
+        finish: async () => {
+          const { data } = await supabase.rpc("finish_flat_fix");
+          const r = data as { ok: boolean; reason?: string; kind?: VehicleKind; price?: number; balance?: number; remounted?: boolean } | null;
+          if (disposed || !r) return { ok: false, reason: "error" };
+          if (!r.ok) return r;
+          const balance = r.balance;
+          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
+          if (r.remounted && r.kind) {
+            // Back on it, and on the way the player was going.
+            traveller.mode = r.kind;
+            saved = { ...traveller.pos };
+          }
+          await refreshVehicles();
+          if (r.remounted) {
+            afterModeChange();
+            const onTo = resumeGoing();
+            say(`New tyre on${r.price ? ` (${r.price} coins)` : ""}: you're back on your ${vehicleName(r.kind ?? "motorbike")}${onTo ? `. On to ${onTo}` : ""}.`, true);
+          }
+          computeActions();
+          return r;
+        },
+      });
       setServiceActions({ service: () => act("service", true) });
       setMealActions({
         eat: async () => {
@@ -3543,6 +3602,16 @@ export function GameMap({
 
       async function act(id: LimitAction, direct = false): Promise<boolean> {
         if (busy) return false;
+        if (id === "flat") {
+          // The flat by the roadside (FlatScene): a roadside mechanic, or your own jack.
+          const v = flatVehicle();
+          if (!v || v.kind === "bicycle" || metresTo(v) > 25) return false;
+          await savePosition(); // the server checks you're beside it
+          const offer: FlatOffer = { kind: v.kind, mechanic: nameFor(VULCANIZERS, `${v.lng.toFixed(4)},${v.lat.toFixed(4)}`), jack: v.jack };
+          openFlatPlace(offer, v);
+          setFlatOpen(offer);
+          return true;
+        }
         if (id === "jerry_relic" || id === "tyre_kit") {
           setBusy(true);
           try {
@@ -3621,7 +3690,7 @@ export function GameMap({
         setBusy(true);
         try {
           await savePosition(); // the server checks where the player is
-          const rpc: Record<Exclude<LimitAction, "eat" | "refuel" | "jerry_relic" | "tyre_kit">, string> = {
+          const rpc: Record<Exclude<LimitAction, "eat" | "refuel" | "jerry_relic" | "tyre_kit" | "flat">, string> = {
             rest: "start_rest",
             rest_here: "rest_here",
             buy_keg: "buy_keg",
@@ -3644,6 +3713,8 @@ export function GameMap({
             kind?: VehicleKind;
             kegFuel?: number;
             remounted?: boolean;
+            /** Poured into a vehicle at the roadside with a flat: you stay on foot until the tyre is changed. */
+            flat?: boolean;
             lng?: number;
             lat?: number;
           } | null;
@@ -3702,7 +3773,7 @@ export function GameMap({
             say(
               r.remounted
                 ? `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel, and you're back on it${onTo ? `. On to ${onTo}` : ""}. A jerry can only goes so far: fill up at a petrol station.`
-                : `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.spoilt ? " That was your jerry can's last use: it's worn out." : ` Your jerry can has ${r.usesLeft} uses left.`}`,
+                : `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.flat ? " Change its flat tyre (🛞 Fix flat) to ride on." : ""}${r.spoilt ? " That was your jerry can's last use: it's worn out." : ` Your jerry can has ${r.usesLeft} uses left.`}`,
               true,
             );
             clearAdvice("fuel");
@@ -3750,8 +3821,8 @@ export function GameMap({
         if (result.fainted) faint();
       }
 
-      /** An empty tank or a breakdown: the vehicle stays where it stopped; the hunter is on foot. */
-      function vehicleStopped(why: "fuel" | "broken") {
+      /** An empty tank, a flat or a breakdown: the vehicle stays where it stopped; the hunter is on foot. */
+      function vehicleStopped(why: "fuel" | "broken" | "flat") {
         const kind = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
         if (kind && why === "broken") pocketAnim(kind, false); // out of fuel, it stays at the roadside (showParked)
         traveller.mode = "walk";
@@ -3761,6 +3832,21 @@ export function GameMap({
           computeActions();
         });
         const name = kind ? vehicleName(kind) : "vehicle";
+        if (why === "flat") {
+          // Right beside it (where the server saw it stop: the phone may have ridden on a few seconds more), to change
+          // the tyre here, then on the way again.
+          placeAt(saved.lng, saved.lat);
+          if (trip) setGoing({ lng: trip.to.lng, lat: trip.to.lat, name: trip.name });
+          endDirections();
+          const jack = owned.find((v) => v.kind === kind)?.jack;
+          say(
+            `💥 Flat tyre! Your ${name} stands at the roadside. ${
+              jack ? "Change it with your jack (free)" : "No jack: a roadside mechanic can change it"
+            }${jack ? `, or let a roadside mechanic do it (${FLAT_FIX_PRICE} coins)` : ` for ${FLAT_FIX_PRICE} coins`}: the 🛞 Fix flat button.`,
+            true,
+          );
+          return;
+        }
         if (why === "fuel") {
           if (fuelInHand()) {
             if (trip) setGoing({ lng: trip.to.lng, lat: trip.to.lat, name: trip.name });
@@ -4938,7 +5024,7 @@ export function GameMap({
       const SCENE_ZOOM = 19.3;
       const SCENE_PITCH = 48;
       const SCENE_PAD = small ? 190 : 150; // the reply strip's height: the place sits above it
-      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | "service";
+      type PlaceKind = "repair" | "meal" | "fuel" | "ward" | "roadside" | "hire" | "road" | "ticket" | "quiz" | "trial" | "vault" | "pump" | "service" | "flat";
       type Walker = {
         av: ReturnType<typeof models.buildAvatar>;
         x: number;
@@ -5486,6 +5572,27 @@ export function GameMap({
         });
         const w = inWorld as InWorld | null;
         if (opened && w) w.keeper.av.root.scale.setScalar(1.6); // bigger than life
+      }
+
+      /** A flat by the roadside: your motorbike or car where it stopped, the spare and toolbox on the kerb, a roadside mechanic. */
+      function openFlatPlace(offer: FlatOffer, v: VehicleRow) {
+        const S = models.ROAD_EVENT_SPOTS;
+        const group = models.makeFlatScene();
+        const vehicle = models.makeVehicleModel(offer.kind);
+        vehicle.rotation.y = Math.PI / 2; // along the road
+        vehicle.position.set(S.stand.x, 0, S.stand.z);
+        group.add(vehicle);
+        return openPlace({
+          kind: "flat",
+          key: `flat:${v.kind}`,
+          at: { ...traveller.pos },
+          group,
+          spots: S,
+          kerbM: 6,
+          keeper: { look: { ...keeperLook(offer.mechanic), topColour: "#4A5A3A", extra: "cap" }, at: S.keeper },
+          you: { from: S.outside, to: S.customer },
+          closeScene: () => setFlatOpen(null),
+        });
       }
 
       /** At the vulcanizer's: your bicycle on the stand, the compressor, the vulcanizer. */
@@ -7886,6 +7993,15 @@ export function GameMap({
           world={inside === "service"}
           onMoment={onMoment}
           onClose={() => (inside === "service" ? actions.current?.leaveShop() : setServiceOpen(null))}
+        />
+      )}
+      {flatOpen && flatActions && (
+        <FlatScene
+          offer={flatOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={flatActions}
+          world={inside === "flat"}
+          onClose={() => (inside === "flat" ? actions.current?.leaveShop() : setFlatOpen(null))}
         />
       )}
       {pumpOpen && pumpActions && (

@@ -9,6 +9,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
 import { KEY_SCENES, KEY_SCENE_INFO, isKeyScene } from "@/game/keyScenes";
 import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setPublished, summonDjinn } from "./actions";
+import { RiddleFields } from "./RiddleFields";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
 
@@ -103,7 +104,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
       <section className="flex flex-col gap-4 rounded-3xl bg-ink-2 p-6">
         <h1 className="font-display text-2xl font-extrabold">Create a hunt</h1>
-        <form action={createHunt} className="grid gap-4 sm:grid-cols-2">
+        <form action={createHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Title">
             <input name="title" required minLength={3} maxLength={80} className={field} placeholder="Lagos Island Dash" />
           </Field>
@@ -219,14 +220,10 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
             {!h.published && (
               <>
-                <form action={addKey} className="grid gap-3 rounded-2xl bg-ink-2 p-4 sm:grid-cols-2">
+                <form action={addKey} className="grid grid-cols-1 gap-3 rounded-2xl bg-ink-2 p-4 sm:grid-cols-2">
                   <input type="hidden" name="hunt" value={h.id} />
                   <p className="font-bold sm:col-span-2">Add key {keys.length + 1}</p>
-                  <div className="sm:col-span-2">
-                    <Field label="Riddle" hint="Points to an area (a landmark, district or city).">
-                      <textarea name="riddle" required minLength={5} maxLength={500} rows={2} className={`${field} h-auto py-2`} />
-                    </Field>
-                  </div>
+                  <RiddleFields />
                   <Field label="Key Trial category">
                     <select name="category" className={field} defaultValue="maths">
                       {Object.entries(CATEGORY_NAMES).map(([value, name]) => (
@@ -255,11 +252,6 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                   <Field label="Exact key spot" hint="Moved automatically onto the nearest road or path.">
                     <input name="spot" required placeholder="6.4543, 3.3961" className={field} />
                   </Field>
-                  <div className="sm:col-span-2">
-                    <Field label="Final Approach clue (optional)" hint="Shown only to hunters who reach the area.">
-                      <input name="clue" maxLength={300} className={field} />
-                    </Field>
-                  </div>
                   <button type="submit" className="h-11 rounded-xl bg-gold font-bold text-ink sm:col-span-2">
                     Add key
                   </button>

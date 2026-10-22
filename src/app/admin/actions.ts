@@ -2,6 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import Anthropic from "@anthropic-ai/sdk";
+import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPlayer } from "@/lib/player";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
@@ -221,4 +224,54 @@ export async function summonDjinn() {
   const { data, error } = await createAdminClient().rpc("djinn_open_wager");
   if (error) back(`Couldn't summon the Djinn: ${error.message}`, true);
   back(data ? "The Djinn has woken. Every player's lamp is smoking." : "A Wager is already on.");
+}
+
+const RiddleDrafts = z.object({
+  drafts: z.array(z.object({ riddle: z.string(), clue: z.string(), why: z.string() })),
+});
+
+/**
+ * Riddles for a key, drafted by Claude (owner, 22 Oct 2026): the owner names the place and picks one (or edits it).
+ * Claude Sonnet 5.5, as a riddle must point at the right place (about a cent a draft).
+ */
+export async function draftRiddles(
+  place: string,
+  level: "easy" | "medium" | "hard",
+): Promise<{ ok: true; drafts: { riddle: string; clue: string; why: string }[] } | { ok: false; message: string }> {
+  await owner();
+  const where = place.trim().slice(0, 160);
+  if (where.length < 3) return { ok: false, message: "Type the place first, like “National Theatre, Iganmu, Lagos”." };
+  if (!process.env.ANTHROPIC_API_KEY) return { ok: false, message: "Claude isn't set up: add ANTHROPIC_API_KEY to the server's settings." };
+  try {
+    const response = await new Anthropic().beta.messages.parse({
+      model: "claude-sonnet-5-5",
+      max_tokens: 8000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default", // a declined request is retried on Anthropic's recommended model
+      output_config: { effort: "medium", format: betaZodOutputFormat(RiddleDrafts) },
+      system: `You write riddles for Loota, a real-map treasure hunt played in Nigeria. A riddle points hunters to a real
+place; they work it out, travel there on the map and search for the key. Write riddles that:
+- never name the place, its district or its street, or use the words of its name (the city or state is fine);
+- rest on true, distinctive things about it (its shape, nickname, history, what happens there, what's near it) that
+  you are certain of: a riddle that points to the wrong place ruins the hunt;
+- a sharp local could solve: one or two short sentences, at most 160 characters, vivid and playful;
+- match the difficulty: easy = a famous feature or nickname; medium = needs one real fact; hard = wordplay or two facts
+  together.
+Example of the style: "A general's cap rests by the water: the house of drama built for FESTAC '77." (the National
+Theatre, Lagos).
+For each riddle also write a Final Approach clue (at most 120 characters), shown only to hunters already in the area,
+that leads to the exact spot (an entrance, a statue, a gate), and "why": one line on which facts the riddle uses, so the
+organiser can check it.`,
+      messages: [{ role: "user", content: `Write 4 different ${level} riddles for this place: ${where}` }],
+    });
+    if (response.stop_reason === "refusal") return { ok: false, message: "Claude declined to draft riddles for that. Try describing the place differently." };
+    const drafts = response.parsed_output?.drafts.filter((d) => d.riddle.trim().length >= 5).slice(0, 4) ?? [];
+    if (!drafts.length) return { ok: false, message: "Claude didn't come up with riddles that time. Try again." };
+    return { ok: true, drafts };
+  } catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) return { ok: false, message: "Claude didn't accept the API key: check ANTHROPIC_API_KEY." };
+    if (e instanceof Anthropic.RateLimitError) return { ok: false, message: "Claude is busy right now. Try again in a minute." };
+    if (e instanceof Anthropic.APIError) return { ok: false, message: `Claude couldn't draft right now (error ${e.status}). Try again.` };
+    return { ok: false, message: "Couldn't reach Claude. Check the connection and try again." };
+  }
 }

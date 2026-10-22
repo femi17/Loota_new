@@ -20,7 +20,8 @@ export type RoadEvent = {
 };
 
 export type RoadEventResult = {
-  outcome: "passed" | "fined" | "helped" | "declined" | "won" | "lost";
+  /** "escaped" / "caught": rode past a checkpoint and got away with it, or didn't. */
+  outcome: "passed" | "fined" | "helped" | "declined" | "won" | "lost" | "escaped" | "caught";
   correct: string | null;
   fine: number;
   reward: number;
@@ -37,7 +38,10 @@ export type RoadEventResult = {
 const RELIC_GIFT: Record<string, string> = { jerry_can: "a Jerry Can relic: a full can of fuel, for when your tank runs dry", second_wind: "a Second Wind relic: 50 energy when you're tired", shield: "a Shield relic: it keeps the rain and traffic off you once" };
 
 export type RoadEventActions = {
-  /** checkpoint: a choice, or −2 to pay the fine; traveller: 1 to help, 0 not; seller: a choice, or −1 no thanks. */
+  /**
+   * checkpoint: a choice, −2 to pay the fine, or −3 to ride on without stopping (a chance of a bigger fine);
+   * traveller: 1 to help, 0 not; seller: a choice, or −1 no thanks.
+   */
   answer: (event: RoadEvent, choice: number) => Promise<RoadEventResult | null>;
   /** Play tapped: the server starts the game's clock. */
   start: (event: RoadEvent) => Promise<boolean>;
@@ -140,7 +144,10 @@ export function RoadEventScene({
       return;
     }
     const mine = { who: "you" as const, text: said };
-    if (r.outcome === "passed") say(mine, { who: "them", text: "Correct! Everything is in order. Drive safely." });
+    if (r.outcome === "escaped") say(mine, { who: "them", text: "Hey! HEY! Come back here!… (You got away with it this time.)" });
+    else if (r.outcome === "caught")
+      say(mine, { who: "them", text: `Where do you think you're going? Pull over! Running a checkpoint: that's ${r.fine} coins, and you'll wait while I write it up.` });
+    else if (r.outcome === "passed") say(mine, { who: "them", text: "Correct! Everything is in order. Drive safely." });
     else if (r.outcome === "fined" && (event.missing ?? []).length)
       say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Get your papers sorted at the vehicle panel before I see you again, o.` });
     else if (r.outcome === "fined" && choice === -2) say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Wait here while I write your receipt.` });
@@ -214,6 +221,8 @@ export function RoadEventScene({
     });
   }
 
+  // Not stopping at a checkpoint (owner, 22 Oct 2026): usually you get away with it; caught, a bigger fine and a wait.
+  const rideOn: SceneChoice = { label: vehicle ? "Ride on without stopping (risky)" : "Walk on without stopping (risky)", onPick: () => void answer(-3, vehicle ? "(You open the throttle and ride straight past.)" : "(You keep walking, eyes front.)") };
   let choices: SceneChoice[];
   if (game === "offered")
     choices = [
@@ -240,13 +249,16 @@ export function RoadEventScene({
       { label: "Sorry, I'm in a hurry", onPick: () => void answer(0, "Sorry, I'm in a hurry.") },
     ];
   else if (event.kind === "checkpoint" && (event.missing ?? []).length)
-    choices = [{ label: `Pay the fine · ${PAPER_FINE * (event.missing ?? []).length} coins`, primary: true, onPick: () => void answer(-2, "Sorry, officer. Here's the fine.") }];
+    choices = [
+      { label: `Pay the fine · ${PAPER_FINE * (event.missing ?? []).length} coins`, primary: true, onPick: () => void answer(-2, "Sorry, officer. Here's the fine.") },
+      rideOn,
+    ];
   else
     choices = [
       ...(event.choices ?? []).map((c, i) => ({ label: c, primary: true, onPick: () => void answer(i, c) })),
-      event.kind === "checkpoint"
-        ? { label: "Just pay the fine · 20 coins", onPick: () => void answer(-2, "I'll just pay the fine.") }
-        : { label: "No thanks", onPick: () => void answer(-1, "No thanks, I'm in a hurry.") },
+      ...(event.kind === "checkpoint"
+        ? [{ label: "Just pay the fine · 20 coins", onPick: () => void answer(-2, "I'll just pay the fine.") }, rideOn]
+        : [{ label: "No thanks", onPick: () => void answer(-1, "No thanks, I'm in a hurry.") }]),
     ];
 
   return (
@@ -288,7 +300,7 @@ export function RoadEventScene({
       }
       countdown={game === "playing" && left !== null && event.game ? { left, total: gameSeconds(event.game) } : null}
       leaveLabel={vehicle ? "Ride on" : "Walk on"}
-      onClose={onClose}
+      onClose={event.kind === "checkpoint" && !done && !busy ? rideOn.onPick : onClose}
     />
   );
 }

@@ -116,6 +116,23 @@ try {
   await wait(2500);
   check("right: 25 coins", /Take your 25 coins/.test((await scene()) ?? "") && (await coins()) === mid + 25);
   await clickWhenThere("Go on");
+  await wait(1000);
+
+  // ---- Another checkpoint: ridden past without stopping (owner, 22 Oct 2026): got away with it, or caught and fined 50
+  await plant("checkpoint", "Officer Bello", { prompt: "What does a red traffic light mean?", choices: ["Go faster", "Stop", "Turn left only"], answer: 1 });
+  await rideUntilStopped();
+  const last = await coins();
+  check("a checkpoint offers to ride on without stopping", await clickWhenThere("without stopping"));
+  await wait(2500);
+  const past = (await scene()) ?? "";
+  const got = await coins();
+  check(
+    "…got away with it, or caught: a 50-coin fine",
+    (/got away with it/.test(past) && got === last) || (/that's 50 coins/.test(past) && got === last - 50),
+    past.slice(-160),
+  );
+  await shot("4-ride-on");
+  await clickWhenThere("Go on");
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

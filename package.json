@@ -34,6 +34,7 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.1.0",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -46,6 +47,7 @@
     "puppeteer-core": "^25.14.0",
     "supabase": "^2.120.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "zod": "^4.6.7"
   }
 }

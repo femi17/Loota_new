@@ -27,6 +27,36 @@
           "A crown"
         ],
         "answer": 1
+      },
+      {
+        "q": "Which Lagos district is the National Theatre in?",
+        "options": [
+          "Iganmu",
+          "Victoria Island",
+          "Ikoyi",
+          "Lekki"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What kind of events are staged at the National Theatre in Lagos?",
+        "options": [
+          "Car and motorbike races",
+          "Ice hockey tournaments",
+          "Stage plays and concerts",
+          "Sea turtle releases"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "Before Abuja became Nigeria's capital in 1991, which city held that role?",
+        "options": [
+          "Kano",
+          "Ibadan",
+          "Lagos",
+          "Enugu"
+        ],
+        "answer": 2
       }
     ]
   },
@@ -56,6 +86,36 @@
           "President",
           "Governor-General",
           "Chief Justice"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which island of Lagos is Tafawa Balewa Square on?",
+        "options": [
+          "Lagos Island",
+          "Victoria Island",
+          "Lekki Peninsula",
+          "Ikeja"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which waterfront area is Tafawa Balewa Square close to?",
+        "options": [
+          "Lagos Marina",
+          "Badagry Beach",
+          "Tarkwa Bay",
+          "Port Harcourt Quay"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Tafawa Balewa Square is a big open ground. Which kind of event is it best known for hosting?",
+        "options": [
+          "Parades and ceremonies",
+          "Football league matches",
+          "Street food markets",
+          "Boat racing"
         ],
         "answer": 0
       }
@@ -89,6 +149,36 @@
           "Ernest Shonekan"
         ],
         "answer": 1
+      },
+      {
+        "q": "On which island in Lagos is Freedom Park located?",
+        "options": [
+          "Lagos Island",
+          "Victoria Island",
+          "Lekki Peninsula",
+          "Ikoyi Island"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which street is Freedom Park found on?",
+        "options": [
+          "Broad Street",
+          "Marina Road",
+          "Awolowo Road",
+          "Ademola Street"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Lagos State, where Freedom Park is, lies in which part of Nigeria?",
+        "options": [
+          "Southwest",
+          "Northeast",
+          "North Central",
+          "South South"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -110,6 +200,46 @@
           "Tafawa Balewa"
         ],
         "answer": 1
+      },
+      {
+        "q": "The National Museum at Onikan shows famous terracotta figures from which ancient Nigerian culture?",
+        "options": [
+          "Nok",
+          "Igbo-Ukwu",
+          "Kerma",
+          "Ashanti"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Onikan, where the National Museum stands, is on which island?",
+        "options": [
+          "Lagos Island",
+          "Victoria Island",
+          "Apapa",
+          "Lekki"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "The National Museum in Lagos has famous sculpted heads from which ancient Yoruba city?",
+        "options": [
+          "Ife",
+          "Oyo",
+          "Ilorin",
+          "Abeokuta"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which ancient kingdom's bronze plaques are a major highlight of the National Museum Lagos?",
+        "options": [
+          "Benin",
+          "Oyo",
+          "Kanem-Bornu",
+          "Nupe"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -131,6 +261,46 @@
           "The Baptist Church"
         ],
         "answer": 2
+      },
+      {
+        "q": "The cathedral stands on the Marina, on which island of Lagos?",
+        "options": [
+          "Victoria Island",
+          "Lagos Island",
+          "Ikoyi",
+          "Lekki"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Lagos, where the cathedral stands, was Nigeria's capital until 1991. Which city replaced it?",
+        "options": [
+          "Kano",
+          "Abuja",
+          "Ibadan",
+          "Enugu"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Lagos, home of the cathedral's Marina, lies on the coast of which ocean?",
+        "options": [
+          "Pacific Ocean",
+          "Indian Ocean",
+          "Atlantic Ocean",
+          "Arctic Ocean"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "A cathedral is the main church where which church leader has his or her seat?",
+        "options": [
+          "A bishop",
+          "A mayor",
+          "A village chief",
+          "A headteacher"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -150,6 +320,46 @@
           "The Oba of Lagos",
           "The Alaafin of Oyo",
           "The Oba of Benin"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "In Yoruba, what does the word Iga mean in the name Iga Idunganran?",
+        "options": [
+          "Palace",
+          "Market",
+          "River",
+          "Harbour"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Iga Idunganran stands on which island at the heart of old Lagos?",
+        "options": [
+          "Lagos Island",
+          "Victoria Island",
+          "Lekki Peninsula",
+          "Ikoyi Island"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Isale Eko is one of the oldest quarters of which Nigerian city?",
+        "options": [
+          "Lagos",
+          "Ibadan",
+          "Abeokuta",
+          "Ilorin"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What kind of crown do Yoruba obas traditionally wear?",
+        "options": [
+          "Feathered war cap",
+          "Beaded crown",
+          "Gold metal helmet",
+          "Woven straw hat"
         ],
         "answer": 1
       }
@@ -183,6 +393,26 @@
           "Lemurs"
         ],
         "answer": 0
+      },
+      {
+        "q": "Lekki is part of which local government area of Lagos State?",
+        "options": [
+          "Eti-Osa",
+          "Ikeja",
+          "Surulere",
+          "Apapa"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do we call a planted collection of trees kept for study and display?",
+        "options": [
+          "Arboretum",
+          "Herbarium",
+          "Aquarium",
+          "Vivarium"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -214,6 +444,36 @@
           "Fuji"
         ],
         "answer": 2
+      },
+      {
+        "q": "Which Lagos district is the Kalakuta Republic Museum in?",
+        "options": [
+          "Ikeja",
+          "Surulere",
+          "Victoria Island",
+          "Lekki"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which band did Fela Kuti lead during the 1970s?",
+        "options": [
+          "Africa 70",
+          "Lagos Sound",
+          "Ikeja Five",
+          "Shrine Players"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which Ikeja nightspot, linked to Fela Kuti, is famous for its live music and Afrobeat performances?",
+        "options": [
+          "The Shrine",
+          "Eko Hotel",
+          "Freedom Park",
+          "Tafawa Balewa Square"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -235,6 +495,46 @@
           "Twins Seven Seven"
         ],
         "answer": 1
+      },
+      {
+        "q": "Besides showing art, what else does Nike Art Gallery offer visitors?",
+        "options": [
+          "Weaving and dyeing classes",
+          "Cooking lessons",
+          "Car repair training",
+          "Swimming lessons"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What kind of art fills the gallery's main collection?",
+        "options": [
+          "Nigerian and African art",
+          "Renaissance European paintings",
+          "Ancient Egyptian papyrus",
+          "Japanese woodblock prints"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Adire cloth is traditionally dyed using which plant-based colour source?",
+        "options": [
+          "Turmeric root",
+          "Hibiscus petals",
+          "Indigo leaves",
+          "Cocoa pods"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "Aso-oke cloth is traditionally woven on which kind of frame?",
+        "options": [
+          "Narrow strip loom",
+          "Potter's wheel",
+          "Metal anvil",
+          "Glass kiln"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -256,6 +556,46 @@
           "Floating"
         ],
         "answer": 1
+      },
+      {
+        "q": "Which body of water does the Lekki-Ikoyi Link Bridge cross?",
+        "options": [
+          "Ogun River",
+          "Lagos Lagoon",
+          "Osun River",
+          "Niger River"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Which Nigerian state is the Lekki-Ikoyi Link Bridge in?",
+        "options": [
+          "Ogun State",
+          "Ondo State",
+          "Lagos State",
+          "Rivers State"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "What does the Lekki-Ikoyi Link Bridge mainly carry?",
+        "options": [
+          "Carrying road traffic across water",
+          "Carrying railway trains across",
+          "Carrying oil pipelines across",
+          "Carrying a metro line across"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Ikoyi, at one end of the bridge, is known for what kind of area?",
+        "options": [
+          "Major airport and cargo hub",
+          "Historic royal palace site",
+          "Upscale housing area",
+          "Industrial port and shipyard"
+        ],
+        "answer": 2
       }
     ]
   },
@@ -287,6 +627,36 @@
           "The tin trade"
         ],
         "answer": 1
+      },
+      {
+        "q": "In which Nigerian state is the town of Badagry located?",
+        "options": [
+          "Lagos State",
+          "Ogun State",
+          "Oyo State",
+          "Kano State"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Badagry sits on the coast of which large ocean?",
+        "options": [
+          "Atlantic Ocean",
+          "Indian Ocean",
+          "Arctic Ocean",
+          "Pacific Ocean"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which country lies directly west of Badagry, across the border?",
+        "options": [
+          "Benin",
+          "Ghana",
+          "Togo",
+          "Cameroon"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -316,6 +686,36 @@
           "Under the rock",
           "Land of rivers",
           "Market town"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "What kind of rock is Olumo Rock made of?",
+        "options": [
+          "Granite",
+          "Limestone",
+          "Sandstone",
+          "Basalt"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Olumo Rock is in Abeokuta, which is the capital of which Nigerian state?",
+        "options": [
+          "Ogun",
+          "Oyo",
+          "Lagos",
+          "Osun"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Abeokuta sits on which major river?",
+        "options": [
+          "Niger River",
+          "Ogun River",
+          "Benue River",
+          "Osun River"
         ],
         "answer": 1
       }
@@ -349,6 +749,36 @@
           "A football stadium"
         ],
         "answer": 0
+      },
+      {
+        "q": "Roughly how many floors does the Cocoa House tower in Ibadan have?",
+        "options": [
+          "About 6",
+          "About 26",
+          "About 60",
+          "About 100"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Cocoa House stands in which central district of Ibadan?",
+        "options": [
+          "Bodija",
+          "Dugbe",
+          "Mokola",
+          "Ring Road"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Ibadan, home of Cocoa House, is the capital of which Nigerian state?",
+        "options": [
+          "Lagos State",
+          "Ogun State",
+          "Oyo State",
+          "Kano State"
+        ],
+        "answer": 2
       }
     ]
   },
@@ -370,6 +800,46 @@
           "First private university"
         ],
         "answer": 1
+      },
+      {
+        "q": "Which teaching hospital is closely linked with the University of Ibadan's medical school?",
+        "options": [
+          "University College Hospital",
+          "General Hospital Ibadan",
+          "Ibadan Specialist Hospital",
+          "Adeoyo State Hospital"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which UI institute is devoted to studying the continent's history, languages and cultures?",
+        "options": [
+          "Institute of African Studies",
+          "Institute of Education",
+          "Institute of Agricultural Research",
+          "Institute of Labour Studies"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "In what year did the University of Ibadan stop being a college of London University and become independent?",
+        "options": [
+          "1958",
+          "1962",
+          "1965",
+          "1970"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Who owns the University of Ibadan?",
+        "options": [
+          "Federal government-owned",
+          "State government-owned",
+          "Privately owned by a church",
+          "Run by the military"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -389,6 +859,46 @@
           "An Olubadan",
           "A missionary",
           "A footballer"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Ibadan, where Bower's Tower stands, is the capital city of which Nigerian state?",
+        "options": [
+          "Ogun",
+          "Kwara",
+          "Oyo",
+          "Osun"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "Nigeria was under whose rule in 1936, when Bower's Tower was built?",
+        "options": [
+          "France",
+          "Britain",
+          "Portugal",
+          "Germany"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "In Yoruba, what does the word 'Oke' in Oke Are mean?",
+        "options": [
+          "Hill",
+          "Forest",
+          "River",
+          "Market"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "When visitors climb up Bower's Tower, what do they mainly come to enjoy?",
+        "options": [
+          "A view over the city",
+          "Live music shows",
+          "Traditional wrestling",
+          "Ocean sunsets"
         ],
         "answer": 0
       }
@@ -422,6 +932,36 @@
           "Yusuf Grillo"
         ],
         "answer": 0
+      },
+      {
+        "q": "The grove is a surviving patch of which type of natural habitat?",
+        "options": [
+          "Desert scrubland",
+          "Tropical rainforest",
+          "Mangrove swamp",
+          "Open savanna grassland"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "In which year did UNESCO add the grove to its World Heritage list?",
+        "options": [
+          "1992",
+          "1999",
+          "2005",
+          "2010"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "Osogbo is the capital city of which Nigerian state?",
+        "options": [
+          "Oyo State",
+          "Ogun State",
+          "Osun State",
+          "Ondo State"
+        ],
+        "answer": 2
       }
     ]
   },
@@ -441,6 +981,46 @@
           "Gurara",
           "Owu",
           "Awhum"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do many visitors enjoy doing in the pools at the base of the falls?",
+        "options": [
+          "Swimming and cooling off",
+          "Skiing on snowy slopes",
+          "Surfing big ocean waves",
+          "Ice skating on the water"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What kind of plant cover surrounds the Erin Ijesha Waterfalls?",
+        "options": [
+          "Lush green forest",
+          "Dry desert scrub",
+          "Snowy pine forests",
+          "Bare salt flats"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which language is mainly spoken in Erin-Ijesha?",
+        "options": [
+          "Yoruba",
+          "Hausa",
+          "Igbo",
+          "Efik"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "How does the water move down the falls?",
+        "options": [
+          "In several stepped levels",
+          "In one single straight drop",
+          "Through underground caves",
+          "Frozen solid all year"
         ],
         "answer": 0
       }
@@ -464,6 +1044,46 @@
           "They flow uphill"
         ],
         "answer": 1
+      },
+      {
+        "q": "Which Nigerian state is Ikogosi Warm Springs located in?",
+        "options": [
+          "Ekiti",
+          "Osun",
+          "Ondo",
+          "Kwara"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What is the capital city of the state where Ikogosi Warm Springs sits?",
+        "options": [
+          "Ado Ekiti",
+          "Ilorin",
+          "Akure",
+          "Osogbo"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do most visitors come to Ikogosi to do?",
+        "options": [
+          "Swim and relax in the pools",
+          "Ski down a snowy slope",
+          "Climb a volcanic crater",
+          "Surf huge ocean waves"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What kind of scenery surrounds the springs?",
+        "options": [
+          "Green trees and hills",
+          "Endless sand dunes",
+          "Snowy mountain peaks",
+          "Flat salt flats"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -483,6 +1103,46 @@
           "About 682",
           "About 2,000",
           "About 5,000"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "What kind of rock is Idanre Hill mostly made of?",
+        "options": [
+          "Granite",
+          "Limestone",
+          "Sandstone",
+          "Basalt"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What type of landform is Idanre Hill, a rocky mass rising from flat land?",
+        "options": [
+          "Inselberg",
+          "Atoll",
+          "Delta",
+          "Caldera"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "In which broad region of Nigeria is the town of Idanre found?",
+        "options": [
+          "South-West",
+          "Far North",
+          "Middle Belt",
+          "South-South"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What language is mostly spoken by the people of Idanre?",
+        "options": [
+          "Igbo",
+          "Yoruba",
+          "Hausa",
+          "Efik"
         ],
         "answer": 1
       }
@@ -516,6 +1176,36 @@
           "Jos"
         ],
         "answer": 2
+      },
+      {
+        "q": "Which Nigerian state is Zuma Rock located in?",
+        "options": [
+          "Niger State",
+          "Kaduna State",
+          "Nasarawa State",
+          "Plateau State"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Zuma Rock sits beside which major road north of Abuja?",
+        "options": [
+          "Abuja–Kaduna Expressway",
+          "Lagos–Ibadan Expressway",
+          "Enugu–Onitsha Highway",
+          "Benin–Asaba Road"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do geologists call a lone rock hill rising sharply from flat land, like Zuma Rock?",
+        "options": [
+          "Inselberg",
+          "Mesa",
+          "Stalactite",
+          "Estuary"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -537,6 +1227,46 @@
           "Government House"
         ],
         "answer": 1
+      },
+      {
+        "q": "What is the name for a rock hill that stands alone above flat land, like Aso Rock?",
+        "options": [
+          "Inselberg",
+          "Caldera",
+          "Delta",
+          "Estuary"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which rock in Niger State, near Abuja, is often confused with Aso Rock?",
+        "options": [
+          "Zuma Rock",
+          "Olumo Rock",
+          "Ayers Rock",
+          "Table Mountain"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Abuja, where Aso Rock stands, is in which of Nigeria's geopolitical zones?",
+        "options": [
+          "North Central",
+          "North West",
+          "South South",
+          "South East"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What type of rock is Aso Rock mostly made of?",
+        "options": [
+          "Granite",
+          "Limestone",
+          "Chalk",
+          "Marble"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -558,6 +1288,46 @@
           "Six"
         ],
         "answer": 2
+      },
+      {
+        "q": "Abuja became Nigeria's capital city in which year?",
+        "options": [
+          "1979",
+          "1991",
+          "1999",
+          "2003"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "The mosque stands in the city that replaced which former capital?",
+        "options": [
+          "Lagos",
+          "Kano",
+          "Enugu",
+          "Ibadan"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which weekly prayer draws large crowds to this mosque every week?",
+        "options": [
+          "Friday Jumu'ah prayer",
+          "Sunday morning service",
+          "Saturday evening vigil",
+          "Thursday night recital"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which body built the mosque as Nigeria's national place of worship?",
+        "options": [
+          "Federal Government of Nigeria",
+          "Lagos State Government",
+          "Kano State Government",
+          "Abuja city council"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -579,6 +1349,46 @@
           "Pope John Paul II"
         ],
         "answer": 0
+      },
+      {
+        "q": "Which Japanese architect led the master plan for the city of Abuja?",
+        "options": [
+          "Kenzo Tange",
+          "Tadao Ando",
+          "Kisho Kurokawa",
+          "Fumihiko Maki"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Abuja lies in which part of Nigeria?",
+        "options": [
+          "The far north",
+          "The centre",
+          "The south coast",
+          "The far east"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "Which famous rock rises above the city of Abuja?",
+        "options": [
+          "Aso Rock",
+          "Olumo Rock",
+          "Idanre Hill",
+          "Obudu Plateau"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do visitors mostly come to Millennium Park to do?",
+        "options": [
+          "Ski down hills",
+          "Watch car races",
+          "Buy gold jewellery",
+          "Stroll and relax outdoors"
+        ],
+        "answer": 3
       }
     ]
   },
@@ -600,6 +1410,46 @@
           "The 20th"
         ],
         "answer": 1
+      },
+      {
+        "q": "Kurmi Market is found in which part of Kano?",
+        "options": [
+          "The old walled city",
+          "The new airport district",
+          "The northern hills area",
+          "The riverside port zone"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which kind of goods is Kurmi Market especially famous for selling?",
+        "options": [
+          "Textiles and fabrics",
+          "Fresh fish and seafood",
+          "Imported used cars",
+          "Gold coins and bars"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Kano is well known for which craft that is sold at Kurmi Market?",
+        "options": [
+          "Leather bags and sandals",
+          "Clay pottery bowls",
+          "Hand-blown glass vases",
+          "Carved ivory tusks"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Kurmi Market grew up along which historic network of trade routes?",
+        "options": [
+          "Trans-Saharan trade routes",
+          "Silk Road to Asia",
+          "Spice route to India",
+          "Amber road to Baltic"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -619,6 +1469,46 @@
           "Zaria",
           "Katsina",
           "Sokoto"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What is most of Dala Hill made of?",
+        "options": [
+          "Granite rock",
+          "Red clay bricks",
+          "Packed sand dunes",
+          "Coral limestone"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do visitors often climb Dala Hill to enjoy?",
+        "options": [
+          "Views over the city",
+          "Snow sports",
+          "Ocean swimming",
+          "Fishing in a lake"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "How do most people get to the top of Dala Hill?",
+        "options": [
+          "Climbing on foot",
+          "By cable car",
+          "By boat ride",
+          "By helicopter"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Dala Hill stands out because the land around Kano is mostly what?",
+        "options": [
+          "Flat plains",
+          "Thick rainforest",
+          "Snowy peaks",
+          "Open sea"
         ],
         "answer": 0
       }
@@ -642,6 +1532,46 @@
           "Scotland"
         ],
         "answer": 1
+      },
+      {
+        "q": "Which feature is typical of medieval castles and seen on Kajuru Castle?",
+        "options": [
+          "Crenellated battlements",
+          "Glass curtain walls",
+          "Pagoda-style roofs",
+          "Thatched clay huts"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which kind of food place can guests find on the castle grounds?",
+        "options": [
+          "A restaurant",
+          "A tyre repair shop",
+          "A bank branch",
+          "A petrol station"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Can visitors spend the night at Kajuru Castle?",
+        "options": [
+          "Yes, it has guest rooms",
+          "No, it is only a museum",
+          "No, it is closed to guests",
+          "Only staff can stay there"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which kind of event is Kajuru Castle known for hosting?",
+        "options": [
+          "Weddings and conferences",
+          "Ice hockey tournaments",
+          "Olympic swimming trials",
+          "Snow festivals"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -673,6 +1603,36 @@
           "Zebras"
         ],
         "answer": 1
+      },
+      {
+        "q": "What kind of landscape covers most of Yankari Game Reserve?",
+        "options": [
+          "Dense rainforest",
+          "Open savannah woodland",
+          "Sand dunes",
+          "Mangrove swamp"
+        ],
+        "answer": 1
+      },
+      {
+        "q": "What are visitors often seen doing in the park's warm springs?",
+        "options": [
+          "Going swimming",
+          "Ice skating",
+          "Skiing",
+          "Surfing"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which river flows through Yankari Game Reserve?",
+        "options": [
+          "Gaji River",
+          "Niger River",
+          "Benue River",
+          "Kaduna River"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -704,6 +1664,36 @@
           "Enugu"
         ],
         "answer": 1
+      },
+      {
+        "q": "Obudu Mountain Resort started out as which kind of farm?",
+        "options": [
+          "A cattle ranch",
+          "A tea estate",
+          "A cocoa farm",
+          "A rubber plantation"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Obudu lies close to the border with which neighbouring country?",
+        "options": [
+          "Cameroon",
+          "Ghana",
+          "Chad",
+          "Niger"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which weather is the Obudu Plateau known for?",
+        "options": [
+          "Misty and cool",
+          "Hot and dry all year",
+          "Snowy in winter",
+          "Dry desert winds"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -725,6 +1715,46 @@
           "December"
         ],
         "answer": 3
+      },
+      {
+        "q": "What is a marina mainly used for?",
+        "options": [
+          "Docking and storing boats",
+          "Growing rice and yams",
+          "Mining river sand",
+          "Broadcasting radio shows"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which river flows right beside the Calabar Marina Resort?",
+        "options": [
+          "Calabar River",
+          "Imo River",
+          "Niger River",
+          "Benue River"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "The river beside the Calabar Marina Resort eventually empties into which large body of water?",
+        "options": [
+          "Atlantic Ocean",
+          "Lake Victoria",
+          "Lake Chad",
+          "Mediterranean Sea"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which Nigerian state is Calabar the capital of?",
+        "options": [
+          "Akwa Ibom",
+          "Cross River",
+          "Rivers",
+          "Delta"
+        ],
+        "answer": 1
       }
     ]
   },
@@ -746,6 +1776,46 @@
           "Necklaces"
         ],
         "answer": 1
+      },
+      {
+        "q": "What flows through the caves?",
+        "options": [
+          "An underground river",
+          "A lava tube",
+          "A salt lake",
+          "A dry canyon"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What are the icicle-like rock points that hang from a cave roof?",
+        "options": [
+          "Stalactites",
+          "Stalagmites",
+          "Columns",
+          "Boulders"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do most visitors come to the Ogbunike Caves to do?",
+        "options": [
+          "Sightseeing and tours",
+          "Skiing down slopes",
+          "Deep sea diving",
+          "Mountain climbing"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What mainly shaped the Ogbunike Caves over time?",
+        "options": [
+          "Water wearing away the rock",
+          "Miners digging for ore",
+          "Volcanic lava flows",
+          "Royal builders' tunnels"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -777,6 +1847,36 @@
           "Ebonyi"
         ],
         "answer": 2
+      },
+      {
+        "q": "What main purpose does the National War Museum serve for visitors?",
+        "options": [
+          "To remember and teach about the war",
+          "To sell military vehicles",
+          "To train army pilots",
+          "To host sports tournaments"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which kind of items are most likely on display at the National War Museum?",
+        "options": [
+          "Military uniforms and weapons",
+          "Ancient bronze sculptures",
+          "Modern fashion clothing",
+          "Musical instruments only"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "In what year did the war this museum remembers begin?",
+        "options": [
+          "1960",
+          "1967",
+          "1973",
+          "1979"
+        ],
+        "answer": 1
       }
     ]
   },
@@ -798,6 +1898,46 @@
           "Taraba"
         ],
         "answer": 1
+      },
+      {
+        "q": "What are Sukur's hillside terrace walls mainly built from?",
+        "options": [
+          "Local stone",
+          "Mud bricks",
+          "Cut timber",
+          "Fired clay bricks"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which old craft using local ore made Sukur well known?",
+        "options": [
+          "Iron smelting",
+          "Pottery for trade",
+          "Gold jewellery",
+          "Cotton weaving"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Where does Sukur's traditional palace stand within the landscape?",
+        "options": [
+          "On a hilltop",
+          "Beside a river",
+          "On a lakeshore",
+          "In a flat valley"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do Sukur's terrace walls help prevent?",
+        "options": [
+          "Soil washing away in rain",
+          "Floods from the river",
+          "Wild animals entering",
+          "Strong night winds"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -819,6 +1959,26 @@
           "Boat regatta"
         ],
         "answer": 1
+      },
+      {
+        "q": "Roughly when did the Argungu Fishing Festival first begin to be held?",
+        "options": [
+          "In the 1930s",
+          "In the 1880s",
+          "In the 1960s",
+          "In the 1990s"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which time of year is the Argungu Fishing Festival usually held?",
+        "options": [
+          "Dry season",
+          "Rainy season",
+          "Flood season",
+          "Planting season"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -861,6 +2021,46 @@
           "1960"
         ],
         "answer": 1
+      },
+      {
+        "q": "What kind of beads are closely linked to the Oba's royal regalia?",
+        "options": [
+          "Coral",
+          "Glass",
+          "Wooden",
+          "Seashell"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What did many of the carved Benin plaques usually show?",
+        "options": [
+          "Royal scenes and court figures",
+          "Only sea animals",
+          "Modern city buildings",
+          "Only flowers and fruit"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "On what kind of structures were Benin plaques traditionally mounted?",
+        "options": [
+          "Wooden pillars",
+          "Stone bridges",
+          "Market stalls",
+          "Canoe hulls"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Which yearly festival is traditionally held at the Oba's palace in Benin City?",
+        "options": [
+          "Durbar",
+          "Eyo",
+          "Igue",
+          "Argungu"
+        ],
+        "answer": 2
       }
     ]
   },
@@ -882,6 +2082,46 @@
           "Benin"
         ],
         "answer": 1
+      },
+      {
+        "q": "What do many Nok terracotta figures mainly show?",
+        "options": [
+          "Human heads and figures",
+          "Horses carrying riders",
+          "Crocodiles and turtles",
+          "Leopards in a row"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Terracotta is clay that has been what by heat?",
+        "options": [
+          "Baked or fired in a kiln",
+          "Dyed with plant oils",
+          "Polished with river stones",
+          "Melted into glass"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "The Nok culture is named after what kind of place?",
+        "options": [
+          "A village",
+          "A river",
+          "A mountain",
+          "A busy market"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "Nok figures were first found by miners digging for what metal?",
+        "options": [
+          "Tin",
+          "Gold",
+          "Copper",
+          "Iron"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -903,6 +2143,26 @@
           "Lagos State"
         ],
         "answer": 1
+      },
+      {
+        "q": "Where does the falling water land after the drop?",
+        "options": [
+          "An underground cave system",
+          "A dry sandy plain",
+          "A pool at the cliff base",
+          "A concrete dam wall"
+        ],
+        "answer": 2
+      },
+      {
+        "q": "When does Owu Falls usually carry the most water?",
+        "options": [
+          "In the rainy season",
+          "During the harmattan months",
+          "Only in December",
+          "Only at New Year"
+        ],
+        "answer": 0
       }
     ]
   },
@@ -922,6 +2182,46 @@
           "Kogi",
           "Nasarawa",
           "Kwara"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What do most visitors come to Gurara Falls to enjoy?",
+        "options": [
+          "Scenery and nature",
+          "Snow sports",
+          "Desert safaris",
+          "Night markets"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "How does the Gurara River form its falls?",
+        "options": [
+          "It drops over a cliff edge",
+          "It runs underground for miles",
+          "It freezes solid each winter",
+          "It splits into many small streams"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "What makes the falls flow strongest in the rainy months?",
+        "options": [
+          "More rain fills the river",
+          "Snow melts from far mountains",
+          "The sea pushes water inland",
+          "Engineers pump extra water in"
+        ],
+        "answer": 0
+      },
+      {
+        "q": "On a sunny day, what can often appear in a waterfall's spray?",
+        "options": [
+          "A rainbow",
+          "A snowflake",
+          "A sandstorm",
+          "A lightning bolt"
         ],
         "answer": 0
       }

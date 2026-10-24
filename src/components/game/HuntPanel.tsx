@@ -22,7 +22,7 @@ import { cue } from "@/game/sound";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import { Confetti } from "./Confetti";
 import { StoryScene } from "./StoryScene";
-import { defaultBeat, type StoryBeat, type StoryLine } from "@/game/story";
+import { defaultBeat, taunt, type StoryBeat, type StoryLine } from "@/game/story";
 
 /** What the hunt panel needs from the map. */
 export type HuntActions = {
@@ -247,6 +247,8 @@ export function HuntPanel({
           if (e.mine) continue;
           toast(newsOf(e));
           cue(e.kind === "key" || e.kind === "first" || e.kind === "finished" ? "rival" : "news");
+          const quip = taunt(e.kind, e.who); // the Masquerade has his say, now and then
+          if (quip) window.setTimeout(() => toast(quip), 1800);
           if (e.kind === "key" || e.kind === "relay" || e.kind === "finished") keys = true;
         }
         if (keys) void refreshRef.current();
@@ -630,7 +632,7 @@ export function HuntPanel({
 
       {trial &&
         (trial.kind === "puzzle" ? (
-          <PuzzleTrial key={trial.attempt} trial={trial} rival={rival} world={scene} keeper={keeper} onResult={settle} />
+          <PuzzleTrial key={trial.attempt} huntId={huntId} trial={trial} rival={rival} world={scene} keeper={keeper} onResult={settle} />
         ) : (
           <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} world={scene} keeper={keeper} onAnswer={(choice) => answer(trial.attempt, choice)} />
         ))}

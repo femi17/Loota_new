@@ -92,3 +92,25 @@ export function defaultBeat(beat: StoryBeat, huntId: string, keys: number): Stor
   const n = Number(beat.slice(4));
   return n === keys - 1 ? pick(LAST_KEY, seed) : pick(KEY, seed);
 }
+
+/** Now and then the Masquerade has his say about the race's news (light and playful; null: he keeps quiet). */
+export function taunt(kind: string, who: string): string | null {
+  if (Math.random() > 0.5) return null;
+  const lines: Record<string, string[]> = {
+    first: [
+      `🎭 The Masquerade: "${who} again? Hmph. Beginner's luck, every time."`,
+      `🎭 The Masquerade: "Ehen! ${who} found my key first. I'll hide the next one under my own mask!"`,
+      `🎭 The Masquerade: "Did somebody tell ${who}? It was the pepper seller, wasn't it?"`,
+    ],
+    finished: [
+      `🎭 The Masquerade: "${who} has ALL my keys?! I need to sit down."`,
+      `🎭 The Masquerade: "Fine, ${who}, you win this one. Just this one!"`,
+    ],
+    key: [
+      `🎭 The Masquerade: "Run, run! ${who} is getting away with my keys!"`,
+      `🎭 The Masquerade: "Hehe, ${who} thinks that was hard? Wait till the next one."`,
+    ],
+  };
+  const list = lines[kind];
+  return list ? list[Math.floor(Math.random() * list.length)] : null;
+}

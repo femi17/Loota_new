@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
 import type { AnswerResult, PuzzleTrialView } from "@/game/hunt";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import { SentriesBoard } from "./SentriesBoard";
@@ -21,12 +23,14 @@ type AdireP = { n: number; given: Record<number, 0 | 1>; signs: { cell: number; 
  * running out throws the hunter 2 km away.
  */
 export function PuzzleTrial({
+  huntId,
   trial,
   rival,
   world = false,
   keeper = "The Keeper",
   onResult,
 }: {
+  huntId: string;
   trial: PuzzleTrialView;
   rival: string | null;
   world?: boolean;
@@ -41,6 +45,51 @@ export function PuzzleTrial({
   const [note, setNote] = useState<string | null>(null);
   const [showRule, setShowRule] = useState(true);
   const [solved, setSolved] = useState(false); // right: a moment to see the finished board before the result
+
+  // The race (owner, 24 Oct 2026: "live race at the chest"): hunters in this key's trial see each other's progress.
+  const [supabase] = useState(() => createClient());
+  const sendRef = useRef<(p: number, force?: boolean) => void>(() => {});
+  const me = useRef<{ id: string; name: string } | null>(null);
+  const channel = useRef<RealtimeChannel | null>(null);
+  const mine = useRef(0);
+  const lastSent = useRef(0);
+  const [racers, setRacers] = useState<Record<string, { name: string; p: number; at: number }>>({});
+  useEffect(() => {
+    let gone = false;
+    const ch = supabase.channel(`trial:${huntId}:${view.key}`, { config: { broadcast: { self: false } } });
+    ch.on("broadcast", { event: "progress" }, ({ payload }) => {
+      const { id, name, p } = payload as { id: string; name: string; p: number };
+      setRacers((r) => ({ ...r, [id]: { name, p, at: Date.now() } }));
+    }).subscribe();
+    channel.current = ch;
+    void supabase.auth.getUser().then(async ({ data }) => {
+      if (!data.user || gone) return;
+      const { data: pr } = await supabase.from("profiles").select("username").eq("id", data.user.id).single();
+      me.current = { id: data.user.id, name: (pr?.username as string | undefined) ?? "A hunter" };
+    });
+    // Now and then, the latest (a hunter who just arrived sees where everyone is).
+    const beat = window.setInterval(() => send(mine.current, true), 2000);
+    function send(p: number, force = false) {
+      if (!me.current || !channel.current) return;
+      const now = Date.now();
+      if (!force && now - lastSent.current < 500 && p < 1) return;
+      lastSent.current = now;
+      void channel.current.send({ type: "broadcast", event: "progress", payload: { id: me.current.id, name: me.current.name, p } });
+    }
+    sendRef.current = send;
+    return () => {
+      gone = true;
+      window.clearInterval(beat);
+      void supabase.removeChannel(ch);
+    };
+  }, [supabase, huntId, view.key]);
+  /** The board's progress (0–1): kept, and sent to the others. */
+  const [myShare, setMyShare] = useState(0);
+  const share = useCallback((p: number) => {
+    mine.current = p;
+    setMyShare(p);
+    sendRef.current(p);
+  }, []);
   const done = useRef(false);
   const resultRef = useRef(onResult);
   useEffect(() => {
@@ -86,6 +135,7 @@ export function PuzzleTrial({
     }
     done.current = true;
     if (r?.ok && (r.result === "key" || r.result === "finished" || r.result === "relay")) {
+      sendRef.current(1, true);
       setSolved(true);
       cue("solved");
       window.setTimeout(() => resultRef.current(r), 1300);
@@ -103,6 +153,10 @@ export function PuzzleTrial({
     const timer = window.setInterval(() => {
       const s = Math.max(0, ((deadline.current ?? 0) - performance.now()) / 1000);
       setLeft(s);
+      setRacers((r) => {
+        const fresh = Object.entries(r).filter(([, v]) => Date.now() - v.at < 15000);
+        return fresh.length === Object.keys(r).length ? r : Object.fromEntries(fresh);
+      });
       // The last fifteen seconds tick.
       const whole = Math.ceil(s);
       if (whole > 0 && whole <= 15 && whole !== lastTick.current && !done.current) {
@@ -118,7 +172,7 @@ export function PuzzleTrial({
 
   const warn = view.level <= 1;
   const info = PUZZLE_NAMES[view.puzzleKind];
-  const share = left === null ? 1 : left / view.seconds;
+  const clockShare = left === null ? 1 : left / view.seconds;
   const urgent = left !== null && left <= 15;
 
   const wrap = world
@@ -148,8 +202,23 @@ export function PuzzleTrial({
           </p>
         )}
         <div className="h-2.5 overflow-hidden rounded-full bg-line" role="timer" aria-label={left === null ? "Starting" : `${Math.ceil(left)} seconds left`}>
-          <div className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "loota-pulse bg-danger" : share < 0.4 ? "bg-[#F28C28]" : "bg-gold"}`} style={{ width: `${share * 100}%` }} />
+          <div className={`h-full rounded-full transition-[width] duration-200 ${urgent ? "loota-pulse bg-danger" : clockShare < 0.4 ? "bg-[#F28C28]" : "bg-gold"}`} style={{ width: `${clockShare * 100}%` }} />
         </div>
+        {Object.keys(racers).length > 0 && (
+          <div className="flex flex-col gap-1 rounded-xl bg-danger/10 p-2 ring-1 ring-danger/40" aria-label="The race">
+            {[["me", { name: "You", p: myShare }] as const, ...Object.entries(racers)]
+              .sort((a, b) => b[1].p - a[1].p)
+              .map(([id, r]) => (
+                <div key={id} className="flex items-center gap-2 text-xs">
+                  <span className={`w-24 truncate font-bold ${id === "me" ? "text-gold" : "text-[#FF8A8A]"}`}>{id === "me" ? "🔑 You" : `⚔️ ${r.name}`}</span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                    <div className={`h-full rounded-full transition-[width] duration-300 ${id === "me" ? "bg-gold" : "bg-danger"}`} style={{ width: `${Math.round(r.p * 100)}%` }} />
+                  </div>
+                  <span className="w-11 text-right font-bold">{r.p >= 1 ? "Done!" : `${Math.round(r.p * 100)}%`}</span>
+                </div>
+              ))}
+          </div>
+        )}
         <button type="button" onClick={() => setShowRule((s) => !s)} className="text-left text-xs leading-snug text-paper/80">
           <span className="mr-1 font-bold text-gold">{keeper}:</span>
           {showRule ? info.rule : "Tap to see the rules."}
@@ -165,13 +234,13 @@ export function PuzzleTrial({
           {!view.puzzle ? (
             <div className="flex aspect-square w-full items-center justify-center rounded-xl bg-ink-2 text-sm text-muted">The chest creaks open…</div>
           ) : view.puzzleKind === "sentries" ? (
-            <SentriesPlay p={view.puzzle as SentriesP} warn={warn} disabled={sending || solved || left === 0} onDone={send} />
+            <SentriesPlay p={view.puzzle as SentriesP} warn={warn} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           ) : view.puzzleKind === "route" ? (
-            <RoutePlay p={view.puzzle as RouteP} disabled={sending || solved || left === 0} onDone={send} />
+            <RoutePlay p={view.puzzle as RouteP} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           ) : view.puzzleKind === "tornmap" ? (
-            <TornMapPlay p={view.puzzle as TornMapPuzzle} disabled={sending || solved || left === 0} onDone={send} />
+            <TornMapPlay p={view.puzzle as TornMapPuzzle} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           ) : (
-            <AdirePlay p={view.puzzle as AdireP} warn={warn} disabled={sending || solved || left === 0} onDone={send} />
+            <AdirePlay p={view.puzzle as AdireP} warn={warn} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           )}
         </div>
         {note && (
@@ -189,9 +258,12 @@ export function PuzzleTrial({
 }
 
 /** Sentries: tap to mark; complete (a sentry in every row) sends it. */
-function SentriesPlay({ p, warn, disabled, onDone }: { p: SentriesP; warn: boolean; disabled: boolean; onDone: (a: unknown) => void }) {
+type PlayProps = { disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
+
+function SentriesPlay({ p, warn, disabled, onDone, onProgress }: PlayProps & { p: SentriesP; warn: boolean }) {
   const [marks, setMarks] = useState<number[]>(() => new Array(p.n * p.n).fill(0));
   const placed = marks.flatMap((m, i) => (m === 2 ? [[Math.floor(i / p.n), i % p.n]] : []));
+  useEffect(() => onProgress(Math.min(1, placed.length / p.n)), [placed.length, p.n, onProgress]);
   const complete = placed.length === p.n;
   const sentFor = useRef("");
   useEffect(() => {
@@ -217,8 +289,9 @@ function SentriesPlay({ p, warn, disabled, onDone }: { p: SentriesP; warn: boole
 }
 
 /** Route: draw it; complete (every square, ending on the last number) sends it. */
-function RoutePlay({ p, disabled, onDone }: { p: RouteP; disabled: boolean; onDone: (a: unknown) => void }) {
+function RoutePlay({ p, disabled, onDone, onProgress }: PlayProps & { p: RouteP }) {
   const [path, setPath] = useState<number[]>([]);
+  useEffect(() => onProgress(path.length / (p.n * p.n)), [path.length, p.n, onProgress]);
   const last = useMemo(() => Math.max(...Object.values(p.numbers)), [p.numbers]);
   const complete = path.length === p.n * p.n && p.numbers[path[path.length - 1]] === last;
   const sentFor = useRef("");
@@ -250,10 +323,12 @@ function RoutePlay({ p, disabled, onDone }: { p: RouteP; disabled: boolean; onDo
 }
 
 /** Torn Map: tap two squares to swap their pieces (tap a chosen one again to turn it, when pieces turn); whole sends it. */
-function TornMapPlay({ p, disabled, onDone }: { p: TornMapPuzzle; disabled: boolean; onDone: (a: unknown) => void }) {
+function TornMapPlay({ p, disabled, onDone, onProgress }: PlayProps & { p: TornMapPuzzle }) {
   const [placed, setPlaced] = useState<[number, number][]>(() => p.start.map(([piece, q]) => [piece, q]));
   const [selected, setSelected] = useState<number | null>(null);
   const whole = useMemo(() => checkTornMap(p, placed), [p, placed]);
+  const right = placed.filter(([piece, q], i) => piece === i && q % 4 === 0).length;
+  useEffect(() => onProgress(whole ? 1 : right / (p.n * p.n)), [whole, right, p.n, onProgress]);
   const sentFor = useRef("");
   useEffect(() => {
     const key = JSON.stringify(placed);
@@ -289,9 +364,12 @@ function TornMapPlay({ p, disabled, onDone }: { p: TornMapPuzzle; disabled: bool
  * Adire: tap to dye; "Check" sends it once every square is dyed (not by itself: a square passes through indigo on its
  * way to white, which would send a half-finished cloth).
  */
-function AdirePlay({ p, warn, disabled, onDone }: { p: AdireP; warn: boolean; disabled: boolean; onDone: (a: unknown) => void }) {
+function AdirePlay({ p, warn, disabled, onDone, onProgress }: PlayProps & { p: AdireP; warn: boolean }) {
   const fresh = () => [...Array(p.n * p.n).keys()].map((i) => (p.given[i] !== undefined ? p.given[i] : -1));
   const [cloth, setCloth] = useState<number[]>(fresh);
+  const givenCount = Object.keys(p.given).length;
+  const dyed = cloth.filter((v) => v >= 0).length - givenCount;
+  useEffect(() => onProgress(Math.max(0, dyed) / Math.max(1, p.n * p.n - givenCount)), [dyed, givenCount, p.n, onProgress]);
   const complete = cloth.every((v) => v >= 0);
   return (
     <div className="flex flex-col gap-2">

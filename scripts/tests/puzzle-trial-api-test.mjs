@@ -29,7 +29,7 @@ try {
   if (error) throw error;
   huntId = hunt.id;
   const key = (n, trial_kind) => ({ hunt_id: huntId, n, riddle: `Test key ${n}.`, category: "maths", trial_kind, area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, spot_lng: spot.lng, spot_lat: spot.lat });
-  await admin.from("hunt_keys").insert([key(1, "sentries"), key(2, "route"), key(3, "adire"), key(4, "puzzle"), key(5, "puzzle")]);
+  await admin.from("hunt_keys").insert([key(1, "sentries"), key(2, "route"), key(3, "adire"), key(4, "tornmap"), key(5, "puzzle"), key(6, "puzzle")]);
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
 
   const jar = new Map();
@@ -53,14 +53,17 @@ try {
     return t.kind === "sentries" ? t.solution.map((col, row) => [row, col]) : t.solution;
   };
   const wrongOf = (kind, a) => kind === "sentries" ? a.map(([r, cc], i) => (i === 0 ? [r, (cc + 1) % a.length] : [r, cc]))
-    : kind === "route" ? [...a.slice(0, -2), a.at(-1), a.at(-2)] : a.map((v, i) => (i === 0 ? 1 - v : v));
+    : kind === "route" ? [...a.slice(0, -2), a.at(-1), a.at(-2)]
+    : kind === "tornmap" ? a.map(([pc, q], i) => (i === 0 ? [pc, q + 1] : [pc, q])) // a piece turned (they don't turn at this level)
+    : a.map((v, i) => (i === 0 ? 1 - v : v));
 
-  for (const n of [1, 2, 3]) {
+  for (const n of [1, 2, 3, 4]) {
     const r = await search();
     check(`key ${n}: the chest opens a puzzle trial`, r?.result === "trial" && r.trial.kind === "puzzle" && r.trial.puzzle === null, JSON.stringify(r?.trial ?? r).slice(0, 140));
     const kind = r.trial.puzzleKind;
     const p = await post("/api/trial/puzzle");
     check(`…a ${kind} puzzle (level ${p.level}), its clock running, no answer sent`, !!p.puzzle && p.secondsLeft > 60 && !("solution" in p) && !JSON.stringify(p).includes("answer"), `${p.seconds} s`);
+    if (kind === "tornmap") check("…the key's own streets, torn into pieces", p.puzzle.lines.length > 5 && p.puzzle.start.length === p.puzzle.n ** 2, `${p.puzzle.lines.length} streets, ${p.puzzle.names.map((x) => x.text).join(", ")}`);
     const again = await post("/api/trial/puzzle");
     check("…asked again (a reload): the same puzzle", JSON.stringify(again.puzzle) === JSON.stringify(p.puzzle));
     const right = await answerOf(p.attempt);
@@ -70,13 +73,13 @@ try {
     check(`…the right answer: Key ${n}`, s?.result === "key" && s.keysHeld === n, JSON.stringify(s).slice(0, 120));
   }
 
-  // Key 4: two wrong answers fail it (thrown 2 km away).
+  // Key 5: two wrong answers fail it (thrown 2 km away).
   let r = await search();
   let p = await post("/api/trial/puzzle");
   const right4 = await answerOf(p.attempt);
   await post("/api/trial/solve", { attempt: p.attempt, answer: wrongOf(p.puzzleKind, right4) });
   const f = await post("/api/trial/solve", { attempt: p.attempt, answer: wrongOf(p.puzzleKind, right4) });
-  check(`key 4 (${p.puzzleKind}, chosen at random): two wrong answers fail the trial, thrown away`, f?.result === "failed" && f.reason === "wrong" && typeof f.lng === "number", JSON.stringify(f).slice(0, 120));
+  check(`key 5 (${p.puzzleKind}, chosen at random): two wrong answers fail the trial, thrown away`, f?.result === "failed" && f.reason === "wrong" && typeof f.lng === "number", JSON.stringify(f).slice(0, 120));
   const { data: pos } = await admin.from("player_positions").select("lng, lat").eq("user_id", id).single();
   const away = Math.hypot((pos.lng - spot.lng) * 110400, (pos.lat - spot.lat) * 110574);
   check("…2 km from the key", Math.abs(away - 2000) < 60, `${Math.round(away)} m`);

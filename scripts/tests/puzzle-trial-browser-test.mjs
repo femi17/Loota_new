@@ -31,7 +31,7 @@ try {
   huntId = hunt.id;
   const key = (n, trial_kind, relay = false) => ({ hunt_id: huntId, n, relay, riddle: `Test stop ${n}.`, category: "maths", trial_kind, area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, spot_lng: spot.lng, spot_lat: spot.lat });
   // Six stops: the first three at level 1 (warnings), the last three harder; stop 2 is a relay chest (a clue, not a key).
-  await admin.from("hunt_keys").insert([key(1, "sentries"), key(2, "route", true), key(3, "adire"), key(4, "sentries"), key(5, "route"), key(6, "adire")]);
+  await admin.from("hunt_keys").insert([key(1, "sentries"), key(2, "route", true), key(3, "adire"), key(4, "sentries"), key(5, "tornmap"), key(6, "adire")]);
   const expect = ["Key 1 earned", "No key", "Key 2 earned", "Key 3 earned", "Key 4 earned", "complete|won"];
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
   // No road events in this test.
@@ -91,6 +91,24 @@ try {
       for (const [row, col] of t.solution.map((cc, r) => [r, cc])) {
         await tapCell(row * p.n + col);
         await tapCell(row * p.n + col);
+      }
+    } else if (t.kind === "tornmap") {
+      // Swap each piece into its square, then turn it upright (tap to choose, tap again to turn), as a player would.
+      const cur = p.start.map(([pc, q]) => [pc, q]);
+      for (let i = 0; i < cur.length; i++) {
+        const j = cur.findIndex(([pc]) => pc === i);
+        if (j !== i) {
+          await tapCell(i);
+          await tapCell(j);
+          [cur[i], cur[j]] = [cur[j], cur[i]];
+        }
+      }
+      for (let i = 0; i < cur.length; i++) {
+        const turns = (4 - (cur[i][1] % 4)) % 4;
+        if (!turns) continue;
+        await tapCell(i);
+        for (let k = 0; k < turns; k++) await tapCell(i);
+        await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Key Trial"] button')].find((x) => x.textContent?.trim() === "Let go")?.click());
       }
     } else if (t.kind === "route") {
       // Drag through the squares, as a finger would.

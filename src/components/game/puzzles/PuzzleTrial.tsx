@@ -6,6 +6,8 @@ import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import { SentriesBoard } from "./SentriesBoard";
 import { RouteBoard } from "./RouteBoard";
 import { AdireBoard } from "./AdireBoard";
+import { TornMapBoard } from "./TornMapBoard";
+import { checkTornMap, type TornMapPuzzle } from "@/game/puzzles/tornmap";
 
 type SentriesP = { n: number; regions: number[] };
 type RouteP = { n: number; numbers: Record<number, number>; walls: [number, number][] };
@@ -37,6 +39,7 @@ export function PuzzleTrial({
   const [shake, setShake] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [showRule, setShowRule] = useState(true);
+  const [solved, setSolved] = useState(false); // right: a moment to see the finished board before the result
   const done = useRef(false);
   const resultRef = useRef(onResult);
   useEffect(() => {
@@ -81,6 +84,12 @@ export function PuzzleTrial({
       return;
     }
     done.current = true;
+    if (r?.ok && (r.result === "key" || r.result === "finished" || r.result === "relay")) {
+      setSolved(true);
+      navigator.vibrate?.(60);
+      window.setTimeout(() => resultRef.current(r), 1300);
+      return;
+    }
     resultRef.current(r);
   }
 
@@ -139,15 +148,22 @@ export function PuzzleTrial({
           {!warn && showRule && <span className="text-muted"> No warnings at this key: a wrong answer costs a life.</span>}
         </button>
 
-        <div key={shake} className={`mx-auto w-full max-w-[min(100%,26rem)] ${shake ? "loota-shake" : ""}`}>
+        <div key={shake} className={`relative mx-auto w-full max-w-[min(100%,26rem)] ${shake ? "loota-shake" : ""}`}>
+          {solved && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex aspect-square items-center justify-center rounded-xl ring-4 ring-gold" aria-live="polite">
+              <span className="loota-wonder-banner rounded-2xl bg-ink px-5 py-2 font-display text-3xl font-extrabold text-gold shadow-lg ring-2 ring-gold">Solved!</span>
+            </div>
+          )}
           {!view.puzzle ? (
             <div className="flex aspect-square w-full items-center justify-center rounded-xl bg-ink-2 text-sm text-muted">The chest creaks open…</div>
           ) : view.puzzleKind === "sentries" ? (
-            <SentriesPlay p={view.puzzle as SentriesP} warn={warn} disabled={sending || left === 0} onDone={send} />
+            <SentriesPlay p={view.puzzle as SentriesP} warn={warn} disabled={sending || solved || left === 0} onDone={send} />
           ) : view.puzzleKind === "route" ? (
-            <RoutePlay p={view.puzzle as RouteP} disabled={sending || left === 0} onDone={send} />
+            <RoutePlay p={view.puzzle as RouteP} disabled={sending || solved || left === 0} onDone={send} />
+          ) : view.puzzleKind === "tornmap" ? (
+            <TornMapPlay p={view.puzzle as TornMapPuzzle} disabled={sending || solved || left === 0} onDone={send} />
           ) : (
-            <AdirePlay p={view.puzzle as AdireP} warn={warn} disabled={sending || left === 0} onDone={send} />
+            <AdirePlay p={view.puzzle as AdireP} warn={warn} disabled={sending || solved || left === 0} onDone={send} />
           )}
         </div>
         {note && (
@@ -220,6 +236,42 @@ function RoutePlay({ p, disabled, onDone }: { p: RouteP; disabled: boolean; onDo
             Clear
           </button>
         </span>
+      </div>
+    </div>
+  );
+}
+
+/** Torn Map: tap two squares to swap their pieces (tap a chosen one again to turn it, when pieces turn); whole sends it. */
+function TornMapPlay({ p, disabled, onDone }: { p: TornMapPuzzle; disabled: boolean; onDone: (a: unknown) => void }) {
+  const [placed, setPlaced] = useState<[number, number][]>(() => p.start.map(([piece, q]) => [piece, q]));
+  const [selected, setSelected] = useState<number | null>(null);
+  const whole = useMemo(() => checkTornMap(p, placed), [p, placed]);
+  const sentFor = useRef("");
+  useEffect(() => {
+    const key = JSON.stringify(placed);
+    if (whole && sentFor.current !== key) {
+      sentFor.current = key;
+      onDone(placed);
+    }
+  });
+  const tap = (square: number) => {
+    if (selected === null) setSelected(square);
+    else if (selected === square) {
+      if (p.rotate) setPlaced((x) => x.map((pq, i) => (i === square ? [pq[0], (pq[1] + 1) % 4] : pq)));
+      else setSelected(null);
+    } else {
+      setPlaced((x) => x.map((pq, i) => (i === square ? x[selected] : i === selected ? x[square] : pq)));
+      setSelected(null);
+    }
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <TornMapBoard drawing={p} n={p.n} placed={placed} selected={whole ? null : selected} disabled={disabled} whole={whole} onTap={tap} />
+      <div className="flex items-center justify-between text-xs text-muted">
+        <span>{whole ? "The map is whole!" : p.rotate ? "Tap two pieces to swap; tap a chosen piece again to turn it" : "Tap two pieces to swap them"}</span>
+        <button type="button" disabled={disabled || selected === null} onClick={() => setSelected(null)} className="font-bold text-gold disabled:opacity-40">
+          Let go
+        </button>
       </div>
     </div>
   );

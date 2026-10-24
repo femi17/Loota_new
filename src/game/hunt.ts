@@ -28,7 +28,7 @@ export type PuzzleTrialView = {
   attempt: string;
   key: number;
   kind: "puzzle";
-  puzzleKind: "sentries" | "route" | "adire";
+  puzzleKind: "sentries" | "route" | "adire" | "tornmap";
   /** 1 for early keys, 3 for the last: bigger boards, fewer clues, and no warnings when a rule is broken. */
   level: number;
   puzzle: unknown;

@@ -1,5 +1,5 @@
 /** The Key Trial puzzles' names and rules, for the phone (the puzzles themselves are made on the server). */
-export type PuzzleKind = "sentries" | "route" | "adire";
+export type PuzzleKind = "sentries" | "route" | "adire" | "tornmap";
 
 export const PUZZLE_NAMES: Record<PuzzleKind, { name: string; rule: string }> = {
   sentries: {
@@ -9,6 +9,10 @@ export const PUZZLE_NAMES: Record<PuzzleKind, { name: string; rule: string }> = 
   route: {
     name: "Route",
     rule: "Draw one route through every square, passing the numbers in order from 1. Move up, down, left or right; never through a wall.",
+  },
+  tornmap: {
+    name: "Torn Map",
+    rule: "The map of these very streets was torn to pieces. Tap a piece, then another, to swap them; at the hardest keys tap a chosen piece again to turn it. Put the map back together.",
   },
   adire: {
     name: "Adire",

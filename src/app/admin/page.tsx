@@ -36,10 +36,11 @@ export default function AdminPage({ searchParams }: { searchParams: SearchParams
 
 /** A key's trial (owner, 24 Oct 2026: tasks, not only questions): a quiz, one puzzle, or a puzzle at random. */
 const TRIAL_KINDS = [
-  ["puzzle", "A puzzle (Sentries, Route or Adire, at random)"],
+  ["puzzle", "A puzzle (Sentries, Route, Adire or Torn Map, at random)"],
   ["sentries", "Sentries (one per row, column and district)"],
   ["route", "Route (one path through every square)"],
   ["adire", "Adire (indigo and white cloth)"],
+  ["tornmap", "Torn Map (the key's own streets, torn up)"],
   ["quiz", "Quiz (questions, in the category below)"],
 ] as const;
 /** "Key 2", or "Key 2 · relay chest" for a stop on the way to Key 2. */

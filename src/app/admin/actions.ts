@@ -294,3 +294,93 @@ organiser can check it.`,
     return { ok: false, message: "Couldn't reach Claude. Check the connection and try again." };
   }
 }
+
+/** A story beat's lines, as typed in /admin: one per line, "Masquerade: …", "Keeper: …" or "Narrator: …". */
+function parseLines(text: string) {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const m = l.match(/^(masquerade|keeper|narrator)\s*:\s*(.+)$/i);
+      return m ? { who: m[1].toLowerCase(), text: m[2].trim().slice(0, 300) } : { who: "narrator", text: l.slice(0, 300) };
+    })
+    .slice(0, 8);
+}
+
+/** Save a hunt's story (owner, 24 Oct 2026: the Masquerade): each beat's lines; an empty box goes back to the default. */
+export async function saveStory(form: FormData) {
+  await owner();
+  const hunt = text(form, "hunt");
+  if (!UUID.test(hunt)) back("Unknown hunt.", true);
+  const db = createAdminClient();
+  let saved = 0;
+  for (const [name, value] of form.entries()) {
+    if (!name.startsWith("beat:")) continue;
+    const beat = name.slice(5);
+    if (!/^(start|finish|key:\d+|relay:\d+)$/.test(beat)) continue;
+    const lines = parseLines(String(value));
+    if (lines.length) {
+      const { error } = await db.from("hunt_story").upsert({ hunt_id: hunt, beat, lines }, { onConflict: "hunt_id,beat" });
+      if (error) back(`Couldn't save the story: ${error.message}`, true);
+      saved++;
+    } else {
+      await db.from("hunt_story").delete().eq("hunt_id", hunt).eq("beat", beat);
+    }
+  }
+  revalidatePath("/admin");
+  back(`Story saved: ${saved} beat${saved === 1 ? "" : "s"} of your own (the rest tell the default).`);
+}
+
+const StoryDraft = z.object({
+  beats: z.array(z.object({ beat: z.string(), lines: z.array(z.object({ who: z.enum(["masquerade", "keeper", "narrator"]), text: z.string() })) })),
+});
+
+/**
+ * A hunt's story drafted by Claude (Claude Sonnet 5.5): the Masquerade, light and playful, a beat for each moment.
+ * Never names or hints at the hunt's places (the beats are told as hunters reach them, but they'd still spoil).
+ */
+export async function draftStory(
+  huntId: string,
+  beats: string[],
+): Promise<{ ok: true; beats: Record<string, string> } | { ok: false; message: string }> {
+  await owner();
+  if (!UUID.test(huntId)) return { ok: false, message: "Unknown hunt." };
+  if (!process.env.ANTHROPIC_API_KEY) return { ok: false, message: "Claude isn't set up: add ANTHROPIC_API_KEY to the server's settings." };
+  const { data: h } = await createAdminClient().from("hunts").select("title, prize, description").eq("id", huntId).single();
+  try {
+    const response = await new Anthropic().beta.messages.parse({
+      model: "claude-sonnet-5-5",
+      max_tokens: 8000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      output_config: { effort: "medium", format: betaZodOutputFormat(StoryDraft) },
+      system: `You write the story beats for Loota, a real-map treasure hunt played in Nigeria. The villain is the Masquerade: a
+mischievous masked dancer in raffia who hides the keys, moves them about and teases the hunters; light and playful,
+never scary, with a little Nigerian flavour (an "Ehen!", a "well well", a "no wahala" here and there). The Keeper is calm
+and on the hunter's side. A narrator sets the scene. Each beat is 2 to 4 short lines (each under 140 characters).
+Beats: "start" (the hunt begins), "key:N" (the hunter has just won Key N), "relay:N" (a chest on the way to Key N held a
+clue, not the key: the Masquerade moved it), "finish" (every key won: the Masquerade is beaten, for now). Build a little
+story arc across the beats, with running jokes. Never name or hint at any place, landmark or city.`,
+      messages: [
+        {
+          role: "user",
+          content: `The hunt: "${h?.title ?? ""}" (prize: ${h?.prize ?? "none"}). ${h?.description ?? ""} It has ${beats.filter((b) => b.startsWith("key:")).length + 1} keys${beats.some((b) => b.startsWith("relay:")) ? " (and relay chests on the way, which don't count as keys)" : ""}.\nWrite these beats, in order: ${beats.join(", ")}.`,
+        },
+      ],
+    });
+    if (response.stop_reason === "refusal") return { ok: false, message: "Claude declined to draft that. Try again." };
+    const out: Record<string, string> = {};
+    for (const b of response.parsed_output?.beats ?? []) {
+      if (!beats.includes(b.beat)) continue;
+      out[b.beat] = b.lines.map((l) => `${l.who[0].toUpperCase()}${l.who.slice(1)}: ${l.text}`).join("\n");
+    }
+    if (!Object.keys(out).length) return { ok: false, message: "Claude didn't come up with a story that time. Try again." };
+    return { ok: true, beats: out };
+  } catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) return { ok: false, message: "Claude didn't accept the API key: check ANTHROPIC_API_KEY." };
+    if (e instanceof Anthropic.RateLimitError) return { ok: false, message: "Claude is busy right now. Try again in a minute." };
+    if (e instanceof Anthropic.APIError) return { ok: false, message: `Claude couldn't draft right now (error ${e.status}). Try again.` };
+    return { ok: false, message: "Couldn't reach Claude. Check the connection and try again." };
+  }
+}

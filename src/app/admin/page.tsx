@@ -10,6 +10,7 @@ import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
 import { KEY_SCENES, KEY_SCENE_INFO, isKeyScene } from "@/game/keyScenes";
 import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setKeyTrial, setPublished, summonDjinn } from "./actions";
 import { RiddleFields } from "./RiddleFields";
+import { StoryEditor } from "./StoryEditor";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
 
@@ -76,6 +77,7 @@ type HuntRow = {
   seconds_per_question: number;
   published: boolean;
   hunt_keys: KeyRow[];
+  hunt_story: { beat: string; lines: { who: string; text: string }[] }[];
   hunt_players: { count: number }[];
 };
 
@@ -101,7 +103,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
   const { data } = await createAdminClient()
     .from("hunts")
-    .select("id, title, prize, winners, starts_at, ends_at, questions_per_trial, seconds_per_question, published, hunt_keys(*), hunt_players(count)")
+    .select("id, title, prize, winners, starts_at, ends_at, questions_per_trial, seconds_per_question, published, hunt_keys(*), hunt_players(count), hunt_story(beat, lines)")
     .order("starts_at", { ascending: false });
   const hunts = (data ?? []) as HuntRow[];
 
@@ -156,6 +158,18 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
       {hunts.map((h) => {
         const keys = [...h.hunt_keys].sort((a, b) => a.n - b.n);
+        // The story's beats: the start, after each key but the last (that's the finish), each relay chest, the finish.
+        const realKeys = keys.filter((k) => !k.relay).length;
+        const beats = ["start"];
+        keys.forEach((k, idx) => {
+          const key = 1 + keys.slice(0, idx).filter((x) => !x.relay).length;
+          if (k.relay) beats.push(`relay:${key}`);
+          else if (key < realKeys) beats.push(`key:${key}`);
+        });
+        beats.push("finish");
+        const storyText = Object.fromEntries(
+          (h.hunt_story ?? []).map((b) => [b.beat, b.lines.map((l) => `${l.who[0].toUpperCase()}${l.who.slice(1)}: ${l.text}`).join("\n")]),
+        );
         const players = h.hunt_players[0]?.count ?? 0;
         return (
           <section key={h.id} className="flex flex-col gap-4 rounded-3xl border-[1.5px] border-line p-6">
@@ -254,6 +268,8 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
               ))}
               {!keys.length && <li className="text-sm text-muted">No keys yet.</li>}
             </ol>
+
+            {keys.length > 0 && <StoryEditor hunt={h.id} beats={beats} initial={storyText} />}
 
             {!h.published && (
               <>

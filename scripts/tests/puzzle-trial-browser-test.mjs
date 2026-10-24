@@ -146,9 +146,21 @@ try {
     check(`…solved: ${expect[n - 1]}`, new RegExp(expect[n - 1], "i").test(won ?? ""), (won ?? "").split("\n").filter(Boolean).slice(0, 3).join(" | "));
     if (n === 2) await shot("2-relay-card");
     if (n === 1) await shot("1-key-card");
+    // Closing the result: a beat of the story (the Masquerade), then on.
+    await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Key Trial result"] button')].at(-1)?.click());
+    let told = null;
+    for (let i = 0; i < 12 && !told; i++) {
+      await wait(500);
+      told = await page.evaluate(() => document.querySelector('[role="dialog"][aria-label="Story"]')?.innerText ?? null);
+    }
+    check(`…then the story: ${n === 2 ? "the relay" : n === 6 ? "the finish" : "after a key"}`, told !== null && /Skip/.test(told), (told ?? "none").split("\n").filter(Boolean).slice(0, 2).join(" | "));
+    if (n === 1 || n === 2 || n === 6) {
+      await wait(2500);
+      await shot(`${n}-story`);
+    }
+    await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Story"] button')].find((b) => b.textContent?.includes("Skip"))?.click());
     const heard = await page.evaluate(() => (window.__lootaCues ?? []).splice(0));
     check(`…heard: solved${n === 2 ? ", then the relay's whoosh" : ""}`, heard.includes("solved") && (n !== 2 || heard.includes("relay")), heard.join(", "));
-    await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Key Trial result"] button')].at(-1)?.click());
     await wait(1500);
   }
   check("no page errors", problems.length === 0, problems.join(" / "));

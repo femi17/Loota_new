@@ -62,6 +62,10 @@ try {
   check("…no bonus for a relay", bonuses === 0, `${bonuses}`);
   st = await rpc("hunt_state", { p_hunt: huntId });
   check("…the hunt card: Key 1 of 2, on the trail, the new riddle", st.keysHeld === 0 && st.keys === 2 && st.trail === true && st.riddle === "North of the start, 1 km.", JSON.stringify({ k: st.keysHeld, t: st.trail, r: st.riddle }));
+  const early = await rpc("hunt_story_beat", { p_hunt: huntId, p_beat: "key:1" });
+  check("the story: Key 1's beat not yet (no spoilers)", early?.ok === false && early.reason === "not_yet", JSON.stringify(early));
+  const relayBeat = await rpc("hunt_story_beat", { p_hunt: huntId, p_beat: "relay:1" });
+  check("…the relay's beat, now it's opened", relayBeat?.ok === true, JSON.stringify(relayBeat));
   const feed = await rpc("hunt_feed", { p_hunt: huntId, p_since: ago(120) });
   check("…the news: a relay chest toward Key 1", feed.events.some((e) => e.kind === "relay" && e.key === 1 && e.mine), JSON.stringify(feed.events.map((e) => e.kind)));
   const pulseA = await rpc("key_pulse", { p_hunt: huntId, p_lng: A.lng, p_lat: A.lat, p_mode: "walk" });

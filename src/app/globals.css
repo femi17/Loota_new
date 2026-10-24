@@ -207,3 +207,16 @@ body {
   [role="dialog"], .loota-key-spin { animation: none; }
   .loota-confetti { display: none; }
 }
+
+/* The Masquerade (owner, 24 Oct 2026): he sways, his raffia flutters, his crest bobs; the festival stars twinkle. */
+@keyframes loota-masq-sway { 0%, 100% { transform: rotate(-4deg) translateY(0); } 50% { transform: rotate(4deg) translateY(-3px); } }
+.loota-masq { transform-origin: 50% 100%; animation: loota-masq-sway 1.4s ease-in-out infinite; }
+@keyframes loota-masq-flutter { 0%, 100% { transform: skewX(-3deg); } 50% { transform: skewX(3deg); } }
+.loota-masq-fringe { transform-box: fill-box; transform-origin: 50% 0%; animation: loota-masq-flutter 0.7s ease-in-out infinite; }
+@keyframes loota-masq-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+.loota-masq-crest { animation: loota-masq-bob 0.7s ease-in-out infinite; }
+@keyframes loota-twinkle { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+.loota-star { animation: loota-twinkle 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .loota-masq, .loota-masq-fringe, .loota-masq-crest, .loota-star { animation: none; }
+}

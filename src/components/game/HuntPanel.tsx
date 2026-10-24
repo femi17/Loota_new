@@ -21,6 +21,8 @@ import { PuzzleTrial } from "./puzzles/PuzzleTrial";
 import { cue } from "@/game/sound";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import { Confetti } from "./Confetti";
+import { StoryScene } from "./StoryScene";
+import { defaultBeat, type StoryBeat, type StoryLine } from "@/game/story";
 
 /** What the hunt panel needs from the map. */
 export type HuntActions = {
@@ -105,6 +107,8 @@ export function HuntPanel({
   const [searching, setSearching] = useState(false);
   const [trial, setTrial] = useState<AnyTrialView | null>(null);
   const [ending, setEnding] = useState<Ending | null>(null);
+  // The story (owner, 24 Oct 2026: the Masquerade): a beat at the start, after each key, at a relay, at the finish.
+  const [story, setStory] = useState<{ lines: StoryLine[]; mood: "sly" | "cross" | "beaten" } | null>(null);
   const [board, setBoard] = useState<BoardRow[] | null>(null);
   const [feed, setFeed] = useState<HuntFeed | null>(null);
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
@@ -148,7 +152,10 @@ export function HuntPanel({
       } catch {
         shown = false;
       }
-      if (!shown) setRevealed(next.riddle);
+      if (!shown) {
+        setRevealed(next.riddle);
+        void tellStory("start"); // the Masquerade first, then the riddle
+      }
     }
     if (next.thrown) {
       actions.current?.placeAt(next.thrown.lng, next.thrown.lat);
@@ -363,10 +370,29 @@ export function HuntPanel({
     void refresh();
   }
 
+  /** Tell a beat of the story, once per device: the hunt's own lines, or the default. */
+  async function tellStory(beat: StoryBeat) {
+    const seen = `loota:story:${huntId}:${beat}`;
+    try {
+      if (localStorage.getItem(seen) === "1") return;
+      localStorage.setItem(seen, "1");
+    } catch {
+      // Private browsing: it may be told again.
+    }
+    const { data } = await supabase.rpc("hunt_story_beat", { p_hunt: huntId, p_beat: beat });
+    const r = data as { ok: boolean; lines: StoryLine[] | null; keys: number } | null;
+    if (!r?.ok) return;
+    const lines = r.lines?.length ? r.lines : defaultBeat(beat, huntId, r.keys);
+    setStory({ lines, mood: beat === "finish" ? "beaten" : beat.startsWith("key:") ? "cross" : "sly" });
+  }
+
   function closeEnding() {
     const was = ending;
     setEnding(null);
     actions.current?.setFrozen(false);
+    if (was?.kind === "key") void tellStory(`key:${was.keysHeld}`);
+    else if (was?.kind === "relay") void tellStory(`relay:${was.key}`);
+    else if (was?.kind === "finished") void tellStory("finish");
     if (was?.kind === "failed" && !was.saved) {
       actions.current?.say("You were thrown 2 km away. Travel back to the key and search again: you'll get new questions.", true);
     }
@@ -583,7 +609,8 @@ export function HuntPanel({
       )}
 
       {/* The first riddle, revealed with a flourish. */}
-      {revealed && !go && (
+      {story && <StoryScene key={story.lines[0]?.text} lines={story.lines} mood={story.mood} onDone={() => setStory(null)} />}
+      {revealed && !go && !story && (
         <div className="pointer-events-auto fixed inset-0 z-30 flex items-center justify-center bg-ink/85 p-5">
           <div role="dialog" aria-label="The first riddle" className="loota-wonder-banner flex w-full max-w-md flex-col gap-4 rounded-3xl bg-[#F5ECD8] p-6 text-center text-[#3A2410]">
             <LootaLogo height={64} tone="dark" className="mx-auto" />

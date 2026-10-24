@@ -8,6 +8,7 @@ import { RouteBoard } from "./RouteBoard";
 import { AdireBoard } from "./AdireBoard";
 import { TornMapBoard } from "./TornMapBoard";
 import { checkTornMap, type TornMapPuzzle } from "@/game/puzzles/tornmap";
+import { cue } from "@/game/sound";
 
 type SentriesP = { n: number; regions: number[] };
 type RouteP = { n: number; numbers: Record<number, number>; walls: [number, number][] };
@@ -80,13 +81,13 @@ export function PuzzleTrial({
       setView((v) => ({ ...v, lives: r.lives }));
       setShake((s) => s + 1);
       setNote(`Not right! ${r.lives === 1 ? "One life left." : `${r.lives} lives left.`} Look again.`);
-      navigator.vibrate?.([80, 60, 80]);
+      cue("wrong");
       return;
     }
     done.current = true;
     if (r?.ok && (r.result === "key" || r.result === "finished" || r.result === "relay")) {
       setSolved(true);
-      navigator.vibrate?.(60);
+      cue("solved");
       window.setTimeout(() => resultRef.current(r), 1300);
       return;
     }
@@ -95,12 +96,19 @@ export function PuzzleTrial({
 
   // The clock: at nought, the trial is lost (the server agrees: it keeps the same clock).
   const deadline = useRef<number | null>(null);
+  const lastTick = useRef(0);
   useEffect(() => {
     if (view.secondsLeft === null) return;
     deadline.current = performance.now() + view.secondsLeft * 1000;
     const timer = window.setInterval(() => {
       const s = Math.max(0, ((deadline.current ?? 0) - performance.now()) / 1000);
       setLeft(s);
+      // The last fifteen seconds tick.
+      const whole = Math.ceil(s);
+      if (whole > 0 && whole <= 15 && whole !== lastTick.current && !done.current) {
+        lastTick.current = whole;
+        cue("tick");
+      }
       if (s <= 0 && !done.current) void send(null);
     }, 200);
     return () => window.clearInterval(timer);

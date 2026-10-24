@@ -10,6 +10,7 @@ import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELIC_ICON, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
 import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, NOT_PAPERS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { cue, setSound, soundOn } from "@/game/sound";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
@@ -429,6 +430,7 @@ export function GameMap({
   };
   const [bagOwned, setBagOwned] = useState<OwnedVehicle[]>([]); // the inventory's vehicles, gear and papers
   const [helpOpen, setHelpOpen] = useState(false);
+  const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
   const [searchOpen, setSearchOpen] = useState(false);
   const [huntShown, setHuntShown] = useState(!huntHidden);
   // Asked for from the lobby: it isn't hidden any more.
@@ -1751,6 +1753,7 @@ export function GameMap({
           setHud((h) => ({ ...h, coins: balance }));
           const half = result.freeRoam ? " (free roam: half, full in a hunt)" : "";
           say(result.kind === "cache" ? `You found a hidden coin cache! +${result.coins} coins${half}.` : `+${result.coins} coins${half}`);
+          cue("coin");
         } else if (result.kind === "relic") {
           const relic = RELICS[result.relic];
           setHud((h) => ({ ...h, relics: h.relics + 1 }));
@@ -6312,6 +6315,7 @@ export function GameMap({
         const now = performance.now();
         if (now - lastStrike < 1200) return; // one at a time
         lastStrike = now;
+        cue("thunder");
         setStrikeFx({ n: Date.now(), icon });
         window.clearTimeout(strikeTimer);
         strikeTimer = window.setTimeout(() => setStrikeFx(null), 1700);
@@ -6637,6 +6641,7 @@ export function GameMap({
         heat = null;
         showHeat();
         setKeyFly(Date.now());
+        cue("key");
         window.setTimeout(() => setKeyFly(null), 1500);
       };
       window.addEventListener("loota:hunt-changed", pulseSoon);
@@ -6655,6 +6660,7 @@ export function GameMap({
         const scene = isKeyScene(spot.scene) ? spot.scene : "circle"; // where the key is: its scene for the trial
         chest = { entity: layer.add({ object: model.group, lng: spot.lng, lat: spot.lat, heading: 0 }), body: model.body, ring: model.ring, spot, key, born: performance.now(), scene };
         say("✨ Something glints in the ground… the key's chest rises! Get to it.", true);
+        cue("chest");
       }
 
       function hideChest() {
@@ -6717,14 +6723,10 @@ export function GameMap({
             showHeat();
           }
         }
-        // A buzz in the hand with each beat once it's warm (phones that can).
-        if (heat && heat.level > 0.35 && now - lastBeat > 1600 - 1250 * heat.level) {
+        // A heartbeat (heard and felt) once it's warm, faster and stronger as the key gets closer.
+        if (heat && heat.level > 0.35 && !frozen && !inWorld && now - lastBeat > 1600 - 1250 * heat.level) { // not in a trial or a scene
           lastBeat = now;
-          try {
-            navigator.vibrate?.(heat.level > 0.8 ? 60 : 25);
-          } catch {
-            // no vibration here
-          }
+          cue("heartbeat", heat.level);
         }
       }
 
@@ -6744,6 +6746,7 @@ export function GameMap({
         sceneHold = true;
         traveller.v = 0;
         openRoadPlace(e);
+        cue("stop");
         setRoadEvent(e);
       }
       /** The road scene is over: the hunter may move again (unless held), and the next chance comes later. */
@@ -7693,6 +7696,17 @@ export function GameMap({
                   <b>Traffic:</b> at rush hour main roads in town jam (red: standstill, orange: slow). Cars crawl, motorbikes weave
                   through; walkers and cyclists aren&apos;t held up.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSound(!sound);
+                    setSoundState(!sound);
+                  }}
+                  aria-pressed={sound}
+                  className="self-start rounded-xl bg-ink-2 px-3 py-2 text-sm font-bold"
+                >
+                  {sound ? "🔊 Sounds and buzzes: on" : "🔇 Sounds and buzzes: off"}
+                </button>
                 <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
                   Got it
                 </button>

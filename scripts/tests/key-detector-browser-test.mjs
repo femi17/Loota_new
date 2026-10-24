@@ -88,6 +88,8 @@ try {
   check("on top of it: burning", /Burning|Hot/.test(chip2 ?? ""), chip2);
   const button = await page.evaluate(() => !![...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Open the key's chest"));
   check("the chest has risen: Open the chest", button);
+  const cues1 = await page.evaluate(() => window.__lootaCues ?? []);
+  check("…heard: the heartbeat near the key, the drum roll as the chest rose (sound & haptics)", cues1.includes("heartbeat") && cues1.includes("chest"), [...new Set(cues1)].join(", "));
   await shot("2-chest");
 
   // ---- Open it with the hunt card put away (owner, 20 Oct 2026: nothing happened): the card comes back, the Key Trial starts
@@ -111,6 +113,7 @@ try {
   const result = await text('[aria-label="Key Trial result"]');
   check("Key 1 earned", /Key 1 earned!/.test(result ?? ""), result);
   check("…and the key flies into the bag", await page.evaluate(() => window.__flew));
+  check("…with a fanfare", (await page.evaluate(() => window.__lootaCues ?? [])).includes("key"));
   await shot("3-key");
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {

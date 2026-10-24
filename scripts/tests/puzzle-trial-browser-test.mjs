@@ -145,6 +145,8 @@ try {
     }
     check(`…solved: ${expect[n - 1]}`, new RegExp(expect[n - 1], "i").test(won ?? ""), (won ?? "").split("\n").filter(Boolean).slice(0, 3).join(" | "));
     if (n === 2) await shot("2-relay-card");
+    const heard = await page.evaluate(() => (window.__lootaCues ?? []).splice(0));
+    check(`…heard: solved${n === 2 ? ", then the relay's whoosh" : ""}`, heard.includes("solved") && (n !== 2 || heard.includes("relay")), heard.join(", "));
     await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Key Trial result"] button')].at(-1)?.click());
     await wait(1500);
   }

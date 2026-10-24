@@ -5,6 +5,7 @@ import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
 import { keeperLook, keeperWrap, lookForId, type AvatarLook } from "@/lib/avatar";
 import { PAPER_FINE, PAPER_NAME, type AddonId, type VehicleKind } from "@/game/economy";
 import { RoadGameBoard, gameIntro, gameSeconds, timeoutMove, type RoadGame, type RoadGameResult } from "./RoadGames";
+import { cue } from "@/game/sound";
 
 /** Something on the road during a hunt (road_event_roll): the question comes without its answer. */
 export type RoadEvent = {
@@ -144,6 +145,7 @@ export function RoadEventScene({
       return;
     }
     const mine = { who: "you" as const, text: said };
+    cue(r.outcome === "passed" || r.outcome === "won" || r.outcome === "helped" || r.outcome === "escaped" ? "right" : r.outcome === "declined" ? "tap" : "wrong");
     if (r.outcome === "escaped") say(mine, { who: "them", text: "Hey! HEY! Come back here!… (You got away with it this time.)" });
     else if (r.outcome === "caught")
       say(mine, { who: "them", text: `Where do you think you're going? Pull over! Running a checkpoint: that's ${r.fine} coins, and you'll wait while I write it up.` });
@@ -197,6 +199,7 @@ export function RoadEventScene({
     }
     if (outOfTime) r.late = true;
     setGameResult(r);
+    cue(r.won && !r.late ? "solved" : "wrong");
     const g = event.game!;
     const cup = ["left", "middle", "right"][Number(r.answer ?? 0)] ?? "other";
     say({

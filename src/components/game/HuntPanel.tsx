@@ -18,6 +18,7 @@ import {
   type TrialView,
 } from "@/game/hunt";
 import { PuzzleTrial } from "./puzzles/PuzzleTrial";
+import { cue } from "@/game/sound";
 
 /** What the hunt panel needs from the map. */
 export type HuntActions = {
@@ -190,6 +191,13 @@ export function HuntPanel({
   const sinceStart = state ? (now - Date.parse(state.startsAt)) / 1000 : null;
   const go = sinceStart !== null && sinceStart >= 0 && sinceStart < 2;
   const due = startsIn !== null && startsIn <= 0; // started by the clock; the server may need a second to agree
+  // The last ten seconds beep; GO! with a drum.
+  useEffect(() => {
+    if (startsIn !== null && startsIn > 0 && startsIn <= 10) cue("countdown");
+  }, [startsIn]);
+  useEffect(() => {
+    if (go) cue("go");
+  }, [go]);
   useEffect(() => {
     if (!due) return;
     const retry = window.setInterval(() => void refreshRef.current(), 1500);
@@ -221,6 +229,7 @@ export function HuntPanel({
         for (const e of f.events) {
           if (e.mine) continue;
           toast(newsOf(e));
+          cue(e.kind === "key" || e.kind === "first" || e.kind === "finished" ? "rival" : "news");
           if (e.kind === "key" || e.kind === "relay" || e.kind === "finished") keys = true;
         }
         if (keys) void refreshRef.current();
@@ -307,6 +316,7 @@ export function HuntPanel({
       return;
     }
     if (r.result === "next") {
+      cue("right");
       window.dispatchEvent(new Event("loota:trial-step")); // right: on to the next question
       setTrial(r.trial);
       return;
@@ -316,12 +326,13 @@ export function HuntPanel({
     if (r.result === "failed") {
       actions.current?.placeAt(r.lng, r.lat);
       setEnding({ kind: "failed", reason: r.reason, correct: r.correct, saved: !!r.saved });
+      cue(r.saved ? "solved" : "failed");
     } else if (r.result === "relay") {
       // No key in this chest: a clue to the next place (the detector turns to it).
       setEnding({ kind: "relay", key: r.key, riddle: r.riddle });
       setRival(null);
       setTip(null);
-      navigator.vibrate?.([120, 80, 120]);
+      cue("relay");
     } else if (r.result === "key") {
       // On the map, a moment for the Keeper's cheer before the key's card.
       const won = { kind: "key" as const, keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle, bonuses: r.bonuses ?? [] };
@@ -696,11 +707,18 @@ function KeyTrial({
     answerRef.current = onAnswer;
   });
 
+  const lastTick = useRef(0);
   useEffect(() => {
     deadline.current = performance.now() + trial.secondsLeft * 1000;
     const timer = window.setInterval(() => {
       const remaining = Math.max(0, (deadline.current - performance.now()) / 1000);
       setLeft(remaining);
+      // The last five seconds tick.
+      const whole = Math.ceil(remaining);
+      if (whole > 0 && whole <= 5 && whole !== lastTick.current && !sentRef.current) {
+        lastTick.current = whole;
+        cue("tick");
+      }
       if (remaining <= 0 && !sentRef.current) {
         sentRef.current = true;
         setSent(-1);

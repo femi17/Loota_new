@@ -19,6 +19,8 @@ import {
 } from "@/game/hunt";
 import { PuzzleTrial } from "./puzzles/PuzzleTrial";
 import { cue } from "@/game/sound";
+import { PUZZLE_NAMES } from "@/game/puzzles/names";
+import { Confetti } from "./Confetti";
 
 /** What the hunt panel needs from the map. */
 export type HuntActions = {
@@ -47,6 +49,14 @@ function newsOf(e: FeedEvent) {
   if (e.kind === "first") return `🥇 ${e.who} was FIRST to Key ${e.key}! +100 coins`;
   if (e.kind === "showdown") return `⚔️ ${e.who} won a showdown at Key ${e.key}${e.text ? ` against ${e.text}` : ""}!`;
   return `👋 ${e.who} joined the hunt`;
+}
+
+/** What the next key's trial is, for the card: a puzzle (named, if the key is set to one) or a quiz's category. */
+function trialLabel(s: HuntState) {
+  const kind = s.trialKind ?? "quiz";
+  if (kind === "quiz") return s.category ? `questions, ${CATEGORY_NAMES[s.category]}` : "questions";
+  if (kind === "puzzle") return "a puzzle";
+  return `a puzzle: ${PUZZLE_NAMES[kind].name}`;
 }
 
 type Ending =
@@ -448,7 +458,7 @@ export function HuntPanel({
                   <p className="text-xs font-bold text-[#7FD1FF]">🗺️ The last chest held a clue, not the key. Follow it:</p>
                 )}
                 <p className="font-display text-base leading-snug">&ldquo;{state.riddle}&rdquo;</p>
-                {state.category && <p className="text-xs text-muted">Key Trial: {CATEGORY_NAMES[state.category]}</p>}
+                <p className="text-xs text-muted">Key Trial: {trialLabel(state)}</p>
                 {!inArea && (
                   <p className="text-xs text-muted">
                     No typing: the riddle names a real place. Go there on the map: <b>Search here</b> appears when you reach the key&apos;s area.
@@ -579,7 +589,7 @@ export function HuntPanel({
             <LootaLogo height={64} tone="dark" className="mx-auto" />
             <p className="text-xs font-extrabold uppercase tracking-widest text-[#8A5A00]">The hunt is on · Key 1 of {state.keys}</p>
             <p className="font-display text-2xl font-extrabold leading-snug">&ldquo;{revealed}&rdquo;</p>
-            {state.category && <p className="text-sm">At the key: a Key Trial in {CATEGORY_NAMES[state.category]}.</p>}
+            <p className="text-sm">At the key, a Key Trial: {trialLabel(state)}.</p>
             <p className="text-sm text-[#5A4020]">
               There&apos;s nothing to type: the riddle names a real place. Work out where it is, travel there on the map before the
               others: <b>Search here</b> appears when you arrive.
@@ -635,6 +645,8 @@ export function HuntPanel({
             )}
             {ending.kind === "key" && (
               <>
+                <Confetti />
+                <p className="loota-key-spin text-6xl" aria-hidden="true">🗝️</p>
                 <h2 className="font-display text-3xl font-extrabold text-gold">Key {ending.keysHeld} earned!</h2>
                 <p className="text-muted">
                   {ending.keysHeld} of {ending.keys} keys. Your next riddle:
@@ -645,6 +657,7 @@ export function HuntPanel({
             )}
             {ending.kind === "finished" && (
               <>
+                <Confetti big />
                 <h2 className="font-display text-3xl font-extrabold text-gold">
                   {ending.winner ? "You won!" : "Hunt complete!"}
                 </h2>

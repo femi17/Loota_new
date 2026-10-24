@@ -191,3 +191,19 @@ body {
 .loota-shake { animation: loota-shake 0.12s ease-in-out 4; }
 @keyframes loota-pulse-bar { 50% { opacity: 0.45; } }
 .loota-pulse { animation: loota-pulse-bar 0.8s ease-in-out infinite; }
+
+/* Polish (owner, 24 Oct 2026: light and playful): every panel and card rises in; a win throws confetti; a won key spins. */
+@keyframes loota-rise-in { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
+[role="dialog"] { animation: loota-rise-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes loota-confetti-fly {
+  0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+  30% { opacity: 1; transform: translate(calc(var(--drift) * 0.4), calc(var(--rise) * -1)) rotate(calc(var(--spin) * 0.4)); }
+  100% { opacity: 0; transform: translate(var(--drift), 260px) rotate(var(--spin)); }
+}
+.loota-confetti { top: 0; animation-name: loota-confetti-fly; animation-timing-function: cubic-bezier(0.25, 0.6, 0.4, 1); animation-fill-mode: both; }
+@keyframes loota-key-spin { 0% { transform: scale(0.2) rotate(-200deg); opacity: 0; } 60% { transform: scale(1.25) rotate(15deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); } }
+.loota-key-spin { display: inline-block; animation: loota-key-spin 0.8s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+@media (prefers-reduced-motion: reduce) {
+  [role="dialog"], .loota-key-spin { animation: none; }
+  .loota-confetti { display: none; }
+}

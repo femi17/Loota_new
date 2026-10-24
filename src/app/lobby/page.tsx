@@ -119,7 +119,7 @@ async function Lobby() {
             <span className="text-sm text-muted">Welcome, hunter</span>
             <h1 className="font-display text-3xl font-extrabold">{player.username}</h1>
             <span className="text-sm text-muted">
-              Home set at {player.home.lat.toFixed(3)}, {player.home.lng.toFixed(3)}
+              Ready to hunt from home
             </span>
           </div>
           <Link

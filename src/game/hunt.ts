@@ -71,6 +71,8 @@ export type HuntState = {
   place: number | null;
   winnersFound: number;
   riddle: string | null;
+  /** On a relay's trail: the last chest held a clue, not the key (owner, 24 Oct 2026). */
+  trail?: boolean;
   category: TrialCategory | null;
   /** The Final Approach clue, once the player has reached the key's area. */
   clue: string | null;
@@ -90,6 +92,8 @@ export type SearchResult =
 export type AnswerResult =
   | { ok: true; result: "next"; trial: TrialView }
   | { ok: true; result: "failed"; reason: "wrong" | "timeout"; correct: string | null; lng: number; lat: number; saved?: boolean }
+  /** A relay chest: no key, a clue (the riddle) to the next place, where the key is. */
+  | { ok: true; result: "relay"; key: number; keysHeld: number; keys: number; riddle: string }
   /** A puzzle answered wrong, with lives left. */
   | { ok: true; result: "wrong"; lives: number }
   | { ok: true; result: "key"; keysHeld: number; keys: number; riddle: string; bonuses?: Bonus[] }
@@ -121,7 +125,8 @@ export type BoardRow = { rank: number; username: string; keysHeld: number; place
 /** Something that just happened in the hunt (hunt_feed); `metres`: how far from the player it was. */
 export type FeedEvent = {
   at: string;
-  kind: "key" | "trial" | "finished" | "joined" | "first" | "showdown";
+  /** `relay`: someone opened a relay chest (a clue toward the key, not the key). */
+  kind: "key" | "relay" | "trial" | "finished" | "joined" | "first" | "showdown";
   who: string;
   mine: boolean;
   key: number | null;

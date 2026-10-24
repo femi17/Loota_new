@@ -29,9 +29,10 @@ try {
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;
-  const key = (n, trial_kind) => ({ hunt_id: huntId, n, riddle: `Test key ${n}.`, category: "maths", trial_kind, area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, spot_lng: spot.lng, spot_lat: spot.lat });
-  // Six keys: the first three at level 1 (warnings), the last three harder.
-  await admin.from("hunt_keys").insert([key(1, "sentries"), key(2, "route"), key(3, "adire"), key(4, "sentries"), key(5, "route"), key(6, "adire")]);
+  const key = (n, trial_kind, relay = false) => ({ hunt_id: huntId, n, relay, riddle: `Test stop ${n}.`, category: "maths", trial_kind, area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, spot_lng: spot.lng, spot_lat: spot.lat });
+  // Six stops: the first three at level 1 (warnings), the last three harder; stop 2 is a relay chest (a clue, not a key).
+  await admin.from("hunt_keys").insert([key(1, "sentries"), key(2, "route", true), key(3, "adire"), key(4, "sentries"), key(5, "route"), key(6, "adire")]);
+  const expect = ["Key 1 earned", "No key", "Key 2 earned", "Key 3 earned", "Key 4 earned", "complete|won"];
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
   // No road events in this test.
   await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: new Date(Date.now() + 3600e3).toISOString(), created_at: new Date(Date.now() + 3600e3).toISOString() });
@@ -81,7 +82,7 @@ try {
     }
     const t = await attempt();
     const text = (await dialog()) ?? "";
-    check(`key ${n}: the chest opens a ${t?.kind ?? "?"} puzzle board`, opened && !!t?.solution, text.split("\n").slice(0, 3).join(" | "));
+    check(`stop ${n}: the chest opens a ${t?.kind ?? "?"} puzzle board`, opened && !!t?.solution, text.split("\n").slice(0, 3).join(" | "));
     if (!t?.solution) break;
     await wait(600);
     await shot(`${n}-${t.kind}-open`);
@@ -124,7 +125,8 @@ try {
       await wait(500);
       won = await page.evaluate(() => document.querySelector('[role="dialog"][aria-label="Key Trial result"]')?.innerText ?? null);
     }
-    check(`…solved: Key ${n} earned`, new RegExp(n === 6 ? "complete|won" : `Key ${n} earned`, "i").test(won ?? ""), (won ?? "").split("\n")[0]);
+    check(`…solved: ${expect[n - 1]}`, new RegExp(expect[n - 1], "i").test(won ?? ""), (won ?? "").split("\n").filter(Boolean).slice(0, 3).join(" | "));
+    if (n === 2) await shot("2-relay-card");
     await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Key Trial result"] button')].at(-1)?.click());
     await wait(1500);
   }

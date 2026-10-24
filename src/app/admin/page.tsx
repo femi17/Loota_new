@@ -42,6 +42,11 @@ const TRIAL_KINDS = [
   ["adire", "Adire (indigo and white cloth)"],
   ["quiz", "Quiz (questions, in the category below)"],
 ] as const;
+/** "Key 2", or "Key 2 · relay chest" for a stop on the way to Key 2. */
+const stopLabel = (keys: { relay: boolean }[], idx: number) => {
+  const key = 1 + keys.slice(0, idx).filter((k) => !k.relay).length;
+  return keys[idx].relay ? `Key ${key} · relay chest` : `Key ${key}`;
+};
 const trialName = (kind: string) => TRIAL_KINDS.find(([k]) => k === kind)?.[1].replace(/ \(.*\)$/, "") ?? kind;
 
 type KeyRow = {
@@ -49,6 +54,8 @@ type KeyRow = {
   riddle: string;
   category: TrialCategory;
   trial_kind: string;
+  /** A relay chest: it holds a clue to the next stop, not a key. */
+  relay: boolean;
   area_lng: number;
   area_lat: number;
   area_radius_m: number;
@@ -189,10 +196,10 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
             </p>
 
             <ol className="flex flex-col gap-2">
-              {keys.map((k) => (
+              {keys.map((k, idx) => (
                 <li key={k.n} className="rounded-2xl bg-ink-2 p-4 text-sm">
                   <p className="font-bold">
-                    Key {k.n} · {k.trial_kind === "quiz" ? `Quiz: ${CATEGORY_NAMES[k.category]}` : trialName(k.trial_kind)} ·{" "}
+                    {stopLabel(keys, idx)} · {k.trial_kind === "quiz" ? `Quiz: ${CATEGORY_NAMES[k.category]}` : trialName(k.trial_kind)} ·{" "}
                     {isKeyScene(k.scene) ? KEY_SCENE_INFO[k.scene].label : k.scene}
                   </p>
                   <p>&ldquo;{k.riddle}&rdquo;</p>
@@ -251,7 +258,16 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
               <>
                 <form action={addKey} className="grid grid-cols-1 gap-3 rounded-2xl bg-ink-2 p-4 sm:grid-cols-2">
                   <input type="hidden" name="hunt" value={h.id} />
-                  <p className="font-bold sm:col-span-2">Add key {keys.length + 1}</p>
+                  <p className="font-bold sm:col-span-2">Add stop {keys.length + 1}: a key, or a relay chest on the way to one</p>
+                  <label className="flex items-start gap-2 rounded-xl bg-ink p-3 text-sm sm:col-span-2">
+                    <input type="checkbox" name="relay" className="mt-1 size-4 accent-[#F4B41A]" />
+                    <span>
+                      <b>A relay chest</b>
+                      <span className="block text-xs text-muted">
+                        Its chest holds no key, only the next stop&apos;s riddle (the key is at the next stop you add). Hunters can&apos;t tell until it opens.
+                      </span>
+                    </span>
+                  </label>
                   <RiddleFields />
                   <Field label="Key Trial" hint="A puzzle at the chest, or questions.">
                     <select name="trial" className={field} defaultValue="puzzle">
@@ -298,7 +314,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                   <form action={removeLastKey}>
                     <input type="hidden" name="hunt" value={h.id} />
                     <button type="submit" className="text-sm text-muted underline">
-                      Remove key {keys.length}
+                      Remove stop {keys.length}
                     </button>
                   </form>
                 )}

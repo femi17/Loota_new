@@ -40,6 +40,7 @@ const far = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`
 function newsOf(e: FeedEvent) {
   const where = e.metres != null ? ` · ${far(e.metres)} from you` : "";
   if (e.kind === "key") return `🔑 ${e.who} found Key ${e.key}${where}`;
+  if (e.kind === "relay") return `🗺️ ${e.who} opened a relay chest: a clue toward Key ${e.key}${where}`;
   if (e.kind === "trial") return `⚔️ ${e.who} is in the Key ${e.key} trial${where}`;
   if (e.kind === "finished") return `🏁 ${e.who} finished ${ordinal(e.place ?? 0)}!`;
   if (e.kind === "first") return `🥇 ${e.who} was FIRST to Key ${e.key}! +100 coins`;
@@ -51,6 +52,7 @@ type Ending =
   /** `correct`: a quiz's right answer (a puzzle has none to show). */
   | { kind: "failed"; reason: "wrong" | "timeout"; correct: string | null; saved: boolean }
   | { kind: "key"; keysHeld: number; keys: number; riddle: string; bonuses: Bonus[] }
+  | { kind: "relay"; key: number; riddle: string }
   | { kind: "finished"; place: number; winner: boolean; bonuses: Bonus[] };
 
 const BONUS_TEXT: Record<Bonus["kind"], string> = { first: "🥇 First to this key", golden: "✨ Golden minutes", showdown: "⚔️ Showdown won" };
@@ -66,7 +68,7 @@ const REFRESH_MS = 30_000;
  * ("loota:trial", on), as each answer is right ("loota:trial-step") and how it ends ("loota:trial", off, with the
  * outcome); `scene` while the map shows it: the card steps aside and the questions sit in a strip at the bottom.
  */
-const trialEvent = (detail: { on: boolean; outcome?: "key" | "finished" | "failed" | "error" }) => window.dispatchEvent(new CustomEvent("loota:trial", { detail }));
+const trialEvent = (detail: { on: boolean; outcome?: "key" | "relay" | "finished" | "failed" | "error" }) => window.dispatchEvent(new CustomEvent("loota:trial", { detail }));
 
 export function HuntPanel({
   huntId,
@@ -219,7 +221,7 @@ export function HuntPanel({
         for (const e of f.events) {
           if (e.mine) continue;
           toast(newsOf(e));
-          if (e.kind === "key" || e.kind === "finished") keys = true;
+          if (e.kind === "key" || e.kind === "relay" || e.kind === "finished") keys = true;
         }
         if (keys) void refreshRef.current();
       }
@@ -314,6 +316,12 @@ export function HuntPanel({
     if (r.result === "failed") {
       actions.current?.placeAt(r.lng, r.lat);
       setEnding({ kind: "failed", reason: r.reason, correct: r.correct, saved: !!r.saved });
+    } else if (r.result === "relay") {
+      // No key in this chest: a clue to the next place (the detector turns to it).
+      setEnding({ kind: "relay", key: r.key, riddle: r.riddle });
+      setRival(null);
+      setTip(null);
+      navigator.vibrate?.([120, 80, 120]);
     } else if (r.result === "key") {
       // On the map, a moment for the Keeper's cheer before the key's card.
       const won = { kind: "key" as const, keysHeld: r.keysHeld, keys: r.keys, riddle: r.riddle, bonuses: r.bonuses ?? [] };
@@ -381,7 +389,7 @@ export function HuntPanel({
                   ? `${state.title} · ended`
                   : done
                     ? `Finished ${ordinal(state.place ?? 0)}`
-                    : `Key ${next} of ${state.keys}`}
+                    : `Key ${next} of ${state.keys}${state.trail ? " · the trail" : ""}`}
             </span>
             <span className="ml-auto text-muted" aria-hidden="true">{open ? "▴" : "▾"}</span>
           </button>
@@ -425,6 +433,9 @@ export function HuntPanel({
             )}
             {state.phase === "live" && !done && state.riddle && (
               <>
+                {state.trail && (
+                  <p className="text-xs font-bold text-[#7FD1FF]">🗺️ The last chest held a clue, not the key. Follow it:</p>
+                )}
                 <p className="font-display text-base leading-snug">&ldquo;{state.riddle}&rdquo;</p>
                 {state.category && <p className="text-xs text-muted">Key Trial: {CATEGORY_NAMES[state.category]}</p>}
                 {!inArea && (
@@ -599,6 +610,16 @@ export function HuntPanel({
                     You&apos;ve been thrown 2 km away. Travel back to the key and search again for a new trial.
                   </p>
                 )}
+              </>
+            )}
+            {ending.kind === "relay" && (
+              <>
+                <p className="text-5xl" aria-hidden="true">🗺️</p>
+                <h2 className="font-display text-3xl font-extrabold text-[#7FD1FF]">No key… only a clue!</h2>
+                <p className="text-muted">
+                  The chest held a torn map, not Key {ending.key}. Someone moved it. The key is somewhere else:
+                </p>
+                <p className="font-display text-lg">&ldquo;{ending.riddle}&rdquo;</p>
               </>
             )}
             {ending.kind === "key" && (

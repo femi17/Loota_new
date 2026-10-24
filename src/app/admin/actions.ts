@@ -148,6 +148,7 @@ export async function addKey(form: FormData) {
     riddle: text(form, "riddle"),
     category: text(form, "category"),
     trial_kind: TRIAL_KINDS.includes(text(form, "trial")) ? text(form, "trial") : "puzzle",
+    relay: form.get("relay") === "on",
     area_lng: area!.lng,
     area_lat: area!.lat,
     area_radius_m: whole(form, "radius"),
@@ -161,8 +162,8 @@ export async function addKey(form: FormData) {
   const scene = ` Its place: ${KEY_SCENE_INFO[picked.scene].label} (${picked.why}).`;
   back(
     spot.movedM === null
-      ? `Key ${(count ?? 0) + 1} added. The road check is unavailable right now, so the spot is exactly as pasted: make sure it's on or beside a road (hunters must get within 40 m).${scene}`
-      : `Key ${(count ?? 0) + 1} added. Its spot was moved ${spot.movedM} m onto the nearest road.${scene}`,
+      ? `Stop ${(count ?? 0) + 1} added${form.get("relay") === "on" ? " (a relay chest: add the key's stop next)" : ""}. The road check is unavailable right now, so the spot is exactly as pasted: make sure it's on or beside a road (hunters must get within 40 m).${scene}`
+      : `Stop ${(count ?? 0) + 1} added${form.get("relay") === "on" ? " (a relay chest: add the key's stop next)" : ""}. Its spot was moved ${spot.movedM} m onto the nearest road.${scene}`,
   );
 }
 
@@ -214,6 +215,9 @@ export async function setPublished(form: FormData) {
   if (publish) {
     const { count } = await db.from("hunt_keys").select("n", { count: "exact", head: true }).eq("hunt_id", hunt);
     if (!count) back("Add at least one key before publishing.", true);
+    // A relay chest leads to the next stop: the last stop must be a key.
+    const { data: last } = await db.from("hunt_keys").select("relay").eq("hunt_id", hunt).order("n", { ascending: false }).limit(1).maybeSingle();
+    if (last?.relay) back("The last stop is a relay chest: add the key's stop after it before publishing.", true);
   }
   const { error } = await db.from("hunts").update({ published: publish }).eq("id", hunt);
   if (error) back(`Couldn't update the hunt: ${error.message}`, true);

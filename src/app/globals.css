@@ -186,3 +186,8 @@ body {
 .loota-bubble::after { content: ""; position: absolute; left: 50%; bottom: -7px; margin-left: -7px; border: 7px solid transparent; border-bottom: 0; border-top-color: inherit; }
 .loota-bubble.bg-paper { border-top-color: var(--color-paper); }
 .loota-bubble.bg-gold { border-top-color: var(--color-gold); }
+
+/* Key Trial puzzles: a wrong answer shakes the board; the last seconds' clock pulses. */
+.loota-shake { animation: loota-shake 0.12s ease-in-out 4; }
+@keyframes loota-pulse-bar { 50% { opacity: 0.45; } }
+.loota-pulse { animation: loota-pulse-bar 0.8s ease-in-out infinite; }

@@ -8,7 +8,7 @@ import { getPlayer } from "@/lib/player";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
 import { KEY_SCENES, KEY_SCENE_INFO, isKeyScene } from "@/game/keyScenes";
-import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setPublished, summonDjinn } from "./actions";
+import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setKeyTrial, setPublished, summonDjinn } from "./actions";
 import { RiddleFields } from "./RiddleFields";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
@@ -34,10 +34,21 @@ export default function AdminPage({ searchParams }: { searchParams: SearchParams
   );
 }
 
+/** A key's trial (owner, 24 Oct 2026: tasks, not only questions): a quiz, one puzzle, or a puzzle at random. */
+const TRIAL_KINDS = [
+  ["puzzle", "A puzzle (Sentries, Route or Adire, at random)"],
+  ["sentries", "Sentries (one per row, column and district)"],
+  ["route", "Route (one path through every square)"],
+  ["adire", "Adire (indigo and white cloth)"],
+  ["quiz", "Quiz (questions, in the category below)"],
+] as const;
+const trialName = (kind: string) => TRIAL_KINDS.find(([k]) => k === kind)?.[1].replace(/ \(.*\)$/, "") ?? kind;
+
 type KeyRow = {
   n: number;
   riddle: string;
   category: TrialCategory;
+  trial_kind: string;
   area_lng: number;
   area_lat: number;
   area_radius_m: number;
@@ -181,7 +192,8 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
               {keys.map((k) => (
                 <li key={k.n} className="rounded-2xl bg-ink-2 p-4 text-sm">
                   <p className="font-bold">
-                    Key {k.n} · {CATEGORY_NAMES[k.category]} · {isKeyScene(k.scene) ? KEY_SCENE_INFO[k.scene].label : k.scene}
+                    Key {k.n} · {k.trial_kind === "quiz" ? `Quiz: ${CATEGORY_NAMES[k.category]}` : trialName(k.trial_kind)} ·{" "}
+                    {isKeyScene(k.scene) ? KEY_SCENE_INFO[k.scene].label : k.scene}
                   </p>
                   <p>&ldquo;{k.riddle}&rdquo;</p>
                   {k.approach_clue && <p className="text-muted">Final approach: {k.approach_clue}</p>}
@@ -195,6 +207,23 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                       {KEY_SCENES.map((s) => (
                         <option key={s} value={s}>
                           {KEY_SCENE_INFO[s].label} · {KEY_SCENE_INFO[s].keeper.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="submit" className="h-9 rounded-lg border border-line px-3 text-xs font-bold">
+                      Change
+                    </button>
+                  </form>
+                  <form action={setKeyTrial} className="my-1 flex flex-wrap items-center gap-2">
+                    <input type="hidden" name="hunt" value={h.id} />
+                    <input type="hidden" name="n" value={k.n} />
+                    <label className="text-xs text-muted" htmlFor={`trial-${h.id}-${k.n}`}>
+                      Its trial
+                    </label>
+                    <select id={`trial-${h.id}-${k.n}`} name="trial" defaultValue={k.trial_kind} className="h-9 rounded-lg bg-ink px-2 text-xs">
+                      {TRIAL_KINDS.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
                         </option>
                       ))}
                     </select>
@@ -224,7 +253,16 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                   <input type="hidden" name="hunt" value={h.id} />
                   <p className="font-bold sm:col-span-2">Add key {keys.length + 1}</p>
                   <RiddleFields />
-                  <Field label="Key Trial category">
+                  <Field label="Key Trial" hint="A puzzle at the chest, or questions.">
+                    <select name="trial" className={field} defaultValue="puzzle">
+                      {TRIAL_KINDS.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Quiz category" hint="Only for a quiz trial.">
                     <select name="category" className={field} defaultValue="maths">
                       {Object.entries(CATEGORY_NAMES).map(([value, name]) => (
                         <option key={value} value={value}>

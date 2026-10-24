@@ -20,8 +20,28 @@ export type HuntSummary = {
   joined: boolean;
 };
 
+/**
+ * A Key Trial that's a puzzle (owner, 24 Oct 2026): the puzzle (null until the game's server makes it, when the phone
+ * asks: /api/trial/puzzle), the lives left and the clock (null until then). Never the answer.
+ */
+export type PuzzleTrialView = {
+  attempt: string;
+  key: number;
+  kind: "puzzle";
+  puzzleKind: "sentries" | "route" | "adire";
+  /** 1 for early keys, 3 for the last: bigger boards, fewer clues, and no warnings when a rule is broken. */
+  level: number;
+  puzzle: unknown;
+  lives: number;
+  seconds: number;
+  secondsLeft: number | null;
+};
+/** A Key Trial: a quiz question, or a puzzle. */
+export type AnyTrialView = TrialView | PuzzleTrialView;
+
 /** The current question of a Key Trial (never the answer). */
 export type TrialView = {
+  kind?: undefined;
   attempt: string;
   key: number;
   index: number;
@@ -54,13 +74,13 @@ export type HuntState = {
   category: TrialCategory | null;
   /** The Final Approach clue, once the player has reached the key's area. */
   clue: string | null;
-  trial: TrialView | null;
+  trial: AnyTrialView | null;
   /** Set when a trial ran out while the player was away: where they were thrown. */
   thrown: { lng: number; lat: number } | null;
 };
 
 export type SearchResult =
-  | { ok: true; result: "trial"; trial: TrialView }
+  | { ok: true; result: "trial"; trial: AnyTrialView }
   | { ok: true; result: "area"; clue: string; band: string }
   | { ok: true; result: "cold"; band: string }
   | { ok: false; reason: "not_live" | "not_joined" | "finished" | "wait" | "no_key" }
@@ -69,7 +89,9 @@ export type SearchResult =
 
 export type AnswerResult =
   | { ok: true; result: "next"; trial: TrialView }
-  | { ok: true; result: "failed"; reason: "wrong" | "timeout"; correct: string; lng: number; lat: number; saved?: boolean }
+  | { ok: true; result: "failed"; reason: "wrong" | "timeout"; correct: string | null; lng: number; lat: number; saved?: boolean }
+  /** A puzzle answered wrong, with lives left. */
+  | { ok: true; result: "wrong"; lives: number }
   | { ok: true; result: "key"; keysHeld: number; keys: number; riddle: string; bonuses?: Bonus[] }
   | { ok: true; result: "finished"; keysHeld: number; keys: number; place: number; winner: boolean; bonuses?: Bonus[] }
   | { ok: false; reason: "no_trial" };

@@ -22,6 +22,7 @@ const whole = (form: FormData, name: string) => Number.parseInt(text(form, name)
 /** A date and time typed in Lagos time (the datetime-local field has no time zone). */
 const lagosTime = (value: string) => new Date(`${value}:00+01:00`);
 const UUID = /^[0-9a-f-]{36}$/i;
+const TRIAL_KINDS = ["puzzle", "sentries", "route", "adire", "quiz"];
 
 /** "6.4541, 3.3958" (as Google Maps copies it: latitude first) → { lng, lat }. */
 function coordinates(value: string) {
@@ -146,6 +147,7 @@ export async function addKey(form: FormData) {
     n: (count ?? 0) + 1,
     riddle: text(form, "riddle"),
     category: text(form, "category"),
+    trial_kind: TRIAL_KINDS.includes(text(form, "trial")) ? text(form, "trial") : "puzzle",
     area_lng: area!.lng,
     area_lat: area!.lat,
     area_radius_m: whole(form, "radius"),
@@ -175,6 +177,19 @@ export async function setKeyScene(form: FormData) {
   if (error) back(`Couldn't change the scene: ${error.message}`, true);
   revalidatePath("/admin");
   back(`Key ${n}'s place is now: ${KEY_SCENE_INFO[scene as KeyScene].label}.`);
+}
+
+/** A key's trial: a quiz, one puzzle, or a puzzle at random (it only changes what the next attempts get). */
+export async function setKeyTrial(form: FormData) {
+  await owner();
+  const hunt = text(form, "hunt");
+  const n = whole(form, "n");
+  const trial = text(form, "trial");
+  if (!UUID.test(hunt) || !Number.isInteger(n) || !TRIAL_KINDS.includes(trial)) back("Unknown key or trial.", true);
+  const { error } = await createAdminClient().from("hunt_keys").update({ trial_kind: trial }).eq("hunt_id", hunt).eq("n", n);
+  if (error) back(`Couldn't change the trial: ${error.message}`, true);
+  revalidatePath("/admin");
+  back(`Key ${n}'s trial is now: ${trial === "puzzle" ? "a puzzle at random" : trial}.`);
 }
 
 export async function removeLastKey(form: FormData) {

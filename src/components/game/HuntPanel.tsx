@@ -14,8 +14,10 @@ import {
   type HuntFeed,
   type HuntState,
   type SearchResult,
+  type AnyTrialView,
   type TrialView,
 } from "@/game/hunt";
+import { PuzzleTrial } from "./puzzles/PuzzleTrial";
 
 /** What the hunt panel needs from the map. */
 export type HuntActions = {
@@ -46,7 +48,8 @@ function newsOf(e: FeedEvent) {
 }
 
 type Ending =
-  | { kind: "failed"; reason: "wrong" | "timeout"; correct: string; saved: boolean }
+  /** `correct`: a quiz's right answer (a puzzle has none to show). */
+  | { kind: "failed"; reason: "wrong" | "timeout"; correct: string | null; saved: boolean }
   | { kind: "key"; keysHeld: number; keys: number; riddle: string; bonuses: Bonus[] }
   | { kind: "finished"; place: number; winner: boolean; bonuses: Bonus[] };
 
@@ -87,7 +90,7 @@ export function HuntPanel({
   const [open, setOpen] = useState(true);
   const [feedback, setFeedback] = useState<{ text: string; hot: boolean } | null>(null);
   const [searching, setSearching] = useState(false);
-  const [trial, setTrial] = useState<TrialView | null>(null);
+  const [trial, setTrial] = useState<AnyTrialView | null>(null);
   const [ending, setEnding] = useState<Ending | null>(null);
   const [board, setBoard] = useState<BoardRow[] | null>(null);
   const [feed, setFeed] = useState<HuntFeed | null>(null);
@@ -109,7 +112,7 @@ export function HuntPanel({
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), TOAST_MS);
   }
 
-  function startTrial(view: TrialView) {
+  function startTrial(view: AnyTrialView) {
     actions.current?.setFrozen(true);
     setEnding(null);
     setTrial(view);
@@ -288,7 +291,12 @@ export function HuntPanel({
 
   async function answer(attempt: string, choice: number) {
     const { data } = await supabase.rpc("answer_trial", { p_attempt: attempt, p_choice: choice });
-    const r = data as AnswerResult | null;
+    settle(data as AnswerResult | null);
+  }
+
+  /** A trial's outcome (a quiz's answer, or a puzzle's verdict): the next question, the key, finished, or failed. */
+  function settle(r: AnswerResult | null) {
+    if (r?.ok && r.result === "wrong") return; // a puzzle with lives left: it carries on
     if (!r || !r.ok) {
       setTrial(null);
       trialEvent({ on: false, outcome: "error" });
@@ -561,7 +569,12 @@ export function HuntPanel({
         </div>
       )}
 
-      {trial && <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} world={scene} keeper={keeper} onAnswer={(choice) => answer(trial.attempt, choice)} />}
+      {trial &&
+        (trial.kind === "puzzle" ? (
+          <PuzzleTrial key={trial.attempt} trial={trial} rival={rival} world={scene} keeper={keeper} onResult={settle} />
+        ) : (
+          <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} world={scene} keeper={keeper} onAnswer={(choice) => answer(trial.attempt, choice)} />
+        ))}
       {recap && <RecapCard recap={recap} onClose={() => setRecap(null)} />}
 
       {ending && (
@@ -570,16 +583,20 @@ export function HuntPanel({
             {ending.kind === "failed" && (
               <>
                 <h2 className="font-display text-3xl font-extrabold text-danger">{ending.reason === "timeout" ? "Time's up!" : "Wrong answer!"}</h2>
-                <p>
-                  The answer was <b>{ending.correct}</b>.
-                </p>
+                {ending.correct ? (
+                  <p>
+                    The answer was <b>{ending.correct}</b>.
+                  </p>
+                ) : (
+                  <p>{ending.reason === "timeout" ? "The chest slammed shut before you finished." : "The lock jammed: that wasn't it."}</p>
+                )}
                 {ending.saved ? (
                   <p className="text-[#C3A6FF]">
                     🪙 Your Djinn&apos;s Coin glowed and crumbled to dust: you stand your ground. Search again for a new set of questions.
                   </p>
                 ) : (
                   <p className="text-muted">
-                    You&apos;ve been thrown 2 km away. Travel back to the key and search again for a new set of questions.
+                    You&apos;ve been thrown 2 km away. Travel back to the key and search again for a new trial.
                   </p>
                 )}
               </>

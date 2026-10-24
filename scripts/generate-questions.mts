@@ -28,13 +28,16 @@ const arg = (name: string, fallback: number) => {
   return i > 0 ? Number(process.argv[i + 1]) : fallback;
 };
 const BANK_PER_CATEGORY = arg("bank", 60);
+/** How the bank's new questions split across levels 1, 2 and 3 (percent), e.g. --split 0,40,60. */
+const SPLIT = (process.argv.includes("--split") ? process.argv[process.argv.indexOf("--split") + 1] : "50,30,20").split(",").map(Number);
 const LANDMARK_TOTAL = arg("landmarks", 5); // each landmark topped up to this many questions
 const DRY = process.argv.includes("--dry");
 const ONLY = process.argv.includes("--category") ? process.argv[process.argv.indexOf("--category") + 1] : null;
-const WRITER = "claude-haiku-5-5";
+// Haiku by default (cheap: owner, 22 Oct); --writer sonnet for the hardest batches (Haiku's "hard" is often easy).
+const WRITER: "claude-haiku-5-5" | "claude-sonnet-5-5" = process.argv.includes("--writer") && process.argv[process.argv.indexOf("--writer") + 1] === "sonnet" ? "claude-sonnet-5-5" : "claude-haiku-5-5";
 const CHECKER = "claude-sonnet-5-5";
 /** $ per million tokens, in and out. */
-const PRICE = { [WRITER]: [0.1, 0.5], [CHECKER]: [2, 10] } as const;
+const PRICE: Record<string, [number, number]> = { "claude-haiku-5-5": [0.1, 0.5], "claude-sonnet-5-5": [2, 10] };
 const BATCH = 20;
 const LANDMARKS_FILE = "scripts/data/landmarks.json";
 
@@ -97,7 +100,8 @@ const RULES = `Rules for every question:
 - Each question is about a different thing, not the same fact asked another way.
 - Facts you are certain of. If you're not sure, write a different question.`;
 
-const DIFFICULTY = `Difficulty: 1 = most Nigerian teenagers would know it; 2 = a keen quiz player would know it; 3 = hard but fair.`;
+// Harder than the first bank (owner, 24 Oct 2026: "the questions are too way easy").
+const DIFFICULTY = `Difficulty: 1 = a keen quiz player gets it, never schoolbook-easy; 2 = a pub-quiz champion gets it; 3 = an expert's question, obscure but fair, the kind one player in ten gets. Never the famous facts everyone knows (the capital, jollof rice, Fela, Burna Boy, the Super Eagles' nickname and the like).`;
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -156,8 +160,8 @@ ${asked.slice(-300).map((a) => `- ${a}`).join("\n") || "(none)"}`,
 // ---- The Key Trial / street seller bank
 const CATEGORIES = {
   general: `General knowledge for anyone: science, nature, the human body, world geography, space, sport, words and
-numbers. About a third should be classic riddles or brain teasers with one clear answer (a street seller asks these:
-"What has keys but can't open locks?").`,
+numbers. About a third should be riddles or brain teasers with one clear answer (a street seller asks these): fresh
+ones that make people think, not the well-worn riddles everyone has heard.`,
   nigeria: `Nigeria: its states and cities, rivers and landmarks, food, music, films, sport, languages, festivals and
 settled history.`,
 } as const;
@@ -170,9 +174,9 @@ async function growBank() {
     const asked = (existing ?? []).map((r) => r.prompt); // grows as this run adds questions
     // Level 1 is asked most (street sellers, early keys), so most new questions are level 1.
     const want = [
-      { difficulty: 1, count: Math.round(BANK_PER_CATEGORY * 0.5) },
-      { difficulty: 2, count: Math.round(BANK_PER_CATEGORY * 0.3) },
-      { difficulty: 3, count: BANK_PER_CATEGORY - Math.round(BANK_PER_CATEGORY * 0.5) - Math.round(BANK_PER_CATEGORY * 0.3) },
+      { difficulty: 1, count: Math.round((BANK_PER_CATEGORY * SPLIT[0]) / 100) },
+      { difficulty: 2, count: Math.round((BANK_PER_CATEGORY * SPLIT[1]) / 100) },
+      { difficulty: 3, count: BANK_PER_CATEGORY - Math.round((BANK_PER_CATEGORY * SPLIT[0]) / 100) - Math.round((BANK_PER_CATEGORY * SPLIT[1]) / 100) },
     ];
     for (const { difficulty, count } of want) {
       let added = 0;

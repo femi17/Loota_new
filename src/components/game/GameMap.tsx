@@ -31,6 +31,7 @@ import type { RoadGameResult } from "./RoadGames";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
+import { HuntClock } from "./HuntClock";
 import { StoryScene } from "./StoryScene";
 import { trapBeat, type StoryLine } from "@/game/story";
 import type { SearchResult } from "@/game/hunt";
@@ -280,6 +281,7 @@ export function GameMap({
   huntAsked,
   openHunt = null,
   newcomer = false,
+  huntClock = null,
 }: {
   playerId: string;
   username: string;
@@ -297,6 +299,8 @@ export function GameMap({
   openHunt?: OpenHunt | null;
   /** Welcomed with coins at onboarding: the welcome tour, the first time on the map (on this device). */
   newcomer?: boolean;
+  /** The hunt's times, for its clock at the top (the joined hunt, or a live one to join). */
+  huntClock?: { startsAt: string; endsAt: string } | null;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false });
@@ -450,6 +454,24 @@ export function GameMap({
    * 20 Oct 2026: "I clicked open chest nothings happens") it comes back first and searches once it's ready.
    */
   const chestAsked = useRef(false);
+  const boardAsked = useRef(false);
+  /** Golden minutes (when they end, this device's clock), as the hunt card hears of them. */
+  const [goldenUntil, setGoldenUntil] = useState<number | null>(null);
+  useEffect(() => {
+    const golden = (e: Event) => setGoldenUntil((e as CustomEvent<number | null>).detail);
+    window.addEventListener("loota:golden", golden);
+    return () => window.removeEventListener("loota:golden", golden);
+  }, []);
+  /** 🏆 on the right: the hunt card's leaderboard (the card comes back first if it was put away). */
+  const openBoard = () => {
+    if (huntShown) {
+      window.dispatchEvent(new Event("loota:board"));
+      return;
+    }
+    boardAsked.current = true;
+    document.cookie = "loota_hidden_hunt=; path=/; max-age=0";
+    setHuntShown(true);
+  };
   const openChest = () => {
     if (huntShown) {
       window.dispatchEvent(new Event("loota:hunt-search"));
@@ -461,6 +483,10 @@ export function GameMap({
   };
   useEffect(() => {
     const ready = () => {
+      if (boardAsked.current) {
+        boardAsked.current = false;
+        window.dispatchEvent(new Event("loota:board"));
+      }
       if (!chestAsked.current) return;
       chestAsked.current = false;
       window.dispatchEvent(new Event("loota:hunt-search"));
@@ -7190,7 +7216,7 @@ export function GameMap({
     );
   }
 
-  const energyColour = hud.energy < 20 ? "bg-danger" : hud.energy < 50 ? "bg-gold" : "bg-[#1E9E62]";
+  const energyColour = hud.energy < 20 ? "#D93B3B" : hud.energy < 50 ? "#F4B41A" : "#1E9E62";
   /** A square icon button (top bar and the tools on the right). */
   const tool = "pointer-events-auto flex size-11 shrink-0 items-center justify-center rounded-xl";
   /** A small count on an icon button's corner. */
@@ -7221,14 +7247,40 @@ export function GameMap({
             <BackIcon />
             <LootaLogo height={32} priority />
           </Link>
-          <div className="pointer-events-auto flex h-11 min-w-0 flex-1 items-center gap-2 rounded-xl bg-ink px-3 sm:max-w-xs" aria-label={`Energy ${hud.energy} of 100`} title="Energy">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="#1E9E62" aria-hidden="true" className="shrink-0">
-              <path d="M13 2L4 14h7l-1 8 9-12h-7z" />
+          {/* Energy: a ring that empties (owner, 25 Oct 2026: smaller, a circle) */}
+          <div
+            className="pointer-events-auto relative flex size-11 shrink-0 items-center justify-center rounded-full bg-ink"
+            role="meter"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={hud.energy}
+            aria-label={`Energy ${hud.energy} of 100`}
+            title={`Energy ${hud.energy}`}
+          >
+            <svg viewBox="0 0 44 44" className="absolute inset-0 size-full -rotate-90" aria-hidden="true">
+              <circle cx="22" cy="22" r="18" fill="none" stroke="#29324A" strokeWidth="4" />
+              <circle
+                cx="22"
+                cy="22"
+                r="18"
+                fill="none"
+                stroke={energyColour}
+                strokeWidth="4"
+                strokeLinecap="round"
+                strokeDasharray={`${(2 * Math.PI * 18 * Math.max(0, Math.min(100, hud.energy))) / 100} ${2 * Math.PI * 18}`}
+                className="transition-[stroke-dasharray] duration-500"
+              />
             </svg>
-            <div className="h-2 flex-1 overflow-hidden rounded bg-line">
-              <div className={`h-full ${energyColour}`} style={{ width: `${hud.energy}%` }} />
-            </div>
-            <span className="w-7 text-right text-sm font-bold">{hud.energy}</span>
+            <span className="relative flex flex-col items-center leading-none">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill={energyColour} aria-hidden="true">
+                <path d="M13 2L4 14h7l-1 8 9-12h-7z" />
+              </svg>
+              <span className="text-[11px] font-extrabold">{hud.energy}</span>
+            </span>
+          </div>
+          {/* The hunt's clock, in the middle */}
+          <div className="flex min-w-0 flex-1 justify-center">
+            {huntClock && <HuntClock startsAt={huntClock.startsAt} endsAt={huntClock.endsAt} goldenUntil={goldenUntil} />}
           </div>
           <button
             type="button"
@@ -7777,6 +7829,11 @@ export function GameMap({
               <LampIcon />
               {hud.lamp.has && <span className={`absolute -right-1 -top-1 size-3 rounded-full ring-2 ring-ink ${hud.lamp.unseen ? "bg-ink" : "bg-gold"}`} aria-hidden="true" />}
             </button>
+            {huntId && (
+              <button type="button" data-tool="leaderboard" aria-label="Leaderboard" title="Leaderboard" onClick={openBoard} className={`${tool} bg-ink text-xl`}>
+                <span aria-hidden="true">🏆</span>
+              </button>
+            )}
           </nav>
         </div>
       </div>

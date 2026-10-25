@@ -51,11 +51,13 @@ const ANSWER_MS = 15_000;
 const CYCLE_MS = 75_000; // 15 s to answer, then a 60 s wait
 
 /** The riddle clock now, from the server's times: answering (s left), waiting (s left), locked or ready. */
-function clockNow(c: (RiddleClock & { skew: number }) | null, now: number) {
+function clockNow(c: (RiddleClock & { skew: number; at: number }) | null, now: number) {
   if (!c) return null;
   if (c.phase !== "answer" && c.phase !== "wait") return { phase: c.phase, left: 0 };
   const start = c.phase === "answer" ? Date.parse(c.endsAt) - ANSWER_MS : Date.parse(c.until) - CYCLE_MS;
-  const e = (((now + c.skew - start) % CYCLE_MS) + CYCLE_MS) % CYCLE_MS;
+  // The card's clock ticks once a second and can lag while the map loads: never older than the server's answer.
+  const since = Math.max(0, Math.max(now, c.at) + c.skew - start);
+  const e = since % CYCLE_MS;
   return e < ANSWER_MS ? { phase: "answer" as const, left: Math.ceil((ANSWER_MS - e) / 1000) } : { phase: "wait" as const, left: Math.ceil((CYCLE_MS - e) / 1000) };
 }
 
@@ -136,7 +138,7 @@ export function HuntPanel({
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [revealed, setRevealed] = useState<string | null>(null); // the riddle being revealed (the start of the hunt)
-  const [clock, setClock] = useState<(RiddleClock & { skew: number }) | null>(null);
+  const [clock, setClock] = useState<(RiddleClock & { skew: number; at: number }) | null>(null);
   const [locking, setLocking] = useState(false);
   const feedSince = useRef<string | null>(null);
   const [tip, setTip] = useState<HuntFeed["tip"]>(null);
@@ -212,6 +214,9 @@ export function HuntPanel({
     // "Open the chest" on the map: search right there (it starts the Key Trial).
     const openChest = () => void searchRef.current();
     window.addEventListener("loota:hunt-search", openChest);
+    // 🏆 on the map's right: the leaderboard, on the card.
+    const showBoard = () => void boardRef.current();
+    window.addEventListener("loota:board", showBoard);
     // The map may be waiting to open a chest: after this render's effects, once searchRef holds the search.
     const ready = window.setTimeout(() => window.dispatchEvent(new Event("loota:hunt-ready")), 0);
     return () => {
@@ -220,6 +225,7 @@ export function HuntPanel({
       window.clearInterval(timer);
       window.removeEventListener("loota:hunt-changed", changed);
       window.removeEventListener("loota:hunt-search", openChest);
+      window.removeEventListener("loota:board", showBoard);
     };
   }, [actions, huntId]);
 
@@ -279,6 +285,7 @@ export function HuntPanel({
         }
         if (keys) void refreshRef.current();
       }
+      window.dispatchEvent(new CustomEvent("loota:golden", { detail: f.golden ? Date.parse(f.golden) - skew.current : null }));
       if (f.golden && !wasGolden.current && !first) toast("✨ Golden minutes! For 10 minutes the detector reaches twice as far, and every key pays +50.");
       wasGolden.current = !!f.golden;
       if (f.tip) {
@@ -342,6 +349,14 @@ export function HuntPanel({
   useEffect(() => {
     searchRef.current = search;
   });
+  /** Open the card on its leaderboard (from 🏆 on the map's right). */
+  const boardRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => {
+    boardRef.current = async () => {
+      setOpen(true);
+      if (!board) await toggleBoard();
+    };
+  });
 
   async function search() {
     const map = actions.current;
@@ -390,7 +405,8 @@ export function HuntPanel({
       setClock(null);
       return;
     }
-    setClock({ ...r, skew: r.now ? Date.parse(r.now) - Date.now() : 0 });
+    const at = Date.now();
+    setClock({ ...r, skew: r.now ? Date.parse(r.now) - at : 0, at });
   }
   async function loadClock() {
     const { data } = await supabase.rpc("riddle_state", { p_hunt: huntId });
@@ -675,22 +691,6 @@ export function HuntPanel({
                 {state.place != null && state.place <= state.winners ? " You're a winner! The Loota team will contact you about your prize." : ""}
               </p>
             )}
-            {racing && feed && (() => {
-              const until = feed.golden ? Date.parse(feed.golden) - skew.current : null;
-              const next = feed.goldenNext ? Date.parse(feed.goldenNext) - skew.current : null;
-              const left = until ? Math.max(0, Math.round((until - now) / 1000)) : null;
-              const soon = next ? Math.round((next - now) / 1000) : null;
-              const mm = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-              void soon; // only while they're on (owner, 25 Oct 2026: a quieter card)
-              if (left) {
-                return (
-                  <p className="self-start rounded-full bg-[#3B2F0A] px-2.5 py-1 text-xs font-bold text-gold ring-1 ring-gold" aria-label="Golden minutes">
-                    ✨ Golden minutes · {mm(left)} · detector ×2, keys +50
-                  </p>
-                );
-              }
-              return null;
-            })()}
             {racing && tip && tip.key === state.keysHeld + 1 && (
               <p className="rounded-xl bg-[#14324A] p-2 text-xs font-bold text-paper" aria-label="A tip">
                 🧭 A tip: Key {tip.key}&apos;s area lies {tip.direction} of where you were, {tip.band}.

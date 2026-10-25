@@ -85,8 +85,9 @@ try {
 
   await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
   await wait(16000);
-  const golden = await text('[aria-label="Golden minutes"]');
-  check("golden minutes on the card", /Golden minutes · \d:\d\d · detector ×2/.test(golden ?? ""), golden);
+  // Golden minutes show in the hunt's clock at the top (owner, 25 Oct 2026), not on the card.
+  const golden = await page.evaluate(() => document.querySelector('[role="timer"]')?.getAttribute("aria-label") ?? null);
+  check("golden minutes in the clock at the top", /^✨ Golden \d+:\d\d/.test(golden ?? ""), golden);
   const tipLine = await text('[aria-label="A tip"]');
   check("a catch-up tip for the trailing hunter", /A tip: Key 1's area lies [a-z-]+ of where you were/.test(tipLine ?? ""), tipLine);
   check("…and its toast", (await page.evaluate(() => window.__toasts)).some((t) => /A tip for the chase/.test(t)));

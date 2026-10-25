@@ -69,6 +69,14 @@ try {
   check("…none of the old lines (No typing, Key Trial:, Prize:)", !/No typing|Key Trial:|Prize:/.test(text));
   check("…🏆 at the top", await page.evaluate(() => !!document.querySelector('section[aria-label="Hunt"] button[aria-label="Leaderboard"]')));
   check("no landmarks button", !(await page.evaluate(() => !!document.querySelector('[data-tool="landmarks"]'))));
+  const top = await page.evaluate(() => ({
+    clock: document.querySelector('[role="timer"]')?.getAttribute("aria-label") ?? null,
+    energy: document.querySelector('[role="meter"]')?.getAttribute("aria-label") ?? null,
+    board: !!document.querySelector('[data-tool="leaderboard"]'),
+  }));
+  check("the hunt's clock at the top: \"Ends in 59:00\"", /^Ends in (\d+m|\d+:\d\d)/.test(top.clock ?? ""), top.clock);
+  check("…energy as a ring", top.energy === "Energy 100 of 100", top.energy);
+  check("…and 🏆 among the tools on the right", top.board);
   const { data: hp0 } = await admin.from("hunt_players").select("riddle_n, riddle_at, guess_n").eq("hunt_id", huntId).eq("user_id", id).single();
   check("the server started the clock when the riddle showed", hp0.riddle_n === 1 && !!hp0.riddle_at && hp0.guess_n === null, JSON.stringify(hp0));
   await page.screenshot({ path: `${OUT}/clock-1-answer.png` });
@@ -111,10 +119,10 @@ try {
   check("missed the 15 seconds: \"Too slow!\" and the wait", /Too slow!/.test(text) && /Your next chance to answer in \d+s/.test(text), text);
   await page.screenshot({ path: `${OUT}/clock-3-wait.png` });
 
-  await page.evaluate(() => document.querySelector('section[aria-label="Hunt"] button[aria-label="Leaderboard"]')?.click());
+  await page.evaluate(() => document.querySelector('[data-tool="leaderboard"]')?.click());
   await wait(2000);
   text = (await card()) ?? "";
-  check("🏆 opens the leaderboard (with the prize)", /Prize: A golden mask/.test(text) && (await page.evaluate(() => !!document.querySelector('[aria-label="The leaderboard"]'))), text);
+  check("🏆 on the right opens the leaderboard (with the prize)", /Prize: A golden mask/.test(text) && (await page.evaluate(() => !!document.querySelector('[aria-label="The leaderboard"]'))), text);
   await page.screenshot({ path: `${OUT}/clock-4-board.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { Place } from "@/game/places";
 
 /** OpenStreetMap's search services ask every app to identify itself. */
@@ -41,6 +42,35 @@ async function nominatim(q: string, lng: number, lat: number): Promise<Place[]> 
   });
 }
 
+const PLACE_KIND: Record<string, string> = { fuel: "Petrol station", hospital: "Hospital", eat: "Place to eat", rest: "Park", tyres: "Vulcanizer", mechanic: "Mechanic" };
+
+/**
+ * Our own named places first, in a fraction of a second (owner, 25 Oct 2026: a riddle gets only 15 seconds to name
+ * its place): famous places (the old landmarks' list) and the places on our map whose names match.
+ */
+async function ours(q: string, lng: number, lat: number): Promise<Place[]> {
+  const like = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+  const db = createAdminClient();
+  const [famous, named] = await Promise.all([
+    db.from("landmarks").select("name, city, lng, lat").ilike("name", like).limit(4),
+    db.from("places").select("name, kind, lng, lat").ilike("name", like).limit(6),
+  ]);
+  const away = (p: { lng: number; lat: number }) => Math.hypot(p.lng - lng, p.lat - lat);
+  return [
+    ...(famous.data ?? []).sort((a, b) => away(a) - away(b)).map((l) => ({ name: l.name, detail: l.city, lng: l.lng, lat: l.lat })),
+    ...(named.data ?? []).sort((a, b) => away(a) - away(b)).slice(0, 3).map((pl) => ({ name: pl.name, detail: PLACE_KIND[pl.kind] ?? "", lng: pl.lng, lat: pl.lat })),
+  ];
+}
+
+/** OpenStreetMap's search: Photon, or Nominatim when Photon is down. */
+async function openStreetMap(q: string, lng: number, lat: number): Promise<Place[]> {
+  try {
+    return await photon(q, lng, lat);
+  } catch {
+    return nominatim(q, lng, lat);
+  }
+}
+
 /**
  * GET /api/geocode?q=…&lng=…&lat=…: places and addresses matching the search,
  * nearest the player first. Signed-in players only.
@@ -61,21 +91,17 @@ export async function GET(request: NextRequest) {
   const cached = recent.get(key);
   if (cached && Date.now() - cached.at < KEEP_MS) return Response.json({ places: cached.places });
 
-  let places: Place[];
-  try {
-    places = await photon(q, lng, lat);
-  } catch {
-    try {
-      places = await nominatim(q, lng, lat);
-    } catch {
-      return Response.json({ error: "Place search is unavailable right now" }, { status: 502 });
-    }
-  }
+  // Ours and OpenStreetMap's at once; when ours already has some, OpenStreetMap gets only a moment more.
+  const world = openStreetMap(q, lng, lat).catch(() => null);
+  const mine = await ours(q, lng, lat).catch(() => [] as Place[]);
+  const theirs = mine.length ? await Promise.race([world, new Promise<null>((r) => setTimeout(() => r(null), 1200))]) : await world;
+  if (!mine.length && !theirs) return Response.json({ error: "Place search is unavailable right now" }, { status: 502 });
+  let places: Place[] = [...mine, ...(theirs ?? [])].slice(0, 8);
   // The same place is often mapped more than once (a building, its area, its entrance): keep the first.
   places = places.filter(
     (p, i) => !places.slice(0, i).some((q) => q.name === p.name && Math.abs(q.lng - p.lng) < 0.003 && Math.abs(q.lat - p.lat) < 0.003),
   );
   if (recent.size > 500) recent.clear();
-  recent.set(key, { at: Date.now(), places });
+  if (theirs) recent.set(key, { at: Date.now(), places }); // a short answer (OpenStreetMap too slow) isn't kept
   return Response.json({ places });
 }

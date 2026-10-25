@@ -57,7 +57,7 @@ export function PlaceSearch({
       } catch {
         if (!controller.signal.aborted) setStatus("error");
       }
-    }, 400);
+    }, 250);
     return () => {
       window.clearTimeout(timer);
       controller.abort();

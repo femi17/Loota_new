@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { LootaLogo } from "@/components/Logo";
 import { createClient } from "@/lib/supabase/client";
 import {
-  CATEGORY_NAMES,
   ordinal,
   type AnswerResult,
   type BoardRow,
@@ -23,7 +22,6 @@ import type { Place } from "@/game/places";
 import { PlaceSearch } from "./PlaceSearch";
 import { PuzzleTrial } from "./puzzles/PuzzleTrial";
 import { cue } from "@/game/sound";
-import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import { Confetti } from "./Confetti";
 import { StoryScene } from "./StoryScene";
 import { defaultBeat, taunt, type StoryBeat, type StoryLine } from "@/game/story";
@@ -75,14 +73,6 @@ function newsOf(e: FeedEvent) {
   if (e.kind === "first") return `🥇 ${e.who} was FIRST to Key ${e.key}! +100 coins`;
   if (e.kind === "showdown") return `⚔️ ${e.who} won a showdown at Key ${e.key}${e.text ? ` against ${e.text}` : ""}!`;
   return `👋 ${e.who} joined the hunt`;
-}
-
-/** What the next key's trial is, for the card: a puzzle (named, if the key is set to one) or a quiz's category. */
-function trialLabel(s: HuntState) {
-  const kind = s.trialKind ?? "quiz";
-  if (kind === "quiz") return s.category ? `questions, ${CATEGORY_NAMES[s.category]}` : "questions";
-  if (kind === "puzzle") return "a puzzle";
-  return `a puzzle: ${PUZZLE_NAMES[kind].name}`;
 }
 
 type Ending =
@@ -708,26 +698,14 @@ export function HuntPanel({
               </p>
             )}
             {board && (
-              <p className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl bg-ink-2 px-2.5 py-2 text-xs text-muted">
-                <span>
-                  🏆 Prize: <b className="text-paper">{state.prize}</b>
-                </span>
-                {racing && feed?.rank != null && (
-                  <span>
-                    You: <b className="text-paper">{ordinal(feed.rank)} of {feed.hunters}</b>
-                  </span>
-                )}
-                {racing && <span>Next Key Trial: {trialLabel(state)}</span>}
-              </p>
-            )}
-            {board && (
               <ol className="flex flex-col gap-1" aria-label="The leaderboard">
                 {board.length === 0 && <li className="text-muted">No hunters yet.</li>}
                 {board.map((row) => (
-                  <li key={row.rank} className={`flex items-center gap-2 rounded-lg px-2 py-1 ${row.me ? "bg-ink-2 font-bold" : ""}`}>
-                    <span className="w-6 text-muted">{row.rank}</span>
-                    <span className="flex-1 truncate">{row.username}</span>
-                    <span>{row.place ? `Finished ${ordinal(row.place)}` : `${row.keysHeld} key${row.keysHeld === 1 ? "" : "s"}`}</span>
+                  <li key={row.rank} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${row.me ? "bg-ink-2 font-bold" : ""}`}>
+                    <span className="min-w-0 flex-1 truncate">{row.username}</span>
+                    <span className="shrink-0 font-bold text-gold" aria-label={`${row.keysHeld} key${row.keysHeld === 1 ? "" : "s"}`}>
+                      🗝 {row.keysHeld}
+                    </span>
                   </li>
                 ))}
               </ol>

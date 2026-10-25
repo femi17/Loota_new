@@ -122,7 +122,9 @@ try {
   await page.evaluate(() => document.querySelector('[data-tool="leaderboard"]')?.click());
   await wait(2000);
   text = (await card()) ?? "";
-  check("🏆 on the right opens the leaderboard (with the prize)", /Prize: A golden mask/.test(text) && (await page.evaluate(() => !!document.querySelector('[aria-label="The leaderboard"]'))), text);
+  // Only the hunters and their keys (owner, 25 Oct 2026).
+  const rows = await page.evaluate(() => [...document.querySelectorAll('[aria-label="The leaderboard"] li')].map((li) => li.innerText.split("\n").join(" | ")));
+  check("🏆 on the right opens the leaderboard: hunters and their keys only", rows.length === 1 && /^Clock\d+ \| 🗝 0$/.test(rows[0] ?? "") && !/Prize|Next Key Trial/.test(text), JSON.stringify(rows));
   await page.screenshot({ path: `${OUT}/clock-4-board.png` });
   // The clock ticks (owner, 25 Oct 2026: "It has to show a clock counting down"), even with days to go.
   await admin.from("hunts").update({ ends_at: new Date(Date.now() + (2 * 86400 + 3 * 3600) * 1000).toISOString() }).eq("id", huntId);

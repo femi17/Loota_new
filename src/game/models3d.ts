@@ -679,6 +679,45 @@ export function makeTaxi() {
   return group;
 }
 
+/**
+ * A police patrol car (owner, 25 Oct 2026: police chases): white with a blue stripe and a light bar whose red and blue
+ * lamps `flash(on)` swaps.
+ */
+export function makePoliceCar() {
+  const group = new THREE.Group();
+  const tyre = (x: number, z: number) => {
+    const w = mesh(V_G.carTyre, "#1D1D1D", x, 0.45, z);
+    w.rotation.z = Math.PI / 2;
+    return w;
+  };
+  const screen = mesh(V_G.windscreen, "#9FD8FF", 0, 1.25, 0.6);
+  screen.rotation.x = -0.4;
+  const red = new THREE.MeshBasicMaterial({ color: "#FF2A2A" });
+  const blue = new THREE.MeshBasicMaterial({ color: "#1A1A66" });
+  const lamp = new THREE.BoxGeometry(0.42, 0.18, 0.3);
+  const redLamp = new THREE.Mesh(lamp, red);
+  redLamp.position.set(-0.24, 1.62, -0.3);
+  const blueLamp = new THREE.Mesh(lamp, blue);
+  blueLamp.position.set(0.24, 1.62, -0.3);
+  group.add(
+    mesh(V_G.carBody, "#F4F1EA", 0, 0.6, 0),
+    mesh(new THREE.BoxGeometry(1.72, 0.22, 3.62), "#1E3A6E", 0, 0.7, 0),
+    mesh(V_G.carSeat, DARK, 0, 1.1, -0.5),
+    screen,
+    mesh(new THREE.BoxGeometry(1.0, 0.1, 0.36), "#222222", 0, 1.5, -0.3),
+    redLamp,
+    blueLamp,
+    tyre(-0.9, -1.1), tyre(0.9, -1.1), tyre(-0.9, 1.2), tyre(0.9, 1.2),
+  );
+  return {
+    group,
+    flash(on: boolean) {
+      red.color.set(on ? "#FF2A2A" : "#551010");
+      blue.color.set(on ? "#1A1A66" : "#3D7BFF");
+    },
+  };
+}
+
 /** A landmark on the map: a stone plinth with a gold star on a column. */
 /**
  * A hunt key's chest (the metal detector found it): wood with gold bands, the lid ajar and gold light inside, a

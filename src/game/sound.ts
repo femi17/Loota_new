@@ -89,7 +89,7 @@ function drum(c: Ctx, at: number, pitch = 200, gain = 0.35) {
 
 export type Cue =
   | "tap" | "heartbeat" | "chest" | "tick" | "wrong" | "right" | "solved" | "key" | "relay" | "failed"
-  | "coin" | "countdown" | "go" | "thunder" | "news" | "rival" | "stop" | "trap" | "beep";
+  | "coin" | "countdown" | "go" | "thunder" | "news" | "rival" | "stop" | "trap" | "beep" | "siren";
 
 const BUZZ: Partial<Record<Cue, number | number[]>> = {
   heartbeat: [18, 90, 28],
@@ -104,6 +104,7 @@ const BUZZ: Partial<Record<Cue, number | number[]>> = {
   stop: [60],
   trap: [40, 40, 40, 40, 250],
   beep: [12],
+  siren: [70, 60, 70],
 };
 
 /** Play a moment's sound (and buzz), if sound is on. `level` (0–1): how strong (the heartbeat) or how close (the beep). */
@@ -192,6 +193,11 @@ export function cue(name: Cue, level = 1) {
       tone(c, 494, 0.22, { type: "sawtooth", gain: 0.07 });
       tone(c, 392, 0.3, { type: "sawtooth", gain: 0.07, at: 0.28 });
       tone(c, 494, 0.3, { type: "sawtooth", gain: 0.07, at: 0.28 });
+      break;
+    case "siren":
+      // A police siren: a wail up and down.
+      tone(c, 640, 0.42, { type: "triangle", to: 980, gain: 0.07 });
+      tone(c, 980, 0.42, { type: "triangle", to: 640, gain: 0.07, at: 0.42 });
       break;
     case "beep":
       // The metal detector: a short electronic beep, higher as the key gets closer.

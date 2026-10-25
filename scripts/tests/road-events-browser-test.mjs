@@ -1,6 +1,6 @@
 // Road events in a hunt (phone): riding along, the game stops the hunter for a police checkpoint (answered wrong: a
 // 20-coin fine), a stranded traveller (helped: which way the key's area is) and a street seller's riddle (answered
-// right: 25 coins). Each is planted, then met after 45 s on the move. The hunt and the test player are deleted.
+// right: 25 coins); then a checkpoint ridden past: the police chase, and standing still they catch you (50 coins). Each is planted, then met after 45 s on the move. The hunt and the test player are deleted.
 //   SHOTS=<folder> node scripts/tests/road-events-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -120,21 +120,37 @@ try {
   await clickWhenThere("Go on");
   await wait(1000);
 
-  // ---- Another checkpoint: ridden past without stopping (owner, 22 Oct 2026): got away with it, or caught and fined 50
+  // ---- Another checkpoint, ridden past (owner, 25 Oct 2026: "if you escape police, they should give you a chase"): the
+  // police come after you; standing still, they catch you: 50 coins and a wait
   await plant("checkpoint", "Officer Bello", { prompt: "What does a red traffic light mean?", choices: ["Go faster", "Stop", "Turn left only"], answer: 1 });
   await rideUntilStopped();
+  await page.keyboard.up("ArrowUp");
   const last = await coins();
   check("a checkpoint offers to ride on without stopping", await clickWhenThere("without stopping"));
-  await wait(2500);
-  const past = (await scene()) ?? "";
-  const got = await coins();
-  check(
-    "…got away with it, or caught: a 50-coin fine",
-    (/got away with it/.test(past) && got === last) || (/that's 50 coins/.test(past) && got === last - 50),
-    past.slice(-160),
-  );
-  await shot("4-ride-on");
-  await clickWhenThere("Go on");
+  let shout = null;
+  for (let i = 0; i < 16 && !/STOP/.test(shout ?? ""); i++) {
+    await wait(150);
+    shout = (await scene()) ?? shout;
+  }
+  check("…\"HEY! STOP!\": the police give chase", /STOP/.test(shout ?? ""), (shout ?? "").slice(-120));
+  let chip = null;
+  for (let i = 0; i < 20 && !chip; i++) {
+    await wait(500);
+    chip = await page.evaluate(() => document.querySelector('[role="status"][aria-label="Police chase"]')?.textContent ?? null);
+  }
+  check("…the chase: \"Police … m behind\", the edges flashing red and blue", /Police \d+ m behind/.test(chip ?? "") && (await page.evaluate(() => !!document.querySelector(".loota-police"))), chip);
+  await shot("4-chase");
+  const cuesNow = await page.evaluate(() => window.__lootaCues ?? []);
+  check("…the siren", cuesNow.includes("siren"));
+  // Stand still: they close in.
+  let caught = false;
+  for (let i = 0; i < 30 && !caught; i++) {
+    await wait(500);
+    caught = (await coins()) === last - 50;
+  }
+  check("standing still, caught: 50 coins", caught, `${last} → ${await coins()}`);
+  check("…the chase is over", !(await page.evaluate(() => !!document.querySelector('[aria-label="Police chase"]'))));
+  await shot("5-caught");
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

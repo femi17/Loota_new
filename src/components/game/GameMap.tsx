@@ -159,6 +159,8 @@ type Hud = {
   repairHere: RepairJob | null;
   /** The metal detector in a hunt (key_pulse): in the key's area, how hot (0–1), warmer or colder; the chest within reach. */
   heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean } | null;
+  /** The police on your tail (owner, 25 Oct 2026): how far behind, and seconds left until you've lost them. */
+  chase: { gap: number; left: number; chaser: "officer" | "patrol" } | null;
   /**
    * The Djinn's Wonders at work (design doc 7.7): seconds left frozen by an Hourglass, in someone's sandstorm,
    * and with your Eye open (the hunters it sees: bearing relative to the view); under your Cloak; mirrored.
@@ -410,6 +412,7 @@ export function GameMap({
     repairHere: null,
     rush: null,
     heat: null,
+    chase: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [detector, setDetector] = useState(hasDetector);
@@ -6792,6 +6795,160 @@ export function GameMap({
       function roadDone() {
         sceneHold = false;
         lastRoadRoll = performance.now();
+        if (pendingChase) {
+          const c = pendingChase;
+          pendingChase = null;
+          startChase(c.event, c.chase);
+        }
+      }
+
+      // ---- A police chase (owner, 25 Oct 2026: "if you escape police, they should give you a chase") ----
+      // The police follow the very road the hunter takes (the trail behind them), at their own speed: an officer on
+      // foot after a walker, a patrol car after a rider. Within a few metres: caught. A long enough lead, or holding
+      // out to the end: lost them. The server settles it (police_chase_end).
+      type ChaseSpec = NonNullable<RoadEventResult["chase"]>;
+      let pendingChase: { event: number; chase: ChaseSpec } | null = null;
+      /** The road behind the hunter: where they've been, with the distance travelled (the police follow it). */
+      let trail: { lng: number; lat: number; d: number }[] = [];
+      let chase: {
+        event: number;
+        chaser: "officer" | "patrol";
+        speed: number; // m/s
+        loseM: number;
+        until: number; // performance.now() time
+        policeD: number;
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+        avatar: ReturnType<typeof models.buildAvatar> | null;
+        car: ReturnType<typeof models.makePoliceCar> | null;
+        lastSiren: number;
+        lastHud: number;
+        over: boolean;
+      } | null = null;
+
+      function trailTick() {
+        const last = trail[trail.length - 1];
+        const here = traveller.pos;
+        if (!last) {
+          trail.push({ lng: here.lng, lat: here.lat, d: 0 });
+          return;
+        }
+        const step = geo.distanceM([last.lng, last.lat], [here.lng, here.lat]);
+        if (step < 2) return;
+        if (step > 150) {
+          trail = [{ lng: here.lng, lat: here.lat, d: last.d + step }]; // jumped (thrown, a trip): a fresh trail
+          return;
+        }
+        trail.push({ lng: here.lng, lat: here.lat, d: last.d + step });
+        // Keep the last ~500 m (and never what's still ahead of the police).
+        const keepFrom = Math.min(last.d - 500, chase ? chase.policeD - 20 : Infinity);
+        while (trail.length > 2 && trail[1].d < keepFrom) trail.shift();
+      }
+
+      /** A point on the trail, `d` metres along it (its start if it's further back). */
+      function trailAt(d: number) {
+        if (d <= trail[0].d) return trail[0];
+        for (let i = 1; i < trail.length; i++) {
+          const a = trail[i - 1], b = trail[i];
+          if (d <= b.d) {
+            const f = (d - a.d) / (b.d - a.d || 1);
+            return { lng: a.lng + (b.lng - a.lng) * f, lat: a.lat + (b.lat - a.lat) * f, d };
+          }
+        }
+        return trail[trail.length - 1];
+      }
+
+      function startChase(event: number, spec: ChaseSpec) {
+        if (chase) return;
+        if (!trail.length) trailTick();
+        const playerD = trail[trail.length - 1].d;
+        const policeD = Math.max(trail[0].d, playerD - spec.gapM);
+        const at = trailAt(policeD);
+        let avatar: ReturnType<typeof models.buildAvatar> | null = null;
+        let car: ReturnType<typeof models.makePoliceCar> | null = null;
+        let object: import("three").Object3D;
+        if (spec.chaser === "officer") {
+          avatar = models.buildAvatar(OFFICER);
+          object = avatar.root;
+        } else {
+          car = models.makePoliceCar();
+          object = car.group;
+        }
+        const entity = layer.add({ object, lng: at.lng, lat: at.lat, heading: traveller.heading });
+        const now = performance.now();
+        chase = {
+          event,
+          chaser: spec.chaser,
+          speed: spec.kmh / 3.6,
+          loseM: spec.loseM,
+          until: now + spec.seconds * 1000,
+          policeD,
+          entity,
+          avatar,
+          car,
+          lastSiren: 0,
+          lastHud: 0,
+          over: false,
+        };
+        say(spec.chaser === "officer" ? "🚨 An officer is running after you! Sprint, and don't stop!" : "🚨 The police are after you! Keep moving: a red light or a jam and they'll catch you.", true);
+      }
+
+      function chaseTick(now: number, dt: number, t: number) {
+        trailTick();
+        if (!chase || chase.over) return;
+        const c = chase;
+        const playerD = trail[trail.length - 1].d;
+        const before = trailAt(c.policeD);
+        c.policeD = Math.min(playerD, c.policeD + c.speed * dt);
+        const at = trailAt(c.policeD);
+        const ahead = trailAt(c.policeD + 3);
+        c.entity.lng = at.lng;
+        c.entity.lat = at.lat;
+        if (ahead.lng !== at.lng || ahead.lat !== at.lat) c.entity.heading = geo.headingOf([at.lng, at.lat], [ahead.lng, ahead.lat]);
+        if (c.avatar) {
+          const moved = geo.distanceM([before.lng, before.lat], [at.lng, at.lat]);
+          models.animateAvatar(c.avatar, { mode: "walk", phase: "idle", moving: moved > 0.01 ? 1 : 0, distance: moved / layer.enlargement() }, dt, t);
+        }
+        c.car?.flash(Math.floor(t * 4) % 2 === 0);
+        if (now - c.lastSiren > 900) {
+          c.lastSiren = now;
+          cue("siren");
+        }
+        const gap = playerD - c.policeD;
+        const left = Math.max(0, Math.ceil((c.until - now) / 1000));
+        if (now - c.lastHud > 200) {
+          c.lastHud = now;
+          setHud((h) => ({ ...h, chase: { gap: Math.round(gap), left, chaser: c.chaser } }));
+        }
+        if (gap <= (c.chaser === "patrol" ? 10 : 4)) void endChase(true);
+        else if (gap >= c.loseM || now >= c.until) void endChase(false);
+      }
+
+      async function endChase(caught: boolean) {
+        const c = chase;
+        if (!c || c.over) return;
+        c.over = true;
+        setHud((h) => ({ ...h, chase: null }));
+        if (caught) {
+          traveller.v = 0;
+          stuckUntil = Math.max(stuckUntil, performance.now() + 60_000);
+          cue("stop");
+        } else {
+          cue("solved");
+        }
+        const { data } = await supabase.rpc("police_chase_end", { p_event: c.event, p_caught: caught });
+        const r = data as { ok: boolean; fine?: number; balance?: number; holdS?: number } | null;
+        if (r?.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
+        if (caught) {
+          if (r?.holdS) stuckUntil = Math.max(stuckUntil, performance.now() + r.holdS * 1000);
+          say(`🚨 Caught! "Running a checkpoint, eh?" That's ${r?.fine ?? 0} coins, and you wait 60 s while it's written up.`, true);
+        } else {
+          say("🏁 You lost them! No fine this time.", true);
+        }
+        // The police stay a moment (beside you if caught), then go.
+        window.setTimeout(() => {
+          layer.remove(c.entity);
+          if (chase === c) chase = null;
+        }, caught ? 6000 : 1500);
       }
       setRoadActions({
         answer: async (e, choice) => {
@@ -6801,6 +6958,7 @@ export function GameMap({
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
           if (r.holdS) stuckUntil = Math.max(stuckUntil, performance.now() + r.holdS * 1000);
+          if (r.outcome === "chase" && r.chase) pendingChase = { event: e.id, chase: r.chase }; // starts as the scene closes
           if (r.hint) say(`🧭 Key ${r.hint.key}'s area: ${r.hint.direction} of where you met ${e.npc}, ${r.hint.band} away.`, true);
           if (r.gift && r.gift.kind !== "coins") {
             countRelics(); // a relic, a tyre kit
@@ -7068,6 +7226,7 @@ export function GameMap({
         pocketTick(now);
         pulseTick(now, t);
         tiredTick(now);
+        chaseTick(now, dt, t);
         void roadTick(now);
 
         if (now - lastHud > 100) {
@@ -8196,6 +8355,17 @@ export function GameMap({
         </div>
       )}
       {trapFlash && <div className="loota-trap-flash pointer-events-none absolute inset-0 z-20" aria-hidden="true" />}
+      {hud.chase && (
+        <>
+          <div className="loota-police pointer-events-none absolute inset-0 z-10" aria-hidden="true" />
+          <div className="pointer-events-none absolute inset-x-0 top-[124px] z-20 flex justify-center" role="status" aria-label="Police chase">
+            <span className="flex items-center gap-2 rounded-full bg-ink/95 px-4 py-1.5 text-sm font-extrabold text-paper ring-2 ring-[#3D7BFF]">
+              🚨 {hud.chase.chaser === "officer" ? "Officer" : "Police"} {hud.chase.gap} m behind
+              <span className="tabular-nums text-gold">· {hud.chase.left}s</span>
+            </span>
+          </div>
+        </>
+      )}
       {trapStory && (
         <StoryScene
           lines={trapStory.lines}

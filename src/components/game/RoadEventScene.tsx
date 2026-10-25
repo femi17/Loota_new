@@ -21,8 +21,10 @@ export type RoadEvent = {
 };
 
 export type RoadEventResult = {
-  /** "escaped" / "caught": rode past a checkpoint and got away with it, or didn't. */
-  outcome: "passed" | "fined" | "helped" | "declined" | "won" | "lost" | "escaped" | "caught";
+  /** "chase": rode past a checkpoint, and the police come after you (owner, 25 Oct 2026). */
+  outcome: "passed" | "fined" | "helped" | "declined" | "won" | "lost" | "chase";
+  /** The police chase: who comes after you, how fast, from how far behind, and what it takes to lose them. */
+  chase?: { chaser: "officer" | "patrol"; kmh: number; gapM: number; loseM: number; seconds: number } | null;
   correct: string | null;
   fine: number;
   reward: number;
@@ -145,11 +147,12 @@ export function RoadEventScene({
       return;
     }
     const mine = { who: "you" as const, text: said };
-    cue(r.outcome === "passed" || r.outcome === "won" || r.outcome === "helped" || r.outcome === "escaped" ? "right" : r.outcome === "declined" ? "tap" : "wrong");
-    if (r.outcome === "escaped") say(mine, { who: "them", text: "Hey! HEY! Come back here!… (You got away with it this time.)" });
-    else if (r.outcome === "caught")
-      say(mine, { who: "them", text: `Where do you think you're going? Pull over! Running a checkpoint: that's ${r.fine} coins, and you'll wait while I write it up.` });
-    else if (r.outcome === "passed") say(mine, { who: "them", text: "Correct! Everything is in order. Drive safely." });
+    cue(r.outcome === "passed" || r.outcome === "won" || r.outcome === "helped" ? "right" : r.outcome === "chase" ? "siren" : r.outcome === "declined" ? "tap" : "wrong");
+    if (r.outcome === "chase") {
+      // The police give chase: off the scene and onto the road at once.
+      say(mine, { who: "them", text: vehicle ? "HEY! STOP! … (Sirens wail. They're coming after you!)" : "Oi! You! STOP there! … (He's running after you!)" });
+      window.setTimeout(onClose, 2600);
+    } else if (r.outcome === "passed") say(mine, { who: "them", text: "Correct! Everything is in order. Drive safely." });
     else if (r.outcome === "fined" && (event.missing ?? []).length)
       say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Get your papers sorted at the vehicle panel before I see you again, o.` });
     else if (r.outcome === "fined" && choice === -2) say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Wait here while I write your receipt.` });

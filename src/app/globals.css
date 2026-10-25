@@ -83,6 +83,10 @@ body {
 @keyframes loota-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
 .loota-trap-flash { box-shadow: inset 0 0 120px 40px rgba(214, 40, 40, 0.75); animation: loota-trap 1.4s ease-out forwards; }
 @keyframes loota-trap { from { opacity: 1; } to { opacity: 0; } }
+/* Dizzy from the Masquerade's trap chest: the chip sways about. */
+.loota-dizzy > span { display: inline-block; animation: loota-dizzy 1.2s ease-in-out infinite; }
+@keyframes loota-dizzy { 0%, 100% { transform: rotate(-6deg) translateX(-6px); } 50% { transform: rotate(6deg) translateX(6px); } }
+@media (prefers-reduced-motion: reduce) { .loota-dizzy > span { animation: none; } }
 @media (prefers-reduced-motion: reduce) {
   .loota-whirlwind-screen, .loota-whirlwind-screen > span, .loota-whirlwind { animation: none; }
 }

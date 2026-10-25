@@ -8,7 +8,7 @@ import { getPlayer } from "@/lib/player";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
 import { KEY_SCENES, KEY_SCENE_INFO, isKeyScene } from "@/game/keyScenes";
-import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setKeyTrial, setPublished, summonDjinn } from "./actions";
+import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setKeyTrap, setKeyTrial, setPublished, summonDjinn } from "./actions";
 import { RiddleFields } from "./RiddleFields";
 import { StoryEditor } from "./StoryEditor";
 
@@ -65,6 +65,9 @@ type KeyRow = {
   spot_lng: number;
   spot_lat: number;
   scene: string;
+  /** The Masquerade's decoy chest, if the key has one. */
+  trap_lng: number | null;
+  trap_lat: number | null;
 };
 type HuntRow = {
   id: string;
@@ -264,6 +267,26 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                       {k.spot_lat.toFixed(5)}, {k.spot_lng.toFixed(5)}
                     </a>
                   </p>
+                  {!k.relay && (
+                    <form action={setKeyTrap} className="mt-2 flex flex-wrap items-center gap-2">
+                      <input type="hidden" name="hunt" value={h.id} />
+                      <input type="hidden" name="n" value={k.n} />
+                      <input type="hidden" name="trap" value={k.trap_lng == null ? "add" : "remove"} />
+                      {k.trap_lng != null && k.trap_lat != null ? (
+                        <span className="text-xs text-muted">
+                          🎭 Trap chest at{" "}
+                          <a className="text-gold underline" href={`https://www.google.com/maps?q=${k.trap_lat},${k.trap_lng}`} target="_blank" rel="noreferrer">
+                            {k.trap_lat.toFixed(5)}, {k.trap_lng.toFixed(5)}
+                          </a>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted">🎭 No trap chest: the Masquerade could plant a decoy 180–280 m away (25 coins and 15 s dizzy for whoever opens it).</span>
+                      )}
+                      <button type="submit" className="h-9 rounded-lg border border-line px-3 text-xs font-bold">
+                        {k.trap_lng == null ? "Add a trap chest" : "Remove the trap"}
+                      </button>
+                    </form>
+                  )}
                 </li>
               ))}
               {!keys.length && <li className="text-sm text-muted">No keys yet.</li>}

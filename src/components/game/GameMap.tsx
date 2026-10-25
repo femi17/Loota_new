@@ -31,6 +31,8 @@ import type { RoadGameResult } from "./RoadGames";
 import { BagPanel } from "./BagPanel";
 import { VehiclePanel, type OwnedVehicle } from "./VehiclePanel";
 import { HuntPanel, type HuntActions } from "./HuntPanel";
+import { StoryScene } from "./StoryScene";
+import { trapBeat, type StoryLine } from "@/game/story";
 import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
@@ -158,7 +160,7 @@ type Hud = {
   /** At a repair shop the player's vehicle is booked into: the "Enter" button. */
   repairHere: RepairJob | null;
   /** The metal detector in a hunt (key_pulse): in the key's area, how hot (0–1), warmer or colder; the chest within reach. */
-  heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean } | null;
+  heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean } | null;
   /**
    * The Djinn's Wonders at work (design doc 7.7): seconds left frozen by an Hourglass, in someone's sandstorm,
    * and with your Eye open (the hunters it sees: bearing relative to the view); under your Cloak; mirrored.
@@ -334,6 +336,10 @@ export function GameMap({
     useWonder: (id: string, to?: LngLat) => Promise<string>;
     /** Attack the dome the hunter is standing at the edge of. */
     attackDome: () => void;
+    /** Open the chest where the hunter stands when it's the Masquerade's decoy. */
+    springTrap: () => void;
+    /** Dizzy from the trap (after the Masquerade's scene): held still for `seconds`. */
+    dizzy: (seconds: number) => void;
     follow: () => void;
     turn: (dir: -1 | 1) => void;
     /** False when not allowed (a motor vehicle on a one-way street). */
@@ -520,6 +526,9 @@ export function GameMap({
   const [whirlwind, setWhirlwind] = useState(false);
   /** A trap just sprang: a red flash. */
   const [trapFlash, setTrapFlash] = useState(false);
+  /** The Masquerade's trap chest sprang: his lines, then dizzy a while (the time it ends). */
+  const [trapStory, setTrapStory] = useState<{ lines: StoryLine[]; dizzyS: number } | null>(null);
+  const [dizzyUntil, setDizzyUntil] = useState<number | null>(null);
   /** News of a Wonder (everyone hears of every use); `flash`: a Cataclysm hit you. */
   const [wonderBanner, setWonderBanner] = useState<{ n: number; icon: string; text: string; hit: boolean; flash: boolean } | null>(null);
   /** A strike on screen: the thunder flash, the bolt and the item spinning off (see strike() in the map's code). */
@@ -1856,6 +1865,13 @@ export function GameMap({
         useItem: (item) => applyItem(item),
         useWonder: (id, to) => useWonder(id, to),
         attackDome: () => void attackDome(),
+        springTrap: () => void springTrap(),
+        dizzy(seconds) {
+          stuckUntil = performance.now() + seconds * 1000;
+          traveller.v = 0;
+          setDizzyUntil(Date.now() + seconds * 1000);
+          window.setTimeout(() => setDizzyUntil(null), seconds * 1000);
+        },
         turn(dir) {
           // Standing on a junction, or pressed just after going through one: take the turn there.
           if (network && onRoad) {
@@ -6625,19 +6641,23 @@ export function GameMap({
       void refreshLandmarks();
 
       // ---- The metal detector (a live hunt): feel for the key's heat; its chest rises out of the ground within 60 m ----
-      type Pulse = { ok: boolean; reason?: string; inArea?: boolean; key?: number; heat?: number; spot?: (LngLat & { scene?: string }) | null };
+      type Pulse = { ok: boolean; reason?: string; inArea?: boolean; key?: number; heat?: number; spot?: (LngLat & { scene?: string }) | null; trap?: LngLat | null };
       let pulseAt = -Infinity;
       let pulseEvery = 6000;
       let pulsing = false;
       let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady" } | null = null;
       let chest: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number; scene: KeyScene } | null = null;
       let chestHere = false;
+      // The Masquerade's decoy (owner, 25 Oct 2026): it rises just like the key's chest; the heat is the tell.
+      let trap: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number } | null = null;
+      let trapHere = false;
       let lastBeat = 0;
       const pulseSoon = () => {
         pulseAt = -Infinity;
       };
       const keyWon = () => {
         hideChest();
+        hideTrap();
         heat = null;
         showHeat();
         setKeyFly(Date.now());
@@ -6648,7 +6668,7 @@ export function GameMap({
       window.addEventListener("loota:key-earned", keyWon);
 
       function showHeat() {
-        const view: Hud["heat"] = heat ? { level: heat.level, trend: heat.trend, chest: chestHere } : null;
+        const view: Hud["heat"] = heat ? { level: heat.level, trend: heat.trend, chest: chestHere, trap: trapHere && !chestHere } : null;
         setHud((h) => (JSON.stringify(h.heat) === JSON.stringify(view) ? h : { ...h, heat: view }));
       }
 
@@ -6670,6 +6690,49 @@ export function GameMap({
         chestHere = false;
       }
 
+      function showTrap(spot: LngLat, key: number) {
+        if (trap && trap.key === key) return;
+        hideTrap();
+        const model = models.makeChest();
+        model.body.position.y = -1.6;
+        trap = { entity: layer.add({ object: model.group, lng: spot.lng, lat: spot.lat, heading: 0 }), body: model.body, ring: model.ring, spot, key, born: performance.now() };
+        say("✨ Something glints in the ground… a chest rises! Get to it.", true); // the same words: the heat is the tell
+        cue("chest");
+      }
+
+      function hideTrap() {
+        if (!trap) return;
+        layer.remove(trap.entity);
+        trap = null;
+        trapHere = false;
+      }
+
+      /** "Open the chest" at the decoy: the Masquerade springs out, takes his coins and spins the hunter about. */
+      async function springTrap() {
+        if (!huntId || !trap) return;
+        traveller.v = 0;
+        const key = trap.key;
+        const { data } = await supabase.rpc("spring_trap", { p_hunt: huntId, p_lng: traveller.pos.lng, p_lat: traveller.pos.lat, p_mode: traveller.mode });
+        const r = data as { ok: boolean; reason?: string; lost?: number; balance?: number; dizzyS?: number } | null;
+        if (disposed || !r) return;
+        if (!r.ok) {
+          if (r.reason === "no_trap") hideTrap();
+          else say(r.reason === "far" ? "Get closer to the chest." : "The chest won't open. Try again.", true);
+          return;
+        }
+        saved = { ...traveller.pos };
+        hideTrap();
+        showHeat();
+        const dizzyS = r.dizzyS ?? 15;
+        stuckUntil = Infinity; // held through the Masquerade's scene, then dizzy (actions.dizzy)
+        if (r.balance != null) setHud((h) => ({ ...h, coins: r.balance! }));
+        setTrapFlash(true);
+        window.setTimeout(() => setTrapFlash(false), 1400);
+        cue("trap");
+        setTrapStory({ lines: trapBeat(huntId, key, r.lost ?? 0), dizzyS });
+        say(`😵 The Masquerade's trap! ${r.lost ? `-${r.lost} coins, and ` : ""}you're dizzy for ${dizzyS} s. The key's own chest rises where the heat is Burning.`, true);
+      }
+
       async function pulse(now: number) {
         if (!huntId) return;
         pulsing = true;
@@ -6681,7 +6744,10 @@ export function GameMap({
         if (!p.ok) {
           if (p.reason === "position") return; // corrected by the next save
           pulseEvery = p.reason === "trial" ? 4000 : 30000; // in a trial (at the chest), or not hunting
-          if (p.reason !== "trial") hideChest();
+          if (p.reason !== "trial") {
+            hideChest();
+            hideTrap();
+          }
           heat = null;
           showHeat();
           return;
@@ -6690,6 +6756,7 @@ export function GameMap({
         if (!p.inArea) {
           pulseEvery = 8000;
           hideChest();
+          hideTrap();
           if (heat) {
             heat = null;
             say("The heat fades: you've left the key's area.");
@@ -6705,6 +6772,8 @@ export function GameMap({
         heat = { level, key, trend };
         if (p.spot) showChest(p.spot, key);
         else hideChest();
+        if (p.trap) showTrap(p.trap, key);
+        else hideTrap();
         showHeat();
       }
 
@@ -6723,8 +6792,19 @@ export function GameMap({
             showHeat();
           }
         }
+        if (trap) {
+          const k = Math.min(1, (now - trap.born) / 1200);
+          trap.body.position.y = -1.6 * (1 - k) ** 3;
+          trap.body.rotation.y = t * 0.6;
+          trap.ring.scale.setScalar(1 + Math.sin(t * 3) * 0.08);
+          const here = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [trap.spot.lng, trap.spot.lat]) <= 40;
+          if (here !== trapHere) {
+            trapHere = here;
+            showHeat();
+          }
+        }
         // A heartbeat (heard and felt) once it's warm, faster and stronger as the key gets closer.
-        if (heat && heat.level > 0.35 && !frozen && !inWorld && now - lastBeat > 1600 - 1250 * heat.level) { // not in a trial or a scene
+        if (heat && heat.level > 0.35 && !frozen && !inWorld && now >= stuckUntil && now - lastBeat > 1600 - 1250 * heat.level) { // not in a trial or a scene
           lastBeat = now;
           cue("heartbeat", heat.level);
         }
@@ -7398,7 +7478,7 @@ export function GameMap({
                     <span aria-hidden="true">🔥</span>
                     {hud.heat.level >= 0.85 ? "Burning!" : hud.heat.level >= 0.6 ? "Hot" : hud.heat.level >= 0.3 ? "Warm" : "In the area"}
                     {hud.heat.trend !== "steady" && <span className="font-semibold opacity-90">· {hud.heat.trend === "warmer" ? "↑ warmer" : "↓ colder"}</span>}
-                    {hud.heat.level >= 0.6 && !hud.heat.chest && <span className="font-semibold opacity-90">· the chest rises within 60 m</span>}
+                    {hud.heat.level >= 0.6 && !hud.heat.chest && !hud.heat.trap && <span className="font-semibold opacity-90">· the chest rises within 60 m</span>}
                   </div>
                 )}
                 {hud.wonders.frozen && (
@@ -8095,6 +8175,21 @@ export function GameMap({
         </div>
       )}
       {trapFlash && <div className="loota-trap-flash pointer-events-none absolute inset-0 z-20" aria-hidden="true" />}
+      {trapStory && (
+        <StoryScene
+          lines={trapStory.lines}
+          mood="sly"
+          onDone={() => {
+            actions.current?.dizzy(trapStory.dizzyS);
+            setTrapStory(null);
+          }}
+        />
+      )}
+      {dizzyUntil && !trapStory && (
+        <div className="loota-dizzy pointer-events-none absolute inset-x-0 top-24 z-20 flex justify-center" aria-label="Dizzy" role="status">
+          <span className="rounded-full bg-[#9B5DE5] px-4 py-1.5 font-display text-base font-extrabold text-paper shadow-lg">😵 Dizzy! The world is spinning…</span>
+        </div>
+      )}
 
       {/* The metal detector: the edges glow and pulse faster as the key gets closer. */}
       {hud.heat && (
@@ -8148,7 +8243,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -8176,10 +8271,10 @@ export function GameMap({
               🧞 Enter the chamber
             </button>
           )}
-          {hud.heat?.chest && (
+          {(hud.heat?.chest || hud.heat?.trap) && (
             <button
               type="button"
-              onClick={openChest}
+              onClick={hud.heat.trap ? () => actions.current?.springTrap() : openChest}
               aria-label="Open the key's chest"
               className="pointer-events-auto flex h-11 items-center gap-1.5 rounded-full bg-gold px-4 font-display text-base font-extrabold text-ink shadow-lg ring-2 ring-[#FFD45C] active:scale-95"
             >

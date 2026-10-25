@@ -76,6 +76,25 @@ const FINISH: StoryLine[][] = [
   ],
 ];
 
+/** The Masquerade's trap chest springs open (the hunter loses `lost` coins and is dizzy a while). */
+const TRAP: ((lost: number) => StoryLine[])[] = [
+  (lost) => [
+    { who: "narrator", text: "The lid flies open… and out springs a mask on a spring! BOING!" },
+    { who: "masquerade", text: `Hehehehe! Gotcha! That's MY chest${lost ? `, and those ${lost} coins are mine now. Thank you o!` : ". No coins on you? I'll take a laugh instead!"}` },
+    { who: "keeper", text: "A decoy. The real chest rises only where the heat is Burning. Shake it off." },
+  ],
+  (lost) => [
+    { who: "narrator", text: "A puff of coloured smoke. Bells. Raffia everywhere. Someone is laughing very loudly." },
+    { who: "masquerade", text: `Ehen! You opened my trap! ${lost ? `${lost} coins for my troubles` : "Not even a coin in your pocket? Ah, ah"}… and a little spin for you!` },
+    { who: "keeper", text: "Dizzy, but not beaten. Trust the heat, not the glint: the key's chest burns." },
+  ],
+];
+
+/** The lines when a trap chest springs (the same hunt and key always tell the same version). */
+export function trapBeat(huntId: string, key: number, lost: number): StoryLine[] {
+  return pick(TRAP, `${huntId}:trap:${key}`)(lost);
+}
+
 /** A steady pick from a list: the same hunt and beat always tell the same version. */
 function pick<T>(list: T[], seed: string) {
   let h = 0;

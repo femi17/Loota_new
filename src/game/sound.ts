@@ -89,7 +89,7 @@ function drum(c: Ctx, at: number, pitch = 200, gain = 0.35) {
 
 export type Cue =
   | "tap" | "heartbeat" | "chest" | "tick" | "wrong" | "right" | "solved" | "key" | "relay" | "failed"
-  | "coin" | "countdown" | "go" | "thunder" | "news" | "rival" | "stop";
+  | "coin" | "countdown" | "go" | "thunder" | "news" | "rival" | "stop" | "trap";
 
 const BUZZ: Partial<Record<Cue, number | number[]>> = {
   heartbeat: [18, 90, 28],
@@ -102,6 +102,7 @@ const BUZZ: Partial<Record<Cue, number | number[]>> = {
   thunder: [200, 80, 300],
   rival: [30, 60, 30],
   stop: [60],
+  trap: [40, 40, 40, 40, 250],
 };
 
 /** Play a moment's sound (and buzz), if sound is on. `level` (0–1): how strong, for the heartbeat. */
@@ -190,6 +191,13 @@ export function cue(name: Cue, level = 1) {
       tone(c, 494, 0.22, { type: "sawtooth", gain: 0.07 });
       tone(c, 392, 0.3, { type: "sawtooth", gain: 0.07, at: 0.28 });
       tone(c, 494, 0.3, { type: "sawtooth", gain: 0.07, at: 0.28 });
+      break;
+    case "trap":
+      // The Masquerade's trap chest: a pop, a sad trombone, and his giggle.
+      noise(c, 0.12, { gain: 0.3, freq: 3000, to: 400 });
+      [392, 370, 349].forEach((f, i) => tone(c, f, 0.3, { type: "sawtooth", at: 0.15 + i * 0.3, gain: 0.08 }));
+      tone(c, 330, 0.8, { type: "sawtooth", at: 1.05, to: 300, gain: 0.08 });
+      [0, 0.09, 0.18, 0.27, 0.36].forEach((at, i) => tone(c, 880 - i * 40, 0.07, { type: "triangle", at: 1.9 + at, to: 700 - i * 40, gain: 0.07 }));
       break;
   }
 }

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPlayer } from "@/lib/player";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
+import { sideStreetSpot } from "@/lib/road-cells";
 
 /** Only the owner may change hunts; everything below uses the secret key after this check. */
 async function owner() {
@@ -191,6 +192,32 @@ export async function setKeyTrial(form: FormData) {
   if (error) back(`Couldn't change the trial: ${error.message}`, true);
   revalidatePath("/admin");
   back(`Key ${n}'s trial is now: ${trial === "puzzle" ? "a puzzle at random" : trial}.`);
+}
+
+/**
+ * The Masquerade's trap chest for a key (owner, 25 Oct 2026): a decoy on a street 180–280 m from the key's spot (it
+ * rises like the real chest, where the heat isn't Burning), or taken away again.
+ */
+export async function setKeyTrap(form: FormData) {
+  await owner();
+  const hunt = text(form, "hunt");
+  const n = whole(form, "n");
+  if (!UUID.test(hunt) || !Number.isInteger(n)) back("Unknown key.", true);
+  const db = createAdminClient();
+  if (text(form, "trap") === "remove") {
+    const { error } = await db.from("hunt_keys").update({ trap_lng: null, trap_lat: null }).eq("hunt_id", hunt).eq("n", n);
+    if (error) back(`Couldn't remove the trap: ${error.message}`, true);
+    revalidatePath("/admin");
+    back("The trap chest is gone.");
+  }
+  const { data: k } = await db.from("hunt_keys").select("spot_lng, spot_lat, relay").eq("hunt_id", hunt).eq("n", n).maybeSingle();
+  if (!k || k.relay) back("Only a key's stop can have a trap chest.", true);
+  const at = (await sideStreetSpot(k!.spot_lng, k!.spot_lat, 180, 280)) ?? null;
+  if (!at) back("No street 180–280 m from the key's spot in our road data: no trap planted.", true);
+  const { error } = await db.from("hunt_keys").update({ trap_lng: at!.lng, trap_lat: at!.lat }).eq("hunt_id", hunt).eq("n", n);
+  if (error) back(`Couldn't plant the trap: ${error.message}`, true);
+  revalidatePath("/admin");
+  back("🎭 The Masquerade planted a trap chest on a street near the key.");
 }
 
 export async function removeLastKey(form: FormData) {

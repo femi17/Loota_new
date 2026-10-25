@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CELL_DEG, RELIC_WEIGHTS, type ItemKind, type RelicId } from "@/game/items";
+import { haveRoadData, sideStreetSpot } from "@/lib/road-cells";
 
 /** How long a square's finds last before it can be restocked. (No loose coin drops: owner's call, 14 Oct 2026.) */
 const LIFETIME_HOURS = 6;
@@ -31,8 +32,21 @@ async function snapToRoad(lng: number, lat: number): Promise<[number, number] | 
 }
 
 /**
+ * A spot in the square for a find: inside the streets, never on a main road (owner, 25 Oct 2026: "Items to find,
+ * relics, quiz location should not be on the main road, it should be inside the streets"). Off our road data, the
+ * nearest road from the routing service.
+ */
+export async function findSpot(x: number, y: number): Promise<[number, number] | null> {
+  const cx = (x + 0.5) * CELL_DEG, cy = (y + 0.5) * CELL_DEG;
+  const spot = await sideStreetSpot(cx, cy, 0, 270);
+  if (spot) return [spot.lng, spot.lat];
+  if (await haveRoadData(cx, cy)) return null; // only main roads (or none) here: no find in this square
+  return snapToRoad((x + Math.random()) * CELL_DEG, (y + Math.random()) * CELL_DEG);
+}
+
+/**
  * Stock one square with one hidden find (a coin cache or a relic) and a decoy
- * spot, on real roads. Nothing lies openly: whispers in the lamp point to them
+ * spot, in its streets. Nothing lies openly: whispers in the lamp point to them
  * (design doc 7.4; intel scrolls no longer lie on the map). Only the caller that
  * wins `claim_cell` stocks it, so two players arriving together can't double it.
  */
@@ -41,7 +55,7 @@ export async function stockCell(admin: SupabaseClient, cell: string): Promise<bo
   if (error || !claimed) return false;
 
   const [x, y] = cell.split(":").map(Number);
-  const randomPoint = () => snapToRoad((x + Math.random()) * CELL_DEG, (y + Math.random()) * CELL_DEG);
+  const randomPoint = () => findSpot(x, y);
 
   const plan: { kind: ItemKind | "decoy"; coins?: number; relic?: RelicId; hidden?: boolean }[] = [
     Math.random() < 0.6 ? { kind: "cache", coins: randomInt(40, 100), hidden: true } : { kind: "relic", relic: randomRelic(), hidden: true },
@@ -61,6 +75,8 @@ export async function stockCell(admin: SupabaseClient, cell: string): Promise<bo
   });
 
   if (rows.length === 0) {
+    // No side streets in the square (only main roads): it stays empty until it's due again.
+    if (await haveRoadData((x + 0.5) * CELL_DEG, (y + 0.5) * CELL_DEG)) return false;
     // No roads found (or the routing service is down): let the next visit try again.
     await admin.from("world_cells").update({ spawned_at: new Date(0).toISOString() }).eq("cell", cell);
     return false;

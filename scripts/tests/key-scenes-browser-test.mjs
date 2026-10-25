@@ -19,6 +19,8 @@ const ids = [];
 let huntId = null;
 let browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 const KEEPERS = {
@@ -53,7 +55,7 @@ try {
     const id = data.user.id; ids.push(id);
     await admin.from("profiles").update({ home_lng: near.lng, home_lat: near.lat, home_set_at: new Date().toISOString() }).eq("id", id);
     await admin.from("player_positions").upsert({ user_id: id, lng: near.lng, lat: near.lat, mode: "walk", energy: 90, updated_at: ago(30) });
-    await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
+    await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, ...LOCKED });
     const jar = new Map();
     const c = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { cookies: {
       getAll: () => [...jar].map(([n, value]) => ({ name: n, value })),

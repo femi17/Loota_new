@@ -6,6 +6,16 @@
 
 export type HuntPhase = "draft" | "upcoming" | "live" | "ended";
 
+/**
+ * The riddle clock (owner, 25 Oct 2026): 15 seconds to name the place from when the hunter first sees the riddle, then
+ * a 60-second wait before the next 15, until they lock one in. Times are the server's.
+ */
+export type RiddleClock =
+  | { phase: "ready"; key: number }
+  | { phase: "answer"; key: number; now: string; endsAt: string }
+  | { phase: "wait"; key: number; now: string; until: string }
+  | { phase: "locked"; key: number; guess: { name: string; lng: number; lat: number } };
+
 export type HuntSummary = {
   id: string;
   title: string;
@@ -87,7 +97,7 @@ export type SearchResult =
   | { ok: true; result: "trial"; trial: AnyTrialView }
   | { ok: true; result: "area"; clue: string; band: string }
   | { ok: true; result: "cold"; band: string }
-  | { ok: false; reason: "not_live" | "not_joined" | "finished" | "wait" | "no_key" }
+  | { ok: false; reason: "not_live" | "not_joined" | "finished" | "wait" | "no_key" | "answer_first" }
   | { ok: false; reason: "thrown"; lng: number; lat: number }
   | { ok: false; reason: "position"; lng: number; lat: number };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BagIcon, BusIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
+import { BagIcon, BusIcon, DirectionsIcon, LampIcon, VehicleIcon } from "./HudIcons";
 import { LootaLogo } from "@/components/Logo";
 import { joinHunt } from "@/app/lobby/actions";
 import { ChestArt } from "@/components/ChestArt";
@@ -88,7 +88,6 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
             [<DirectionsIcon key="d" />, "Directions: search any place, the way is drawn"],
             [<VehicleIcon key="v" kind={null} />, "Walk, rent or buy a bicycle, motorbike or car"],
             [<BusIcon key="b" />, "Taxis, buses, trains and planes"],
-            [<LandmarkIcon key="l" />, "Landmarks: visit famous places for coins"],
             [<LampIcon key="la" />, "The lamp: secrets during a hunt, and the Djinn"],
             [<BagIcon key="i" />, "Inventory (top): gear, papers, relics"],
           ].map(([icon, text], i) => (
@@ -116,11 +115,11 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
           <p>
             <b>{openHunt.title}</b>: {openHunt.keys} keys to find. Prize: {openHunt.prize}.
           </p>
-          <p className="text-muted">Join it and you get the first riddle. Work out the place, get there, then search for the key.</p>
+          <p className="text-muted">Join it and open the first riddle: you have 15 seconds to name the place. Then get there before the others.</p>
         </>
       ) : (
         <>
-          <p>No hunt is running right now. Explore: visit a landmark for coins, meet people on the road, and get yourself a ride.</p>
+          <p>No hunt is running right now. Explore: chase the Lamp&apos;s Detours for coins, meet people on the road, and get yourself a ride.</p>
           <p className="text-muted">When the next hunt goes live it will show on the map and in the lobby.</p>
         </>
       ),

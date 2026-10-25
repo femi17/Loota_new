@@ -19,6 +19,8 @@ const ids = [];
 let huntId = null;
 let browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 const start = { lng: 3.3787, lat: 6.5186 };
@@ -36,7 +38,7 @@ try {
   if (error) throw error;
   huntId = hunt.id;
   await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "The test key, far to the north-east.", category: "maths", area_lng: 3.45, area_lat: 6.58, area_radius_m: 800, spot_lng: 3.45, spot_lat: 6.58 });
-  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
+  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, ...LOCKED });
   const coins = async () => (await admin.from("profiles").select("coins").eq("id", id).single()).data.coins;
   const plant = (kind, npc, question) => admin.from("road_events").insert({ user_id: id, hunt_id: huntId, kind, npc, question });
 

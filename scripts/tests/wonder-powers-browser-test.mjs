@@ -23,6 +23,8 @@ const ids = [];
 let huntId = null;
 let browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 const yaba = { lng: 3.3787, lat: 6.5186 };
@@ -48,7 +50,7 @@ try {
   if (error) throw error;
   huntId = hunt.id;
   await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "The test riddle 1", category: "general", area_lng: 3.39, area_lat: 6.53, area_radius_m: 500, spot_lng: 3.39, spot_lat: 6.53 });
-  await admin.from("hunt_players").insert([{ hunt_id: huntId, user_id: me.id }, { hunt_id: huntId, user_id: rival.id }]);
+  await admin.from("hunt_players").insert([{ hunt_id: huntId, user_id: me.id, ...LOCKED }, { hunt_id: huntId, user_id: rival.id, ...LOCKED }]);
   for (const w of ["eye_of_the_djinn", "carpet_of_kings", "djinn_coin"]) await give(me, w);
   const ret = await give(rival, "orb_of_return");
   const ret2 = await give(rival, "orb_of_return");

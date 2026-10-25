@@ -18,6 +18,8 @@ const ids = [];
 let huntId = null;
 let browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 const yaba = { lng: 3.3787, lat: 6.5186 };
@@ -44,7 +46,7 @@ try {
     { hunt_id: huntId, n: 1, riddle: "Where the test riddle points, two and a half kilometres east of Yaba.", category: "maths", area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, spot_lng: spot.lng, spot_lat: spot.lat },
     { hunt_id: huntId, n: 2, riddle: "The second test riddle.", category: "maths", area_lng: yaba.lng, area_lat: yaba.lat, area_radius_m: 800, spot_lng: yaba.lng, spot_lat: yaba.lat },
   ]);
-  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: me.id });
+  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: me.id, ...LOCKED });
 
   const jar = new Map();
   const c = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { cookies: {
@@ -90,13 +92,21 @@ try {
   }
   check("GO!", went);
   let riddle = null;
-  for (let i = 0; i < 20 && !riddle; i++) {
+  for (let i = 0; i < 40 && !riddle; i++) {
     riddle = await text('[aria-label="The first riddle"]');
-    if (!riddle) await wait(500);
+    if (!riddle) {
+      // The Masquerade's opening comes first: skip it.
+      await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Story"] button')].find((b) => /Skip/.test(b.textContent ?? ""))?.click());
+      await wait(500);
+    }
   }
-  check("the first riddle, revealed", /key 1 of 2/i.test(riddle ?? "") && /two and a half kilometres/.test(riddle ?? ""), riddle);
+  // The riddle comes sealed (owner, 25 Oct 2026: the 15-second clock starts only once it's opened).
+  check("the first riddle, sealed until opened", /key 1 of 2/i.test(riddle ?? "") && /15 seconds/.test(riddle ?? "") && !/two and a half kilometres/.test(riddle ?? ""), riddle);
   await shot("2-riddle");
-  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Let's go"))?.click());
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Open the riddle"))?.click());
+  await wait(1500);
+  const onCard = await text('section[aria-label="Hunt"]');
+  check("…opened: on the card", /two and a half kilometres/.test(onCard ?? ""), onCard);
 
   // ---- A rival
   const rc = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { auth: { persistSession: false } });

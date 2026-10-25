@@ -14,7 +14,19 @@ const distance = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(m >= 10_000 ?
  * Type a place or address; pick a result to plot a route there. Places near the hunter come first.
  * `inline` lists the results below the box instead of floating over the map (inside a scrolling panel).
  */
-export function PlaceSearch({ near, onPick, inline = false }: { near: () => LngLat; onPick: (place: Place) => void; inline?: boolean }) {
+export function PlaceSearch({
+  near,
+  onPick,
+  inline = false,
+  placeholder = "Search a place or address",
+  autoFocus = false,
+}: {
+  near: () => LngLat;
+  onPick: (place: Place) => void;
+  inline?: boolean;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const [places, setPlaces] = useState<(Place & { away: number })[]>([]);
   const [status, setStatus] = useState<"idle" | "searching" | "none" | "error">("idle");
@@ -86,8 +98,9 @@ export function PlaceSearch({ near, onPick, inline = false }: { near: () => LngL
             }
           }}
           onFocus={() => places.length && setOpen(true)}
-          placeholder="Search a place or address"
-          aria-label="Search a place or address"
+          placeholder={placeholder}
+          aria-label={placeholder}
+          autoFocus={autoFocus}
           enterKeyHint="go"
           className="h-full min-w-0 flex-1 bg-transparent text-sm text-paper outline-none placeholder:text-muted"
         />

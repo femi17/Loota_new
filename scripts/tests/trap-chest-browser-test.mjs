@@ -16,6 +16,8 @@ const admin = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persi
 const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
 let id = null, huntId = null, browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 const spot = { lng: 3.378214, lat: 6.500147 };
 const north = (p, m) => ({ lng: p.lng, lat: p.lat + m / 110574 });
@@ -34,7 +36,7 @@ try {
   if (error) throw error;
   huntId = hunt.id;
   await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "Trap key.", category: "maths", trial_kind: "sentries", area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, spot_lng: spot.lng, spot_lat: spot.lat, trap_lng: trap.lng, trap_lat: trap.lat });
-  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
+  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, ...LOCKED });
   // No road scenes in the way.
   await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: new Date(Date.now() + 3600e3).toISOString(), created_at: new Date(Date.now() + 3600e3).toISOString() });
 

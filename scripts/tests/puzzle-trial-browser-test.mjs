@@ -15,6 +15,8 @@ const admin = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persi
 const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
 let id = null, huntId = null, browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 const spot = { lng: 3.378214, lat: 6.500147 }; // on a road in Yaba
 
@@ -33,7 +35,7 @@ try {
   // Six stops: the first three at level 1 (warnings), the last three harder; stop 2 is a relay chest (a clue, not a key).
   await admin.from("hunt_keys").insert([key(1, "sentries"), key(2, "route", true), key(3, "adire"), key(4, "sentries"), key(5, "tornmap"), key(6, "adire")]);
   const expect = ["Key 1 earned", "No key", "Key 2 earned", "Key 3 earned", "Key 4 earned", "complete|won"];
-  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
+  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, ...LOCKED });
   // No road events in this test.
   await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: new Date(Date.now() + 3600e3).toISOString(), created_at: new Date(Date.now() + 3600e3).toISOString() });
 
@@ -73,6 +75,12 @@ try {
   await wait(20000);
 
   for (let n = 1; n <= 6; n++) {
+    // Each new riddle's place already named (the riddle clock), so the hunter can search at the chest.
+    if (n > 1) {
+      await admin.from("hunt_players").update({ ...LOCKED, guess_n: n }).eq("hunt_id", huntId).eq("user_id", id);
+      await page.evaluate(() => window.dispatchEvent(new Event("loota:hunt-changed")));
+      await wait(2000);
+    }
     // Search here, at the spot: the chest opens a puzzle.
     let opened = false;
     for (let i = 0; i < 30 && !opened; i++) {

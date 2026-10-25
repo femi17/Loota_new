@@ -168,7 +168,7 @@ async function Lobby() {
           <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-ink text-2xl" aria-hidden="true">🗺️</span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="font-display text-lg font-extrabold">Free roam</span>
-            <span className="text-sm text-muted">Explore from home: landmarks for coins, Detours, roadside games.</span>
+            <span className="text-sm text-muted">Explore from home: the Lamp&apos;s Detours, roadside games, rides.</span>
           </span>
           <span className="inline-flex h-11 shrink-0 items-center rounded-xl border-[1.5px] border-gold px-4 font-bold text-gold">Play</span>
         </Link>

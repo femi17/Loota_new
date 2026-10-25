@@ -18,6 +18,8 @@ const ids = [];
 let huntId = null;
 let browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 // The key: a spot on a road in Yaba (a bus stop stands by the road).
@@ -39,7 +41,7 @@ try {
     { hunt_id: huntId, n: 1, riddle: "The test key, by a bus stop in Yaba.", category: "maths", area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, approach_clue: "Near the bus stop.", spot_lng: spot.lng, spot_lat: spot.lat },
     { hunt_id: huntId, n: 2, riddle: "The second test key.", category: "maths", area_lng: 3.39, area_lat: 6.53, area_radius_m: 800, spot_lng: 3.39, spot_lat: 6.53 },
   ]);
-  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
+  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, ...LOCKED });
 
   const jar = new Map();
   const c = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { cookies: {

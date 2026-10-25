@@ -1,6 +1,4 @@
-// A landmark's check-in and a Detour from the Lamp, as scenes on the map (phone): "Check in" → the guide at the
-// landmark's plaza → "I'm ready!" (the clock starts) → the question, against the clock → the right answer → the fact
-// and the coins; "Claim" at a Detour (in a throwaway live hunt) → the Lamp's messenger by the glowing lamp → ready →
+// Quiz scenes on the map (phone): at a landmark, nothing any more (landmarks were removed, 25 Oct 2026); "Claim" at a Detour (in a throwaway live hunt) → the Lamp's messenger by the glowing lamp → ready →
 // the right answer → the prize. The test hunt, Detour and players are deleted.
 //   SHOTS=<folder> node scripts/tests/quiz-scenes-browser-test.mjs
 import { createRequire } from "node:module";
@@ -21,6 +19,8 @@ let huntId = null;
 let detourId = null;
 let browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 async function player(tag, at) {
@@ -73,30 +73,15 @@ try {
   };
   const coins = async (id) => (await admin.from("profiles").select("coins").eq("id", id).single()).data.coins;
 
-  // ---- 1. A landmark's check-in
-  const { data: lms } = await admin.from("landmarks").select("id, name, lng, lat, questions").gte("lng", 3.3).lte("lng", 3.45).gte("lat", 6.43).lte("lat", 6.56).limit(1);
+  // ---- 1. Landmarks are gone (owner, 25 Oct 2026): standing at one, no Check in, no landmarks button
+  const { data: lms } = await admin.from("landmarks").select("id, name, lng, lat").gte("lng", 3.3).lte("lng", 3.45).gte("lat", 6.43).lte("lat", 6.56).limit(1);
   const lm = lms[0];
   const visitor = await player("lm", lm);
   const v = await open(visitor);
-  check(`at ${lm.name}: the Check in button`, await v.clickWhenThere(`Check in at ${lm.name}`, 20));
-  const intro = await v.textWhen(`[role="dialog"][aria-label="Checking in at ${lm.name}"]`, /Ready\?/);
-  check("the guide greets you at the plaza (the clock not yet running)", /a guide here\. Answer one question about this place/.test(intro ?? "") && !/s left/.test(intro ?? ""), intro);
-  await v.page.screenshot({ path: `${OUT}/quiz-1-guide.png` });
-  const before = await coins(visitor.id);
-  await v.clickWhenThere("I'm ready!");
-  const asked = await v.textWhen('[role="dialog"]', /s left/);
-  check("…then the question, against the clock", /\d+ s left/.test(asked ?? ""), asked);
-  const { data: ci } = await admin.from("landmark_checkins").select("question").eq("user_id", visitor.id).order("asked_at", { ascending: false }).limit(1).single();
-  const q = lm.questions[ci.question];
-  await v.page.screenshot({ path: `${OUT}/quiz-2-question.png` });
-  await v.clickWhenThere(q.options[q.answer]);
-  const right = await v.textWhen('[role="dialog"]', /Here are your \d+ coins/);
-  check("the right answer: the fact and the coins", /Correct!.*Here are your \d+ coins/.test(right ?? "") && (await coins(visitor.id)) > before, `${(await coins(visitor.id)) - before} coins · ${right}`);
-  await v.page.screenshot({ path: `${OUT}/quiz-3-correct.png` });
-  await v.clickWhenThere("Thank you!");
-  await wait(2500);
-  check("…and back to the street", (await v.page.$('[role="dialog"]')) === null);
-  check("no page errors (landmark)", v.problems.length === 0, v.problems.join(" / "));
+  await wait(4000);
+  check(`at ${lm.name}: no Check in button`, !(await v.page.evaluate((n) => !!document.querySelector(`button[aria-label^="Check in at ${n}"]`), lm.name)));
+  check("…and no landmarks button", !(await v.page.evaluate(() => !!document.querySelector('[data-tool="landmarks"]'))));
+  check("no page errors (at a landmark)", v.problems.length === 0, v.problems.join(" / "));
   await v.page.close();
 
   // ---- 2. A Detour from the Lamp, in a live hunt
@@ -108,7 +93,7 @@ try {
   huntId = hunt.id;
   await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "Far away.", category: "general", area_lng: 3.5, area_lat: 6.6, area_radius_m: 800, spot_lng: 3.5, spot_lat: 6.6 });
   const seeker = await player("lamp", spot);
-  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: seeker.id, joined_at: ago(60), keys_held: 0, finished_at: null, place: null });
+  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: seeker.id, joined_at: ago(60), keys_held: 0, finished_at: null, place: null, ...LOCKED });
   const { data: d } = await admin.from("detours").insert({
     kind: "flash", area: `${Math.floor(spot.lng / 0.1)}:${Math.floor(spot.lat / 0.1)}`, title: "The silver pouch", story: "Someone dropped a pouch of coins by this road.",
     place_name: "the corner by the kiosk", lng: spot.lng, lat: spot.lat, reward_coins: 15, ends_at: soon(240),

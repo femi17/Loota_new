@@ -37,7 +37,7 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
-import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
+import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, VehicleIcon } from "./HudIcons";
 import { JourneyPanel, legText } from "./JourneyPanel";
 import { DjinnPanel, type ChamberResult, type DjinnActions, type DjinnChamber, type DjinnStage, type DjinnState, type GateVerdict } from "./DjinnPanel";
 import { wonderOf } from "@/game/wonders";
@@ -45,7 +45,6 @@ import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, 
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
-import { LandmarkPanel, type CheckinQuestion, type CheckinResult, type Landmark, type LandmarkActions } from "./LandmarkPanel";
 import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
 import {
   BUS_RANGE_M,
@@ -153,8 +152,6 @@ type Hud = {
   jam: Jam;
   /** Stopped at a red light: seconds until green. */
   redLight: number | null;
-  /** At a landmark (within its check-in area): what checking in would pay. */
-  landmarkHere: { landmark: Landmark; canTry: boolean } | null;
   /** A rental waiting at a bus stop, or a taxi on its way: where, how far, and the button once there. */
   pickup: { icon: string; title: string; status: string; action: string | null } | null;
   /** At a repair shop the player's vehicle is booked into: the "Enter" button. */
@@ -194,8 +191,7 @@ type HunterUpdate = {
 
 /** Who brings a rented bicycle or okada (the same renter for the same request, on the map and in the scene). */
 const RENTERS = ["Musa", "Kunle", "Mama Ronke", "Tunde", "Aunty Joy", "Chidi", "Danjuma", "Iya Bola"];
-/** A landmark's guides, and the Lamp's messenger (in purple, like the lamp's glow). */
-const GUIDES = ["Guide Kemi", "Guide Tunde", "Guide Ifeanyi", "Guide Hauwa", "Guide Bayo"];
+/** The Lamp's messenger (in purple, like the lamp's glow). */
 const MESSENGER: AvatarLook = { skin: "#8D5524", hair: "bun", hairColour: "#1B120C", top: "hoodie", topColour: "#7C4DCC", bottomsColour: "#2A1747", extra: "none" };
 /** The pump attendant, the cook, the nurse and the paramedic in the scenes (the same one for the same place or visit). */
 const ATTENDANTS = ["Chidi", "Musa", "Segun", "Ibrahim", "Emeka", "Yusuf", "Sola"];
@@ -395,7 +391,6 @@ export function GameMap({
     keg: null,
     tyreKits: 0,
     pickup: null,
-    landmarkHere: null,
     clock: null,
     jam: 0,
     redLight: null,
@@ -477,8 +472,6 @@ export function GameMap({
   const [garage, setGarage] = useState<OwnedVehicle[] | null>(null); // the vehicle panel, when open
   const [transitOpen, setTransitOpen] = useState(false);
   const [transitActions, setTransitActions] = useState<TransitActions | null>(null); // set once the map is ready
-  const [landmarkActions, setLandmarkActions] = useState<LandmarkActions | null>(null);
-  const [landmarksOpen, setLandmarksOpen] = useState<{ quiz: CheckinQuestion | null; message: string | null } | null>(null);
   const [checkingIn, setCheckingIn] = useState(false);
   const [lampActions, setLampActions] = useState<LampActions | null>(null);
   const [repairActions, setRepairActions] = useState<RepairActions | null>(null);
@@ -587,52 +580,6 @@ export function GameMap({
     setLampOpen({ quiz: q });
   };
   const [adviceOpen, setAdviceOpen] = useState(false);
-  /**
-   * The Check in button: the landmark's guide on the map (the question asked when you're ready, so the greeting
-   * doesn't eat the clock); the panel if the place can't be shown.
-   */
-  const checkIn = async (landmark: Landmark) => {
-    if (!landmarkActions || checkingIn) return;
-    const guide = GUIDES[landmark.id % GUIDES.length];
-    const look: AvatarLook = { ...keeperLook(guide), topColour: "#F4B41A", extra: "cap" }; // a guide's yellow vest and cap
-    if (actions.current?.openQuizPlace("landmark", landmark.name, look)) {
-      let checkinId: string | null = null;
-      setQuizOpen({
-        offer: {
-          host: { name: guide, look },
-          title: `Checking in at ${landmark.name}`,
-          sign: landmark.name,
-          intro: `Welcome to ${landmark.name}! I'm ${guide}, a guide here. Answer one question about this place and earn ${landmark.reward} coins. Ready?`,
-        },
-        actions: {
-          start: async () => {
-            const q = await landmarkActions.start(landmark);
-            if (typeof q === "string") return q;
-            checkinId = q.checkinId;
-            return { question: q.question, options: q.options, seconds: q.seconds, endsAt: q.endsAt };
-          },
-          answer: async (choice) => {
-            if (!checkinId) return "Something went wrong. Try again.";
-            const r = await landmarkActions.answer(checkinId, choice);
-            if (typeof r === "string") return r;
-            if (r.correct) {
-              return {
-                good: true,
-                line: `Correct! ${r.fact} Here are your ${r.reward} coins.${r.lead ? " And a whisper for you: there's a hidden find nearby. It's in your lamp." : ""}`,
-              };
-            }
-            return { good: false, line: `${r.late ? "Time's up!" : "Not quite."} It's ${r.answer}. ${r.fact} Come back tomorrow and try again.` };
-          },
-        },
-      });
-      return;
-    }
-    setCheckingIn(true);
-    const q = await landmarkActions.start(landmark);
-    setCheckingIn(false);
-    setLandmarksOpen(typeof q === "string" ? { quiz: null, message: q } : { quiz: q, message: null });
-  };
-
   const lookKey = JSON.stringify(look);
   const startLng = start.lng;
   const startLat = start.lat;
@@ -1939,6 +1886,7 @@ export function GameMap({
 
       // ---- Hunts: searching where you stand, trials and being thrown out ----
       let frozen = false; // standing still during a Key Trial
+      let huntHold = false; // standing still until the riddle's place is named (the riddle clock)
       let stuckUntil = 0; // held by a trap (quicksand, a dart wall), performance.now() time
 
       /** Put the hunter at a spot the server has already recorded (e.g. thrown 2 km after a failed trial). */
@@ -1980,6 +1928,12 @@ export function GameMap({
           frozen = value;
           if (value) traveller.v = 0;
         },
+        setHold(value) {
+          huntHold = value;
+          if (value) traveller.v = 0;
+        },
+        goTo: (place) => actions.current?.goTo(place),
+        where: () => ({ ...traveller.pos }),
         say,
       };
 
@@ -5519,8 +5473,6 @@ export function GameMap({
           kerbM: 6,
           keeper: { look: host, at: S.keeper },
           you: { from: S.outside, to: S.customer },
-          // The landmark's own marker on the map is the plaza's star now.
-          hidden: kind === "landmark" ? [...landmarkMarkers.values()].filter((m) => geo.distanceM([m.entity.lng, m.entity.lat], [traveller.pos.lng, traveller.pos.lat]) < 600).map((m) => m.entity) : [],
           closeScene: () => setQuizOpen(null),
           extra: { shrine: shrine ?? undefined, star: plaza?.star },
         });
@@ -6556,94 +6508,18 @@ export function GameMap({
         }
       }
 
-      // ---- Landmarks: visit famous places and answer a question for coins and intel ----
-      let landmarks: Landmark[] = [];
-      let landmarksAt = -Infinity;
-      let landmarksFrom: LngLat | null = null;
-      const landmarkMarkers = new Map<number, { entity: import("@/game/ThreeMapLayer").MapEntity; star: import("three").Object3D }>();
-      const LANDMARK_SHOWN_M = 6000;
-
-      async function refreshLandmarks(): Promise<Landmark[]> {
-        const from = { ...traveller.pos };
-        landmarksAt = performance.now();
-        landmarksFrom = from;
-        const { data } = await supabase.rpc("landmarks_near", { p_lng: from.lng, p_lat: from.lat, p_limit: 8 });
-        if (disposed || !data) return landmarks;
-        const now = Date.now();
-        landmarks = (data as Landmark[]).map((l) => ({ ...l, canTry: !(l.nextAt && Date.parse(l.nextAt) > now) }));
-        // A monument with its name at each landmark nearby.
-        const shown = new Set<number>();
-        for (const lm of landmarks) {
-          if (lm.metres > LANDMARK_SHOWN_M) continue;
-          shown.add(lm.id);
-          if (landmarkMarkers.has(lm.id)) continue;
-          const marker = models.makeLandmarkMarker();
-          marker.group.add(layer.billboard(models.makeNameplate(lm.name.toUpperCase(), "#8A5A00")));
-          landmarkMarkers.set(lm.id, { entity: layer.add({ object: marker.group, lng: lm.lng, lat: lm.lat, heading: 0 }), star: marker.star });
-        }
-        for (const [id, m] of landmarkMarkers) {
-          if (shown.has(id)) continue;
-          layer.remove(m.entity);
-          landmarkMarkers.delete(id);
-        }
-        showLandmarkHere();
-        return landmarks;
-      }
-
-      /** At a landmark? Then a Check in button (unless it was tried in the last day). */
-      function showLandmarkHere() {
-        const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
-        const lm = ride || visit ? null : landmarks.find((l) => geo.distanceM(at, [l.lng, l.lat]) <= l.radiusM) ?? null;
-        const canTry = !!lm && lm.canTry;
-        setHud((h) =>
-          h.landmarkHere?.landmark.id === lm?.id && h.landmarkHere?.canTry === canTry && h.landmarkHere?.landmark.reward === lm?.reward
-            ? h
-            : { ...h, landmarkHere: lm ? { landmark: lm, canTry } : null },
-        );
-      }
-
-      function landmarkTick(now: number, dt: number) {
-        for (const m of landmarkMarkers.values()) m.star.rotation.y += dt * 1.5;
-        if (now - landmarksAt < 5000) return;
-        const moved = landmarksFrom ? geo.distanceM([landmarksFrom.lng, landmarksFrom.lat], [traveller.pos.lng, traveller.pos.lat]) : Infinity;
-        if (moved > 150 || now - landmarksAt > 60000) void refreshLandmarks();
-        else if (now - landmarksAt > 1000) showLandmarkHere();
-      }
-
-      setLandmarkActions({
-        near: refreshLandmarks,
-        start: async (lm) => {
-          await savePosition(); // the server checks the player is there
-          const { data } = await supabase.rpc("start_checkin", { p_landmark: lm.id });
-          const r = data as ({ ok: boolean; reason?: string; nextAt?: string; deadline?: string; now?: string } & Partial<CheckinQuestion>) | null;
-          if (!r?.ok) {
-            if (r?.reason === "far") return `Get to ${lm.name} first: you need to be there to check in.`;
-            if (r?.reason === "tomorrow") return `You've already tried ${lm.name} today. Come back tomorrow.`;
-            return "Couldn't check in just now. Try again.";
-          }
-          // The server's deadline, on this device's clock.
-          const endsAt = Date.now() + (Date.parse(r.deadline!) - Date.parse(r.now!));
-          return { checkinId: r.checkinId!, landmark: r.landmark!, question: r.question!, options: r.options!, seconds: r.seconds!, endsAt };
-        },
-        answer: async (checkinId, choice) => {
-          const { data } = await supabase.rpc("answer_checkin", { p_checkin: checkinId, p_choice: choice });
-          const r = data as ({ ok: boolean; reason?: string; balance?: number | null; lead?: { lng: number; lat: number } | null } & Omit<CheckinResult, "lead">) | null;
-          if (!r?.ok) return "Couldn't send your answer. Try again.";
-          const balance = r.balance;
-          if (balance != null) setHud((h) => ({ ...h, coins: balance }));
-          if (r.lead) {
-            lastSync = performance.now();
-            void syncWorld(); // the lead shows on the map
-          }
-          void refreshLandmarks();
-          return { correct: r.correct, late: r.late, answer: r.answer, fact: r.fact, reward: r.reward, first: r.first, lead: !!r.lead };
-        },
-        directionsTo: (lm) => void planDirections({ lng: lm.lng, lat: lm.lat }, lm.name),
-      });
-      void refreshLandmarks();
-
       // ---- The metal detector (a live hunt): feel for the key's heat; its chest rises out of the ground within 60 m ----
-      type Pulse = { ok: boolean; reason?: string; inArea?: boolean; key?: number; heat?: number; spot?: (LngLat & { scene?: string }) | null; trap?: LngLat | null };
+      type Pulse = {
+        ok: boolean;
+        reason?: string;
+        inArea?: boolean;
+        key?: number;
+        heat?: number;
+        spot?: (LngLat & { scene?: string }) | null;
+        trap?: LngLat | null;
+        /** At the hunter's answer, and it isn't the key's place (the riddle clock starts again). */
+        wrongPlace?: string;
+      };
       let pulseAt = -Infinity;
       let pulseEvery = 6000;
       let pulsing = false;
@@ -6755,6 +6631,10 @@ export function GameMap({
           return;
         }
         saved = { ...traveller.pos }; // the pulse saved it
+        if (p.wrongPlace) {
+          window.dispatchEvent(new CustomEvent("loota:wrong-place", { detail: p.wrongPlace }));
+          say(`🚫 ${p.wrongPlace}: no key here. Name another place!`, true);
+        }
         if (!p.inArea) {
           pulseEvery = 8000;
           hideChest();
@@ -6985,7 +6865,7 @@ export function GameMap({
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && !sceneHold && !inWorld && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
+        const canMove = !frozen && !huntHold && !sceneHold && !inWorld && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
@@ -7101,7 +6981,6 @@ export function GameMap({
         nearTick(now);
         spotsTick(now);
         if (pickup && !ride) pickupTick(now, dt, t);
-        landmarkTick(now, dt);
         skyAndTrafficTick(now);
         lampTick(now);
         repairTick(now);
@@ -7758,8 +7637,8 @@ export function GameMap({
                 <p className="text-xs font-bold uppercase tracking-wider text-gold">A hunt, step by step</p>
                 <ol className="flex flex-col gap-2">
                   {[
-                    ["📜", "Read the riddle", "It names a real place. No typing: work out where."],
-                    ["🗺️", "Get there", "Walk, ride or take the bus. Search here appears once you're in the key's area."],
+                    ["📜", "Name the place", "You have 15 seconds to type the place the riddle points to. Miss it and you wait a minute."],
+                    ["🗺️", "Get there", "The way to your answer is drawn. Nobody knows if it's right until they arrive: the wrong place means a new 15 seconds."],
                     ["🔥", "Follow the heat", "In the area the edges glow: Warm, Hot, then Burning as you close in."],
                     ["🗝️", "Open the chest", "Within 60 m of the key it rises out of the ground."],
                     ["🧩", "Beat the Key Trial", "A puzzle or quick questions against the clock. Fail and you're thrown 2 km away."],
@@ -7786,7 +7665,6 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><DirectionsIcon /></span> Directions: search a place or tap the map</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><VehicleIcon kind={hud.vehicle?.kind ?? null} /></span> Walk, or ride a bicycle, motorbike or car</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
-                  <li className="flex items-center gap-2"><span className="text-paper"><LandmarkIcon /></span> Landmarks: check in for coins</li>
                   <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours and finds (it glows); the Djinn between hunts (purple smoke)</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Inventory: gear, papers, relics</li>
                 </ul>
@@ -7879,16 +7757,6 @@ export function GameMap({
             >
               <BusIcon />
               {hud.stopHere && <span className={`${badge} bg-ink text-paper`} aria-hidden="true">{hud.stopHere.icon}</span>}
-            </button>
-            <button
-              type="button"
-              data-tool="landmarks"
-              aria-label="Landmarks"
-              title="Landmarks"
-              onClick={() => setLandmarksOpen({ quiz: null, message: null })}
-              className={`${tool} relative ${hud.landmarkHere?.canTry ? "bg-gold text-ink" : "bg-ink text-paper"}`}
-            >
-              <LandmarkIcon />
             </button>
             <button
               type="button"
@@ -8276,16 +8144,12 @@ export function GameMap({
         </div>
       )}
 
-      {landmarksOpen && landmarkActions && (
-        <LandmarkPanel actions={landmarkActions} quiz={landmarksOpen.quiz} message={landmarksOpen.message} onClose={() => setLandmarksOpen(null)} />
-      )}
-
       {transitOpen && transitActions && (
         <TransitPanel actions={transitActions} coins={hud.coins} onClose={() => setTransitOpen(false)} />
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || (hud.landmarkHere?.canTry && !hud.ride && !hud.care)) && (
+      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -8356,19 +8220,6 @@ export function GameMap({
             >
               <LampIcon size={18} />
               Claim · {hud.detourHere.relic ? RELICS[hud.detourHere.relic].name : `+${hud.detourHere.coins}`}
-            </button>
-          )}
-          {hud.landmarkHere?.canTry && !hud.ride && !hud.care && (
-            <button
-              type="button"
-              disabled={checkingIn}
-              onClick={() => void checkIn(hud.landmarkHere!.landmark)}
-              aria-label={`Check in at ${hud.landmarkHere.landmark.name} for ${hud.landmarkHere.landmark.reward} coins`}
-              title={`Check in at ${hud.landmarkHere.landmark.name}`}
-              className={`${here} gap-1.5`}
-            >
-              <LandmarkIcon size={18} />
-              Check in · +{hud.landmarkHere.landmark.reward}
             </button>
           )}
           {hud.actions.map((a) => (

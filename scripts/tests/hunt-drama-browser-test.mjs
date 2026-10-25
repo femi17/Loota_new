@@ -19,6 +19,8 @@ const ids = [];
 let huntId = null;
 let browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 const spot = { lng: 3.378214, lat: 6.500147 };
@@ -47,10 +49,10 @@ try {
   await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "The one test key, by a bus stop.", category: "general", area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, spot_lng: spot.lng, spot_lat: spot.lat });
   const { error: playersErr } = await admin.from("hunt_players").insert([
     // (rows inserted together need the same columns: missing ones would be null, not their defaults)
-    { hunt_id: huntId, user_id: me.id, joined_at: ago(20 * 60), keys_held: 0, finished_at: null, place: null },
-    { hunt_id: huntId, user_id: rival.id, joined_at: ago(25 * 60), keys_held: 0, finished_at: null, place: null },
+    { hunt_id: huntId, user_id: me.id, joined_at: ago(20 * 60), keys_held: 0, finished_at: null, place: null, ...LOCKED },
+    { hunt_id: huntId, user_id: rival.id, joined_at: ago(25 * 60), keys_held: 0, finished_at: null, place: null, ...LOCKED },
     // The leader has finished (no trial on record: the player can still be first to the key's trial).
-    { hunt_id: huntId, user_id: leader.id, joined_at: ago(30 * 60), keys_held: 1, finished_at: ago(60), place: 1 },
+    { hunt_id: huntId, user_id: leader.id, joined_at: ago(30 * 60), keys_held: 1, finished_at: ago(60), place: 1, ...LOCKED },
   ]);
   if (playersErr) throw playersErr;
   // The rival is already in the key's trial.
@@ -84,7 +86,7 @@ try {
   await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
   await wait(16000);
   const golden = await text('[aria-label="Golden minutes"]');
-  check("golden minutes on the card", /Golden minutes · \d:\d\d left/.test(golden ?? ""), golden);
+  check("golden minutes on the card", /Golden minutes · \d:\d\d · detector ×2/.test(golden ?? ""), golden);
   const tipLine = await text('[aria-label="A tip"]');
   check("a catch-up tip for the trailing hunter", /A tip: Key 1's area lies [a-z-]+ of where you were/.test(tipLine ?? ""), tipLine);
   check("…and its toast", (await page.evaluate(() => window.__toasts)).some((t) => /A tip for the chase/.test(t)));

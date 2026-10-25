@@ -16,6 +16,8 @@ const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
 const ids = [];
 let huntId = null, browser;
 let fails = 0;
+// An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
+const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 const spot = { lng: 3.378214, lat: 6.500147 };
 
@@ -38,7 +40,7 @@ try {
     ids.push(id);
     await admin.from("profiles").update({ username: `Racer_${tag}${Date.now() % 1000}`, home_lng: spot.lng, home_lat: spot.lat, home_set_at: new Date().toISOString() }).eq("id", id);
     await admin.from("player_positions").upsert({ user_id: id, lng: spot.lng, lat: spot.lat, mode: "walk", energy: 100, updated_at: ago(30) });
-    await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
+    await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, ...LOCKED });
     await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: new Date(Date.now() + 3600e3).toISOString(), created_at: new Date(Date.now() + 3600e3).toISOString() });
     const jar = new Map();
     const c = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { cookies: {

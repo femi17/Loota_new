@@ -15,8 +15,12 @@ import {
   type HuntState,
   type SearchResult,
   type AnyTrialView,
+  type RiddleClock,
   type TrialView,
 } from "@/game/hunt";
+import type { LngLat } from "@/game/geo";
+import type { Place } from "@/game/places";
+import { PlaceSearch } from "./PlaceSearch";
 import { PuzzleTrial } from "./puzzles/PuzzleTrial";
 import { cue } from "@/game/sound";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
@@ -35,7 +39,25 @@ export type HuntActions = {
   say: (text: string, alert?: boolean) => void;
   /** Which way and how far a spot is from the hunter, as the screen shows it (bearing in degrees, 0 = up). */
   pointer: (lng: number, lat: number) => { bearing: number; metres: number };
+  /** Hold the hunter still until they've named the riddle's place (the riddle clock). */
+  setHold: (hold: boolean) => void;
+  /** Plan the way to a place (the journey planner, as the directions button does). */
+  goTo: (place: Place) => void;
+  /** Where the hunter is. */
+  where: () => LngLat;
 };
+
+const ANSWER_MS = 15_000;
+const CYCLE_MS = 75_000; // 15 s to answer, then a 60 s wait
+
+/** The riddle clock now, from the server's times: answering (s left), waiting (s left), locked or ready. */
+function clockNow(c: (RiddleClock & { skew: number }) | null, now: number) {
+  if (!c) return null;
+  if (c.phase !== "answer" && c.phase !== "wait") return { phase: c.phase, left: 0 };
+  const start = c.phase === "answer" ? Date.parse(c.endsAt) - ANSWER_MS : Date.parse(c.until) - CYCLE_MS;
+  const e = (((now + c.skew - start) % CYCLE_MS) + CYCLE_MS) % CYCLE_MS;
+  return e < ANSWER_MS ? { phase: "answer" as const, left: Math.ceil((ANSWER_MS - e) / 1000) } : { phase: "wait" as const, left: Math.ceil((CYCLE_MS - e) / 1000) };
+}
 
 const FEED_MS = 6000;
 const TOAST_MS = 4500;
@@ -114,6 +136,8 @@ export function HuntPanel({
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [revealed, setRevealed] = useState<string | null>(null); // the riddle being revealed (the start of the hunt)
+  const [clock, setClock] = useState<(RiddleClock & { skew: number }) | null>(null);
+  const [locking, setLocking] = useState(false);
   const feedSince = useRef<string | null>(null);
   const [tip, setTip] = useState<HuntFeed["tip"]>(null);
   const [rival, setRival] = useState<string | null>(null); // a showdown: someone else in this key's trial
@@ -157,6 +181,8 @@ export function HuntPanel({
         void tellStory("start"); // the Masquerade first, then the riddle
       }
     }
+    if (next.phase === "live" && next.joined && !next.finishedAt) void loadClock();
+    else setClock(null);
     if (next.thrown) {
       actions.current?.placeAt(next.thrown.lng, next.thrown.lat);
       actions.current?.say("Your Key Trial ran out of time while you were away, so you were thrown 2 km from the key.", true);
@@ -272,6 +298,41 @@ export function HuntPanel({
     };
   }, [racing, huntId]);
 
+  // The riddle clock: it starts when the hunter can see the riddle (nothing in front of it); they stand still until
+  // they've named a place; the last seconds tick; reaching a wrong place opens a new 15 seconds.
+  const tick = clockNow(clock, now);
+  const canStart = !!racing && !!state?.riddle && clock?.phase === "ready" && !trial && !ending && !story && !revealed && !go && !scene;
+  useEffect(() => {
+    if (!canStart) return;
+    void (async () => {
+      const { data } = await supabase.rpc("start_riddle", { p_hunt: huntId });
+      clockFrom(data);
+      setOpen(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once each time it becomes startable
+  }, [canStart]);
+  const holding = !!racing && (tick?.phase === "answer" || tick?.phase === "wait");
+  useEffect(() => {
+    actions.current?.setHold(holding);
+  }, [holding, actions]);
+  useEffect(() => () => actions.current?.setHold(false), [actions]);
+  const answerLeft = tick?.phase === "answer" ? tick.left : null;
+  useEffect(() => {
+    if (answerLeft !== null && answerLeft <= 5) cue("tick");
+  }, [answerLeft]);
+  useEffect(() => {
+    const wrong = (e: Event) => {
+      const name = (e as CustomEvent<string>).detail;
+      cue("wrong");
+      setOpen(true);
+      setFeedback({ text: `🚫 Nothing here: the key isn't at ${name}. Quick, 15 seconds to name another place!`, hot: false });
+      void loadClock();
+    };
+    window.addEventListener("loota:wrong-place", wrong);
+    return () => window.removeEventListener("loota:wrong-place", wrong);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadClock reads the latest hunt
+  }, [huntId]);
+
   const trialKeyRef = useRef<number | null>(null);
   useEffect(() => {
     trialKeyRef.current = trial?.key ?? null;
@@ -304,6 +365,9 @@ export function HuntPanel({
           text: `Cold: the key isn't here. Its area is ${r.band} away. Work out the place the riddle names, travel there, then search again.`,
           hot: false,
         });
+      } else if (r.reason === "answer_first") {
+        setFeedback({ text: "Name the place first: type it in the box under the riddle.", hot: false });
+        void loadClock();
       } else if (r.reason === "wait") {
         setFeedback({ text: "Give it a few seconds between searches.", hot: false });
       } else if (r.reason === "position") {
@@ -316,6 +380,41 @@ export function HuntPanel({
       }
     } finally {
       setSearching(false);
+    }
+  }
+
+  /** The riddle clock from the server (riddle_state, start_riddle and lock_guess all answer with it). */
+  function clockFrom(data: unknown) {
+    const r = data as (RiddleClock & { ok?: boolean; now?: string }) | null;
+    if (!r || !("phase" in r)) {
+      setClock(null);
+      return;
+    }
+    setClock({ ...r, skew: r.now ? Date.parse(r.now) - Date.now() : 0 });
+  }
+  async function loadClock() {
+    const { data } = await supabase.rpc("riddle_state", { p_hunt: huntId });
+    clockFrom(data);
+  }
+
+  /** Lock in a place for the riddle; then the way there is planned. */
+  async function lockPlace(place: Place) {
+    if (locking) return;
+    setLocking(true);
+    try {
+      const { data } = await supabase.rpc("lock_guess", { p_hunt: huntId, p_lng: place.lng, p_lat: place.lat, p_name: place.name });
+      const r = data as { ok: boolean; reason?: string } | null;
+      clockFrom(data);
+      if (r?.ok) {
+        cue("go");
+        setFeedback({ text: `📍 Locked in: ${place.name}. Go! Nobody knows if it's right until they get there.`, hot: false });
+        actions.current?.goTo(place);
+      } else if (r?.reason === "too_late") {
+        cue("wrong");
+        setFeedback({ text: "⏳ Too late! Wait for your next chance.", hot: false });
+      }
+    } finally {
+      setLocking(false);
     }
   }
 
@@ -442,7 +541,7 @@ export function HuntPanel({
             </span>
             <span className="ml-auto text-muted" aria-hidden="true">{open ? "▴" : "▾"}</span>
           </button>
-          {state.phase === "live" && !done && inArea && (
+          {state.phase === "live" && !done && inArea && (!clock || clock.phase === "locked" || clock.phase === "ready") && (
             <button
               type="button"
               disabled={searching}
@@ -452,6 +551,17 @@ export function HuntPanel({
               {searching ? "Searching…" : "Search here"}
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => void toggleBoard()}
+            aria-label="Leaderboard"
+            aria-pressed={!!board}
+            title="Leaderboard"
+            className={`flex h-8 shrink-0 items-center gap-1 rounded-lg px-1.5 text-xs font-extrabold ${board ? "bg-gold text-ink" : "text-gold hover:bg-ink-2"}`}
+          >
+            <span aria-hidden="true">🏆</span>
+            {racing && feed?.rank != null && <span>{ordinal(feed.rank)}</span>}
+          </button>
           <button
             type="button"
             onClick={onHide}
@@ -486,11 +596,49 @@ export function HuntPanel({
                   <p className="text-xs font-bold text-[#7FD1FF]">🗺️ The last chest held a clue, not the key. Follow it:</p>
                 )}
                 <p className="font-display text-base leading-snug">&ldquo;{state.riddle}&rdquo;</p>
-                <p className="text-xs text-muted">Key Trial: {trialLabel(state)}</p>
-                {!inArea && (
-                  <p className="text-xs text-muted">
-                    No typing: the riddle names a real place. Go there on the map: <b>Search here</b> appears when you reach the key&apos;s area.
-                  </p>
+                {tick?.phase === "answer" && (
+                  <div className="flex flex-col gap-2 rounded-xl bg-ink-2 p-2.5 ring-1 ring-gold" aria-label="Name the place">
+                    <div className="flex items-center justify-between text-xs font-extrabold">
+                      <span className="text-gold">Where is it? Name the place</span>
+                      <span className={`tabular-nums ${tick.left <= 5 ? "loota-pulse text-danger-text" : "text-paper"}`}>⏱ {tick.left}s</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-ink" aria-hidden="true">
+                      <div
+                        className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${tick.left <= 5 ? "bg-danger" : "bg-gold"}`}
+                        style={{ width: `${(tick.left / 15) * 100}%` }}
+                      />
+                    </div>
+                    <PlaceSearch
+                      inline
+                      autoFocus
+                      placeholder="Type the place…"
+                      near={() => actions.current?.where() ?? { lng: 0, lat: 0 }}
+                      onPick={(place) => void lockPlace(place)}
+                    />
+                  </div>
+                )}
+                {tick?.phase === "wait" && (
+                  <div className="flex flex-col gap-1.5 rounded-xl bg-[#3A1A1A] p-2.5 ring-1 ring-danger" role="status" aria-label="Waiting">
+                    <span className="text-xs font-extrabold text-danger-text">⏳ Too slow! Others are already on their way.</span>
+                    <span className="text-xs text-paper">
+                      Your next chance to answer in <b className="tabular-nums">{tick.left}s</b>. Think it through…
+                    </span>
+                  </div>
+                )}
+                {clock?.phase === "locked" && (
+                  <div className="flex items-center gap-2 rounded-xl bg-ink-2 p-2 text-xs" aria-label="Your answer">
+                    <span aria-hidden="true">📍</span>
+                    <span className="min-w-0 flex-1">
+                      Your answer: <b className="text-paper">{clock.guess.name}</b>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => actions.current?.goTo({ name: clock.guess.name, detail: "", lng: clock.guess.lng, lat: clock.guess.lat })}
+                      className="shrink-0 rounded-lg border border-gold px-2 py-1 font-bold text-gold"
+                    >
+                      Show the way
+                    </button>
+                  </div>
                 )}
                 {state.clue && (
                   <p className="rounded-xl bg-ink-2 p-2">
@@ -533,15 +681,13 @@ export function HuntPanel({
               const left = until ? Math.max(0, Math.round((until - now) / 1000)) : null;
               const soon = next ? Math.round((next - now) / 1000) : null;
               const mm = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+              void soon; // only while they're on (owner, 25 Oct 2026: a quieter card)
               if (left) {
                 return (
-                  <p className="rounded-xl bg-[#3B2F0A] p-2 text-xs font-bold text-gold ring-1 ring-gold" aria-label="Golden minutes">
-                    ✨ Golden minutes · {mm(left)} left: the detector reaches twice as far, keys pay +50
+                  <p className="self-start rounded-full bg-[#3B2F0A] px-2.5 py-1 text-xs font-bold text-gold ring-1 ring-gold" aria-label="Golden minutes">
+                    ✨ Golden minutes · {mm(left)} · detector ×2, keys +50
                   </p>
                 );
-              }
-              if (soon != null && soon > 0 && soon <= 15 * 60) {
-                return <p className="text-xs font-bold text-gold/80" aria-label="Golden minutes soon">✨ Golden minutes in {mm(soon)}</p>;
               }
               return null;
             })()}
@@ -561,19 +707,21 @@ export function HuntPanel({
                 {feedback.text}
               </p>
             )}
-            <div className="flex items-center gap-3 text-xs text-muted">
-              <span>Prize: {state.prize}</span>
-              {racing && feed?.rank != null && (
-                <span className="font-bold text-paper">
-                  {ordinal(feed.rank)} of {feed.hunters}
-                </span>
-              )}
-              <button type="button" onClick={() => void toggleBoard()} className="ml-auto font-bold text-gold">
-                {board ? "Hide board" : "Leaderboard"}
-              </button>
-            </div>
             {board && (
-              <ol className="flex flex-col gap-1">
+              <p className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl bg-ink-2 px-2.5 py-2 text-xs text-muted">
+                <span>
+                  🏆 Prize: <b className="text-paper">{state.prize}</b>
+                </span>
+                {racing && feed?.rank != null && (
+                  <span>
+                    You: <b className="text-paper">{ordinal(feed.rank)} of {feed.hunters}</b>
+                  </span>
+                )}
+                {racing && <span>Next Key Trial: {trialLabel(state)}</span>}
+              </p>
+            )}
+            {board && (
+              <ol className="flex flex-col gap-1" aria-label="The leaderboard">
                 {board.length === 0 && <li className="text-muted">No hunters yet.</li>}
                 {board.map((row) => (
                   <li key={row.rank} className={`flex items-center gap-2 rounded-lg px-2 py-1 ${row.me ? "bg-ink-2 font-bold" : ""}`}>
@@ -617,14 +765,13 @@ export function HuntPanel({
           <div role="dialog" aria-label="The first riddle" className="loota-wonder-banner flex w-full max-w-md flex-col gap-4 rounded-3xl bg-[#F5ECD8] p-6 text-center text-[#3A2410]">
             <LootaLogo height={64} tone="dark" className="mx-auto" />
             <p className="text-xs font-extrabold uppercase tracking-widest text-[#8A5A00]">The hunt is on · Key 1 of {state.keys}</p>
-            <p className="font-display text-2xl font-extrabold leading-snug">&ldquo;{revealed}&rdquo;</p>
-            <p className="text-sm">At the key, a Key Trial: {trialLabel(state)}.</p>
+            <p className="font-display text-2xl font-extrabold leading-snug">The first riddle is sealed.</p>
             <p className="text-sm text-[#5A4020]">
-              There&apos;s nothing to type: the riddle names a real place. Work out where it is, travel there on the map before the
-              others: <b>Search here</b> appears when you arrive.
+              When you open it, you have <b>15 seconds</b> to name the place it points to. Miss it and you wait a minute while the
+              others set off. Nobody knows if they&apos;re right until they get there.
             </p>
             <button type="button" onClick={() => setRevealed(null)} className="h-12 rounded-2xl bg-[#3A2410] font-bold text-[#F5ECD8]">
-              Let&apos;s go
+              Open the riddle
             </button>
           </div>
         </div>
@@ -667,9 +814,9 @@ export function HuntPanel({
                 <p className="text-5xl" aria-hidden="true">🗺️</p>
                 <h2 className="font-display text-3xl font-extrabold text-[#7FD1FF]">No key… only a clue!</h2>
                 <p className="text-muted">
-                  The chest held a torn map, not Key {ending.key}. Someone moved it. The key is somewhere else:
+                  The chest held a torn map, not Key {ending.key}. Someone moved it. A new riddle points to where it is now:
+                  you&apos;ll have 15 seconds to name the place.
                 </p>
-                <p className="font-display text-lg">&ldquo;{ending.riddle}&rdquo;</p>
               </>
             )}
             {ending.kind === "key" && (
@@ -678,9 +825,8 @@ export function HuntPanel({
                 <p className="loota-key-spin text-6xl" aria-hidden="true">🗝️</p>
                 <h2 className="font-display text-3xl font-extrabold text-gold">Key {ending.keysHeld} earned!</h2>
                 <p className="text-muted">
-                  {ending.keysHeld} of {ending.keys} keys. Your next riddle:
+                  {ending.keysHeld} of {ending.keys} keys. Your next riddle is ready: you&apos;ll have 15 seconds to name the place.
                 </p>
-                <p className="font-display text-lg">&ldquo;{ending.riddle}&rdquo;</p>
                 <Bonuses bonuses={ending.bonuses} />
               </>
             )}

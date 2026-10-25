@@ -581,7 +581,27 @@ export function HuntPanel({
           </button>
         </div>
 
-        {open && (
+        {/* 🏆: only the leaderboard (owner, 25 Oct 2026: "Clicking on the leaderboard. I am still getting the quiz question and all") */}
+        {open && board && (
+          <div className="flex flex-col gap-1 text-sm">
+            <p className="px-2 text-xs font-extrabold uppercase tracking-wider text-gold">Leaderboard</p>
+            <ol className="flex flex-col gap-1" aria-label="The leaderboard">
+              {board.length === 0 && <li className="px-2 text-muted">No hunters yet.</li>}
+              {board.map((row) => (
+                <li key={row.rank} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${row.me ? "bg-ink-2 font-bold" : ""}`}>
+                  <span className="min-w-0 flex-1 truncate">{row.username}</span>
+                  <span className="shrink-0 font-bold text-gold" aria-label={`${row.keysHeld} key${row.keysHeld === 1 ? "" : "s"}`}>
+                    🗝 {row.keysHeld}
+                  </span>
+                </li>
+              ))}
+            </ol>
+            <button type="button" onClick={() => setBoard(null)} className="mt-1 h-9 rounded-xl bg-ink-2 text-xs font-bold text-paper">
+              Back to the riddle
+            </button>
+          </div>
+        )}
+        {open && !board && (
           <div className="flex flex-col gap-2 text-sm">
             {state.phase === "upcoming" && (
               <>
@@ -696,19 +716,6 @@ export function HuntPanel({
               <p role="status" className={`rounded-xl p-2 font-bold ${feedback.hot ? "bg-[#7a2e12] text-paper" : "bg-[#173b5c] text-paper"}`}>
                 {feedback.text}
               </p>
-            )}
-            {board && (
-              <ol className="flex flex-col gap-1" aria-label="The leaderboard">
-                {board.length === 0 && <li className="text-muted">No hunters yet.</li>}
-                {board.map((row) => (
-                  <li key={row.rank} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${row.me ? "bg-ink-2 font-bold" : ""}`}>
-                    <span className="min-w-0 flex-1 truncate">{row.username}</span>
-                    <span className="shrink-0 font-bold text-gold" aria-label={`${row.keysHeld} key${row.keysHeld === 1 ? "" : "s"}`}>
-                      🗝 {row.keysHeld}
-                    </span>
-                  </li>
-                ))}
-              </ol>
             )}
           </div>
         )}

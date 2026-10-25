@@ -15,6 +15,8 @@ export type Player = {
   position: { lng: number; lat: number; mode: Mode } | null;
   /** The owner, who can create and publish hunts. */
   isAdmin: boolean;
+  /** A metal detector bought (it beeps near a key, and reaches farther). */
+  detector: boolean;
 };
 
 /** The signed-in player's profile, or null when nobody is signed in. Server only. */
@@ -29,7 +31,7 @@ export async function getPlayer(): Promise<Player | null> {
 
   const { data } = await supabase
     .from("profiles")
-    .select("id, username, avatar, coins, home_lng, home_lat, is_admin")
+    .select("id, username, avatar, coins, home_lng, home_lat, is_admin, detector")
     .eq("id", id)
     .single();
   if (!data) return null;
@@ -46,6 +48,7 @@ export async function getPlayer(): Promise<Player | null> {
     coins: Number(data.coins),
     home: data.home_lng != null && data.home_lat != null ? { lng: data.home_lng, lat: data.home_lat } : null,
     isAdmin: data.is_admin === true,
+    detector: data.detector === true,
     position: pos ? { lng: pos.lng, lat: pos.lat, mode: pos.mode in MODES ? (pos.mode as Mode) : "walk" } : null,
   };
 }

@@ -30,7 +30,7 @@ try {
   const { data } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   const id = data.user.id; ids.push(id);
   const start = fromSpot(600);
-  await admin.from("profiles").update({ home_lng: start.lng, home_lat: start.lat, home_set_at: new Date().toISOString() }).eq("id", id);
+  await admin.from("profiles").update({ coins: 400, home_lng: start.lng, home_lat: start.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   await admin.from("player_positions").upsert({ user_id: id, lng: start.lng, lat: start.lat, mode: "walk", energy: 90, updated_at: ago(30) });
   const { data: hunt, error } = await admin.from("hunts")
     .insert({ title: "Detector test (automated)", prize: "none", winners: 3, starts_at: ago(600), ends_at: soon(7200), published: true, questions_per_trial: 2, seconds_per_question: 15 })
@@ -77,6 +77,27 @@ try {
   check("…and Search here on the hunt card (only in the area)", await page.evaluate(() => [...document.querySelectorAll('section[aria-label="Hunt"] button')].some((b) => b.textContent?.trim() === "Search here")));
   await shot("1-area");
 
+  // ---- 🏆: only the leaderboard (no riddle under it)
+  await page.evaluate(() => document.querySelector('[data-tool="leaderboard"]')?.click());
+  await wait(2000);
+  const boardCard = await text('section[aria-label="Hunt"]');
+  check("🏆: the card shows only the leaderboard", /Leaderboard/i.test(boardCard ?? "") && /🗝 0/.test(boardCard ?? "") && !/test key, by a bus stop/.test(boardCard ?? ""), boardCard);
+  await page.evaluate(() => [...document.querySelectorAll('section[aria-label="Hunt"] button')].find((b) => b.textContent?.trim() === "Back to the riddle")?.click());
+  await wait(800);
+  check("…and back to the riddle", /test key, by a bus stop/.test((await text('section[aria-label="Hunt"]')) ?? ""));
+
+  // ---- The metal detector, bought in the inventory (300 coins)
+  await page.evaluate(() => document.querySelector('button[aria-label^="Inventory"]')?.click());
+  await wait(1500);
+  const offer = await text('[role="dialog"]');
+  check("the inventory offers a metal detector for 300", /Metal detector/.test(offer ?? "") && /Buy · 300/.test(offer ?? ""), (offer ?? "").slice(0, 160));
+  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.trim() === "Buy · 300")?.click());
+  await wait(2500);
+  const owned = await text('[role="dialog"]');
+  const { data: me } = await admin.from("profiles").select("coins, detector").eq("id", id).single();
+  check("…bought: ✓ Yours, 100 coins left", /✓ Yours/.test(owned ?? "") && me.detector === true && Number(me.coins) === 100, `${me.detector} ${me.coins}`);
+  await shot("1b-detector");
+
   // ---- 25 m off: the chest (it rises within 60 m; Open the chest within 40 m)
   await page.goto("about:blank");
   await wait(1000);
@@ -91,7 +112,7 @@ try {
   const button = await page.evaluate(() => !![...document.querySelectorAll("button")].find((b) => b.getAttribute("aria-label") === "Open the key's chest"));
   check("the chest has risen: Open the chest", button);
   const cues1 = await page.evaluate(() => window.__lootaCues ?? []);
-  check("…heard: the heartbeat near the key, the drum roll as the chest rose (sound & haptics)", cues1.includes("heartbeat") && cues1.includes("chest"), [...new Set(cues1)].join(", "));
+  check("…heard: the detector beeping near the key, the drum roll as the chest rose (no heartbeat: not tired)", cues1.includes("beep") && cues1.includes("chest") && !cues1.includes("heartbeat"), [...new Set(cues1)].join(", "));
   await shot("2-chest");
 
   // ---- Open it with the hunt card put away (owner, 20 Oct 2026: nothing happened): the card comes back, the Key Trial starts

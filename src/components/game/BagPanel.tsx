@@ -52,6 +52,8 @@ const STATE_CHIP: Record<OwnedVehicle["state"], { text: string; style: string }>
 
 /** The player's inventory: their vehicles' gear and papers (and buying what's missing), the jerry can, relics, Wonders. */
 export function BagPanel({
+  detector,
+  onBuyDetector,
   leads,
   owned,
   coins,
@@ -63,6 +65,9 @@ export function BagPanel({
   onWonder,
   onClose,
 }: {
+  /** A metal detector bought (300 coins, kept). */
+  detector: boolean;
+  onBuyDetector: () => Promise<string>;
   leads: number;
   /** The vehicles the player owns, with their gear and papers. */
   owned: OwnedVehicle[];
@@ -80,6 +85,8 @@ export function BagPanel({
   onClose: () => void;
 }) {
   const [relics, setRelics] = useState<Relic[] | null>(null);
+  const [buyingDetector, setBuyingDetector] = useState(false);
+  const [detectorNote, setDetectorNote] = useState<string | null>(null);
   const [wonders, setWonders] = useState<Wonder[]>([]);
   const [now] = useState(() => Date.now());
   const [busy, setBusy] = useState<string | null>(null);
@@ -246,6 +253,36 @@ export function BagPanel({
                   </div>
                 );
               })}
+
+              {/* The metal detector (owner, 25 Oct 2026): beeps near a key, reaches farther */}
+              <div className={`flex items-center gap-3 rounded-2xl p-3 ${detector ? "bg-ink-2" : "bg-ink-2 ring-1 ring-gold/50"}`}>
+                <span className="flex size-10 items-center justify-center rounded-xl bg-gold/15 text-xl" aria-hidden="true">📡</span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold leading-tight">Metal detector</p>
+                  <p className="text-xs text-muted">
+                    {detector
+                      ? "Yours. It beeps as you close in on a key, faster and faster, and picks one up from farther away."
+                      : "Beeps as you close in on a key, faster and faster, and picks one up from 1.5× farther. Yours to keep."}
+                  </p>
+                  {detectorNote && <p className="mt-1 text-xs font-bold text-gold">{detectorNote}</p>}
+                </div>
+                {detector ? (
+                  <span className="shrink-0 text-xs font-bold text-ok">✓ Yours</span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={buyingDetector || coins < 300}
+                    onClick={async () => {
+                      setBuyingDetector(true);
+                      setDetectorNote(await onBuyDetector());
+                      setBuyingDetector(false);
+                    }}
+                    className="h-10 shrink-0 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50"
+                  >
+                    Buy · 300
+                  </button>
+                )}
+              </div>
 
               {/* The jerry can */}
               <div className="flex items-center gap-3 rounded-2xl bg-ink-2 p-3">

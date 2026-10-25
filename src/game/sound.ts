@@ -89,7 +89,7 @@ function drum(c: Ctx, at: number, pitch = 200, gain = 0.35) {
 
 export type Cue =
   | "tap" | "heartbeat" | "chest" | "tick" | "wrong" | "right" | "solved" | "key" | "relay" | "failed"
-  | "coin" | "countdown" | "go" | "thunder" | "news" | "rival" | "stop" | "trap";
+  | "coin" | "countdown" | "go" | "thunder" | "news" | "rival" | "stop" | "trap" | "beep";
 
 const BUZZ: Partial<Record<Cue, number | number[]>> = {
   heartbeat: [18, 90, 28],
@@ -103,9 +103,10 @@ const BUZZ: Partial<Record<Cue, number | number[]>> = {
   rival: [30, 60, 30],
   stop: [60],
   trap: [40, 40, 40, 40, 250],
+  beep: [12],
 };
 
-/** Play a moment's sound (and buzz), if sound is on. `level` (0–1): how strong, for the heartbeat. */
+/** Play a moment's sound (and buzz), if sound is on. `level` (0–1): how strong (the heartbeat) or how close (the beep). */
 export function cue(name: Cue, level = 1) {
   // The moments' sounds, in order, for tests (a test can't listen).
   if (typeof window !== "undefined") ((window as unknown as { __lootaCues?: Cue[] }).__lootaCues ??= []).push(name);
@@ -191,6 +192,10 @@ export function cue(name: Cue, level = 1) {
       tone(c, 494, 0.22, { type: "sawtooth", gain: 0.07 });
       tone(c, 392, 0.3, { type: "sawtooth", gain: 0.07, at: 0.28 });
       tone(c, 494, 0.3, { type: "sawtooth", gain: 0.07, at: 0.28 });
+      break;
+    case "beep":
+      // The metal detector: a short electronic beep, higher as the key gets closer.
+      tone(c, 700 + 900 * level, 0.07, { type: "square", gain: 0.05 + 0.05 * level });
       break;
     case "trap":
       // The Masquerade's trap chest: a pop, a sad trombone, and his giggle.

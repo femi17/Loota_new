@@ -282,6 +282,7 @@ export function GameMap({
   openHunt = null,
   newcomer = false,
   huntClock = null,
+  hasDetector = false,
 }: {
   playerId: string;
   username: string;
@@ -301,6 +302,8 @@ export function GameMap({
   newcomer?: boolean;
   /** The hunt's times, for its clock at the top (the joined hunt, or a live one to join). */
   huntClock?: { startsAt: string; endsAt: string } | null;
+  /** A metal detector bought: it beeps as a key gets closer (the server also lets it reach farther). */
+  hasDetector?: boolean;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false });
@@ -409,6 +412,24 @@ export function GameMap({
     heat: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
+  const [detector, setDetector] = useState(hasDetector);
+  const detectorRef = useRef(hasDetector); // for the map's own loop
+  /** Buy the metal detector (from the inventory). */
+  const buyDetector = async (): Promise<string> => {
+    const { createClient } = await import("@/lib/supabase/client");
+    const { data } = await createClient().rpc("buy_detector");
+    const r = data as { ok: boolean; reason?: string; balance?: number; price?: number } | null;
+    if (r?.ok) {
+      setDetector(true);
+      detectorRef.current = true;
+      if (r.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
+      cue("coin");
+      return "📡 Your metal detector is ready: it beeps as you close in on a key, and picks one up from farther away.";
+    }
+    if (r?.reason === "owned") return "You already have a metal detector.";
+    if (r?.reason === "coins") return `A metal detector costs ${r.price ?? 300} coins.`;
+    return "Couldn't buy it right now. Try again.";
+  };
   // The first time on the map: the welcome tour (once per player on this device); a live hunt's invitation.
   const tourKey = `loota:welcome:${playerId}`;
   const tourSeen = useSyncExternalStore(
@@ -6545,6 +6566,8 @@ export function GameMap({
         trap?: LngLat | null;
         /** At the hunter's answer, and it isn't the key's place (the riddle clock starts again). */
         wrongPlace?: string;
+        /** Whether the hunter owns a metal detector. */
+        detector?: boolean;
       };
       let pulseAt = -Infinity;
       let pulseEvery = 6000;
@@ -6657,6 +6680,7 @@ export function GameMap({
           return;
         }
         saved = { ...traveller.pos }; // the pulse saved it
+        if (p.detector) detectorRef.current = true;
         if (p.wrongPlace) {
           window.dispatchEvent(new CustomEvent("loota:wrong-place", { detail: p.wrongPlace }));
           say(`🚫 ${p.wrongPlace}: no key here. Name another place!`, true);
@@ -6711,10 +6735,23 @@ export function GameMap({
             showHeat();
           }
         }
-        // A heartbeat (heard and felt) once it's warm, faster and stronger as the key gets closer.
-        if (heat && heat.level > 0.35 && !frozen && !inWorld && now >= stuckUntil && now - lastBeat > 1600 - 1250 * heat.level) { // not in a trial or a scene
+        // The metal detector (if bought) beeps once it's warm, faster and higher as the key gets closer.
+        if (detectorRef.current && heat && heat.level > 0.3 && !frozen && !inWorld && now >= stuckUntil && now - lastBeat > 1500 - 1350 * heat.level) { // not in a trial or a scene
           lastBeat = now;
-          cue("heartbeat", heat.level);
+          cue("beep", heat.level);
+        }
+      }
+
+      // Tired (owner, 25 Oct 2026: "let hear the heart beat if someone is tired"): under a quarter of their energy,
+      // a heartbeat, heard and felt, faster and stronger as it runs out.
+      let lastTiredBeat = 0;
+      function tiredTick(now: number) {
+        const e = traveller.energy;
+        if (e >= 25 || frozen || inWorld || ride) return;
+        const level = Math.min(1, (25 - e) / 25);
+        if (now - lastTiredBeat > 1700 - 900 * level) {
+          lastTiredBeat = now;
+          cue("heartbeat", 0.3 + 0.7 * level);
         }
       }
 
@@ -7016,6 +7053,7 @@ export function GameMap({
         wondersTick(now);
         pocketTick(now);
         pulseTick(now, t);
+        tiredTick(now);
         void roadTick(now);
 
         if (now - lastHud > 100) {
@@ -7691,7 +7729,7 @@ export function GameMap({
                   {[
                     ["📜", "Name the place", "You have 15 seconds to type the place the riddle points to. Miss it and you wait a minute."],
                     ["🗺️", "Get there", "The way to your answer is drawn. Nobody knows if it's right until they arrive: the wrong place means a new 15 seconds."],
-                    ["🔥", "Follow the heat", "In the area the edges glow: Warm, Hot, then Burning as you close in."],
+                    ["🔥", "Follow the heat", "In the area the edges glow: Warm, Hot, then Burning as you close in. A metal detector (in your inventory, 300 coins) beeps faster and reaches farther."],
                     ["🗝️", "Open the chest", "Within 60 m of the key it rises out of the ground."],
                     ["🧩", "Beat the Key Trial", "A puzzle or quick questions against the clock. Fail and you're thrown 2 km away."],
                   ].map(([icon, title, text], i) => (
@@ -7924,6 +7962,8 @@ export function GameMap({
 
       {bagOpen && (
         <BagPanel
+          detector={detector}
+          onBuyDetector={buyDetector}
           leads={hud.leads}
           owned={bagOwned}
           keg={hud.keg}

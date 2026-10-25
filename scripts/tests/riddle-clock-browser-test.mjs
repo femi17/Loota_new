@@ -144,6 +144,12 @@ try {
   });
   check("…and it fits the top bar", fits);
   await page.screenshot({ path: `${OUT}/clock-5-top.png`, clip: { x: 0, y: 0, width: 390, height: 70 } });
+  // Tired (owner, 25 Oct 2026: "let hear the heart beat if someone is tired"): on 10 energy, a heartbeat.
+  await admin.from("player_positions").update({ energy: 10 }).eq("user_id", id);
+  await open();
+  await wait(4000);
+  const tiredCues = await page.evaluate(() => window.__lootaCues ?? []);
+  check("tired (10 energy): the heartbeat", tiredCues.includes("heartbeat"), [...new Set(tiredCues)].join(", "));
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

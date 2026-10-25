@@ -8,7 +8,7 @@ import { ChestArt } from "@/components/ChestArt";
 import { Masquerade } from "./Masquerade";
 
 /** How to move, shown rather than told: hold the lower screen, swipe there to turn, SPRINT. */
-function MoveDemo() {
+export function MoveDemo() {
   const tile = "flex flex-1 flex-col items-center gap-2 rounded-2xl bg-ink-2 p-2.5 text-center text-xs font-bold";
   return (
     <div className="flex gap-2" aria-hidden="true">

@@ -167,15 +167,20 @@ export function LandmarkPanel({
               const wait = !lm.canTry;
               return (
                 <li key={lm.id} className={`flex items-center justify-between gap-3 rounded-2xl bg-ink-2 p-4 ${here ? "ring-2 ring-gold" : ""}`}>
-                  <div className="min-w-0">
-                    <p className="truncate font-bold">
-                      🏛 {lm.name}
-                      {lm.visited ? " ✓" : ""}
-                    </p>
-                    <p className="truncate text-xs text-muted">
-                      {lm.city} · {TIER[lm.tier]} · {here ? "you're here" : distance(lm.metres)} ·{" "}
-                      <span className="font-bold text-gold">{lm.reward} coins</span>
-                      {wait ? " · try again tomorrow" : ""}
+                  <span
+                    className={`flex size-11 shrink-0 items-center justify-center rounded-xl text-xl ${lm.tier >= 2 ? "bg-gold/20 ring-1 ring-gold/60" : "bg-ink"}`}
+                    aria-hidden="true"
+                  >
+                    {lm.visited ? "✅" : "🏛"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold leading-snug">{lm.name}</p>
+                    <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
+                      <span className="text-muted">
+                        {lm.city} · {TIER[lm.tier]} · {here ? "you're here" : distance(lm.metres)}
+                      </span>
+                      <span className="rounded-full bg-gold/15 px-2 py-0.5 font-bold text-gold">+{lm.reward} coins</span>
+                      {wait && <span className="text-muted">try again tomorrow</span>}
                     </p>
                   </div>
                   {here ? (

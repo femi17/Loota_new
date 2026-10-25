@@ -4,7 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { LootaLogo } from "@/components/Logo";
-import { HuntInvite, WelcomeTour, type OpenHunt } from "./WelcomeTour";
+import { HuntInvite, MoveDemo, WelcomeTour, type OpenHunt } from "./WelcomeTour";
 import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
@@ -424,10 +424,12 @@ export function GameMap({
     () => true, // on the server: none
   );
   const [tourDone, setTourDone] = useState(false);
-  const touring = newcomer && !tourSeen && !tourDone;
+  const [tourAgain, setTourAgain] = useState(false); // asked for from the help panel
+  const touring = (newcomer && !tourSeen && !tourDone) || tourAgain;
   const [inviteOff, setInviteOff] = useState(false);
   const endTour = () => {
     setTourDone(true);
+    setTourAgain(false);
     try {
       localStorage.setItem(tourKey, "1");
     } catch {
@@ -7746,48 +7748,88 @@ export function GameMap({
             )}
 
             {helpOpen && (
-              <div className="pointer-events-auto flex max-h-[60dvh] max-w-md flex-col gap-2 overflow-y-auto rounded-2xl bg-ink p-4 text-sm" role="note">
-                <p className="font-bold">The buttons</p>
+              <div className="pointer-events-auto flex max-h-[64dvh] max-w-md flex-col gap-3 overflow-y-auto rounded-2xl bg-ink p-4 text-sm ring-1 ring-line" role="note" aria-label="How to play">
+                <div className="flex items-center justify-between">
+                  <p className="font-display text-lg font-extrabold">How to play</p>
+                  <button type="button" aria-label="Close" onClick={() => setHelpOpen(false)} className="flex size-8 items-center justify-center rounded-lg bg-ink-2 text-paper">
+                    ✕
+                  </button>
+                </div>
+                <p className="text-xs font-bold uppercase tracking-wider text-gold">A hunt, step by step</p>
+                <ol className="flex flex-col gap-2">
+                  {[
+                    ["📜", "Read the riddle", "It names a real place. No typing: work out where."],
+                    ["🗺️", "Get there", "Walk, ride or take the bus. Search here appears once you're in the key's area."],
+                    ["🔥", "Follow the heat", "In the area the edges glow: Warm, Hot, then Burning as you close in."],
+                    ["🗝️", "Open the chest", "Within 60 m of the key it rises out of the ground."],
+                    ["🧩", "Beat the Key Trial", "A puzzle or quick questions against the clock. Fail and you're thrown 2 km away."],
+                  ].map(([icon, title, text], i) => (
+                    <li key={title} className="flex gap-3 rounded-xl bg-ink-2 p-2.5">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-ink text-lg" aria-hidden="true">{icon}</span>
+                      <span>
+                        <b>
+                          {i + 1}. {title}
+                        </b>
+                        <span className="block text-muted">{text}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <p className="rounded-xl bg-[#3B1F4F] p-2.5">
+                  🎭 <b>Beware the Masquerade:</b> a chest that rises where the heat isn&apos;t <b>Burning</b> is his trap.
+                </p>
+                <p className="mt-1 text-xs font-bold uppercase tracking-wider text-gold">Moving</p>
+                <MoveDemo />
+                <p className="text-muted">Keyboard: hold ↑ to go, ↓ to turn round, tap ← → to turn at the next junction, Shift to sprint.</p>
+                <p className="mt-1 text-xs font-bold uppercase tracking-wider text-gold">Your buttons</p>
                 <ul className="flex flex-col gap-1.5">
                   <li className="flex items-center gap-2"><span className="text-paper"><DirectionsIcon /></span> Directions: search a place or tap the map</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><VehicleIcon kind={hud.vehicle?.kind ?? null} /></span> Walk, or ride a bicycle, motorbike or car</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><LandmarkIcon /></span> Landmarks: check in for coins</li>
-                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours, whispers and hidden finds during a hunt (it glows); the Djinn between hunts (it smokes purple)</li>
+                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours and finds (it glows); the Djinn between hunts (purple smoke)</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Inventory: gear, papers, relics</li>
                 </ul>
-                <p className="mt-1 font-bold">How to move</p>
-                <p>
-                  <b>Keyboard:</b> hold ↑ to go, ↓ to turn round and go back. Tap ← or → to turn left or right at the next junction (or
-                  the one you just passed). Hold Shift to sprint.
-                </p>
-                <p>
-                  <b>Touch:</b> press and hold the lower part of the screen to walk. Swipe left or right there to turn, and down to turn
-                  back. Hold SPRINT to run or pedal faster.
-                </p>
-                <p>
-                  <b>Look around:</b> drag the map (the upper part on a phone) left or right to turn the view, up or down to tilt it.
-                </p>
-                <p>
-                  Things you can do where you stand (eat, rest, refuel, check in) appear as gold buttons above the street name.
-                </p>
-                <p>
-                  <b>Night and day</b> follow the real sun where you are. At night taxis charge more and buses come less often.{" "}
-                  <b>Traffic:</b> at rush hour main roads in town jam (red: standstill, orange: slow). Cars crawl, motorbikes weave
-                  through; walkers and cyclists aren&apos;t held up.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSound(!sound);
-                    setSoundState(!sound);
-                  }}
-                  aria-pressed={sound}
-                  className="self-start rounded-xl bg-ink-2 px-3 py-2 text-sm font-bold"
-                >
-                  {sound ? "🔊 Sounds and buzzes: on" : "🔇 Sounds and buzzes: off"}
-                </button>
-                <button type="button" onClick={() => setHelpOpen(false)} className="self-start font-bold text-gold">
+                <details className="rounded-xl bg-ink-2 p-2.5">
+                  <summary className="cursor-pointer font-bold">Good to know</summary>
+                  <div className="mt-2 flex flex-col gap-2 text-muted">
+                    <p>
+                      <b className="text-paper">Look around:</b> drag the map (the upper part on a phone) sideways to turn the view, up or down to tilt it.
+                    </p>
+                    <p>Things you can do where you stand (eat, rest, refuel, check in) appear as gold buttons above the street name.</p>
+                    <p>
+                      <b className="text-paper">Night and day</b> follow the real sun: at night taxis cost more and buses come less often.
+                    </p>
+                    <p>
+                      <b className="text-paper">Traffic:</b> at rush hour main roads jam (red: standstill, orange: slow). Cars crawl, motorbikes weave
+                      through; walkers and cyclists aren&apos;t held up.
+                    </p>
+                  </div>
+                </details>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSound(!sound);
+                      setSoundState(!sound);
+                    }}
+                    aria-pressed={sound}
+                    className="rounded-xl bg-ink-2 px-3 py-2 text-sm font-bold"
+                  >
+                    {sound ? "🔊 Sound: on" : "🔇 Sound: off"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHelpOpen(false);
+                      setTourAgain(true);
+                    }}
+                    className="rounded-xl bg-ink-2 px-3 py-2 text-sm font-bold"
+                  >
+                    ▶ Show the welcome tour again
+                  </button>
+                </div>
+                <button type="button" onClick={() => setHelpOpen(false)} className="h-11 rounded-xl bg-gold font-bold text-ink">
                   Got it
                 </button>
               </div>
@@ -7795,7 +7837,7 @@ export function GameMap({
 
             {/* The hunt (riddle, keys, Search here) */}
             {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
-            {!huntId && openHunt && !inviteOff && !inside && !touring && <HuntInvite hunt={openHunt} onDismiss={() => setInviteOff(true)} />}
+            {!huntId && openHunt && !inviteOff && !inside && !touring && !helpOpen && <HuntInvite hunt={openHunt} onDismiss={() => setInviteOff(true)} />}
             {huntId && huntShown && (
               <div className={inside && inside !== "trial" ? "hidden" : "contents"}>
                 <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} keeper={trialKeeper} inArea={!!hud.heat} />

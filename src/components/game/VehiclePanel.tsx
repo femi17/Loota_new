@@ -302,6 +302,14 @@ export function VehiclePanel({
                       )}
                     </div>
                   )}
+                  {/* Why Buy is greyed out (or would leave gear behind): how far short the coins are. */}
+                  {!onIt && !mine && coins < info.price + extrasTotal && (
+                    <p className="text-xs text-muted">
+                      {coins < info.price
+                        ? `${(info.price - coins).toLocaleString("en-NG")} coins short to buy one.${kind === "car" ? " A taxi takes you meanwhile." : " Rent one meanwhile."}`
+                        : `${(info.price + extrasTotal - coins).toLocaleString("en-NG")} coins short with the gear ticked: untick some to buy it now.`}
+                    </p>
+                  )}
                 </li>
               );
             })}

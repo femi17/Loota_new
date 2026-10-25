@@ -179,9 +179,15 @@ function NearestRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-2xl bg-ink-2 p-4">
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-sm font-bold">{title}</p>
-        <p className="truncate text-sm text-muted">{stop ? `${stopTitle(stop)} · ${distance(stop.metres)}` : "None within reach"}</p>
+        {stop ? (
+          <p className="mt-0.5 text-sm text-muted">
+            {stopTitle(stop)} <span className="ml-1 whitespace-nowrap rounded-full bg-ink px-2 py-0.5 text-xs font-bold text-paper">{distance(stop.metres)}</span>
+          </p>
+        ) : (
+          <p className="text-sm text-muted">None within reach</p>
+        )}
         {children}
       </div>
       {stop && (

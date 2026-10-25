@@ -161,6 +161,8 @@ type Hud = {
   heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean } | null;
   /** The police on your tail (owner, 25 Oct 2026): how far behind, and seconds left until you've lost them. */
   chase: { gap: number; left: number; chaser: "officer" | "patrol" } | null;
+  /** Cruise (owner, 25 Oct 2026): tokens held (15 s each, up to 8), on or off, and what's left of the one in use (0–1). */
+  cruise: { tokens: number; on: boolean; part: number };
   /**
    * The Djinn's Wonders at work (design doc 7.7): seconds left frozen by an Hourglass, in someone's sandstorm,
    * and with your Eye open (the hunters it sees: bearing relative to the view); under your Cloak; mirrored.
@@ -341,6 +343,10 @@ export function GameMap({
     useWonder: (id: string, to?: LngLat) => Promise<string>;
     /** Attack the dome the hunter is standing at the edge of. */
     attackDome: () => void;
+    /** Cruise on or off. */
+    toggleCruise: () => void;
+    /** Buy cruise tokens (4 for 40 coins, up to the most you can hold); resolves to a message. */
+    buyCruise: () => Promise<string>;
     /** Open the chest where the hunter stands when it's the Masquerade's decoy. */
     springTrap: () => void;
     /** Dizzy from the trap (after the Masquerade's scene): held still for `seconds`. */
@@ -413,6 +419,7 @@ export function GameMap({
     rush: null,
     heat: null,
     chase: null,
+    cruise: { tokens: 0, on: false, part: 0 },
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [detector, setDetector] = useState(hasDetector);
@@ -1878,6 +1885,8 @@ export function GameMap({
         useItem: (item) => applyItem(item),
         useWonder: (id, to) => useWonder(id, to),
         attackDome: () => void attackDome(),
+        toggleCruise: () => toggleCruise(),
+        buyCruise: () => buyCruise(),
         springTrap: () => void springTrap(),
         dizzy(seconds) {
           stuckUntil = performance.now() + seconds * 1000;
@@ -6802,6 +6811,143 @@ export function GameMap({
         }
       }
 
+      // ---- Cruise (owner, 25 Oct 2026: "move without pressing the keys… it can only go straight, users will need to
+      // monitor it"): the hunter goes on by themselves, straight on at junctions unless asked to turn (swipe or ← →).
+      // A token is 15 s of moving (red lights and jams don't use it up); it stops at a dead end, when the tokens run
+      // out, or when something stops the hunter (a scene, a trial, a trip). Tokens lie in the side streets.
+      const CRUISE_S = 15;
+      let lastCruiseHud = 0;
+      let cruiseTokens = 0;
+      let cruiseOn = false;
+      let cruiseLeft = 0; // seconds left of the token in use
+      const showCruise = () =>
+        setHud((h) => {
+          const view = { tokens: cruiseTokens, on: cruiseOn, part: cruiseOn ? Math.round((cruiseLeft / CRUISE_S) * 20) / 20 : 0 };
+          return h.cruise.tokens === view.tokens && h.cruise.on === view.on && h.cruise.part === view.part ? h : { ...h, cruise: view };
+        });
+      /** Spend a token (the server keeps the count). */
+      function spendCruiseToken() {
+        cruiseTokens = Math.max(0, cruiseTokens - 1);
+        cruiseLeft = CRUISE_S;
+        void supabase.rpc("use_cruise_token").then(({ data }) => {
+          const r = data as { ok: boolean; tokens: number } | null;
+          if (r) cruiseTokens = Math.min(cruiseTokens, r.tokens);
+          if (r && !r.ok) stopCruise("Out of cruise tokens.");
+          showCruise();
+        });
+      }
+      function toggleCruise() {
+        if (cruiseOn) {
+          stopCruise("Cruise off.");
+          return;
+        }
+        if (ride || visit) return;
+        if (cruiseTokens <= 0) {
+          say("No cruise tokens left: pick them up in the side streets (the teal discs), or buy some in your inventory.", true);
+          return;
+        }
+        spendCruiseToken();
+        cruiseOn = true;
+        cue("go");
+        say("🚗 Cruise on: straight on at junctions. Swipe or press ← → to turn there. Tap Cruise to stop.");
+        showCruise();
+      }
+      function stopCruise(why?: string) {
+        if (!cruiseOn) return;
+        cruiseOn = false;
+        cruiseLeft = 0;
+        cue("tap");
+        if (why) say(why);
+        showCruise();
+      }
+      function cruiseTick(dt: number, canMove: boolean) {
+        if (!cruiseOn) return;
+        if (ride || visit || inWorld || sceneHold || huntHold || frozen) {
+          stopCruise();
+          return;
+        }
+        if (!canMove || traveller.v < 0.3) return; // waiting (a red light, a jam): the token keeps
+        cruiseLeft -= dt;
+        if (cruiseLeft > 0) return;
+        if (cruiseTokens > 0) spendCruiseToken();
+        else stopCruise("Your cruise tokens ran out.");
+      }
+      async function buyCruise(): Promise<string> {
+        const { data } = await supabase.rpc("buy_cruise_tokens");
+        const r = data as { ok: boolean; reason?: string; bought?: number; tokens?: number; balance?: number; price?: number } | null;
+        if (r?.tokens != null) cruiseTokens = r.tokens;
+        showCruise();
+        if (r?.ok) {
+          if (r.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
+          cue("coin");
+          return `🚗 ${r.bought} cruise tokens: you have ${r.tokens}.`;
+        }
+        if (r?.reason === "full") return "Your cruise tokens are full (8).";
+        if (r?.reason === "coins") return `That's ${r.price} coins.`;
+        return "Couldn't buy them right now. Try again.";
+      }
+      void supabase.rpc("cruise_state").then(({ data }) => {
+        const r = data as { tokens: number; daily: boolean } | null;
+        if (disposed || !r) return;
+        cruiseTokens = r.tokens;
+        showCruise();
+        if (r.daily) say("🎁 Your 2 free cruise tokens for today. Tap Cruise to ride on by yourself.");
+      });
+
+      // Tokens lying in the side streets: teal discs; pass within 15 m to pick one up.
+      const drops = new Map<number, { entity: import("@/game/ThreeMapLayer").MapEntity; disc: import("three").Object3D; lng: number; lat: number; taking: boolean }>();
+      let dropsAt = -Infinity;
+      let dropsFrom: LngLat | null = null;
+      async function refreshDrops() {
+        dropsAt = performance.now();
+        dropsFrom = { ...traveller.pos };
+        const { data } = await supabase.rpc("cruise_drops_near");
+        const list = (data as { id: number; lng: number; lat: number }[] | null) ?? [];
+        if (disposed) return;
+        const live = new Set(list.map((d) => d.id));
+        for (const [id, d] of drops) {
+          if (live.has(id) || d.taking) continue;
+          layer.remove(d.entity);
+          drops.delete(id);
+        }
+        for (const d of list) {
+          if (drops.has(d.id)) continue;
+          const model = models.makeCruiseToken();
+          drops.set(d.id, { entity: layer.add({ object: model.group, lng: d.lng, lat: d.lat, heading: 0 }), disc: model.disc, lng: d.lng, lat: d.lat, taking: false });
+        }
+      }
+      async function takeDrop(id: number) {
+        const d = drops.get(id);
+        if (!d || d.taking) return;
+        d.taking = true;
+        await savePosition(true); // the server checks where it last saw the hunter
+        const { data } = await supabase.rpc("take_cruise_drop", { p_drop: id });
+        const r = data as { ok: boolean; reason?: string; tokens?: number } | null;
+        if (r?.ok || r?.reason === "gone") {
+          layer.remove(d.entity);
+          drops.delete(id);
+        } else {
+          d.taking = false;
+        }
+        if (r?.tokens != null) cruiseTokens = r.tokens;
+        showCruise();
+        if (r?.ok) {
+          cue("coin");
+          say(`🚗 +1 cruise token (${r.tokens}/8).`);
+        } else if (r?.reason === "full") {
+          say("Your cruise tokens are full (8): use some first.");
+        }
+      }
+      function dropsTick(now: number, t: number) {
+        const moved = dropsFrom ? geo.distanceM([dropsFrom.lng, dropsFrom.lat], [traveller.pos.lng, traveller.pos.lat]) : Infinity;
+        if (now - dropsAt > 25_000 || (moved > 200 && now - dropsAt > 3000)) void refreshDrops();
+        for (const [id, d] of drops) {
+          d.disc.rotation.y = t * 2;
+          d.disc.position.y = 1.4 + Math.sin(t * 2.5 + id) * 0.15;
+          if (!d.taking && cruiseTokens < 8 && geo.distanceM([d.lng, d.lat], [traveller.pos.lng, traveller.pos.lat]) <= 15) void takeDrop(id);
+        }
+      }
+
       // ---- A police chase (owner, 25 Oct 2026: "if you escape police, they should give you a chase") ----
       // The police follow the very road the hunter takes (the trail behind them), at their own speed: an officer on
       // foot after a walker, a patrol car after a rider. Within a few metres: caught. A long enough lead, or holding
@@ -6963,6 +7109,10 @@ export function GameMap({
           if (r.gift && r.gift.kind !== "coins") {
             countRelics(); // a relic, a tyre kit
             if (r.gift.kind === "keg") void loadCondition(); // a full jerry can
+            if (r.gift.kind === "cruise") {
+              cruiseTokens = Math.min(8, cruiseTokens + r.gift.tokens);
+              showCruise();
+            }
           }
           return r;
         },
@@ -7101,7 +7251,8 @@ export function GameMap({
 
         // The player moves only while holding a key or the screen.
         const canMove = !frozen && !huntHold && !sceneHold && !inWorld && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
-        const { distance, events } = movement.step(traveller, { go: c.go || touchGo, sprint: c.sprint }, dt, t, canMove);
+        const { distance, events } = movement.step(traveller, { go: c.go || touchGo || cruiseOn, sprint: c.sprint }, dt, t, canMove);
+        cruiseTick(dt, canMove);
         for (const event of events) {
           if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
         }
@@ -7139,7 +7290,8 @@ export function GameMap({
                 buildRoads();
               } else if (onRoad) {
                 onRoad = roads.reverse(onRoad);
-                say("This road ends here. Keep going to head back, or pick another way.");
+                if (cruiseOn) stopCruise("This road ends here: cruise off.");
+                else say("This road ends here. Keep going to head back, or pick another way.");
               }
             }
           }
@@ -7227,6 +7379,11 @@ export function GameMap({
         pulseTick(now, t);
         tiredTick(now);
         chaseTick(now, dt, t);
+        dropsTick(now, t);
+        if (cruiseOn && now - lastCruiseHud > 500) {
+          lastCruiseHud = now;
+          showCruise();
+        }
         void roadTick(now);
 
         if (now - lastHud > 100) {
@@ -7923,6 +8080,9 @@ export function GameMap({
                 <p className="mt-1 text-xs font-bold uppercase tracking-wider text-gold">Moving</p>
                 <MoveDemo />
                 <p className="text-muted">Keyboard: hold ↑ to go, ↓ to turn round, tap ← → to turn at the next junction, Shift to sprint.</p>
+                <p className="rounded-xl bg-[#2EC4B6]/15 p-2.5">
+                  🚗 <b>Cruise</b> (the teal button) takes you on by yourself, straight on at junctions: swipe or press ← → to turn there. Each token is 15 s of moving; pick them up in the side streets (teal discs), get 2 free a day, or buy them in your inventory.
+                </p>
                 <p className="mt-1 text-xs font-bold uppercase tracking-wider text-gold">Your buttons</p>
                 <ul className="flex flex-col gap-1.5">
                   <li className="flex items-center gap-2"><span className="text-paper"><DirectionsIcon /></span> Directions: search a place or tap the map</li>
@@ -8135,6 +8295,8 @@ export function GameMap({
 
       {bagOpen && (
         <BagPanel
+          cruiseTokens={hud.cruise.tokens}
+          onBuyCruise={() => actions.current?.buyCruise() ?? Promise.resolve("The map isn't ready yet.")}
           detector={detector}
           onBuyDetector={buyDetector}
           leads={hud.leads}
@@ -8509,6 +8671,40 @@ export function GameMap({
               {a.short}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Cruise (owner, 25 Oct 2026): beside Sprint, or in its place on a motorbike or in a car. */}
+      {!hud.ride && !hud.care && (
+        <div
+          className={`absolute ${canSprint(hud.mode) ? "bottom-11 right-[104px]" : "bottom-9 right-5"}`}
+          style={{ marginBottom: "env(safe-area-inset-bottom)" }}
+        >
+          <button
+            type="button"
+            onClick={() => actions.current?.toggleCruise()}
+            aria-pressed={hud.cruise.on}
+            aria-label={`Cruise ${hud.cruise.on ? "on" : "off"}: ${hud.cruise.tokens} tokens`}
+            title="Cruise: go on by yourself (straight on at junctions)"
+            className={`pointer-events-auto relative flex size-[64px] flex-col items-center justify-center rounded-full leading-none shadow-lg ${hud.cruise.on ? "bg-[#2EC4B6] text-ink" : "bg-ink text-paper"} ${hud.cruise.tokens === 0 && !hud.cruise.on ? "opacity-60" : ""}`}
+          >
+            {/* The ring: the tokens held (off), or what's left of the one in use (on) */}
+            <svg viewBox="0 0 64 64" className="absolute inset-0 size-full -rotate-90" aria-hidden="true">
+              <circle cx="32" cy="32" r="29" fill="none" stroke={hud.cruise.on ? "#0F1420" : "#29324A"} strokeOpacity={hud.cruise.on ? 0.25 : 1} strokeWidth="4" />
+              <circle
+                cx="32"
+                cy="32"
+                r="29"
+                fill="none"
+                stroke={hud.cruise.on ? "#0F1420" : "#2EC4B6"}
+                strokeWidth="4"
+                strokeLinecap="round"
+                strokeDasharray={`${2 * Math.PI * 29 * (hud.cruise.on ? hud.cruise.part : hud.cruise.tokens / 8)} ${2 * Math.PI * 29}`}
+              />
+            </svg>
+            <span className="relative text-[11px] font-extrabold tracking-wide">CRUISE</span>
+            <span className="relative mt-0.5 text-[11px] font-bold opacity-80">×{hud.cruise.tokens}</span>
+          </button>
         </div>
       )}
 

@@ -35,6 +35,7 @@ export type RoadEventResult = {
     | { kind: "relic"; relic: "jerry_can" | "second_wind" | "shield" }
     | { kind: "keg"; fresh: boolean }
     | { kind: "item"; item: "tyre_kit" }
+    | { kind: "cruise"; tokens: number }
     | null;
 };
 
@@ -171,7 +172,9 @@ export function RoadEventScene({
               : " Let me fill your jerry can for you: it's full now."
             : g.kind === "item"
               ? " Take this tyre kit, pump and patches: fix a flat yourself, anywhere."
-              : ` Take these ${g.amount} coins for your trouble.`;
+              : g.kind === "cruise"
+                ? ` Take these ${g.tokens} cruise tokens: let the road carry you a while.`
+                : ` Take these ${g.amount} coins for your trouble.`;
       const thanks = r.hint
         ? `Thank you, God bless you! Listen: I passed a crowd of treasure hunters to the ${r.hint.direction} of here, ${r.hint.band} away. That's where Key ${r.hint.key} is, I'm sure of it.${present}`
         : present

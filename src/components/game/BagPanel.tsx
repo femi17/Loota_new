@@ -52,6 +52,8 @@ const STATE_CHIP: Record<OwnedVehicle["state"], { text: string; style: string }>
 
 /** The player's inventory: their vehicles' gear and papers (and buying what's missing), the jerry can, relics, Wonders. */
 export function BagPanel({
+  cruiseTokens,
+  onBuyCruise,
   detector,
   onBuyDetector,
   leads,
@@ -65,6 +67,9 @@ export function BagPanel({
   onWonder,
   onClose,
 }: {
+  /** Cruise tokens held (15 s each, up to 8). */
+  cruiseTokens: number;
+  onBuyCruise: () => Promise<string>;
   /** A metal detector bought (300 coins, kept). */
   detector: boolean;
   onBuyDetector: () => Promise<string>;
@@ -86,6 +91,8 @@ export function BagPanel({
 }) {
   const [relics, setRelics] = useState<Relic[] | null>(null);
   const [buyingDetector, setBuyingDetector] = useState(false);
+  const [buyingCruise, setBuyingCruise] = useState(false);
+  const [cruiseNote, setCruiseNote] = useState<string | null>(null);
   const [detectorNote, setDetectorNote] = useState<string | null>(null);
   const [wonders, setWonders] = useState<Wonder[]>([]);
   const [now] = useState(() => Date.now());
@@ -253,6 +260,28 @@ export function BagPanel({
                   </div>
                 );
               })}
+
+              {/* Cruise tokens (owner, 25 Oct 2026) */}
+              <div className="flex items-center gap-3 rounded-2xl bg-ink-2 p-3">
+                <span className="flex size-10 items-center justify-center rounded-xl bg-[#2EC4B6]/15 text-xl" aria-hidden="true">🚗</span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold leading-tight">Cruise tokens · {cruiseTokens}/8</p>
+                  <p className="text-xs text-muted">15 s each of going on by yourself. Pick them up in the side streets; 2 free every day.</p>
+                  {cruiseNote && <p className="mt-1 text-xs font-bold text-[#2EC4B6]">{cruiseNote}</p>}
+                </div>
+                <button
+                  type="button"
+                  disabled={buyingCruise || cruiseTokens >= 8 || coins < 10}
+                  onClick={async () => {
+                    setBuyingCruise(true);
+                    setCruiseNote(await onBuyCruise());
+                    setBuyingCruise(false);
+                  }}
+                  className="h-10 shrink-0 rounded-xl bg-[#2EC4B6] px-3 text-sm font-bold text-ink disabled:opacity-50"
+                >
+                  Buy {Math.min(4, 8 - cruiseTokens) || 4} · {(Math.min(4, 8 - cruiseTokens) || 4) * 10}
+                </button>
+              </div>
 
               {/* The metal detector (owner, 25 Oct 2026): beeps near a key, reaches farther */}
               <div className={`flex items-center gap-3 rounded-2xl p-3 ${detector ? "bg-ink-2" : "bg-ink-2 ring-1 ring-gold/50"}`}>

@@ -7,6 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 import { CELL_DEG } from "@/game/items";
 import { MAIN_ROADS, roadCellsAround, sideStreetSpot } from "@/lib/road-cells";
 import { findSpot } from "@/lib/world-spawn";
+import { stockCruise } from "@/lib/cruise-drops";
 process.loadEnvFile(new URL("../../.env.local", import.meta.url));
 const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, { auth: { persistSession: false } });
 let fails = 0;
@@ -76,5 +77,20 @@ const key = { lng: 3.378214, lat: 6.500147 };
 const trap = await sideStreetSpot(key.lng, key.lat, 180, 280);
 check("a trap chest 180–280 m from its key, in the streets", !!trap && metres(key, trap) >= 180 && metres(key, trap) <= 280 && (await clearOfMain(trap)) >= 35,
   trap ? `${Math.round(metres(key, trap))} m away, ${Math.round(await clearOfMain(trap))} m from a main road` : "none");
+
+// ---- Cruise tokens (owner, 25 Oct 2026): two in the side streets of a square on Herbert Macaulay Way
+const sq = { lng: 3.379, lat: 6.507 };
+const cellKey = `${Math.floor(sq.lng / CELL_DEG)}:${Math.floor(sq.lat / CELL_DEG)}`;
+const { data: before } = await admin.from("cruise_drops").select("id").eq("cell", cellKey);
+const beforeIds = new Set((before ?? []).map((d) => d.id));
+await admin.from("cruise_drops").update({ expires_at: new Date(Date.now() - 1000).toISOString() }).eq("cell", cellKey).is("taken_at", null);
+const added = await stockCruise(admin, sq.lng, sq.lat);
+const { data: fresh } = await admin.from("cruise_drops").select("id, lng, lat").eq("cell", cellKey).is("taken_at", null).gt("expires_at", new Date().toISOString());
+const clears = await Promise.all((fresh ?? []).map((d) => clearOfMain(d)));
+check("cruise tokens: two in the square's side streets, off the main roads", added === 2 && clears.length === 2 && clears.every((c) => c >= 35), clears.map((c) => Math.round(c)).join(", "));
+const again = await stockCruise(admin, sq.lng, sq.lat);
+check("…and no more while they lie there", again === 0);
+const mine = (fresh ?? []).map((d) => d.id).filter((x) => !beforeIds.has(x));
+if (mine.length) await admin.from("cruise_drops").delete().in("id", mine);
 
 console.log(fails ? `${fails} FAILED` : "all passed");

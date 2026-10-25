@@ -718,6 +718,23 @@ export function makePoliceCar() {
   };
 }
 
+/** A cruise token lying in the street (owner, 25 Oct 2026): a glowing teal disc on its edge with a ring below; spin `disc`. */
+export function makeCruiseToken() {
+  const group = new THREE.Group();
+  const disc = new THREE.Group();
+  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.18, 20), glow("#2EC4B6"));
+  face.rotation.x = Math.PI / 2;
+  const mark = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.09, 6, 16), glow("#E8FFFB"));
+  mark.position.z = 0.1;
+  disc.add(face, mark);
+  disc.position.y = 1.4;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.08, 6, 24), glow("#2EC4B6"));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.05;
+  group.add(disc, ring);
+  return { group, disc };
+}
+
 /** A landmark on the map: a stone plinth with a gold star on a column. */
 /**
  * A hunt key's chest (the metal detector found it): wood with gold bands, the lid ajar and gold light inside, a

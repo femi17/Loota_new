@@ -124,6 +124,24 @@ try {
   text = (await card()) ?? "";
   check("🏆 on the right opens the leaderboard (with the prize)", /Prize: A golden mask/.test(text) && (await page.evaluate(() => !!document.querySelector('[aria-label="The leaderboard"]'))), text);
   await page.screenshot({ path: `${OUT}/clock-4-board.png` });
+  // The clock ticks (owner, 25 Oct 2026: "It has to show a clock counting down"), even with days to go.
+  await admin.from("hunts").update({ ends_at: new Date(Date.now() + (2 * 86400 + 3 * 3600) * 1000).toISOString() }).eq("id", huntId);
+  await open();
+  const shown = () => page.evaluate(() => document.querySelector('[role="timer"]')?.innerText.split("\n").join(" ") ?? null);
+  const t1 = await shown();
+  await wait(2200);
+  const t2 = await shown();
+  check("the top clock: days on the label, the time ticking", /2 DAYS LEFT/i.test(t1 ?? "") && /0?3:0\d:\d\d|02:59:\d\d/.test(t1 ?? "") && t1 !== t2, `${t1} → ${t2}`);
+  const fits = await page.evaluate(() => {
+    const r = document.querySelector('[role="timer"]')?.getBoundingClientRect();
+    const coins = document.querySelector('button[aria-label$="coins: buy more"]')?.getBoundingClientRect();
+    const ring = document.querySelector('[role="meter"]')?.getBoundingClientRect();
+    // Its box holds its words, and it doesn't touch the energy ring or the coins.
+    const inner = [...(document.querySelector('[role="timer"]')?.children ?? [])].every((c) => c.getBoundingClientRect().width <= (r?.width ?? 0));
+    return !!r && !!coins && !!ring && inner && r.left >= ring.right && r.right <= coins.left;
+  });
+  check("…and it fits the top bar", fits);
+  await page.screenshot({ path: `${OUT}/clock-5-top.png`, clip: { x: 0, y: 0, width: 390, height: 70 } });
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

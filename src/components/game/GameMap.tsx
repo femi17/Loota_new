@@ -7236,8 +7236,8 @@ export function GameMap({
       </div>
 
       <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-col gap-2" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        {/* Top bar: back (with the logo), energy, coins, bag, help */}
-        <div className="flex items-center gap-2">
+        {/* Top bar: back (with the logo), energy, the hunt's clock, coins, bag, help */}
+        <div className="flex items-center gap-1.5">
           <Link
             href="/lobby"
             aria-label="Back to the lobby"
@@ -7245,7 +7245,7 @@ export function GameMap({
             className="pointer-events-auto flex h-11 shrink-0 items-center gap-0.5 rounded-xl bg-ink pl-1 pr-2 text-paper"
           >
             <BackIcon />
-            <LootaLogo height={32} priority />
+            <LootaLogo height={28} priority />
           </Link>
           {/* Energy: a ring that empties (owner, 25 Oct 2026: smaller, a circle) */}
           <div

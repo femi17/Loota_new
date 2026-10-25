@@ -812,7 +812,21 @@ export function GameMap({
         }
         traveller.pos = { lng: p.lng, lat: p.lat };
         snapReachM = 400;
+        // Put onto a road some way from where the server last saw the hunter (thrown off any road, say): tell it so,
+        // or it takes the jump for walking too fast and refuses every save after (owner, 25 Oct 2026).
+        if (geo.distanceM([saved.lng, saved.lat], [p.lng, p.lat]) > 30) void placeOnRoad();
         return true;
+      }
+
+      /** The hunter was put onto the road: the server records the spot (up to 800 m, once every two minutes). */
+      async function placeOnRoad() {
+        if (saving) return;
+        saving = true; // no ordinary save meanwhile: it would be refused and pull the hunter back off the road
+        const at = { ...traveller.pos };
+        const { data } = await supabase.rpc("place_on_road", { p_lng: at.lng, p_lat: at.lat });
+        saving = false;
+        const r = data as { ok: boolean; lng?: number; lat?: number } | null;
+        if (r?.ok && r.lng != null && r.lat != null) saved = { lng: r.lng, lat: r.lat };
       }
 
       const setTurn = (turn: -1 | 0 | 1) => {

@@ -82,7 +82,7 @@ try {
   check(`key 5 (${p.puzzleKind}, chosen at random): two wrong answers fail the trial, thrown away`, f?.result === "failed" && f.reason === "wrong" && typeof f.lng === "number", JSON.stringify(f).slice(0, 120));
   const { data: pos } = await admin.from("player_positions").select("lng, lat").eq("user_id", id).single();
   const away = Math.hypot((pos.lng - spot.lng) * 110400, (pos.lat - spot.lat) * 110574);
-  check("…2 km from the key", Math.abs(away - 2000) < 60, `${Math.round(away)} m`);
+  check("…about 2 km from the key (on a street 1.5–2.5 km off)", away >= 1450 && away <= 2550, `${Math.round(away)} m`);
 
   // Back at the chest: a new puzzle; answered after the clock: failed.
   await admin.from("player_positions").update({ lng: spot.lng, lat: spot.lat, updated_at: ago(30) }).eq("user_id", id);

@@ -74,7 +74,7 @@ try {
   await page.evaluate(() => [...document.querySelectorAll('button[type="submit"]')].at(-1)?.click());
   await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 }).catch(() => {});
   note("AFTER ONBOARDING:", page.url());
-  await waitFor(/Enter the map/);
+  await waitFor(/Free roam/);
   await shot("lobby", true);
   note("LOBBY:", (await body()).slice(0, 700));
   const coins = (await admin.from("profiles").select("coins").eq("id", id).single()).data.coins;

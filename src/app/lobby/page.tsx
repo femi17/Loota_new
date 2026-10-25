@@ -4,6 +4,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/Logo";
 import { HunterFigure } from "@/components/HunterFigure";
+import { ChestArt } from "@/components/ChestArt";
+import { Countdown } from "@/components/Countdown";
 import { getPlayer } from "@/lib/player";
 import { listHunts } from "@/lib/hunts";
 import { logOut } from "../(auth)/actions";
@@ -14,53 +16,89 @@ const PHASE_LABEL = { draft: "Draft", upcoming: "Coming up", live: "Live now", e
 const when = (iso: string) =>
   `${new Date(iso).toLocaleString("en-NG", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" })} (Lagos time)`;
 
+/** Live first, then coming up, then ended. */
+const ORDER = { live: 0, upcoming: 1, draft: 2, ended: 3 } as const;
+
 async function HuntList() {
-  const hunts = await listHunts();
+  const hunts = (await listHunts()).sort((x, y) => ORDER[x.phase] - ORDER[y.phase]);
   if (!hunts.length) {
     return (
-      <section className="rounded-3xl border-[1.5px] border-dashed border-line p-6">
-        <h2 className="font-display text-2xl font-extrabold">No hunts live yet</h2>
-        <p className="mt-2 text-muted">The next hunt will appear here with its prize, keys and start time.</p>
+      <section className="flex items-center gap-4 rounded-3xl border-[1.5px] border-dashed border-line p-6">
+        <ChestArt size={72} glow={false} />
+        <div>
+          <h2 className="font-display text-2xl font-extrabold">No hunts live yet</h2>
+          <p className="mt-1 text-muted">The next hunt will appear here with its prize, keys and start time.</p>
+        </div>
       </section>
     );
   }
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="font-display text-2xl font-extrabold">Hunts</h2>
-      {hunts.map((h) => (
-        <article key={h.id} className={`flex flex-col gap-3 rounded-3xl bg-ink-2 p-6 ${h.phase === "live" ? "border-[1.5px] border-gold" : ""}`}>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-3 py-1 text-xs font-bold ${h.phase === "live" ? "bg-gold text-ink" : "bg-line text-paper"}`}>
-              {PHASE_LABEL[h.phase]}
-            </span>
-            <span className="text-sm text-muted">
-              {h.keys} key{h.keys === 1 ? "" : "s"} · {h.winners} winner{h.winners === 1 ? "" : "s"} · {h.players} hunter{h.players === 1 ? "" : "s"}
-            </span>
-          </div>
-          <h3 className="font-display text-xl font-extrabold">{h.title}</h3>
-          <p className="text-sm">
-            <span className="text-muted">Prize: </span>
-            <b>{h.prize}</b>
-          </p>
-          {h.description && <p className="text-sm text-muted">{h.description}</p>}
-          <p className="text-sm text-muted">
-            {h.phase === "upcoming" ? `Starts ${when(h.startsAt)}` : h.phase === "live" ? `Ends ${when(h.endsAt)}` : `Ended ${when(h.endsAt)}`}
-          </p>
-          {h.phase !== "ended" &&
-            (h.joined ? (
-              <Link href={`/play?hunt=${h.id}`} className="inline-flex h-12 items-center self-start rounded-2xl bg-gold px-6 font-bold text-ink">
-                {h.phase === "live" ? "Continue the hunt" : "You're in · enter the map"}
-              </Link>
-            ) : (
-              <form action={joinHunt}>
-                <input type="hidden" name="hunt" value={h.id} />
-                <button type="submit" className="h-12 rounded-2xl bg-gold px-6 font-bold text-ink">
-                  Join this hunt
-                </button>
-              </form>
-            ))}
-        </article>
-      ))}
+    <section className="flex flex-col gap-4" aria-label="Hunts">
+      {hunts.map((h) => {
+        const live = h.phase === "live";
+        const action = h.phase === "ended" ? null : h.joined ? (
+          <Link href={`/play?hunt=${h.id}`} className="flex h-14 w-full items-center justify-center rounded-2xl bg-gold text-lg font-extrabold text-ink hover:bg-gold-hover">
+            {live ? "Continue the hunt" : "You're in · enter the map"}
+          </Link>
+        ) : (
+          <form action={joinHunt}>
+            <input type="hidden" name="hunt" value={h.id} />
+            <button type="submit" className="h-14 w-full rounded-2xl bg-gold text-lg font-extrabold text-ink hover:bg-gold-hover">
+              {live ? "Join the hunt" : "Join this hunt"}
+            </button>
+          </form>
+        );
+        return (
+          <article
+            key={h.id}
+            className={`relative flex flex-col gap-4 overflow-hidden rounded-3xl p-6 ${live ? "bg-[radial-gradient(ellipse_at_90%_0%,#4A3510_0%,#182033_60%)] ring-[1.5px] ring-gold" : "bg-ink-2"}`}
+          >
+            {live && (
+              <div className="pointer-events-none absolute -right-4 -top-2 opacity-90">
+                <ChestArt size={110} />
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold uppercase tracking-wider ${live ? "bg-danger text-paper" : "bg-line text-paper"}`}>
+                {live && <span className="loota-live-dot size-1.5 rounded-full bg-paper" aria-hidden="true" />}
+                {PHASE_LABEL[h.phase]}
+              </span>
+            </div>
+            <div className="max-w-[75%]">
+              <h2 className="font-display text-2xl font-extrabold leading-tight">{h.title}</h2>
+              {h.description && <p className="mt-1 text-sm text-muted">{h.description}</p>}
+            </div>
+            <dl className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-2xl bg-ink/60 p-2.5">
+                <dt className="text-xs text-muted">Keys</dt>
+                <dd className="font-display text-xl font-extrabold">🗝 {h.keys}</dd>
+              </div>
+              <div className="rounded-2xl bg-ink/60 p-2.5">
+                <dt className="text-xs text-muted">Hunters</dt>
+                <dd className="font-display text-xl font-extrabold">{h.players}</dd>
+              </div>
+              <div className="rounded-2xl bg-ink/60 p-2.5">
+                <dt className="text-xs text-muted">{live ? "Ends in" : h.phase === "upcoming" ? "Starts in" : "Ended"}</dt>
+                <dd className="font-display text-xl font-extrabold">
+                  {h.phase === "ended" ? "✓" : <Countdown to={live ? h.endsAt : h.startsAt} fallback="…" />}
+                </dd>
+              </div>
+            </dl>
+            <p className="flex items-center gap-2 rounded-2xl bg-gold/10 px-4 py-3 text-sm">
+              <span aria-hidden="true">🏆</span>
+              <span>
+                <span className="text-muted">Prize: </span>
+                <b>{h.prize}</b>
+                <span className="text-muted"> · {h.winners} winner{h.winners === 1 ? "" : "s"}</span>
+              </span>
+            </p>
+            <p className="text-xs text-muted">
+              {h.phase === "upcoming" ? `Starts ${when(h.startsAt)}` : live ? `Ends ${when(h.endsAt)}` : `Ended ${when(h.endsAt)}`}
+            </p>
+            {action}
+          </article>
+        );
+      })}
     </section>
   );
 }
@@ -111,37 +149,29 @@ async function Lobby() {
       </header>
 
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6">
-        <section className="flex flex-wrap items-center gap-6 rounded-3xl bg-ink-2 p-6">
-          <div className="flex size-24 items-end justify-center overflow-hidden rounded-2xl bg-map">
-            <HunterFigure look={player.look} width={52} label={`${player.username}'s hunter`} />
+        <section className="flex items-center gap-4">
+          <div className="flex size-16 shrink-0 items-end justify-center overflow-hidden rounded-2xl bg-map">
+            <HunterFigure look={player.look} width={36} label={`${player.username}'s hunter`} />
           </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-sm text-muted">Welcome, hunter</span>
-            <h1 className="font-display text-3xl font-extrabold">{player.username}</h1>
-            <span className="text-sm text-muted">
-              Ready to hunt from home
-            </span>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="text-sm text-muted">Welcome back, hunter</span>
+            <h1 className="break-all font-display text-xl font-extrabold leading-tight sm:text-2xl">{player.username}</h1>
           </div>
-          <Link
-            href="/look"
-            className="ml-auto inline-flex h-11 items-center rounded-xl border-[1.5px] border-line px-4 text-sm font-bold hover:border-muted"
-          >
+          <Link href="/look" className="inline-flex h-10 shrink-0 items-center rounded-xl border-[1.5px] border-line px-3 text-sm font-bold hover:border-muted">
             Change look
           </Link>
         </section>
 
-        <Link
-          href="/play"
-          className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border-[1.5px] border-gold bg-ink-2 p-6 hover:bg-line"
-        >
-          <span className="flex flex-col gap-1">
-            <span className="font-display text-2xl font-extrabold">Enter the map</span>
-            <span className="text-muted">Start from home and explore the real map with your hunter.</span>
-          </span>
-          <span className="inline-flex h-12 items-center rounded-2xl bg-gold px-6 font-bold text-ink">Play</span>
-        </Link>
-
         <HuntList />
+
+        <Link href="/play" className="flex items-center gap-4 rounded-3xl bg-ink-2 p-5 hover:bg-line">
+          <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-ink text-2xl" aria-hidden="true">🗺️</span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="font-display text-lg font-extrabold">Free roam</span>
+            <span className="text-sm text-muted">Explore from home: landmarks for coins, Detours, roadside games.</span>
+          </span>
+          <span className="inline-flex h-11 shrink-0 items-center rounded-xl border-[1.5px] border-gold px-4 font-bold text-gold">Play</span>
+        </Link>
         {player.isAdmin && (
           <Link href="/admin" className="self-start text-sm font-bold text-gold hover:underline">
             Owner tools: create and publish hunts →

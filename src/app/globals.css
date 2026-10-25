@@ -224,3 +224,19 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .loota-masq, .loota-masq-fringe, .loota-masq-crest, .loota-star { animation: none; }
 }
+
+/* The first launch (owner, 25 Oct 2026): the way to the chest marching, the chest's glow, the tour's gestures. */
+.loota-route { stroke-dasharray: 2 11; animation: loota-route 0.9s linear infinite; }
+@keyframes loota-route { to { stroke-dashoffset: -13; } }
+.loota-chest-glow { transform-box: fill-box; transform-origin: center; animation: loota-chest-glow 1.8s ease-in-out infinite; }
+@keyframes loota-chest-glow { 0%, 100% { opacity: 0.55; transform: scale(0.92); } 50% { opacity: 1; transform: scale(1.08); } }
+.loota-press { animation: loota-press 1.6s ease-in-out infinite; }
+@keyframes loota-press { 0%, 100% { transform: scale(1); } 30%, 70% { transform: scale(0.82); } }
+.loota-ripple { animation: loota-ripple 1.6s ease-out infinite; }
+@keyframes loota-ripple { 0% { opacity: 0.7; transform: scale(0.6); } 100% { opacity: 0; transform: scale(2.2); } }
+.loota-swipe { animation: loota-swipe 1.8s ease-in-out infinite; }
+@keyframes loota-swipe { 0% { opacity: 0; transform: translateX(-18px); } 30%, 70% { opacity: 1; } 100% { opacity: 0; transform: translateX(18px); } }
+.loota-live-dot { animation: loota-sparkle 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .loota-route, .loota-chest-glow, .loota-press, .loota-ripple, .loota-swipe, .loota-live-dot { animation: none; }
+}

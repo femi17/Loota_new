@@ -4,6 +4,40 @@ import { useState } from "react";
 import { BagIcon, BusIcon, DirectionsIcon, LampIcon, LandmarkIcon, VehicleIcon } from "./HudIcons";
 import { LootaLogo } from "@/components/Logo";
 import { joinHunt } from "@/app/lobby/actions";
+import { ChestArt } from "@/components/ChestArt";
+import { Masquerade } from "./Masquerade";
+
+/** How to move, shown rather than told: hold the lower screen, swipe there to turn, SPRINT. */
+function MoveDemo() {
+  const tile = "flex flex-1 flex-col items-center gap-2 rounded-2xl bg-ink-2 p-2.5 text-center text-xs font-bold";
+  return (
+    <div className="flex gap-2" aria-hidden="true">
+      <div className={tile}>
+        <span className="relative flex h-20 w-12 items-end justify-center overflow-hidden rounded-xl bg-map ring-2 ring-line">
+          <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gold/25" />
+          <span className="loota-ripple absolute bottom-3 size-7 rounded-full bg-gold/60" />
+          <span className="loota-press relative mb-4 size-5 rounded-full bg-gold ring-2 ring-paper" />
+        </span>
+        Hold low to walk
+      </div>
+      <div className={tile}>
+        <span className="relative flex h-20 w-12 items-end justify-center overflow-hidden rounded-xl bg-map ring-2 ring-line">
+          <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gold/25" />
+          <span className="loota-swipe relative mb-4 text-lg font-extrabold text-ink">⟷</span>
+        </span>
+        Swipe to turn
+      </div>
+      <div className={tile}>
+        <span className="flex h-20 items-center justify-center">
+          <span className="loota-press flex size-14 items-center justify-center rounded-full bg-ink text-[10px] font-extrabold tracking-wide text-paper ring-[3px] ring-gold">
+            SPRINT
+          </span>
+        </span>
+        Hold to run
+      </div>
+    </div>
+  );
+}
 
 /** A live hunt the player hasn't joined (the tour's last card, and the invitation on the map). */
 export type OpenHunt = { id: string; title: string; keys: number; prize: string };
@@ -14,14 +48,20 @@ export type OpenHunt = { id: string; title: string; keys: number; prize: string 
  */
 export function WelcomeTour({ username, coins, openHunt, onDone }: { username: string; coins: number; openHunt: OpenHunt | null; onDone: () => void }) {
   const [step, setStep] = useState(0);
-  const cards = [
+  const cards: { title: string; art?: React.ReactNode; body: React.ReactNode }[] = [
     {
       title: `Welcome, ${username}!`,
+      art: (
+        <div className="relative flex h-32 items-end justify-center overflow-hidden rounded-2xl bg-[radial-gradient(ellipse_at_50%_100%,#4A3510_0%,#182033_70%)] pb-3" aria-hidden="true">
+          <span className="loota-key-spin absolute top-3 text-4xl">🗝️</span>
+          <ChestArt size={104} open />
+        </div>
+      ),
       body: (
         <>
           <p>
-            Loota is a treasure hunt on the real map of Nigeria. Solve riddles that point to real places, travel there, and beat the
-            Key Trial to win the keys.
+            Loota is a treasure hunt on the real map of Nigeria. Crack riddles that point to real places, travel there, and beat the
+            puzzle at the chest to win the keys.
           </p>
           <p className="rounded-xl bg-gold/15 p-3 font-bold text-gold">🪙 You have {coins.toLocaleString("en-NG")} coins to start: enough for meals, a rented bike, a tyre pump and a few roadside games.</p>
         </>
@@ -29,14 +69,14 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
     },
     {
       title: "Getting around",
+      art: <MoveDemo />,
       body: (
         <>
           <p>
-            <b>Press and hold the lower part of the screen</b> to walk. Swipe left or right there to turn at the next junction, and
-            down to turn back. Hold <b>SPRINT</b> to go faster (it tires you).
+            <b>Hold the lower part of the screen</b> to walk. Swipe left or right there to turn at the next junction, down to turn
+            back. <b>SPRINT</b> is faster, but tires you.
           </p>
-          <p className="text-muted">On a keyboard: hold ↑ to go, ← → to turn, ↓ to go back.</p>
-          <p>Walking uses energy: eat at a buka or rest at a park when it runs low.</p>
+          <p className="text-sm text-muted">Walking uses energy: eat at a buka or rest at a park when it runs low. On a keyboard: ↑ to go, ← → to turn, ↓ to go back.</p>
         </>
       ),
     },
@@ -62,6 +102,15 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
     },
     {
       title: openHunt ? "A hunt is live!" : "What to do first",
+      art: (
+        <div className="flex h-36 items-end justify-center gap-4 overflow-hidden rounded-2xl bg-[radial-gradient(ellipse_at_50%_110%,#7A3A10_0%,#3B1F4F_45%,#140F2E_85%)] pb-3" aria-hidden="true">
+          <div className="flex flex-col items-center">
+            <span className="loota-bubble relative mb-1 rounded-xl bg-paper px-2.5 py-1 text-[11px] font-bold text-ink">Catch me if you can!</span>
+            <Masquerade size={52} />
+          </div>
+          <ChestArt size={84} />
+        </div>
+      ),
       body: openHunt ? (
         <>
           <p>
@@ -81,13 +130,14 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
   const card = cards[step];
   return (
     <div className="pointer-events-auto absolute inset-0 z-40 flex items-end justify-center bg-ink/70 p-3 sm:items-center" role="dialog" aria-label="Welcome to Loota">
-      <div className="loota-wonder-banner flex w-full max-w-md flex-col gap-4 rounded-3xl bg-ink p-5 text-paper ring-1 ring-line">
+      <div className="loota-wonder-banner flex max-h-[calc(100dvh-24px)] w-full max-w-md flex-col gap-4 overflow-y-auto rounded-3xl bg-ink p-5 text-paper ring-1 ring-line">
         <div className="flex items-center justify-between">
           <LootaLogo height={40} />
           <button type="button" onClick={onDone} className="text-sm font-bold text-muted">
             Skip
           </button>
         </div>
+        {card.art}
         <h2 className="font-display text-2xl font-extrabold">{card.title}</h2>
         <div className="flex flex-col gap-3 text-[15px] leading-relaxed">{card.body}</div>
         <div className="flex items-center gap-1.5" aria-hidden="true">

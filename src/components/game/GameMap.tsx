@@ -7815,7 +7815,7 @@ export function GameMap({
                           {/* The jerry can's fuel, as a reminder (only when there's some in it) */}
                           {hud.keg && hud.keg.fuel > 0 && (
                             <span
-                              className="absolute -right-2 -top-2 flex items-center rounded-full bg-gold px-0.5 ring-2 ring-ink"
+                              className="absolute -left-2 -top-2.5 flex items-center rounded-full bg-gold px-0.5 ring-2 ring-ink"
                               aria-label={`Jerry can ${Math.round((100 * hud.keg.fuel) / KEG_CAPACITY)}% full`}
                               data-badge="jerry-can"
                             >

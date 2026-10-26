@@ -21,6 +21,7 @@ import {
 import type { LngLat } from "@/game/geo";
 import type { Place } from "@/game/places";
 import { PlaceSearch } from "./PlaceSearch";
+import { toast } from "./NewsToasts"; // hunt news shows on the map's news strip
 import { PuzzleTrial } from "./puzzles/PuzzleTrial";
 import { cue } from "@/game/sound";
 import { Confetti } from "./Confetti";
@@ -61,7 +62,6 @@ function clockNow(c: (RiddleClock & { skew: number; at: number }) | null, now: n
 }
 
 const FEED_MS = 6000;
-const TOAST_MS = 4500;
 const far = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
 
 /** A line of hunt news. */
@@ -126,7 +126,6 @@ export function HuntPanel({
   const [story, setStory] = useState<{ lines: StoryLine[]; mood: "sly" | "cross" | "beaten" } | null>(null);
   const [board, setBoard] = useState<BoardRow[] | null>(null);
   const [feed, setFeed] = useState<HuntFeed | null>(null);
-  const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [revealed, setRevealed] = useState<string | null>(null); // the riddle being revealed (the start of the hunt)
   const [clock, setClock] = useState<(RiddleClock & { skew: number; at: number }) | null>(null);
@@ -139,12 +138,6 @@ export function HuntPanel({
   const wasGolden = useRef(false);
   const skew = useRef(0); // the server's clock minus this device's
   const lastRank = useRef<number | null>(null);
-
-  function toast(text: string) {
-    const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-2), { id, text }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), TOAST_MS);
-  }
 
   function startTrial(view: AnyTrialView) {
     actions.current?.setFrozen(true);
@@ -274,7 +267,10 @@ export function HuntPanel({
           if (quip) window.setTimeout(() => toast(quip), 1800);
           if (e.kind === "key" || e.kind === "relay" || e.kind === "finished") keys = true;
         }
-        if (keys) void refreshRef.current();
+        if (keys) {
+          void refreshRef.current();
+          window.dispatchEvent(new Event("loota:key-news")); // the 🏆 on the map lights up
+        }
       }
       window.dispatchEvent(new CustomEvent("loota:golden", { detail: f.golden ? Date.parse(f.golden) - skew.current : null }));
       if (f.golden && !wasGolden.current && !first) toast("✨ Golden minutes! For 10 minutes the detector reaches twice as far, and every key pays +50.");
@@ -736,17 +732,6 @@ export function HuntPanel({
           </div>
         )}
       </section>
-
-      {/* Hunt news, a few seconds each. */}
-      {toasts.length > 0 && (
-        <div className="pointer-events-none fixed inset-x-3 bottom-[190px] z-20 mx-auto flex max-w-sm flex-col gap-1.5" aria-live="polite">
-          {toasts.map((t) => (
-            <p key={t.id} className="loota-wonder-banner rounded-xl bg-ink/95 px-3 py-2 text-sm font-bold text-paper ring-1 ring-gold">
-              {t.text}
-            </p>
-          ))}
-        </div>
-      )}
 
       {/* The last ten seconds before the start, then GO! */}
       {((startsIn !== null && startsIn > 0 && startsIn <= 10) || go) && (

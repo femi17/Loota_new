@@ -77,6 +77,15 @@ export const LampIcon = ({ size }: { size?: number }) => (
   </Svg>
 );
 
+/** A trophy cup: the hunt's leaderboard (drawn like the other tools, owner 26 Oct 2026). */
+export const TrophyIcon = ({ size }: { size?: number }) => (
+  <Svg size={size}>
+    <path d="M7 4h10v5a5 5 0 0 1-10 0z" />
+    <path d="M7 6H4.5a2.5 2.5 0 0 0 2.6 4.4M17 6h2.5a2.5 2.5 0 0 1-2.6 4.4" />
+    <path d="M12 14v3M8.5 20.5h7M9.5 17h5l.5 3.5h-6z" />
+  </Svg>
+);
+
 /** The inventory: a backpack (not a shopping bag: nothing is sold in it). */
 export const BagIcon = () => (
   <Svg>

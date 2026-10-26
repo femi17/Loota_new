@@ -40,6 +40,8 @@ export type HuntSummary = {
   startsAt: string;
   endsAt: string;
   phase: HuntPhase;
+  /** Runs round the clock (test hunts): no rest from 9 pm to 9 am. */
+  allDay?: boolean;
   keys: number;
   players: number;
   joined: boolean;

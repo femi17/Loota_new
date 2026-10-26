@@ -19,6 +19,9 @@ export type LampDetour = {
   claimed: number;
   coins: number;
   relic: RelicId | null;
+  /** Cruise tokens or a tyre kit (owner, 26 Oct 2026: the lamp gives more than relics), and how many. */
+  item?: LampPrizeItem | null;
+  qty?: number;
   /** How the player's own try went, if they've tried. */
   mine: "asked" | "won" | "wrong" | "late" | "full" | null;
 };
@@ -36,7 +39,8 @@ export type LampItem = ({ type: "detour" } & LampDetour) | ({ type: "whisper" } 
 export type LampState = { current: LampItem | null; inHunt?: boolean; restUntil?: number };
 
 export type LampQuestion = { detourId: string; title: string; question: string; options: string[]; seconds: number; endsAt: number };
-export type LampResult = { outcome: "won" | "wrong" | "late" | "full"; answer: string; coins: number; relic: RelicId | null };
+export type LampPrizeItem = "cruise" | "tyre_kit";
+export type LampResult = { outcome: "won" | "wrong" | "late" | "full"; answer: string; coins: number; relic: RelicId | null; item?: LampPrizeItem | null; qty?: number };
 
 export type LampActions = {
   refresh: () => Promise<LampState>;
@@ -63,7 +67,14 @@ const KIND = {
   rush: "🏃 Rush: only the first to arrive",
   flash_rush: "🔥 Flash rush: the first few, before time runs out",
 } as const;
-const rewardText = (coins: number, relic: RelicId | null) => (relic ? `${RELICS[relic].name} (${RELICS[relic].rarity.toLowerCase()} relic)` : `${coins} coins`);
+const rewardText = (coins: number, relic: RelicId | null, item?: LampPrizeItem | null, qty = 1) =>
+  item === "cruise"
+    ? `${qty} cruise token${qty === 1 ? "" : "s"}`
+    : item === "tyre_kit"
+      ? qty === 1 ? "a tyre kit" : `${qty} tyre kits`
+      : relic
+        ? `${RELICS[relic].name} (${RELICS[relic].rarity.toLowerCase()} relic)`
+        : `${coins} coins`;
 
 /** The lamp (design doc 7.4): one thing at a time (a Detour, a whisper or the Orb), with the way there on request. */
 export function LampPanel({
@@ -210,7 +221,7 @@ export function LampPanel({
             <div className="flex flex-col gap-3 rounded-2xl bg-ink-2 p-4">
               <p className={`text-lg font-bold ${result.outcome === "won" ? "text-[#3DD68C]" : "text-danger"}`}>
                 {result.outcome === "won"
-                  ? `✓ It's yours: ${rewardText(result.coins, result.relic)}!`
+                  ? `✓ It's yours: ${rewardText(result.coins, result.relic, result.item, result.qty)}!`
                   : result.outcome === "full"
                     ? "✗ Right, but too slow: others got there first."
                     : result.outcome === "late"
@@ -305,8 +316,8 @@ export function LampPanel({
                 <p className="font-bold">{d.title}</p>
                 <p className="text-sm text-paper/85">{d.story}</p>
                 <p className="text-xs text-muted">
-                  {d.place} · {here ? "you're here" : distance(d.metres)} · <span className="font-bold text-gold">{rewardText(d.coins, d.relic)}</span>
-                  {state.inHunt === false && !d.relic && <span className="text-muted"> (free roam: half)</span>}
+                  {d.place} · {here ? "you're here" : distance(d.metres)} · <span className="font-bold text-gold">{rewardText(d.coins, d.relic, d.item, d.qty)}</span>
+                  {state.inHunt === false && !d.relic && !d.item && <span className="text-muted"> (free roam: half)</span>}
                   {d.capacity !== null && (
                     <>
                       {" "}

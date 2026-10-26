@@ -527,9 +527,61 @@ export function makeDome(radius: number) {
   return group;
 }
 
-// ---- Public transport (design doc 13.2: generic, unbranded) -----------------
+// ---- Public transport -------------------------------------------------------
 // Forward is +z, like the other vehicles. Sizes are squashed a little so they
-// read well next to the enlarged avatars.
+// read well next to the enlarged avatars. Branded with the Loota logo (owner,
+// 26 Oct 2026: "let's brand our bus, trains, and plane... ads for investors"):
+// on the sides, and on the roofs and wings, which the map's camera sees most.
+
+/** The logo's proportions (public/brand, as in components/Logo). */
+const LOGO_RATIO = 265 / 240;
+const logoTextures = new Map<string, THREE.Texture>();
+const logoMaterials = new Map<string, THREE.MeshLambertMaterial>();
+const logoGeometries = new Map<number, THREE.PlaneGeometry>();
+/**
+ * The logo as a decal, `height` metres tall, facing +z (text along +x). Brown on light paint, gold on dark.
+ * Textures, materials and geometries are shared: every bus, carriage and plane uses the same few.
+ */
+function logoDecal(tone: "dark" | "gold" | "light", height: number) {
+  let m = logoMaterials.get(tone);
+  if (!m) {
+    let t = logoTextures.get(tone);
+    if (!t) {
+      t = new THREE.TextureLoader().load(`/brand/loota-${tone}.png`);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 4;
+      logoTextures.set(tone, t);
+    }
+    // A little in front of the paint, never fighting it for depth.
+    m = new THREE.MeshLambertMaterial({ map: t, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    logoMaterials.set(tone, m);
+  }
+  let g = logoGeometries.get(height);
+  if (!g) {
+    g = new THREE.PlaneGeometry(height * LOGO_RATIO, height);
+    logoGeometries.set(height, g);
+  }
+  const decal = new THREE.Mesh(g, m);
+  decal.renderOrder = 1;
+  return decal;
+}
+/** The logo on both sides of a body, `halfWidth` from its centre line. */
+function logoSides(tone: "dark" | "gold" | "light", height: number, halfWidth: number, y: number, z: number) {
+  const right = logoDecal(tone, height);
+  right.position.set(halfWidth, y, z);
+  right.rotation.y = Math.PI / 2;
+  const left = logoDecal(tone, height);
+  left.position.set(-halfWidth, y, z);
+  left.rotation.y = -Math.PI / 2;
+  return [right, left];
+}
+/** The logo lying on top (a roof, a wing), upright for the camera behind and above. */
+function logoTop(tone: "dark" | "gold" | "light", height: number, x: number, y: number, z: number) {
+  const d = logoDecal(tone, height);
+  d.position.set(x, y, z);
+  d.rotation.set(-Math.PI / 2, 0, Math.PI);
+  return d;
+}
 
 const T_G = {
   busBody: new THREE.BoxGeometry(2.4, 2.2, 7.5),
@@ -555,7 +607,7 @@ const T_G = {
   cabinWindows: new THREE.CylinderGeometry(1.32, 1.32, 9, 16, 1, true, -0.35, 0.7),
 };
 
-/** A city bus: yellow, with a black stripe (like a Lagos danfo, but bigger). */
+/** A city bus: yellow, with a black stripe (like a Lagos danfo, but bigger), and the Loota logo. */
 export function makeBus() {
   const group = new THREE.Group();
   const tyre = (x: number, z: number) => {
@@ -566,28 +618,32 @@ export function makeBus() {
   const screen = mesh(T_G.busScreen, "#9FD8FF", 0, 1.9, 3.76);
   group.add(
     mesh(T_G.busBody, "#F4B41A", 0, 1.5, 0),
-    mesh(T_G.busRoof, "#E8E2D0", 0, 2.67, 0),
+    mesh(T_G.busRoof, "#2B2F36", 0, 2.67, 0),
     mesh(T_G.busWindows, "#2F4B63", 0, 1.95, -0.3),
-    mesh(T_G.busStripe, "#111111", 0, 1.1, 0),
+    mesh(T_G.busStripe, "#111111", 0, 0.52, 0),
     screen,
     tyre(-1.15, 2.4), tyre(1.15, 2.4), tyre(-1.15, -2.4), tyre(1.15, -2.4),
+    ...logoSides("dark", 0.9, 1.215, 1.11, 0.4),
+    logoTop("gold", 1.9, 0, 2.76, 0),
   );
   return group;
 }
 
-/** One train carriage; the lead one has a sloped nose and windscreen. */
+/** One train carriage, in Loota's colours with its logo; the lead one has a sloped nose and windscreen. */
 export function makeTrainCar(lead: boolean) {
   const group = new THREE.Group();
   group.add(
     mesh(T_G.carriage, "#F4F1EA", 0, 1.8, 0),
-    mesh(T_G.carriageRoof, "#9A9C9E", 0, 3.2, 0),
+    mesh(T_G.carriageRoof, "#2B2F36", 0, 3.2, 0),
     mesh(T_G.carriageWindows, "#2F4B63", 0, 2.25, 0),
-    mesh(T_G.carriageStripe, "#1E9E62", 0, 1.2, 0),
+    mesh(T_G.carriageStripe, "#F4B41A", 0, 0.68, 0),
     mesh(T_G.bogie, "#333333", 0, 0.35, 2.8),
     mesh(T_G.bogie, "#333333", 0, 0.35, -2.8),
+    ...logoSides("dark", 0.95, 1.315, 1.4, 0),
+    logoTop("gold", 1.9, 0, 3.37, 0),
   );
   if (lead) {
-    group.add(mesh(T_G.nose, "#1E9E62", 0, 1.3, 4.9), mesh(T_G.noseScreen, "#9FD8FF", 0, 2.6, 4.25));
+    group.add(mesh(T_G.nose, "#F4B41A", 0, 1.3, 4.9), mesh(T_G.noseScreen, "#9FD8FF", 0, 2.6, 4.25));
   }
   return group;
 }
@@ -595,7 +651,7 @@ export function makeTrainCar(lead: boolean) {
 /** Length of a carriage plus the gap to the next, before enlargement. */
 export const TRAIN_CAR_SPACING = 8.9;
 
-/** A passenger plane: white, with a green tail. */
+/** A passenger plane: white, with a gold tail, in Loota's livery. */
 export function makePlane() {
   const group = new THREE.Group();
   const body = new THREE.Group();
@@ -618,9 +674,13 @@ export function makePlane() {
     tail,
     mesh(T_G.wing, "#DADADA", 0, -0.3, 0),
     mesh(T_G.tailWing, "#DADADA", 0, 0.3, -8.4),
-    mesh(T_G.fin, "#1E9E62", 0, 1.9, -8.6),
+    mesh(T_G.fin, "#F4B41A", 0, 1.9, -8.6),
     engineL,
     engineR,
+    ...logoSides("dark", 0.6, 1.31, 0, 3.2), // small: the body curves away above and below
+    ...logoSides("dark", 1.8, 0.14, 2.2, -8.6),
+    logoTop("dark", 2.0, -4.9, -0.16, 0),
+    logoTop("dark", 2.0, 4.9, -0.16, 0),
   );
   body.position.y = 1.6; // wheels-down height on the ground
   group.add(body);

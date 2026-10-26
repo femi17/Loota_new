@@ -58,7 +58,7 @@ export function LoungeScene({ view, you, onHide }: { view: LoungeView; you: Avat
 
         {/* The lounge: windows on the apron, the board, the seats */}
         <div className="relative h-56 overflow-hidden rounded-2xl bg-[#1B2436]">
-          {/* Windows: the sky, a plane at the stand */}
+          {/* Windows: the sky, a plane at the stand, in Loota colours (owner, 26 Oct 2026: brand the planes) */}
           <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,#7EC8F2_0%,#CDEBFA_100%)]">
             <div className="absolute inset-0 grid grid-cols-4 gap-1.5 p-0">
               {[0, 1, 2, 3].map((i) => (
@@ -68,10 +68,11 @@ export function LoungeScene({ view, you, onHide }: { view: LoungeView; you: Avat
             <svg viewBox="0 0 160 40" className="absolute bottom-1 left-[18%] w-[64%]" aria-hidden="true">
               <path d="M8 24 Q4 20 14 19 L118 17 Q150 18 154 23 Q150 28 118 28 L14 28 Q4 28 8 24 Z" fill="#F4F1EA" />
               <path d="M60 22 L92 6 L100 6 L80 22 Z M64 26 L92 38 L100 38 L82 26 Z" fill="#D8DEE8" />
-              <path d="M10 19 L4 6 L12 6 L24 19 Z" fill="#2F6FEB" />
-              {[30, 40, 50, 60, 70, 80, 90, 100, 110].map((x) => (
+              <path d="M10 19 L4 6 L12 6 L24 19 Z" fill="#F4B41A" />
+              {[30, 40, 50, 60, 70, 80, 90, 100].map((x) => (
                 <circle key={x} cx={x} cy="21" r="1.4" fill="#2A3550" />
               ))}
+              <image href="/brand/loota-dark.png" x="106" y="17.4" width="11.6" height="10.5" />
             </svg>
             <div className="absolute inset-x-0 bottom-0 h-3 bg-[#8A939F]" />
           </div>

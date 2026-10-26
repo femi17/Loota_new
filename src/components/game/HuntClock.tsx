@@ -22,7 +22,7 @@ const now = () => Math.floor(Date.now() / 1000);
  * The hunt's clock at the top of the map (owner, 25 Oct 2026: "in the center of the screen at the top, there are to be
  * a countdown for each hunt"): how long until it starts, how long it has left, or, in golden minutes, how long they last.
  */
-export function HuntClock({ startsAt, endsAt, goldenUntil }: { startsAt: string; endsAt: string; goldenUntil: number | null }) {
+export function HuntClock({ startsAt, endsAt, allDay = false, goldenUntil }: { startsAt: string; endsAt: string; allDay?: boolean; goldenUntil: number | null }) {
   const t = useSyncExternalStore(subscribe, now, () => null);
   if (t === null) return null;
   const start = Math.floor(Date.parse(startsAt) / 1000);
@@ -33,7 +33,7 @@ export function HuntClock({ startsAt, endsAt, goldenUntil }: { startsAt: string;
       ? ["Starts in", start - t, "text-paper"]
       : t >= end
         ? ["Hunt over", 0, "text-muted"]
-        : huntResting(t * 1000)
+        : !allDay && huntResting(t * 1000)
           ? ["🌙 Back in", Math.floor(huntResumesAt(t * 1000) / 1000) - t, "text-[#C9D6FF]"]
           : golden
           ? ["✨ Golden", golden - t, "text-gold"]

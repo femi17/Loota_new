@@ -40,11 +40,12 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
-import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, VehicleIcon } from "./HudIcons";
+import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, TrophyIcon, VehicleIcon } from "./HudIcons";
 import { JourneyPanel, legText } from "./JourneyPanel";
 import { DjinnPanel, type ChamberResult, type DjinnActions, type DjinnChamber, type DjinnStage, type DjinnState, type GateVerdict } from "./DjinnPanel";
 import { wonderOf } from "@/game/wonders";
 import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, rideLeg, type Journey } from "@/game/journey";
+import { NewsToasts } from "./NewsToasts";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
@@ -309,7 +310,7 @@ export function GameMap({
   /** Welcomed with coins at onboarding: the welcome tour, the first time on the map (on this device). */
   newcomer?: boolean;
   /** The hunt's times, for its clock at the top (the joined hunt, or a live one to join). */
-  huntClock?: { startsAt: string; endsAt: string } | null;
+  huntClock?: { startsAt: string; endsAt: string; allDay?: boolean } | null;
   /** A metal detector bought: it beeps as a key gets closer (the server also lets it reach farther). */
   hasDetector?: boolean;
 }) {
@@ -502,8 +503,16 @@ export function GameMap({
     window.addEventListener("loota:golden", golden);
     return () => window.removeEventListener("loota:golden", golden);
   }, []);
+  /** The leaderboard lights up when another hunter takes a key (owner, 26 Oct 2026), until it's opened. */
+  const [boardLit, setBoardLit] = useState(false);
+  useEffect(() => {
+    const lit = () => setBoardLit(true);
+    window.addEventListener("loota:key-news", lit);
+    return () => window.removeEventListener("loota:key-news", lit);
+  }, []);
   /** 🏆 on the right: the hunt card's leaderboard (the card comes back first if it was put away). */
   const openBoard = () => {
+    setBoardLit(false);
     if (huntShown) {
       window.dispatchEvent(new Event("loota:board"));
       return;
@@ -6173,9 +6182,13 @@ export function GameMap({
           if (!r?.ok) return "Couldn't send your answer. Try again.";
           const balance = r.balance;
           if (balance != null) setHud((h) => ({ ...h, coins: balance }));
-          if (r.outcome === "won" && r.relic) countRelics();
+          if (r.outcome === "won" && (r.relic || r.item === "tyre_kit")) countRelics();
+          if (r.outcome === "won" && r.item === "cruise" && r.qty) {
+            cruiseTokens = Math.min(8, cruiseTokens + r.qty);
+            showCruise();
+          }
           lampStale = true; // done with: the next one comes
-          return { outcome: r.outcome, answer: r.answer, coins: r.coins, relic: r.relic };
+          return { outcome: r.outcome, answer: r.answer, coins: r.coins, relic: r.relic, item: r.item, qty: r.qty };
         },
         showWay: (to) => void routeTo({ name: to.name, detail: "", lng: to.lng, lat: to.lat }),
         dismiss: async (item) => {
@@ -7769,7 +7782,7 @@ export function GameMap({
           </div>
           {/* The hunt's clock, in the middle */}
           <div className="flex min-w-0 flex-1 justify-center">
-            {huntClock && <HuntClock startsAt={huntClock.startsAt} endsAt={huntClock.endsAt} goldenUntil={goldenUntil} />}
+            {huntClock && <HuntClock startsAt={huntClock.startsAt} endsAt={huntClock.endsAt} allDay={huntClock.allDay} goldenUntil={goldenUntil} />}
           </div>
           <button
             type="button"
@@ -8339,8 +8352,16 @@ export function GameMap({
               {hud.lamp.has && <span className={`absolute -right-1 -top-1 size-3 rounded-full ring-2 ring-ink ${hud.lamp.unseen ? "bg-ink" : "bg-gold"}`} aria-hidden="true" />}
             </button>
             {huntId && (
-              <button type="button" data-tool="leaderboard" aria-label="Leaderboard" title="Leaderboard" onClick={openBoard} className={`${tool} bg-ink text-xl`}>
-                <span aria-hidden="true">🏆</span>
+              <button
+                type="button"
+                data-tool="leaderboard"
+                aria-label={`Leaderboard${boardLit ? ": a key was just taken" : ""}`}
+                title="Leaderboard"
+                onClick={openBoard}
+                className={`${tool} relative ${boardLit ? "loota-lamp-glow bg-gold text-ink" : "bg-ink text-paper"}`}
+              >
+                <TrophyIcon />
+                {boardLit && <span className="absolute -right-1 -top-1 size-3 rounded-full bg-ink ring-2 ring-ink" aria-hidden="true" />}
               </button>
             )}
           </nav>
@@ -8371,6 +8392,9 @@ export function GameMap({
       >
         {hud.hint}
       </p>
+
+      {/* News: the hunt's, and everyone's finds and lamp prizes. */}
+      <NewsToasts hidden={!!inside && inside !== "trial"} />
 
       {/* The bus rush: quick questions over the map while the crowd pushes for the door. */}
       {hud.rush && (

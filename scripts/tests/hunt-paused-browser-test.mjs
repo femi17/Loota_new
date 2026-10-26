@@ -26,7 +26,7 @@ try {
   await admin.from("profiles").update({ home_lng: home.lng, home_lat: home.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   await admin.from("player_positions").upsert({ user_id: id, lng: home.lng, lat: home.lat, mode: "walk", energy: 100, updated_at: ago(30) });
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Night test (automated)", prize: "none", winners: 1, starts_at: ago(3 * 86400), ends_at: new Date(Date.now() + 3 * 86400e3).toISOString(), published: true, all_day: true })
+    .insert({ title: "Night test (automated)", prize: "none", winners: 1, starts_at: ago(3 * 86400), ends_at: new Date(Date.now() + 3 * 86400e3).toISOString(), published: true, all_day: false }) // it rests at night (the page's clock says 10 pm)
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

@@ -24,7 +24,6 @@ import { PumpScene, type PumpActions, type PumpOffer } from "./PumpScene";
 import { FlatScene, type FlatActions, type FlatOffer } from "./FlatScene";
 import { PourScene, type PourActions, type PourOffer } from "./PourScene";
 import { LoungeScene, type LoungeView } from "./LoungeScene";
-import { JerryCan } from "./JerryCan";
 import { ServiceScene, type ServiceActions, type ServiceOffer } from "./ServiceScene";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
@@ -3600,8 +3599,9 @@ export function GameMap({
           const canFill = keg ? 2 * (KEG_CAPACITY - Math.floor(keg.fuel)) : 0;
           if (station && !stranded && !keg && lowOnFuel) list.push({ id: "buy_keg", icon: "🛢", short: `Jerry can · ${KEG_PRICE}`, label: `Buy a jerry can · ${KEG_PRICE} coins` });
           if (station && !stranded && keg && keg.fuel < KEG_CAPACITY) list.push({ id: "fill_keg", icon: "🛢", short: `Fill can · ${canFill}`, label: `Fill your jerry can · ${canFill} coins` });
-          // Pour it: by the vehicle at the roadside, or into the one ridden (a can takes a tank to 65% at most).
-          const dry = atStranded ? stranded : motorRidden && motorRidden.fuel < KEG_CAPACITY ? motorRidden : pocketed((v) => v.fuel < KEG_CAPACITY && !v.broken_at);
+          // Pour it only when a tank has run dry (owner, 26 Oct 2026: "remove the jerry can totally… not needed… except
+          // when fuel finishes"): by the vehicle at the roadside, or into an empty one in your pocket.
+          const dry = atStranded ? stranded : pocketed((v) => v.fuel <= 0 && !v.broken_at);
           pourTarget = keg && keg.fuel > 0 && dry ? dry : null;
           if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour can", label: `Pour the jerry can into your ${vehicleName(dry.kind)}` });
           // Beside the vehicle that ran dry, with no fuel in a can but a Jerry Can relic: use that.
@@ -7638,12 +7638,6 @@ export function GameMap({
   const here = "pointer-events-auto flex h-10 items-center rounded-full bg-gold px-3.5 text-sm font-bold text-ink shadow-lg disabled:opacity-50";
   const distanceText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  // No Pour button on the screen (owner, 26 Oct 2026: "the pour is not needed… remove it from the screen, but in case the
-  // user has some fuel in it, we can remind them by adding it as a badge on the gas tank icon"): a can with fuel shows as
-  // a badge on the ⛽ gauge, and tapping the gauge pours (the scene). "Pour can" stays in the middle only on foot by a
-  // vehicle stranded at the roadside (no gauge then).
-  const pourAction = hud.vehicle?.fuel != null ? (hud.actions.find((a) => a.id === "pour_keg") ?? null) : null;
-  const actionsHere = pourAction ? hud.actions.filter((a) => a.id !== "pour_keg") : hud.actions;
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
@@ -7802,29 +7796,7 @@ export function GameMap({
                 {hud.vehicle && (hud.vehicle.fuel != null || hud.vehicle.tyre != null || hud.vehicle.meter) && (
                   <div className={`${chip} bg-ink`} aria-label={`Your ${VEHICLES[hud.vehicle.kind].name.toLowerCase()}`}>
                     {hud.vehicle.fuel != null && (
-                      <button
-                        type="button"
-                        disabled={!pourAction || hud.busy}
-                        onClick={() => pourAction && actions.current?.act(pourAction.id)}
-                        aria-label={pourAction ? `${pourAction.label} (fuel ${Math.round(hud.vehicle.fuel)}%)` : `Fuel ${Math.round(hud.vehicle.fuel)}%`}
-                        title={pourAction ? pourAction.label : "Fuel"}
-                        className={`relative flex items-center gap-1 disabled:cursor-default ${hud.vehicle.fuel < 15 ? "text-danger" : ""}`}
-                      >
-                        <span className="relative">
-                          ⛽
-                          {/* The jerry can's fuel, as a reminder (only when there's some in it) */}
-                          {hud.keg && hud.keg.fuel > 0 && (
-                            <span
-                              className="absolute -left-2 -top-2.5 flex items-center rounded-full bg-gold px-0.5 ring-2 ring-ink"
-                              aria-label={`Jerry can ${Math.round((100 * hud.keg.fuel) / KEG_CAPACITY)}% full`}
-                              data-badge="jerry-can"
-                            >
-                              <JerryCan size={11} level={hud.keg.fuel / KEG_CAPACITY} />
-                            </span>
-                          )}
-                        </span>
-                        {Math.round(hud.vehicle.fuel)}%
-                      </button>
+                      <span className={hud.vehicle.fuel < 15 ? "text-danger" : ""} title="Fuel">⛽ {Math.round(hud.vehicle.fuel)}%</span>
                     )}
                     {hud.vehicle.tyre != null && (
                       <span className={hud.vehicle.tyre < 40 ? "text-danger" : ""} title="Tyres">{hud.vehicle.tyre <= 0 ? "🛞 flat" : `🛞 ${Math.round(hud.vehicle.tyre)}%`}</span>
@@ -8683,7 +8655,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {!inside && (hud.dome?.siege || actionsHere.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap) && (
+      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -8756,7 +8728,7 @@ export function GameMap({
               Claim · {hud.detourHere.relic ? RELICS[hud.detourHere.relic].name : `+${hud.detourHere.coins}`}
             </button>
           )}
-          {actionsHere.map((a) => (
+          {hud.actions.map((a) => (
             <button key={a.id} type="button" disabled={hud.busy} onClick={() => actions.current?.act(a.id)} aria-label={a.label} title={a.label} className={`${here} gap-1`}>
               <span aria-hidden="true">{a.icon}</span>
               {a.short}

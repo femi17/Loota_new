@@ -1,9 +1,9 @@
-// The jerry can by the fuel gauge (owner, 26 Oct 2026: "the pour is not needed… remove it from the screen, but in case
-// the user has some fuel in it… a badge on the gas tank icon"). Riding a motorbike with 20% in the tank and a jerry can
-// of fuel: a can badge (77%) on ⛽, no Pour button. Tapping the gauge, the scene ("the pour should be a scene,
-// the user gets off the bike… show a jerry can with the fuel as percentage"): the hunter beside the bike, the can at
-// 77% and the tank at 20%; "Pour it in": the can empties, the tank fills to 65%; Ride on. The test player is deleted.
-//   SHOTS=<folder> node scripts/tests/pour-by-gauge-browser-test.mjs
+// The jerry can only when the fuel runs out (owner, 26 Oct 2026: "remove the jerry can totally… not needed… except when
+// fuel finishes"). Riding a motorbike with 20% in the tank and a jerry can of fuel: no badge on ⛽, no Pour anywhere.
+// Its tank run dry (the motorbike in the pocket, empty): "Pour can", and the scene: the hunter beside the bike, the can
+// at 77% and the tank at 0%; "Pour it in": the can down to what's left, the tank at 50%; Ride on. The test player is
+// deleted.
+//   SHOTS=<folder> node scripts/tests/jerry-can-when-dry-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 const app = createRequire(new URL("../../package.json", import.meta.url));
@@ -47,30 +47,33 @@ try {
     try { localStorage.setItem(`loota:welcome:${uid}`, "1"); } catch {}
   }, id);
   await page.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
-  let where = null;
-  for (let i = 0; i < 40 && !where; i++) {
+  const pourButtons = () =>
+    page.evaluate(() => [...document.querySelectorAll("button")].filter((x) => /Pour/.test(x.textContent ?? "") || /Pour the jerry can/.test(x.getAttribute("aria-label") ?? "")).map((x) => x.textContent?.trim()));
+  let gauge = null;
+  for (let i = 0; i < 40 && !gauge; i++) {
     await wait(1000);
-    where = await page.evaluate(() => {
-      const badge = document.querySelector('[data-badge="jerry-can"]');
-      if (!badge) return null;
-      const gauge = badge.closest("button");
-      return {
-        badge: badge.getAttribute("aria-label"),
-        onGauge: !!gauge && /Pour the jerry can/.test(gauge.getAttribute("aria-label") ?? "") && /%/.test(gauge.textContent ?? ""),
-        pourButton: [...document.querySelectorAll("button")].some((x) => /^(🛢\s*)?Pour( ·|$)|Pour can/.test(x.textContent?.trim() ?? "")),
-      };
-    });
+    gauge = await page.evaluate(() => document.querySelector('[title="Fuel"]')?.textContent ?? null);
   }
-  check("the jerry can's fuel as a badge on the ⛽ gauge (77%)", !!where && where.badge === "Jerry can 77% full" && where.onGauge, JSON.stringify(where));
-  check("…and no Pour button on the screen", where && !where.pourButton);
+  check("riding with fuel: the gauge, and no jerry can badge", /20%/.test(gauge ?? "") && !(await page.evaluate(() => !!document.querySelector('[data-badge="jerry-can"]'))), gauge);
+  check("…and no Pour anywhere", (await pourButtons()).length === 0, JSON.stringify(await pourButtons()));
   await page.screenshot({ path: `${OUT}/pour-1-gauge.png`, clip: { x: 0, y: 0, width: 390, height: 220 } });
-  // Tapping the gauge pours (the scene).
-  await page.evaluate(() => document.querySelector('[data-badge="jerry-can"]')?.closest("button")?.click());
+
+  // The tank runs dry: the motorbike in the pocket, empty.
+  await admin.from("player_vehicles").update({ fuel: 0, in_use: false }).eq("user_id", id);
+  await admin.from("player_positions").update({ mode: "walk", updated_at: ago(30) }).eq("user_id", id);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  let pour = [];
+  for (let i = 0; i < 40 && !pour.length; i++) {
+    await wait(1000);
+    pour = await pourButtons();
+  }
+  check("its tank empty: Pour can", pour.some((x) => /Pour can/.test(x ?? "")), JSON.stringify(pour));
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((x) => /Pour can/.test(x.textContent ?? ""))?.click());
   await wait(1200);
   const NL = String.fromCharCode(10);
   const sceneText = () => page.evaluate((nl) => document.querySelector('[role="dialog"][aria-label="Pouring the jerry can"]')?.innerText.split(nl).filter(Boolean).join(" | ") ?? null, NL);
   let scene = await sceneText();
-  check("the scene: off the bike, the can at 77%, the tank at 20%", /Topping up your motorbike/.test(scene ?? "") && /Jerry can \| 77%/.test(scene ?? "") && /20%/.test(scene ?? "") && /get off/.test(scene ?? ""), scene);
+  check("the scene: off the bike, the can at 77%, the tank at 0%", /Topping up your motorbike/.test(scene ?? "") && /Jerry can \| 77%/.test(scene ?? "") && /Tank \| 0%/.test(scene ?? "") && /get off/.test(scene ?? ""), scene);
   await page.screenshot({ path: `${OUT}/pour-2-scene.png` });
   await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.includes("Pour it in"))?.click());
   await wait(1200);
@@ -79,17 +82,17 @@ try {
     await wait(500);
     scene = await sceneText();
   }
-  check("poured: the can down to what was left (8%), the tank at 65%, Ride on", /Jerry can \| 8%/.test(scene ?? "") && /Tank \| 65%/.test(scene ?? "") && /65% fuel/.test(scene ?? "") && /Ride on/.test(scene ?? ""), scene);
+  check("poured: the can empty, the tank at 50%, Ride on", /Jerry can \| 0%/.test(scene ?? "") && /Tank \| 50%/.test(scene ?? "") && /50% fuel/.test(scene ?? "") && /Ride on/.test(scene ?? ""), scene);
   await page.screenshot({ path: `${OUT}/pour-4-done.png` });
   await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.trim() === "Ride on")?.click());
   await wait(800);
   check("Ride on: the scene closes", !(await sceneText()));
-  let fuel = 20;
-  for (let i = 0; i < 10 && fuel <= 20; i++) {
+  let fuel = 0;
+  for (let i = 0; i < 10 && fuel <= 0; i++) {
     await wait(1000);
     fuel = (await admin.from("player_vehicles").select("fuel").eq("user_id", id).eq("kind", "motorbike").single()).data.fuel;
   }
-  check("tapped: the tank topped up", fuel > 20, `${Math.round(fuel)}%`);
+  check("the tank filled from the can", Math.round(fuel) === 50, `${Math.round(fuel)}%`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

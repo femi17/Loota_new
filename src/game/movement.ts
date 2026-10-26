@@ -13,13 +13,15 @@ export type Mode = "walk" | "bicycle" | "motorbike" | "car";
 /**
  * Speeds match max_travel_speed() and base_speed() in the database. `drain` is
  * energy used per second at full pace (so per metre it's the same at any speed,
- * as the server counts it: energy_per_m); riding a motor vehicle takes none.
+ * as the server counts it: energy_per_m). Riding a motorbike or driving a car
+ * tires you too, more gently (owner, 26 Oct 2026: "tell them to go rest, they
+ * have been driving for too long").
  */
 export const MODES: Record<Mode, { label: string; kmh: number; profile: "foot" | "bike" | "car"; drain: number }> = {
   walk: { label: "Walk", kmh: 5, profile: "foot", drain: 0.35 },
   bicycle: { label: "Bicycle", kmh: 16, profile: "bike", drain: 0.5 },
-  motorbike: { label: "Motorbike", kmh: 35, profile: "car", drain: 0 },
-  car: { label: "Car", kmh: 45, profile: "car", drain: 0 },
+  motorbike: { label: "Motorbike", kmh: 35, profile: "car", drain: 0.12 },
+  car: { label: "Car", kmh: 45, profile: "car", drain: 0.08 },
 };
 
 const SPRINT_SPEED = 1.6; // sprint is 60% faster…
@@ -30,6 +32,8 @@ export const REST_REGEN = 2;
 export const ROADSIDE_REGEN = 1;
 const TIRED_AT = 20; // below this, you slow down
 const TIRED_SPEED = 0.6;
+/** Out of energy on a motorbike or in a car: rest until this much is back before going on. */
+const SPENT_UNTIL = 15;
 const CELEBRATE_SECONDS = 3.5;
 const ARRIVE_WITHIN_M = 1.5;
 
@@ -54,6 +58,8 @@ export type Traveller = {
   resting: boolean;
   /** Energy per second while resting: REST_REGEN at a chill spot, ROADSIDE_REGEN by the road. */
   restRate: number;
+  /** Ran out of energy riding or driving: can't go on until it's back to SPENT_UNTIL. */
+  spent?: boolean;
 };
 
 export type Controls = { go: boolean; sprint: boolean };
@@ -107,14 +113,20 @@ export function step(
   if (t.phase === "idle" && canMove && (controls.go || controls.sprint)) {
     target = base * (sprinting ? SPRINT_SPEED : 1) * t.speedFactor;
     if (t.energy < TIRED_AT) target *= TIRED_SPEED;
+    // Too tired to ride or drive on: no fainting at the wheel, but no going on until you've rested a while.
+    if (MODES[t.mode].profile === "car") {
+      if (t.energy <= 0) t.spent = true;
+      if (t.spent && t.energy >= SPENT_UNTIL) t.spent = false;
+      if (t.spent) target = 0;
+    } else t.spent = false;
   }
   t.v += (target - t.v) * Math.min(1, (target > t.v ? 2.5 : 4) * dt);
   if (target === 0 && t.v < 0.3) t.v = 0;
 
   if (t.v > 0.5) {
     t.resting = false;
-    t.energy -= MODES[t.mode].drain * (sprinting ? SPRINT_DRAIN : 1) * (t.v / base) * dt;
-    if (t.energy <= 0 && MODES[t.mode].drain > 0) {
+    t.energy = Math.max(0, t.energy - MODES[t.mode].drain * (sprinting ? SPRINT_DRAIN : 1) * (t.v / base) * dt);
+    if (t.energy <= 0 && MODES[t.mode].profile !== "car") {
       t.energy = 0;
       t.v = 0;
       t.phase = "fainted";

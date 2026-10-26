@@ -3517,7 +3517,29 @@ export function GameMap({
       function checkLimits() {
         if (visit || ride) return;
         const energy = traveller.energy;
-        if (traveller.mode === "walk" || traveller.mode === "bicycle") {
+        if (traveller.mode === "motorbike" || traveller.mode === "car") {
+          // Riding or driving a long time (owner, 26 Oct 2026): time for a break.
+          const what = traveller.mode === "car" ? "driving" : "riding";
+          if (energy <= 0 && warned.energy > 0) {
+            warned.energy = 0;
+            void advise("energy", "Too tired to go on", `You're too tired to keep ${what}. Pull over and rest (Rest here), or take a break at a park or a place to eat.`, ["rest", "eat"], 2000, {
+              text: `You're too tired to keep ${what}. Pull over and rest right here (Rest here) until you've got your energy back.`,
+              where: "Rest here",
+            });
+          } else if (energy < 25 && warned.energy > 25) {
+            warned.energy = 25;
+            void advise("energy", "Pull over and rest", `You've been ${what} too long and you're worn out: pull over and rest now, or you'll soon be too tired to go on.`, ["rest", "eat"], 2000, {
+              text: `You've been ${what} too long and you're worn out. Pull over and rest right here (Rest here).`,
+              where: "Rest here",
+            });
+          } else if (energy < 50 && warned.energy > 50) {
+            warned.energy = 50;
+            void advise("energy", "Time for a break", `You've been ${what} a while. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.`, ["rest", "eat"], 2000, {
+              text: `You've been ${what} a while. Pull over for a break (Rest here) when you can.`,
+              where: "Rest here",
+            });
+          }
+        } else if (traveller.mode === "walk" || traveller.mode === "bicycle") {
           if (energy < 25 && warned.energy > 25) {
             warned.energy = 25;
             void advise("energy", "Exhausted: rest now", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park or a place to eat, or have a meal.", ["rest", "eat"], chillReachM(), {
@@ -3599,9 +3621,11 @@ export function GameMap({
           const eatSpot = spotHere(["eat"]);
           if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
           const chill = spotHere(["rest", "eat"]);
-          if (chill && traveller.mode === "walk" && traveller.energy < 90 && !traveller.resting) list.push({ id: "rest", icon: "🪑", short: "Rest", label: `Rest at ${chill.name}` });
-          if (!chill && (traveller.mode === "walk" || traveller.mode === "bicycle") && traveller.energy < 60 && !traveller.resting) {
-            list.push({ id: "rest_here", icon: "🧘", short: "Rest here", label: "Sit down and rest right here (slower than at a chill spot)" });
+          // Resting: on foot, by your bicycle, or pulled over on a motorbike or in a car (they tire you too).
+          const driving = traveller.mode === "motorbike" || traveller.mode === "car";
+          if (chill && (traveller.mode === "walk" || driving) && traveller.energy < 90 && !traveller.resting) list.push({ id: "rest", icon: "🪑", short: "Rest", label: `Rest at ${chill.name}` });
+          if (!chill && traveller.energy < 60 && !traveller.resting) {
+            list.push({ id: "rest_here", icon: "🧘", short: "Rest here", label: driving ? "Pull over and rest right here (slower than at a chill spot)" : "Sit down and rest right here (slower than at a chill spot)" });
           }
           const station = spotHere(["fuel"]);
           const thirsty = thirstyVehicle();
@@ -3858,7 +3882,11 @@ export function GameMap({
           } else if (id === "rest_here") {
             traveller.resting = true;
             traveller.restRate = movement.ROADSIDE_REGEN;
-            say(`You sit down ${traveller.mode === "bicycle" ? "by your bicycle" : "by the road"}. Energy comes back while you rest (faster at a park or a place to eat); move on when you're ready.`);
+            say(
+              traveller.mode === "motorbike" || traveller.mode === "car"
+                ? `You pull over and rest by your ${vehicleName(traveller.mode)}. Energy comes back while you rest (faster at a park or a place to eat); go on when you're ready.`
+                : `You sit down ${traveller.mode === "bicycle" ? "by your bicycle" : "by the road"}. Energy comes back while you rest (faster at a park or a place to eat); move on when you're ready.`,
+            );
           } else if (id === "buy_keg") {
             keg = { fuel: 0, usesLeft: r.usesLeft ?? 50 };
             say(`You bought a jerry can (good for 50 trips). Fill it here: it carries enough for ${KEG_CAPACITY}% of a tank.`);

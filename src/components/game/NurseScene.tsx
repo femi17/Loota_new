@@ -75,7 +75,7 @@ export function NurseScene({
                   ask(
                     "why",
                     "How do I stop it happening again?",
-                    "Watch your energy. When you get tired, sit down at a park or a place to eat, or have a meal. Walking and cycling use it up; buses and taxis don't.",
+                    "Watch your energy. When you get tired, sit down at a park or a place to eat, or have a meal. Walking and cycling use it up fastest; riding or driving a long time tires you too. Buses and taxis don't.",
                   ),
               },
             ]),

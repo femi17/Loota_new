@@ -200,7 +200,7 @@ export function VehiclePanel({
                     <div className="min-w-0 flex-1">
                       <p className="text-lg font-bold leading-tight">{info.name}</p>
                       <p className="text-xs text-muted">
-                        {SPEED[kind]} · {kind === "bicycle" ? "uses your energy" : "uses fuel"}
+                        {SPEED[kind]} · {kind === "bicycle" ? "uses your energy" : "uses fuel, tires you slowly"}
                       </p>
                       {mine && kind !== "bicycle" && (
                         <div className="mt-1 flex items-center gap-2" aria-label={`Fuel ${Math.round(mine.fuel)}%`}>

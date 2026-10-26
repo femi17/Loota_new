@@ -42,7 +42,7 @@ try {
   const rival = await player("Ada");
   const leader = await player("Tunde");
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Drama test (automated)", prize: "none", winners: 3, starts_at: ago(33 * 60), ends_at: soon(7200), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Drama test (automated)", prize: "none", winners: 3, starts_at: ago(33 * 60), ends_at: soon(7200), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

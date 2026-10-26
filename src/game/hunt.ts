@@ -4,7 +4,22 @@
  * browser; the server reveals each step as it's earned.
  */
 
-export type HuntPhase = "draft" | "upcoming" | "live" | "ended";
+/** "paused": between 9 pm and 9 am Lagos time (owner, 26 Oct 2026: hunts run 9 am to 9 pm; free roam after). */
+export type HuntPhase = "draft" | "upcoming" | "live" | "paused" | "ended";
+
+/** Lagos is UTC+1 all year. */
+const LAGOS_MS = 3600e3;
+/** Whether a hunt rests at this moment: outside 9 am – 9 pm Lagos time. */
+export const huntResting = (now: number) => {
+  const h = new Date(now + LAGOS_MS).getUTCHours();
+  return h < 9 || h >= 21;
+};
+/** When hunts are on again: the next 9 am, Lagos time (ms). */
+export function huntResumesAt(now: number) {
+  const lagos = new Date(now + LAGOS_MS);
+  const nine = Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), lagos.getUTCDate(), 9) - LAGOS_MS;
+  return nine > now ? nine : nine + 86400e3;
+}
 
 /**
  * The riddle clock (owner, 25 Oct 2026): 15 seconds to name the place from when the hunter first sees the riddle, then

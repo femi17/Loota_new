@@ -33,7 +33,7 @@ try {
   await admin.from("profiles").update({ coins: 400, home_lng: start.lng, home_lat: start.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   await admin.from("player_positions").upsert({ user_id: id, lng: start.lng, lat: start.lat, mode: "walk", energy: 90, updated_at: ago(30) });
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Detector test (automated)", prize: "none", winners: 3, starts_at: ago(600), ends_at: soon(7200), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Detector test (automated)", prize: "none", winners: 3, starts_at: ago(600), ends_at: soon(7200), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

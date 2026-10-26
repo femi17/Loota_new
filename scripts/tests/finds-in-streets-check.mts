@@ -78,19 +78,27 @@ const trap = await sideStreetSpot(key.lng, key.lat, 180, 280);
 check("a trap chest 180–280 m from its key, in the streets", !!trap && metres(key, trap) >= 180 && metres(key, trap) <= 280 && (await clearOfMain(trap)) >= 35,
   trap ? `${Math.round(metres(key, trap))} m away, ${Math.round(await clearOfMain(trap))} m from a main road` : "none");
 
-// ---- Cruise tokens (owner, 25 Oct 2026): two in the side streets of a square on Herbert Macaulay Way
+// ---- Cruise tokens (owner, 25–26 Oct 2026: rarer): a square on Herbert Macaulay Way rolled once: one token in a
+// side street off the main roads (40% of the time) or nothing; then not rolled again while that lasts
 const sq = { lng: 3.379, lat: 6.507 };
 const cellKey = `${Math.floor(sq.lng / CELL_DEG)}:${Math.floor(sq.lat / CELL_DEG)}`;
 const { data: before } = await admin.from("cruise_drops").select("id").eq("cell", cellKey);
 const beforeIds = new Set((before ?? []).map((d) => d.id));
-await admin.from("cruise_drops").update({ expires_at: new Date(Date.now() - 1000).toISOString() }).eq("cell", cellKey).is("taken_at", null);
-const added = await stockCruise(admin, sq.lng, sq.lat);
-const { data: fresh } = await admin.from("cruise_drops").select("id, lng, lat").eq("cell", cellKey).is("taken_at", null).gt("expires_at", new Date().toISOString());
-const clears = await Promise.all((fresh ?? []).map((d) => clearOfMain(d)));
-check("cruise tokens: two in the square's side streets, off the main roads", added === 2 && clears.length === 2 && clears.every((c) => c >= 35), clears.map((c) => Math.round(c)).join(", "));
-const again = await stockCruise(admin, sq.lng, sq.lat);
-check("…and no more while they lie there", again === 0);
-const mine = (fresh ?? []).map((d) => d.id).filter((x) => !beforeIds.has(x));
-if (mine.length) await admin.from("cruise_drops").delete().in("id", mine);
+await admin.from("cruise_drops").update({ expires_at: new Date(Date.now() - 1000).toISOString() }).eq("cell", cellKey).gt("expires_at", new Date().toISOString());
+const rolls: number[] = [];
+let offMain = true;
+for (let i = 0; i < 6; i++) {
+  const added = await stockCruise(admin, sq.lng, sq.lat);
+  rolls.push(added);
+  const { data: fresh } = await admin.from("cruise_drops").select("id, lng, lat, taken_at").eq("cell", cellKey).gt("expires_at", new Date().toISOString());
+  const again = await stockCruise(admin, sq.lng, sq.lat);
+  if (again !== 0 || (fresh ?? []).length !== 1) offMain = false;
+  for (const d of fresh ?? []) if (!d.taken_at && (await clearOfMain(d)) < 35) offMain = false;
+  await admin.from("cruise_drops").update({ expires_at: new Date(Date.now() - 1000).toISOString() }).eq("cell", cellKey).gt("expires_at", new Date().toISOString());
+}
+check("cruise tokens: one roll per square, a token (off the main roads) or nothing, never two", offMain && rolls.every((r) => r === 0 || r === 1), rolls.join(","));
+const { data: mine } = await admin.from("cruise_drops").select("id").eq("cell", cellKey);
+const added = (mine ?? []).map((d) => d.id).filter((x) => !beforeIds.has(x));
+if (added.length) await admin.from("cruise_drops").delete().in("id", added);
 
 console.log(fails ? `${fails} FAILED` : "all passed");

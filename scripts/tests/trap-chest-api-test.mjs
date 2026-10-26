@@ -23,7 +23,7 @@ try {
   id = data.user.id;
   await admin.from("profiles").update({ coins: 100, home_lng: SPOT.lng, home_lat: SPOT.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Trap test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true })
+    .insert({ title: "Trap test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

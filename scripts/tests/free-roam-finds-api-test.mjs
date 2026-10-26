@@ -72,7 +72,7 @@ try {
 
   // ---- In a live hunt: full rewards
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Finds test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: later(3600), published: true })
+    .insert({ title: "Finds test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: later(3600), published: true, all_day: true })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

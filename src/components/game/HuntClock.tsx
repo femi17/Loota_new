@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { timeLeft } from "@/components/Countdown";
+import { huntResting, huntResumesAt } from "@/game/hunt";
 
 const two = (n: number) => String(n).padStart(2, "0");
 /** A ticking clock under a day: "03:12:45", or "12:45" in the last hour (the days go on the label above). */
@@ -32,7 +33,9 @@ export function HuntClock({ startsAt, endsAt, goldenUntil }: { startsAt: string;
       ? ["Starts in", start - t, "text-paper"]
       : t >= end
         ? ["Hunt over", 0, "text-muted"]
-        : golden
+        : huntResting(t * 1000)
+          ? ["🌙 Back in", Math.floor(huntResumesAt(t * 1000) / 1000) - t, "text-[#C9D6FF]"]
+          : golden
           ? ["✨ Golden", golden - t, "text-gold"]
           : end - t >= 86400
             ? [`${Math.floor((end - t) / 86400)} day${end - t >= 2 * 86400 ? "s" : ""} left`, end - t, "text-paper"]

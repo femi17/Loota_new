@@ -16,6 +16,7 @@ import {
   type AnyTrialView,
   type RiddleClock,
   type TrialView,
+  huntResumesAt,
 } from "@/game/hunt";
 import type { LngLat } from "@/game/geo";
 import type { Place } from "@/game/places";
@@ -539,7 +540,9 @@ export function HuntPanel({
             <span className="truncate text-sm font-bold">
               {state.phase === "upcoming"
                 ? `${state.title} · starts soon`
-                : state.phase === "ended" && !done
+                : state.phase === "paused" && !done
+                  ? `${state.title} · back at 9 am`
+                  : state.phase === "ended" && !done
                   ? `${state.title} · ended`
                   : done
                     ? `Finished ${ordinal(state.place ?? 0)}`
@@ -603,6 +606,19 @@ export function HuntPanel({
         )}
         {open && !board && (
           <div className="flex flex-col gap-2 text-sm">
+            {state.phase === "paused" && !done && (() => {
+              const s = Math.max(0, Math.round((huntResumesAt(now) - now) / 1000));
+              const two = (n: number) => String(n).padStart(2, "0");
+              return (
+                <div className="flex flex-col gap-1 rounded-xl bg-[#0B1630] p-3 text-[#C9D6FF]" role="status" aria-label="The hunt is resting">
+                  <span className="font-bold">🌙 The hunt rests from 9 pm to 9 am (Lagos time).</span>
+                  <span className="text-xs">Roam freely meanwhile: your keys and your place are kept.</span>
+                  <span className="font-display text-xl font-extrabold tabular-nums text-paper">
+                    Back in {two(Math.floor(s / 3600))}:{two(Math.floor((s % 3600) / 60))}:{two(s % 60)}
+                  </span>
+                </div>
+              );
+            })()}
             {state.phase === "upcoming" && (
               <>
                 {startsIn !== null && startsIn > 0 && startsIn < 24 * 3600 && (

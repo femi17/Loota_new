@@ -722,13 +722,13 @@ export function makePoliceCar() {
 export function makeCruiseToken() {
   const group = new THREE.Group();
   const disc = new THREE.Group();
-  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.18, 20), glow("#2EC4B6"));
+  const face = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.14, 20), glow("#2EC4B6"));
   face.rotation.x = Math.PI / 2;
-  const mark = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.09, 6, 16), glow("#E8FFFB"));
+  const mark = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.06, 6, 16), glow("#E8FFFB"));
   mark.position.z = 0.1;
   disc.add(face, mark);
-  disc.position.y = 1.4;
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.08, 6, 24), glow("#2EC4B6"));
+  disc.position.y = 0.9;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.05, 6, 24), glow("#2EC4B6"));
   ring.rotation.x = Math.PI / 2;
   ring.position.y = 0.05;
   group.add(disc, ring);

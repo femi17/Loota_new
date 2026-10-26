@@ -9,6 +9,17 @@ import puppeteer from "puppeteer-core";
 const app = createRequire(new URL("../../package.json", import.meta.url));
 const { createClient } = app("@supabase/supabase-js");
 const { createServerClient } = app("@supabase/ssr");
+/** The pour is a scene (owner, 26 Oct 2026): "Pour it in", watch the gauges, then "Ride on". */
+async function pourScene(page) {
+  const click = (t) => page.evaluate((x) => {
+    const b = [...document.querySelectorAll('[role="dialog"][aria-label="Pouring the jerry can"] button')].find((e) => e.textContent?.includes(x));
+    b?.click();
+    return !!b;
+  }, t);
+  for (let i = 0; i < 20 && !(await click("Pour it in")); i++) await new Promise((r) => setTimeout(r, 300));
+  for (let i = 0; i < 30 && !(await click("Ride on")); i++) await new Promise((r) => setTimeout(r, 300));
+}
+
 process.loadEnvFile(new URL("../../.env.local", import.meta.url));
 const OUT = process.env.SHOTS ?? (await import("node:os")).tmpdir();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -113,6 +124,7 @@ try {
     x?.click();
     return !!x;
   }));
+  await pourScene(page);
   await wait(4000);
   const said = await body();
   check("poured: back on it, on to the journey's place", /you're back on it\. On to Unilag Senate Building/.test(said), said.match(/Poured[^|]*/)?.[0]);
@@ -130,6 +142,7 @@ try {
   await page.evaluate((p) => localStorage.setItem("loota:going-before-dry", JSON.stringify(p)), place2);
   await open();
   await page.evaluate(() => [...document.querySelectorAll("button")].find((e) => e.textContent?.includes("Pour can"))?.click());
+  await pourScene(page);
   await wait(4000);
   check("reopened, then poured: on to the place you were heading for", /On to Yaba Market/.test(await body()));
   const back2 = await waitEnd([place2.lng, place2.lat], 200);

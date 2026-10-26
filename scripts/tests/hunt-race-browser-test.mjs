@@ -38,7 +38,7 @@ try {
   const rival = await player("Ada", near(500));
   const spot = near(2500);
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Race test (automated)", prize: "none", winners: 3, starts_at: soon(45), ends_at: soon(7200), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Race test (automated)", prize: "none", winners: 3, starts_at: soon(45), ends_at: soon(7200), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

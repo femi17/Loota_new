@@ -39,7 +39,7 @@ const near = { lng: spot.lng, lat: spot.lat + 25 / 110574 };
 
 try {
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Key scenes test (automated)", prize: "none", winners: 3, starts_at: ago(600), ends_at: soon(7200), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Key scenes test (automated)", prize: "none", winners: 3, starts_at: ago(600), ends_at: soon(7200), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

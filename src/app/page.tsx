@@ -6,6 +6,7 @@ import { HuntScene } from "@/components/HuntScene";
 import { Countdown } from "@/components/Countdown";
 import { Masquerade } from "@/components/game/Masquerade";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { huntResting, huntResumesAt } from "@/game/hunt";
 
 const steps = [
   { icon: "🧩", title: "Crack the riddle", text: "Every key hides at a real place in Nigeria. Work out where: you only find out you're right when you get there." },
@@ -14,8 +15,10 @@ const steps = [
   { icon: "🎭", title: "Outwit the Masquerade", text: "He hides the keys, moves them about and plants trap chests. Trust the heat, not the glint." },
 ];
 
-/** Whether a hunt has started (read per request: the page is dynamic here). */
+/** Whether a hunt has started, and whether it's resting for the night (read per request: the page is dynamic here). */
 const started = (startsAt: string) => new Date(startsAt).getTime() <= Date.now();
+const resting = () => huntResting(Date.now());
+const resumes = () => new Date(huntResumesAt(Date.now())).toISOString();
 
 /** What's on now (or next): the hunt's name, prize and clock, for anyone looking in. */
 async function LiveHunt() {
@@ -30,12 +33,13 @@ async function LiveHunt() {
     .maybeSingle();
   if (!h) return null;
   const live = started(h.starts_at);
+  const night = live && resting();
   const hunters = (h.hunt_players as unknown as { count: number }[] | null)?.[0]?.count ?? 0;
   return (
     <Link href="/signup" className="flex max-w-xl items-center gap-3 rounded-2xl bg-ink-2 px-4 py-3 ring-1 ring-gold/60 hover:ring-gold" aria-label={`${live ? "Live now" : "Coming up"}: ${h.title}`}>
-      <span className={`size-2.5 shrink-0 rounded-full ${live ? "loota-live-dot bg-danger" : "bg-gold"}`} aria-hidden="true" />
+      <span className={`size-2.5 shrink-0 rounded-full ${live && !night ? "loota-live-dot bg-danger" : "bg-gold"}`} aria-hidden="true" />
       <span className="min-w-0 flex-1">
-        <span className="block text-xs font-bold uppercase tracking-wider text-gold">{live ? "Live now" : "Next hunt"}</span>
+        <span className="block text-xs font-bold uppercase tracking-wider text-gold">{night ? "Resting till 9 am" : live ? "Live now" : "Next hunt"}</span>
         <span className="block truncate font-bold">{h.title}</span>
         <span className="block text-sm text-muted">
           🏆 {h.prize}
@@ -43,9 +47,9 @@ async function LiveHunt() {
         </span>
       </span>
       <span className="shrink-0 text-right text-sm">
-        <span className="block text-xs text-muted">{live ? "ends in" : "starts in"}</span>
+        <span className="block text-xs text-muted">{night ? "back in" : live ? "ends in" : "starts in"}</span>
         <b className="text-paper">
-          <Countdown to={live ? h.ends_at : h.starts_at} fallback="…" />
+          <Countdown to={night ? resumes() : live ? h.ends_at : h.starts_at} fallback="…" />
         </b>
       </span>
     </Link>

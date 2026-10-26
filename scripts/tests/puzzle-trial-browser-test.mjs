@@ -27,7 +27,7 @@ try {
   await admin.from("profiles").update({ home_lng: spot.lng, home_lat: spot.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   await admin.from("player_positions").upsert({ user_id: id, lng: spot.lng, lat: spot.lat, mode: "walk", energy: 100, updated_at: ago(30) });
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Puzzle UI test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true })
+    .insert({ title: "Puzzle UI test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

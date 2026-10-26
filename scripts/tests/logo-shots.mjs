@@ -58,7 +58,7 @@ try {
   await page.screenshot({ path: `${OUT}/logo-3b-play.png` });
 
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Logo test (automated)", prize: "none", winners: 3, starts_at: new Date(Date.now() + 40_000).toISOString(), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Logo test (automated)", prize: "none", winners: 3, starts_at: new Date(Date.now() + 40_000).toISOString(), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

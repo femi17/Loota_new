@@ -245,3 +245,8 @@ body {
 .loota-police { animation: loota-police 0.7s steps(1) infinite; }
 @keyframes loota-police { 0% { box-shadow: inset 0 0 90px 22px rgba(255, 42, 42, 0.55); } 50% { box-shadow: inset 0 0 90px 22px rgba(61, 123, 255, 0.55); } }
 @media (prefers-reduced-motion: reduce) { .loota-police { animation: none; box-shadow: inset 0 0 90px 22px rgba(255, 42, 42, 0.45); } }
+
+/* Fuel running from the jerry can into the tank (owner, 26 Oct 2026). */
+.loota-pour { background-image: repeating-linear-gradient(180deg, #F4B41A 0 6px, #FFD45C 6px 10px); background-size: 100% 20px; animation: loota-pour 0.4s linear infinite; }
+@keyframes loota-pour { to { background-position: 0 20px; } }
+@media (prefers-reduced-motion: reduce) { .loota-pour { animation: none; } }

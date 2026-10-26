@@ -44,7 +44,7 @@ try {
   const rival = await player("Rival", { lng: yaba.lng + 0.01, lat: yaba.lat }, { lng: 3.40, lat: 6.55 });
   const { data: hunt, error } = await admin
     .from("hunts")
-    .insert({ title: "Wonder test (automated)", prize: "none", winners: 3, starts_at: ago(3600), ends_at: new Date(Date.now() + 2 * 3600_000).toISOString(), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Wonder test (automated)", prize: "none", winners: 3, starts_at: ago(3600), ends_at: new Date(Date.now() + 2 * 3600_000).toISOString(), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id")
     .single();
   if (error) throw error;

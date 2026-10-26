@@ -10,14 +10,18 @@ import { getPlayer } from "@/lib/player";
 import { listHunts } from "@/lib/hunts";
 import { logOut } from "../(auth)/actions";
 import { joinHunt } from "./actions";
+import { huntResumesAt } from "@/game/hunt";
 
-const PHASE_LABEL = { draft: "Draft", upcoming: "Coming up", live: "Live now", ended: "Ended" } as const;
+/** Now (read per request: the lobby is dynamic). */
+const nowMs = () => Date.now();
+
+const PHASE_LABEL = { draft: "Draft", upcoming: "Coming up", live: "Live now", paused: "Back at 9 am", ended: "Ended" } as const;
+/** Live first, then resting for the night, then coming up, then ended. */
 
 const when = (iso: string) =>
   `${new Date(iso).toLocaleString("en-NG", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" })} (Lagos time)`;
 
-/** Live first, then coming up, then ended. */
-const ORDER = { live: 0, upcoming: 1, draft: 2, ended: 3 } as const;
+const ORDER = { live: 0, paused: 1, upcoming: 2, draft: 3, ended: 4 } as const;
 
 async function HuntList() {
   const hunts = (await listHunts()).sort((x, y) => ORDER[x.phase] - ORDER[y.phase]);
@@ -78,9 +82,13 @@ async function HuntList() {
                 <dd className="font-display text-xl font-extrabold">{h.players}</dd>
               </div>
               <div className="rounded-2xl bg-ink/60 p-2.5">
-                <dt className="text-xs text-muted">{live ? "Ends in" : h.phase === "upcoming" ? "Starts in" : "Ended"}</dt>
+                <dt className="text-xs text-muted">{live ? "Ends in" : h.phase === "paused" ? "Back in" : h.phase === "upcoming" ? "Starts in" : "Ended"}</dt>
                 <dd className="font-display text-xl font-extrabold">
-                  {h.phase === "ended" ? "✓" : <Countdown to={live ? h.endsAt : h.startsAt} fallback="…" />}
+                  {h.phase === "ended" ? (
+                    "✓"
+                  ) : (
+                    <Countdown to={live ? h.endsAt : h.phase === "paused" ? new Date(huntResumesAt(nowMs())).toISOString() : h.startsAt} fallback="…" />
+                  )}
                 </dd>
               </div>
             </dl>
@@ -93,7 +101,13 @@ async function HuntList() {
               </span>
             </p>
             <p className="text-xs text-muted">
-              {h.phase === "upcoming" ? `Starts ${when(h.startsAt)}` : live ? `Ends ${when(h.endsAt)}` : `Ended ${when(h.endsAt)}`}
+              {h.phase === "upcoming"
+                ? `Starts ${when(h.startsAt)}`
+                : live
+                  ? `Hunting 9 am – 9 pm daily · ends ${when(h.endsAt)}`
+                  : h.phase === "paused"
+                    ? `Resting for the night: back at 9 am (Lagos time) · ends ${when(h.endsAt)}`
+                    : `Ended ${when(h.endsAt)}`}
             </p>
             {action}
           </article>

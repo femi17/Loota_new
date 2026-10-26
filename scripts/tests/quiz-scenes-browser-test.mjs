@@ -87,7 +87,7 @@ try {
   // ---- 2. A Detour from the Lamp, in a live hunt
   const spot = { lng: 3.378214, lat: 6.500147 };
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Quiz test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: soon(3600), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Quiz test (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: soon(3600), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

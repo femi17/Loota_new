@@ -32,7 +32,8 @@ export type LampOrb = { id: string; lng: number; lat: number; metres: number; en
 /** The lamp holds one thing at a time (owner's call, 15 Oct 2026). */
 export type LampItem = ({ type: "detour" } & LampDetour) | ({ type: "whisper" } & LampWhisper) | ({ type: "orb" } & LampOrb);
 /** `inHunt`: false when the player isn't in a live hunt (finds still come, at half the coins: owner, 22 Oct 2026). */
-export type LampState = { current: LampItem | null; inHunt?: boolean };
+/** `restUntil`: the lamp rests after each thing is done (owner, 26 Oct 2026), until then (ms, this device's clock). */
+export type LampState = { current: LampItem | null; inHunt?: boolean; restUntil?: number };
 
 export type LampQuestion = { detourId: string; title: string; question: string; options: string[]; seconds: number; endsAt: number };
 export type LampResult = { outcome: "won" | "wrong" | "late" | "full"; answer: string; coins: number; relic: RelicId | null };
@@ -251,6 +252,10 @@ export function LampPanel({
           )
         ) : !state ? (
           <p className="text-sm text-muted">The lamp flickers…</p>
+        ) : !item && state?.restUntil && state.restUntil > now ? (
+          <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">
+            🌙 The lamp is resting. It glows again in about {Math.max(1, Math.ceil((state.restUntil - now) / 60000))} min: keep roaming.
+          </p>
         ) : !item ? (
           <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">
             {state.inHunt === false

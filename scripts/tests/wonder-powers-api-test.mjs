@@ -70,7 +70,7 @@ try {
   // ---- A throwaway live hunt
   const { data: hunt, error: huntErr } = await admin
     .from("hunts")
-    .insert({ title: "Wonder test (automated)", prize: "none", winners: 3, starts_at: ago(3600), ends_at: new Date(Date.now() + 2 * 3600_000).toISOString(), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Wonder test (automated)", prize: "none", winners: 3, starts_at: ago(3600), ends_at: new Date(Date.now() + 2 * 3600_000).toISOString(), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id")
     .single();
   if (huntErr) throw huntErr;

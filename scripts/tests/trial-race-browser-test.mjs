@@ -23,7 +23,7 @@ const spot = { lng: 3.378214, lat: 6.500147 };
 
 try {
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Race test (automated)", prize: "none", winners: 2, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true })
+    .insert({ title: "Race test (automated)", prize: "none", winners: 2, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

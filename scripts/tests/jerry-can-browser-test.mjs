@@ -8,6 +8,17 @@ import puppeteer from "puppeteer-core";
 const app = createRequire(new URL("../../package.json", import.meta.url));
 const { createClient } = app("@supabase/supabase-js");
 const { createServerClient } = app("@supabase/ssr");
+/** The pour is a scene (owner, 26 Oct 2026): "Pour it in", watch the gauges, then "Ride on". */
+async function pourScene(page) {
+  const click = (t) => page.evaluate((x) => {
+    const b = [...document.querySelectorAll('[role="dialog"][aria-label="Pouring the jerry can"] button')].find((e) => e.textContent?.includes(x));
+    b?.click();
+    return !!b;
+  }, t);
+  for (let i = 0; i < 20 && !(await click("Pour it in")); i++) await new Promise((r) => setTimeout(r, 300));
+  for (let i = 0; i < 30 && !(await click("Ride on")); i++) await new Promise((r) => setTimeout(r, 300));
+}
+
 process.loadEnvFile(new URL("../../.env.local", import.meta.url));
 const OUT = process.env.SHOTS ?? (await import("node:os")).tmpdir();
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -143,6 +154,7 @@ try {
   await open();
   await shot("4-beside");
   check("beside it: Pour can", await tapHere("Pour can"));
+  await pourScene(page);
   await wait(4000);
   const after = await bike();
   const poured = await body();

@@ -22,6 +22,8 @@ import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { CoinShop, confirmPayment } from "./CoinShop";
 import { PumpScene, type PumpActions, type PumpOffer } from "./PumpScene";
 import { FlatScene, type FlatActions, type FlatOffer } from "./FlatScene";
+import { PourScene, type PourActions, type PourOffer } from "./PourScene";
+import { JerryCan } from "./JerryCan";
 import { ServiceScene, type ServiceActions, type ServiceOffer } from "./ServiceScene";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { loadSignals, signalAhead, signalState, signalsNear, signalsOnPath, waitForGreen, type Signal } from "@/game/signals";
@@ -345,6 +347,8 @@ export function GameMap({
     attackDome: () => void;
     /** Cruise on or off. */
     toggleCruise: () => void;
+    /** A scene that held the hunter (the pour) is over. */
+    endHold: () => void;
     /** Buy cruise tokens (4 for 40 coins, up to the most you can hold); resolves to a message. */
     buyCruise: () => Promise<string>;
     /** Open the chest where the hunter stands when it's the Masquerade's decoy. */
@@ -540,6 +544,8 @@ export function GameMap({
   const [pumpOpen, setPumpOpen] = useState<PumpOffer | null>(null);
   const [pumpActions, setPumpActions] = useState<PumpActions | null>(null);
   const [flatOpen, setFlatOpen] = useState<FlatOffer | null>(null); // a flat by the roadside
+  const [pourOpen, setPourOpen] = useState<PourOffer | null>(null); // pouring the jerry can (a scene)
+  const [pourActions, setPourActions] = useState<PourActions | null>(null);
   const [flatActions, setFlatActions] = useState<FlatActions | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
@@ -1886,6 +1892,10 @@ export function GameMap({
         useWonder: (id, to) => useWonder(id, to),
         attackDome: () => void attackDome(),
         toggleCruise: () => toggleCruise(),
+        endHold: () => {
+          sceneHold = false;
+          computeActions();
+        },
         buyCruise: () => buyCruise(),
         springTrap: () => void springTrap(),
         dizzy(seconds) {
@@ -3580,6 +3590,7 @@ export function GameMap({
           if (station && !stranded && keg && keg.fuel < KEG_CAPACITY) list.push({ id: "fill_keg", icon: "🛢", short: `Fill can · ${canFill}`, label: `Fill your jerry can · ${canFill} coins` });
           // Pour it: by the vehicle at the roadside, or into the one ridden (a can takes a tank to 65% at most).
           const dry = atStranded ? stranded : motorRidden && motorRidden.fuel < KEG_CAPACITY ? motorRidden : pocketed((v) => v.fuel < KEG_CAPACITY && !v.broken_at);
+          pourTarget = keg && keg.fuel > 0 && dry ? dry : null;
           if (keg && keg.fuel > 0 && dry) list.push({ id: "pour_keg", icon: "🛢", short: "Pour can", label: `Pour the jerry can into your ${vehicleName(dry.kind)}` });
           // Beside the vehicle that ran dry, with no fuel in a can but a Jerry Can relic: use that.
           if (atStranded && stranded && !(keg && keg.fuel > 0) && jerryRelicId) {
@@ -3610,6 +3621,13 @@ export function GameMap({
 
       setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg"), fillKeg: () => fillKegHere() });
       setPumpActions({ pump: () => act("pump", true) });
+      setPourActions({
+        pour: async () => {
+          lastPour = null;
+          const ok = await act("pour_keg", true);
+          return ok ? lastPour : null;
+        },
+      });
       // Changing a flat (FlatScene): start it (the wait), then finish it: the tyre changed, and back on the vehicle.
       setFlatActions({
         start: async (how) => {
@@ -3648,8 +3666,20 @@ export function GameMap({
         },
       });
 
+      /** The vehicle the jerry can would go into (computeActions), and how the last pour went. */
+      let pourTarget: { kind: VehicleKind; fuel: number } | null = null;
+      let lastPour: { tank: number; can: number; usesLeft: number; spoilt: boolean } | null = null;
       async function act(id: LimitAction, direct = false): Promise<boolean> {
         if (busy) return false;
+        if (id === "pour_keg" && !direct) {
+          // The pour as a scene (owner, 26 Oct 2026): the hunter gets off and tips the can in; both gauges move.
+          const v = pourTarget;
+          if (!v || !keg || v.kind === "bicycle") return false;
+          traveller.v = 0;
+          sceneHold = true;
+          setPourOpen({ kind: v.kind, tank: v.fuel, can: Math.min(1, keg.fuel / KEG_CAPACITY), usesLeft: keg.usesLeft });
+          return true;
+        }
         if (id === "flat") {
           // The flat by the roadside (FlatScene): a roadside mechanic, or your own jack.
           const v = flatVehicle();
@@ -3804,6 +3834,7 @@ export function GameMap({
             adviseCarryBack();
           } else if (id === "pour_keg") {
             keg = r.spoilt ? null : { fuel: r.kegFuel ?? 0, usesLeft: r.usesLeft ?? 0 };
+            lastPour = { tank: r.fuel ?? 0, can: Math.min(1, (r.kegFuel ?? 0) / KEG_CAPACITY), usesLeft: r.usesLeft ?? 0, spoilt: !!r.spoilt };
             const name = r.kind ? vehicleName(r.kind) : "vehicle";
             let onTo: string | null = null;
             if (r.remounted && r.kind) {
@@ -4956,7 +4987,7 @@ export function GameMap({
           | ({ type: "detour" } & Omit<LampDetour, "endsAt"> & { endsAt: string })
           | { type: "whisper"; id: string; lng: number; lat: number; metres: number; endsAt: string }
           | { type: "orb"; id: string; lng: number; lat: number; metres: number; endsAt: string };
-        const raw = data as { now: string; current: RawItem | null; hunt?: boolean } | null;
+        const raw = data as { now: string; current: RawItem | null; hunt?: boolean; restUntil?: string } | null;
         if (disposed || !raw) return lamp ?? { current: null };
         const skew = Date.now() - Date.parse(raw.now);
         const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
@@ -4967,7 +4998,7 @@ export function GameMap({
           : c.type === "whisper"
             ? { ...c, endsAt: Date.parse(c.endsAt) + skew, direction: compassWord(geo.compassFromHeading(geo.headingOf(here, [c.lng, c.lat]))) }
             : { ...c, endsAt: Date.parse(c.endsAt) + skew };
-        lamp = { current, inHunt: raw.hunt !== false };
+        lamp = { current, inHunt: raw.hunt !== false, restUntil: raw.restUntil ? Date.parse(raw.restUntil) + skew : undefined };
         // Something new: say so (the lamp glows too).
         if (current && current.id !== before && !seenLamp.has(current.id)) {
           say(
@@ -6943,7 +6974,7 @@ export function GameMap({
         if (now - dropsAt > 25_000 || (moved > 200 && now - dropsAt > 3000)) void refreshDrops();
         for (const [id, d] of drops) {
           d.disc.rotation.y = t * 2;
-          d.disc.position.y = 1.4 + Math.sin(t * 2.5 + id) * 0.15;
+          d.disc.position.y = 0.9 + Math.sin(t * 2.5 + id) * 0.1;
           if (!d.taking && cruiseTokens < 8 && geo.distanceM([d.lng, d.lat], [traveller.pos.lng, traveller.pos.lat]) <= 15) void takeDrop(id);
         }
       }
@@ -7595,6 +7626,10 @@ export function GameMap({
   const here = "pointer-events-auto flex h-10 items-center rounded-full bg-gold px-3.5 text-sm font-bold text-ink shadow-lg disabled:opacity-50";
   const distanceText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  // Pouring the jerry can sits by the fuel gauge (owner, 26 Oct 2026: "You don't need to pour can on the screen in the
+  // middle, maybe up close to the fuel icon"); in the middle only when there's no gauge (on foot by a stranded vehicle).
+  const pourAction = hud.vehicle?.fuel != null ? (hud.actions.find((a) => a.id === "pour_keg") ?? null) : null;
+  const actionsHere = pourAction ? hud.actions.filter((a) => a.id !== "pour_keg") : hud.actions;
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
@@ -7692,7 +7727,6 @@ export function GameMap({
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             {(hud.clock ||
               hud.vehicle ||
-              hud.keg ||
               hud.radar ||
               hud.dome ||
               hud.rain ||
@@ -7764,11 +7798,18 @@ export function GameMap({
                     {hud.vehicle.meter && <span className="font-semibold text-muted" title="Rental meter">{hud.vehicle.meter}</span>}
                   </div>
                 )}
-                {hud.keg && (
-                  <div className={`${chip} bg-ink`} aria-label={`Jerry can ${Math.round(hud.keg.fuel)}%, ${hud.keg.usesLeft} uses left`} title={`Jerry can · ${hud.keg.usesLeft} uses left`}>
-                    <span aria-hidden="true">🛢</span>
-                    {hud.keg.fuel > 0 ? `${Math.round(hud.keg.fuel)}%` : "empty"}
-                  </div>
+                {pourAction && (
+                  <button
+                    type="button"
+                    disabled={hud.busy}
+                    onClick={() => actions.current?.act(pourAction.id)}
+                    aria-label={pourAction.label}
+                    title={pourAction.label}
+                    className={`${chip} bg-gold text-ink disabled:opacity-50`}
+                  >
+                    <JerryCan size={12} level={hud.keg ? hud.keg.fuel / KEG_CAPACITY : 0} />
+                    Pour{hud.keg ? ` · ${Math.round((100 * hud.keg.fuel) / KEG_CAPACITY)}%` : ""}
+                  </button>
                 )}
                 {hud.heat && (
                   <div
@@ -8077,6 +8118,9 @@ export function GameMap({
                 <p className="rounded-xl bg-[#3B1F4F] p-2.5">
                   🎭 <b>Beware the Masquerade:</b> a chest that rises where the heat isn&apos;t <b>Burning</b> is his trap.
                 </p>
+                <p className="rounded-xl bg-[#0B1630] p-2.5 text-[#C9D6FF]">
+                  🌙 <b>Hunting hours:</b> 9 am to 9 pm, Lagos time. From 9 pm the hunt rests and you roam freely; your keys and place are kept.
+                </p>
                 <p className="mt-1 text-xs font-bold uppercase tracking-wider text-gold">Moving</p>
                 <MoveDemo />
                 <p className="text-muted">Keyboard: hold ↑ to go, ↓ to turn round, tap ← → to turn at the next junction, Shift to sprint.</p>
@@ -8224,7 +8268,9 @@ export function GameMap({
 
       <p
         role="status"
-        className={`absolute bottom-9 left-3 right-[104px] rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
+        className={`absolute bottom-9 left-3 ${
+          hud.ride || hud.care ? "right-3" : canSprint(hud.mode) ? "right-[176px]" : "right-[96px]" // clear of CRUISE (and SPRINT)
+        } rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
           hud.alert ? "ring-2 ring-gold" : ""
         } ${hud.hint && !hud.rush ? "" : "invisible"}`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -8440,6 +8486,17 @@ export function GameMap({
           onClose={() => (inside === "flat" ? actions.current?.leaveShop() : setFlatOpen(null))}
         />
       )}
+      {pourOpen && pourActions && (
+        <PourScene
+          offer={pourOpen}
+          you={JSON.parse(lookKey) as AvatarLook}
+          actions={pourActions}
+          onClose={() => {
+            setPourOpen(null);
+            actions.current?.endHold();
+          }}
+        />
+      )}
       {pumpOpen && pumpActions && (
         <PumpScene
           offer={pumpOpen}
@@ -8592,7 +8649,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap) && (
+      {!inside && (hud.dome?.siege || actionsHere.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -8665,7 +8722,7 @@ export function GameMap({
               Claim · {hud.detourHere.relic ? RELICS[hud.detourHere.relic].name : `+${hud.detourHere.coins}`}
             </button>
           )}
-          {hud.actions.map((a) => (
+          {actionsHere.map((a) => (
             <button key={a.id} type="button" disabled={hud.busy} onClick={() => actions.current?.act(a.id)} aria-label={a.label} title={a.label} className={`${here} gap-1`}>
               <span aria-hidden="true">{a.icon}</span>
               {a.short}

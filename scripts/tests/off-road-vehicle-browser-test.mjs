@@ -30,7 +30,7 @@ try {
     { user_id: id, kind: "motorbike", fuel: 80, lng: at.lng, lat: at.lat, in_use: false, helmet: true, registered: true },
   ]);
   if (vErr) throw vErr;
-  const { data: hunt } = await admin.from("hunts").insert({ title: "Repro (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true }).select("id").single();
+  const { data: hunt } = await admin.from("hunts").insert({ title: "Repro (automated)", prize: "none", winners: 1, starts_at: ago(600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true }).select("id").single();
   huntId = hunt.id;
   await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "Repro key.", category: "maths", trial_kind: "sentries", area_lng: 3.3958, area_lat: 6.4541, area_radius_m: 800, spot_lng: 3.3958, spot_lat: 6.4541 });
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, riddle_n: 1, riddle_at: ago(100), guess_n: 1, guess_name: "TBS", guess_lng: 3.3958, guess_lat: 6.4541 });

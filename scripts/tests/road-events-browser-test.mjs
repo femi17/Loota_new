@@ -33,7 +33,7 @@ try {
   await admin.from("player_vehicles").insert({ user_id: id, kind: "motorbike", fuel: 100, tyre: 100, engine: 100, lng: start.lng, lat: start.lat, in_use: true });
   await admin.from("player_positions").upsert({ user_id: id, lng: start.lng, lat: start.lat, mode: "motorbike", energy: 100, updated_at: ago(20) });
   const { data: hunt, error } = await admin.from("hunts")
-    .insert({ title: "Road events test (automated)", prize: "none", winners: 3, starts_at: ago(600), ends_at: soon(7200), published: true, questions_per_trial: 2, seconds_per_question: 15 })
+    .insert({ title: "Road events test (automated)", prize: "none", winners: 3, starts_at: ago(600), ends_at: soon(7200), published: true, all_day: true, questions_per_trial: 2, seconds_per_question: 15 })
     .select("id").single();
   if (error) throw error;
   huntId = hunt.id;

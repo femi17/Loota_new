@@ -7647,7 +7647,7 @@ export function GameMap({
       </div>
 
       <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-col gap-2" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        {/* Top bar: back (with the logo), energy, the hunt's clock, coins, bag, help */}
+        {/* Top bar: back (with the logo), energy, the hunt's clock, coins, bag (help is with the tools below) */}
         <div className="flex items-center gap-1.5">
           <Link
             href="/lobby"
@@ -7717,16 +7717,6 @@ export function GameMap({
           >
             <BagIcon />
             {hud.relics > 0 && <span className={`${badge} bg-paper text-ink`}>{hud.relics}</span>}
-          </button>
-          <button
-            type="button"
-            aria-label="Help"
-            title="Help"
-            aria-expanded={helpOpen}
-            onClick={() => setHelpOpen((o) => !o)}
-            className={`${tool} text-lg font-extrabold ${helpOpen ? "bg-gold text-ink" : "bg-ink"}`}
-          >
-            ?
           </button>
         </div>
 
@@ -8194,6 +8184,17 @@ export function GameMap({
 
           {/* Right: the tools, as icons */}
           <nav className={`flex shrink-0 flex-col gap-2 ${inside ? "invisible" : ""}`} aria-label="Tools">
+            {/* Help, at the top of the tools (owner, 26 Oct 2026: the inventory takes the end of the top bar) */}
+            <button
+              type="button"
+              aria-label="Help"
+              title="Help"
+              aria-expanded={helpOpen}
+              onClick={() => setHelpOpen((o) => !o)}
+              className={`${tool} text-lg font-extrabold ${helpOpen ? "bg-gold text-ink" : "bg-ink"}`}
+            >
+              ?
+            </button>
             <button
               type="button"
               data-tool="directions"

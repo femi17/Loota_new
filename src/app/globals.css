@@ -255,3 +255,11 @@ body {
 .loota-walk-in { animation: loota-walk-in 2.2s ease-in-out forwards; }
 @keyframes loota-walk-in { from { left: -10%; } to { left: 26%; } }
 @media (prefers-reduced-motion: reduce) { .loota-walk-in { animation: none; left: 26%; } }
+
+/* Phones (owner, 26 Oct 2026: "Zoom in a little more… if we are using 14, use 16 on mobile"; chose: text and buttons):
+   the root size grows by 16/14, so 14px text reads 16px and everything sized in rem (buttons, chips, panels) with it. */
+@media (max-width: 640px) {
+  html {
+    font-size: calc(16px * 16 / 14);
+  }
+}

@@ -101,8 +101,8 @@ export function VehiclePanel({
   onTaxi: () => void;
   onClose: () => void;
 }) {
-  const primary = "h-11 flex-1 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:cursor-not-allowed disabled:opacity-40";
-  const secondary = "h-11 flex-1 rounded-xl border-[1.5px] border-line px-3 text-sm font-bold text-paper disabled:cursor-not-allowed disabled:opacity-40";
+  const primary = "h-11 flex-1 whitespace-nowrap rounded-xl bg-gold px-2 text-sm font-bold text-ink disabled:cursor-not-allowed disabled:opacity-40";
+  const secondary = "h-11 flex-1 whitespace-nowrap rounded-xl border-[1.5px] border-line px-2 text-sm font-bold text-paper disabled:cursor-not-allowed disabled:opacity-40";
   // With a new vehicle: its gear and papers, ticked to buy along with it.
   const [extras, setExtras] = useState<Record<string, boolean>>({});
   const ticked = (kind: VehicleKind, id: AddonId) => extras[`${kind}:${id}`] ?? true;

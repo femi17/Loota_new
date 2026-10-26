@@ -73,7 +73,7 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
       body: (
         <>
           <p>
-            <b>Hold the lower part of the screen</b> to walk. Swipe left or right there to turn at the next junction, down to turn
+            <b>Hold the lower part of the screen</b> to walk. Swipe left or right anywhere on the map to turn at the next junction, down (low on the screen) to turn
             back. <b>SPRINT</b> is faster, but tires you.
           </p>
           <p className="text-sm text-muted">Walking uses energy: eat at a buka or rest at a park when it runs low. On a keyboard: ↑ to go, ← → to turn, ↓ to go back.</p>

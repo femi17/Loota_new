@@ -2030,9 +2030,12 @@ export function GameMap({
       // back behind the hunter. A short tap gives directions to that spot.
       //
       // On touch screens the lower part of the screen steers instead: press and
-      // hold to walk, swipe left or right to turn, swipe down to turn back.
+      // hold to walk, swipe left or right to turn, swipe down to turn back. And a
+      // sideways swipe anywhere on the map turns too (owner, 26 Oct 2026: "On
+      // mobile we should be able to swipe left and right to make turns"); up or
+      // down in the upper part still tilts the view.
       const pointers = new Set<number>();
-      let drag: { x: number; y: number; offset: number; pitch: number; moved: boolean } | null = null;
+      let drag: { x: number; y: number; offset: number; pitch: number; moved: boolean; touch: boolean; swipe: "turn" | "tilt" | null } | null = null;
       let steer: { id: number; x: number; y: number; turned: boolean; back: boolean; timer: number } | null = null;
       let touchGo = false;
       const STEER_ZONE = 0.55; // touches below this share of the screen height steer
@@ -2057,7 +2060,7 @@ export function GameMap({
           steer = { id: e.pointerId, x: e.clientX, y: e.clientY, turned: false, back: false, timer };
           return;
         }
-        drag = { x: e.clientX, y: e.clientY, offset: lookOffset, pitch: map.getPitch(), moved: false };
+        drag = { x: e.clientX, y: e.clientY, offset: lookOffset, pitch: map.getPitch(), moved: false, touch: e.pointerType === "touch", swipe: null };
       };
       const lookMove = (e: PointerEvent) => {
         if (steer && e.pointerId === steer.id) {
@@ -2081,6 +2084,25 @@ export function GameMap({
         const dy = e.clientY - drag.y;
         if (!drag.moved && Math.hypot(dx, dy) < 5) return;
         drag.moved = true;
+        if (drag.touch) {
+          // A finger: sideways is a turn (once per swipe), up or down tilts the view.
+          if (!drag.swipe && Math.hypot(dx, dy) >= 12) drag.swipe = Math.abs(dx) > Math.abs(dy) ? "turn" : "tilt";
+          if (drag.swipe === "turn") {
+            if (Math.abs(dx) > 45) {
+              actions.current?.turn(dx > 0 ? 1 : -1);
+              drag.swipe = "tilt"; // done: the rest of this swipe only tilts
+              drag.x = e.clientX;
+              drag.y = e.clientY;
+              drag.pitch = map.getPitch();
+            }
+            return;
+          }
+          if (drag.swipe === "tilt") {
+            dragging = true;
+            map.setPitch(Math.max(25, Math.min(70, drag.pitch - dy * 0.2)));
+          }
+          return;
+        }
         dragging = true;
         lookOffset = drag.offset - dx * 0.3;
         map.setPitch(Math.max(25, Math.min(70, drag.pitch - dy * 0.2)));
@@ -8131,7 +8153,7 @@ export function GameMap({
                   <summary className="cursor-pointer font-bold">Good to know</summary>
                   <div className="mt-2 flex flex-col gap-2 text-muted">
                     <p>
-                      <b className="text-paper">Look around:</b> drag the map (the upper part on a phone) sideways to turn the view, up or down to tilt it.
+                      <b className="text-paper">Look around:</b> on a phone, drag up or down to tilt the view (a sideways swipe turns); with a mouse, drag sideways to turn the view.
                     </p>
                     <p>Things you can do where you stand (eat, rest, refuel, check in) appear as gold buttons above the street name.</p>
                     <p>

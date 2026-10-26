@@ -13,14 +13,14 @@ type Relic = { id: string; relic: RelicId; charges: number; expires_at: string }
 type Wonder = { id: string; wonder: string; expires_at: string };
 type Tab = "gear" | "relics" | "wonders";
 
-/** What each relic's button says (Shields work by themselves; Fast Pass waits for transport). */
+/** What each relic's button says (Shields work by themselves; a Fast Pass is used while waiting for transport). */
 const USE_LABEL: Record<RelicId, string | null> = {
   second_wind: "Use",
   jerry_can: "Use",
   radar: "Use",
   rain_charm: "Use",
   shield: null,
-  fast_pass: null,
+  fast_pass: "Use",
   lockdown_orb: "Raise dome",
 };
 

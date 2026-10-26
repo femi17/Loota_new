@@ -101,6 +101,8 @@ export type Trip = {
   /** A crowded city bus (night, rush hour): "pending" until the player has pushed on (bus_rush_start). */
   rush?: "pending" | "boarded" | null;
   rushTries?: number;
+  /** A Fast Pass was used on it (at booking, or while waiting). */
+  fastPass?: boolean;
 };
 
 /** A flight's gate, from where it's going (the same on the boarding pass and in the departure lounge). */

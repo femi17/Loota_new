@@ -115,7 +115,7 @@ type Hud = {
     outcome: { boarded: boolean; score: number; of: number; next: number | null } | null;
   } | null;
   /** On a bus, train or plane (or waiting for one). */
-  ride: { icon: string; title: string; status: string; canCancel: boolean } | null;
+  ride: { icon: string; title: string; status: string; canCancel: boolean; pass: boolean } | null;
   /** At a bus stop, station or airport: what the transport button offers. */
   stopHere: { icon: string; label: string } | null;
   /** At a station's ticket office or an airport's check-in desk: the button to go in. */
@@ -371,6 +371,8 @@ export function GameMap({
     endJourney: () => void;
     /** Get off a bus, train or plane that hasn't left yet (fare refunded). */
     cancelTrip: () => void;
+    /** Use a Fast Pass on the bus, train, taxi or flight being waited for. */
+    fastPass: () => void;
     /** An answer in the bus rush (the choice's place, 0–2). */
     rushAnswer: (choice: number) => void;
     /** Do something where the player stands (eat, rest, refuel, kegs, tyres, repairs). */
@@ -1813,6 +1815,7 @@ export function GameMap({
 
       // Relics count for the bag button (relics with uses left); a Jerry Can relic and tyre kits, for the buttons here.
       let jerryRelicId: string | null = null;
+      let fastPassRelicId: string | null = null; // one to use while waiting at a stop (the trip banner's button)
       let tyreKits = 0;
       function countRelics() {
         void supabase
@@ -1824,6 +1827,7 @@ export function GameMap({
             const now = Date.now();
             const live = data.filter((r) => new Date(r.expires_at).getTime() > now);
             jerryRelicId = live.find((r) => r.relic === "jerry_can")?.id ?? null;
+            fastPassRelicId = live.find((r) => r.relic === "fast_pass")?.id ?? null;
             setHud((h) => ({ ...h, relics: live.length }));
             computeActions();
           });
@@ -1944,6 +1948,9 @@ export function GameMap({
         },
         where: () => ({ ...traveller.pos }),
         cancelTrip: () => void cancelTrip(),
+        fastPass: () => {
+          if (fastPassRelicId) void spendRelic(fastPassRelicId).then((said) => say(said));
+        },
         rushAnswer: (choice) => rushAnswer(choice),
         act: (id) => void act(id),
         followAdvice: () => {
@@ -2140,6 +2147,7 @@ export function GameMap({
       let lastEffects = 0;
       const effectsSeen = new Set<string>(); // effects already explained to the player
 
+      const spendRelic = useRelic; // the same, by a plain name ("use…" reads as a React hook to the linter)
       async function useRelic(id: string): Promise<string> {
         await savePosition(); // rain falls where the server last saw the hunter
         const { data, error } = await supabase.rpc("use_relic", { p_relic: id });
@@ -2150,7 +2158,8 @@ export function GameMap({
           return (
             {
               passive: "Shields work by themselves: the next rain or traffic effect that would slow you uses one up instead.",
-              not_yet: "Fast Pass is for bus waits and check-in queues, which are coming soon. Keep it until then.",
+              not_yet: "Use a Fast Pass while you're waiting for a bus, train, taxi or flight: book the ride (the bus button), then use it to skip the wait.",
+              already: "This trip already has a Fast Pass on it.",
               no_vehicle: "Jerry Can fills your own motorbike or car. Get on it first (Vehicles), then use the can.",
               far: "Walk to your vehicle at the roadside first (the way is drawn), then use the Jerry Can beside it.",
               full: "Your tank has 65% or more: a jerry can won't fill it further. Keep it for when it runs dry.",
@@ -2186,6 +2195,24 @@ export function GameMap({
           }
           onFuel(r.fuel);
           return `Jerry Can: your tank is at ${Math.round(r.fuel)}%.`;
+        }
+        if (r.relic === "fast_pass") {
+          // Used while waiting (owner, 26 Oct 2026): the trip leaves sooner, and a crowded bus's scramble is skipped.
+          const trip = (r as { trip?: TransitTrip }).trip;
+          if (trip && ride && ride.trip.id === trip.id) {
+            ride.trip = trip;
+            ride.offset = Date.parse(trip.now) - Date.now();
+            ride.departs = Date.parse(trip.departsAt);
+            ride.arrives = Date.parse(trip.arrivesAt);
+            ride.way = null;
+            clearCrowd();
+            rush = null;
+            busLeftAt = 0;
+            setHud((h) => (h.rush ? { ...h, rush: null } : h));
+            if ((trip.mode === "bus" && trip.metres <= BUS_RANGE_M) || trip.mode === "taxi") void planRideWay(ride);
+          }
+          if (trip?.mode === "plane") return "Fast Pass: straight past the check-in queue. You board sooner.";
+          return `Fast Pass: no waiting. Your ${trip ? TRANSIT[trip.mode].label.toLowerCase() : "ride"} is here: off you go.`;
         }
         if (r.relic === "radar" && r.until) {
           radarUntil = new Date(r.until).getTime();
@@ -2580,10 +2607,11 @@ export function GameMap({
         if (!ride) return;
         const info = TRANSIT[ride.trip.mode];
         const title = `${info.label} ${ride.trip.mode === "bus" ? "towards" : "to"} ${ride.label}`;
+        const pass = canCancel && !!fastPassRelicId && !ride.trip.fastPass; // still waiting, and a Fast Pass in the bag
         setHud((h) =>
-          h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.title === title
+          h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.pass === pass && h.ride.title === title
             ? h
-            : { ...h, ride: { icon: info.icon, title, status, canCancel } },
+            : { ...h, ride: { icon: info.icon, title, status, canCancel, pass } },
         );
       }
 
@@ -8113,7 +8141,7 @@ export function GameMap({
 
             {/* On a bus, train or plane: where to, and when it leaves or arrives. */}
             {hud.ride && !inside && (
-              <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
+              <div className="pointer-events-auto flex w-full max-w-md flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
                 <span className="text-2xl" aria-hidden="true">
                   {hud.ride.icon}
                 </span>
@@ -8121,11 +8149,24 @@ export function GameMap({
                   <span className="font-display text-base font-extrabold leading-tight">{hud.ride.title}</span>
                   <span className="truncate text-xs text-paper/85">{hud.ride.status}</span>
                 </div>
-                {hud.ride.canCancel && (
-                  <button type="button" onClick={() => actions.current?.cancelTrip()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
-                    Cancel
-                  </button>
-                )}
+                {/* With a Fast Pass to offer, the buttons get a row of their own (the title and the wait stay readable). */}
+                <div className={`flex shrink-0 gap-2 ${hud.ride.pass ? "w-full justify-end" : ""}`}>
+                  {hud.ride.pass && (
+                    <button
+                      type="button"
+                      onClick={() => actions.current?.fastPass()}
+                      aria-label="Use a Fast Pass: skip the wait"
+                      className="shrink-0 rounded-lg bg-[#C3A6FF] px-2 py-1 text-xs font-bold text-ink"
+                    >
+                      🎟️ Fast Pass
+                    </button>
+                  )}
+                  {hud.ride.canCancel && (
+                    <button type="button" onClick={() => actions.current?.cancelTrip()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 

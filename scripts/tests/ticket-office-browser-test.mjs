@@ -1,7 +1,8 @@
 // Tickets and check-in on the map (phone): at Yaba station the gold "Ticket office" button → the ticket hall (the
 // clerk behind the glass, the departures board, a train beyond) → where to → the fare → pay → the ticket, the trip
 // begins; at Lagos airport, a flight chosen in the travel panel → "Check in at the airport" → the terminal → the
-// fare → check in → ID → bag on the scale → boarding pass. The test players are deleted.
+// fare → check in → ID → bag on the scale → boarding pass → the departure lounge (you walk in and sit; the board counts
+// down; "Look at the map" leaves a chip back to it). The test players are deleted.
 //   SHOTS=<folder> node scripts/tests/ticket-office-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -144,10 +145,19 @@ try {
   const pass = await p.textWhen('[role="dialog"]', /boarding pass/);
   const ptrip = await tripOf(flyer.id);
   check("the boarding pass: the flight booked, the fare paid", /boarding pass to .*Gate \d/.test(pass ?? "") && ptrip?.mode === "plane" && (await coins(flyer.id)) === pBefore - ptrip.fare, JSON.stringify(ptrip));
-  await p.clickWhenThere("Thanks! To the gate");
-  await wait(2500);
-  const pstatus = await p.text('[aria-label="Your trip"]');
-  check("…then to the gate, boarding soon", /Plane to|Flight to|Fly/.test(pstatus ?? "") || /boarding/i.test(pstatus ?? ""), pstatus);
+  // The departure lounge (owner, 26 Oct 2026: "make the user walk to the lounge to sit… a scene").
+  const gate = (pass ?? "").match(/Gate (\d)/)?.[1];
+  check("…then to the lounge", await p.clickWhenThere("Thanks! To the lounge"));
+  const lounge = await p.textWhen('[role="dialog"][aria-label="Departure lounge"]', /Sit back/, 30);
+  check("the lounge: you sit, the board counts down to boarding at the same gate", /Departure lounge/.test(lounge ?? "") && new RegExp(`GATE ${gate}`).test(lounge ?? "") && /BOARDING IN \d+:\d\d/.test(lounge ?? "") && /Sit back/.test(lounge ?? ""), (lounge ?? "").split("\n").join(" | "));
+  await p.page.screenshot({ path: `${OUT}/ticket-5-lounge.png` });
+  await p.clickWhenThere("Look at the map");
+  await wait(800);
+  const chipText = await p.text('button[aria-label="Back to the lounge"]');
+  check("Look at the map: a chip to go back", /Lounge · boards in \d+:\d\d/.test(chipText ?? "") && !(await p.page.$('[role="dialog"][aria-label="Departure lounge"]')), chipText);
+  await p.page.evaluate(() => document.querySelector('button[aria-label="Back to the lounge"]')?.click());
+  await wait(800);
+  check("…and back in the lounge", !!(await p.page.$('[role="dialog"][aria-label="Departure lounge"]')));
   check("no page errors (plane)", p.problems.length === 0, p.problems.join(" / "));
 } catch (e) {
   fails++;

@@ -103,6 +103,13 @@ export type Trip = {
   rushTries?: number;
 };
 
+/** A flight's gate, from where it's going (the same on the boarding pass and in the departure lounge). */
+export function gateFor(destination: string) {
+  let h = 0;
+  for (const ch of destination) h = (h * 31 + ch.charCodeAt(0)) | 0;
+  return 1 + (Math.abs(h) % 6);
+}
+
 /** "2 min 30 s", "45 s" */
 export function clock(seconds: number) {
   const s = Math.max(0, Math.round(seconds));

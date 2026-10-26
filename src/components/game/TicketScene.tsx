@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
-import { clock, type TransitDestination, type TransitStop } from "@/game/transit";
+import { clock, gateFor, type TransitDestination, type TransitStop } from "@/game/transit";
 import type { TransitQuote } from "./TransitPanel";
 
 /**
@@ -154,14 +154,14 @@ export function TicketScene({
           onMoment?.({ type: "bag" });
           say(
             { who: "you", text: "Here's my bag." },
-            { who: "them", text: `All checked in: here's your boarding pass to ${quote?.label}. Gate ${1 + ((quote?.to.id ?? 0) % 6)}, and boarding starts soon. Have a lovely flight!` },
+            { who: "them", text: `All checked in: here's your boarding pass to ${quote?.label}. Gate ${gateFor(quote?.to.name ?? "")}, and boarding starts soon. Have a lovely flight!` },
           );
           setStep("done");
         },
       },
     ];
   } else if (step === "done") {
-    choices = [{ label: plane ? "Thanks! To the gate ✈️" : "Thanks! To the platform 🚆", primary: true, onPick: onClose }];
+    choices = [{ label: plane ? "Thanks! To the lounge 🛋️" : "Thanks! To the platform 🚆", primary: true, onPick: onClose }];
   } else {
     choices = [{ label: "Bye", onPick: onClose }];
   }

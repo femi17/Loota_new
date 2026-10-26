@@ -23,6 +23,7 @@ import { CoinShop, confirmPayment } from "./CoinShop";
 import { PumpScene, type PumpActions, type PumpOffer } from "./PumpScene";
 import { FlatScene, type FlatActions, type FlatOffer } from "./FlatScene";
 import { PourScene, type PourActions, type PourOffer } from "./PourScene";
+import { LoungeScene, type LoungeView } from "./LoungeScene";
 import { JerryCan } from "./JerryCan";
 import { ServiceScene, type ServiceActions, type ServiceOffer } from "./ServiceScene";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
@@ -163,6 +164,8 @@ type Hud = {
   heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean } | null;
   /** The police on your tail (owner, 25 Oct 2026): how far behind, and seconds left until you've lost them. */
   chase: { gap: number; left: number; chaser: "officer" | "patrol" } | null;
+  /** Waiting for a flight in the departure lounge (owner, 26 Oct 2026), until it leaves. */
+  lounge: LoungeView | null;
   /** Cruise (owner, 25 Oct 2026): tokens held (15 s each, up to 8), on or off, and what's left of the one in use (0–1). */
   cruise: { tokens: number; on: boolean; part: number };
   /**
@@ -424,6 +427,7 @@ export function GameMap({
     heat: null,
     chase: null,
     cruise: { tokens: 0, on: false, part: 0 },
+    lounge: null,
   });
   const [bagOpen, setBagOpen] = useState(false);
   const [detector, setDetector] = useState(hasDetector);
@@ -546,6 +550,8 @@ export function GameMap({
   const [flatOpen, setFlatOpen] = useState<FlatOffer | null>(null); // a flat by the roadside
   const [pourOpen, setPourOpen] = useState<PourOffer | null>(null); // pouring the jerry can (a scene)
   const [pourActions, setPourActions] = useState<PourActions | null>(null);
+  /** The lounge put away to look at the map (for that flight; a chip brings it back). */
+  const [loungeHiddenFor, setLoungeHiddenFor] = useState<string | null>(null);
   const [flatActions, setFlatActions] = useState<FlatActions | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
@@ -2794,6 +2800,7 @@ export function GameMap({
         busLeftAt = 0;
         setHud((h) => (h.rush ? { ...h, rush: null } : h));
         ride = null;
+        setHud((h) => (h.lounge ? { ...h, lounge: null } : h));
         me.object.visible = true;
         map.setMinZoom(GAME_ZOOM); // back to the one zoom players play at
         setHud((h) => ({ ...h, ride: null }));
@@ -2836,6 +2843,10 @@ export function GameMap({
           }
           crowdStep(now, dt, now / 1000);
           if (rushing && left <= 3 && !rush && !busLeftAt && now - lastRushTry > 1500) void beginRush(r, now);
+          if (r.trip.mode === "plane") {
+            const lounge: LoungeView = { id: r.trip.id, from: r.trip.from, to: r.trip.to, left: Math.max(0, Math.ceil(left)) };
+            setHud((h) => (h.lounge?.id === lounge.id && h.lounge.left === lounge.left ? h : { ...h, lounge }));
+          }
           showRide(
             rushing
               ? left > 0
@@ -2848,6 +2859,7 @@ export function GameMap({
         }
         if (r.s === 0) {
           clearCrowd(); // the rest squeezed on too
+          setHud((h) => (h.lounge ? { ...h, lounge: null } : h)); // boarded: off to the plane
           // Leaving: the camera may pull back for a fast trip (the player still can't zoom), and street names stop.
           map.setMinZoom(8);
           setHud((h) => ({ ...h, street: null, services: { fuel: null, food: null } }));
@@ -7626,8 +7638,10 @@ export function GameMap({
   const here = "pointer-events-auto flex h-10 items-center rounded-full bg-gold px-3.5 text-sm font-bold text-ink shadow-lg disabled:opacity-50";
   const distanceText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  // Pouring the jerry can sits by the fuel gauge (owner, 26 Oct 2026: "You don't need to pour can on the screen in the
-  // middle, maybe up close to the fuel icon"); in the middle only when there's no gauge (on foot by a stranded vehicle).
+  // No Pour button on the screen (owner, 26 Oct 2026: "the pour is not needed… remove it from the screen, but in case the
+  // user has some fuel in it, we can remind them by adding it as a badge on the gas tank icon"): a can with fuel shows as
+  // a badge on the ⛽ gauge, and tapping the gauge pours (the scene). "Pour can" stays in the middle only on foot by a
+  // vehicle stranded at the roadside (no gauge then).
   const pourAction = hud.vehicle?.fuel != null ? (hud.actions.find((a) => a.id === "pour_keg") ?? null) : null;
   const actionsHere = pourAction ? hud.actions.filter((a) => a.id !== "pour_keg") : hud.actions;
 
@@ -7737,7 +7751,8 @@ export function GameMap({
               hud.wonders.eye ||
               hud.wonders.cloaked ||
               hud.wonders.mirrored ||
-              hud.heat) && (
+              hud.heat ||
+              hud.lounge) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {hud.clock && (
                   <div
@@ -7787,7 +7802,29 @@ export function GameMap({
                 {hud.vehicle && (hud.vehicle.fuel != null || hud.vehicle.tyre != null || hud.vehicle.meter) && (
                   <div className={`${chip} bg-ink`} aria-label={`Your ${VEHICLES[hud.vehicle.kind].name.toLowerCase()}`}>
                     {hud.vehicle.fuel != null && (
-                      <span className={hud.vehicle.fuel < 15 ? "text-danger" : ""} title="Fuel">⛽ {Math.round(hud.vehicle.fuel)}%</span>
+                      <button
+                        type="button"
+                        disabled={!pourAction || hud.busy}
+                        onClick={() => pourAction && actions.current?.act(pourAction.id)}
+                        aria-label={pourAction ? `${pourAction.label} (fuel ${Math.round(hud.vehicle.fuel)}%)` : `Fuel ${Math.round(hud.vehicle.fuel)}%`}
+                        title={pourAction ? pourAction.label : "Fuel"}
+                        className={`relative flex items-center gap-1 disabled:cursor-default ${hud.vehicle.fuel < 15 ? "text-danger" : ""}`}
+                      >
+                        <span className="relative">
+                          ⛽
+                          {/* The jerry can's fuel, as a reminder (only when there's some in it) */}
+                          {hud.keg && hud.keg.fuel > 0 && (
+                            <span
+                              className="absolute -right-2 -top-2 flex items-center rounded-full bg-gold px-0.5 ring-2 ring-ink"
+                              aria-label={`Jerry can ${Math.round((100 * hud.keg.fuel) / KEG_CAPACITY)}% full`}
+                              data-badge="jerry-can"
+                            >
+                              <JerryCan size={11} level={hud.keg.fuel / KEG_CAPACITY} />
+                            </span>
+                          )}
+                        </span>
+                        {Math.round(hud.vehicle.fuel)}%
+                      </button>
                     )}
                     {hud.vehicle.tyre != null && (
                       <span className={hud.vehicle.tyre < 40 ? "text-danger" : ""} title="Tyres">{hud.vehicle.tyre <= 0 ? "🛞 flat" : `🛞 ${Math.round(hud.vehicle.tyre)}%`}</span>
@@ -7798,17 +7835,10 @@ export function GameMap({
                     {hud.vehicle.meter && <span className="font-semibold text-muted" title="Rental meter">{hud.vehicle.meter}</span>}
                   </div>
                 )}
-                {pourAction && (
-                  <button
-                    type="button"
-                    disabled={hud.busy}
-                    onClick={() => actions.current?.act(pourAction.id)}
-                    aria-label={pourAction.label}
-                    title={pourAction.label}
-                    className={`${chip} bg-gold text-ink disabled:opacity-50`}
-                  >
-                    <JerryCan size={12} level={hud.keg ? hud.keg.fuel / KEG_CAPACITY : 0} />
-                    Pour{hud.keg ? ` · ${Math.round((100 * hud.keg.fuel) / KEG_CAPACITY)}%` : ""}
+                {hud.lounge && loungeHiddenFor === hud.lounge.id && !ticketOpen && (
+                  <button type="button" onClick={() => setLoungeHiddenFor(null)} className={`${chip} bg-[#2F6FEB] text-paper`} aria-label="Back to the lounge">
+                    <span aria-hidden="true">🛋</span>
+                    Lounge · {hud.lounge.left > 20 ? `boards in ${mmss(hud.lounge.left - 20)}` : "boarding!"}
                   </button>
                 )}
                 {hud.heat && (
@@ -8485,6 +8515,10 @@ export function GameMap({
           world={inside === "flat"}
           onClose={() => (inside === "flat" ? actions.current?.leaveShop() : setFlatOpen(null))}
         />
+      )}
+      {/* The lounge once checked in and through (not while still at the desk) */}
+      {hud.lounge && loungeHiddenFor !== hud.lounge.id && !ticketOpen && (
+        <LoungeScene view={hud.lounge} you={JSON.parse(lookKey) as AvatarLook} onHide={() => setLoungeHiddenFor(hud.lounge?.id ?? null)} />
       )}
       {pourOpen && pourActions && (
         <PourScene

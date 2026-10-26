@@ -250,3 +250,8 @@ body {
 .loota-pour { background-image: repeating-linear-gradient(180deg, #F4B41A 0 6px, #FFD45C 6px 10px); background-size: 100% 20px; animation: loota-pour 0.4s linear infinite; }
 @keyframes loota-pour { to { background-position: 0 20px; } }
 @media (prefers-reduced-motion: reduce) { .loota-pour { animation: none; } }
+
+/* The departure lounge (owner, 26 Oct 2026): the hunter walks in from the door to their seat. */
+.loota-walk-in { animation: loota-walk-in 2.2s ease-in-out forwards; }
+@keyframes loota-walk-in { from { left: -10%; } to { left: 26%; } }
+@media (prefers-reduced-motion: reduce) { .loota-walk-in { animation: none; left: 26%; } }

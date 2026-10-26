@@ -1,6 +1,6 @@
-// Pouring the jerry can by the fuel gauge (owner, 26 Oct 2026: "You don't need to pour can on the screen in the middle,
-// maybe up close to the fuel icon"). Riding a motorbike with 20% in the tank and a jerry can of fuel: "🛢 Pour" sits
-// beside ⛽ at the top, with the can's fill (77%), not in the middle. Tapping it, the scene ("the pour should be a scene,
+// The jerry can by the fuel gauge (owner, 26 Oct 2026: "the pour is not needed… remove it from the screen, but in case
+// the user has some fuel in it… a badge on the gas tank icon"). Riding a motorbike with 20% in the tank and a jerry can
+// of fuel: a can badge (77%) on ⛽, no Pour button. Tapping the gauge, the scene ("the pour should be a scene,
 // the user gets off the bike… show a jerry can with the fuel as percentage"): the hunter beside the bike, the can at
 // 77% and the tank at 20%; "Pour it in": the can empties, the tank fills to 65%; Ride on. The test player is deleted.
 //   SHOTS=<folder> node scripts/tests/pour-by-gauge-browser-test.mjs
@@ -51,18 +51,21 @@ try {
   for (let i = 0; i < 40 && !where; i++) {
     await wait(1000);
     where = await page.evaluate(() => {
-      const b = document.querySelector('button[aria-label^="Pour the jerry can"]');
-      if (!b) return null;
-      const gauge = [...document.querySelectorAll('[title="Fuel"]')][0]?.getBoundingClientRect();
-      const r = b.getBoundingClientRect();
-      return { text: b.textContent?.trim(), top: Math.round(r.top), gaugeTop: gauge ? Math.round(gauge.top) : null, middle: [...document.querySelectorAll("button")].some((x) => x.textContent?.includes("Pour can")) };
+      const badge = document.querySelector('[data-badge="jerry-can"]');
+      if (!badge) return null;
+      const gauge = badge.closest("button");
+      return {
+        badge: badge.getAttribute("aria-label"),
+        onGauge: !!gauge && /Pour the jerry can/.test(gauge.getAttribute("aria-label") ?? "") && /%/.test(gauge.textContent ?? ""),
+        pourButton: [...document.querySelectorAll("button")].some((x) => /^(🛢\s*)?Pour( ·|$)|Pour can/.test(x.textContent?.trim() ?? "")),
+      };
     });
   }
-  check("🛢 Pour beside the fuel gauge, at the top", !!where && where.gaugeTop !== null && Math.abs(where.top - where.gaugeTop) < 30 && where.top < 250, JSON.stringify(where));
-  check("…not in the middle", where && !where.middle);
-  check("…with the can's fill: Pour · 77%", /Pour · 77%/.test(where?.text ?? ""), where?.text);
+  check("the jerry can's fuel as a badge on the ⛽ gauge (77%)", !!where && where.badge === "Jerry can 77% full" && where.onGauge, JSON.stringify(where));
+  check("…and no Pour button on the screen", where && !where.pourButton);
   await page.screenshot({ path: `${OUT}/pour-1-gauge.png`, clip: { x: 0, y: 0, width: 390, height: 220 } });
-  await page.evaluate(() => document.querySelector('button[aria-label^="Pour the jerry can"]')?.click());
+  // Tapping the gauge pours (the scene).
+  await page.evaluate(() => document.querySelector('[data-badge="jerry-can"]')?.closest("button")?.click());
   await wait(1200);
   const NL = String.fromCharCode(10);
   const sceneText = () => page.evaluate((nl) => document.querySelector('[role="dialog"][aria-label="Pouring the jerry can"]')?.innerText.split(nl).filter(Boolean).join(" | ") ?? null, NL);

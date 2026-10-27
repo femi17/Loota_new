@@ -1207,6 +1207,7 @@ export function GameMap({
       // ---- Saving position (the server rejects impossible moves) -----------
       let saved = { lng: startLng, lat: startLat };
       let saving = false;
+      let saveAgain = false; // a forced save asked for while another was on its way
       let lastSave = 0;
       // Tell the server where the hunter starts (a new player has no saved spot until they
       // first move), so domes, rain and radar know where they are straight away.
@@ -1229,16 +1230,31 @@ export function GameMap({
       };
       /** `force`: save even without having moved (e.g. to have the server confirm a faint). */
       async function savePosition(force = false) {
-        if (saving || (!force && geo.distanceM([saved.lng, saved.lat], [traveller.pos.lng, traveller.pos.lat]) < 5)) return;
+        if (saving) {
+          // One already on its way: a forced save (a faint to confirm) goes straight after it, never dropped.
+          if (force) saveAgain = true;
+          return;
+        }
+        if (!force && geo.distanceM([saved.lng, saved.lat], [traveller.pos.lng, traveller.pos.lat]) < 5) return;
         saving = true;
         const sent = { ...traveller.pos };
         const { data, error } = await supabase.rpc("save_position", { p_lng: sent.lng, p_lat: sent.lat, p_mode: traveller.mode });
         saving = false;
+        if (saveAgain && !disposed) {
+          saveAgain = false;
+          void savePosition(true);
+          return;
+        }
         if (disposed || error || !data) return;
         const result = data as SaveResult;
         saved = { lng: result.lng, lat: result.lat };
         if (result.ok) {
           onSaved(result);
+          return;
+        }
+        if (traveller.phase === "fainted" && result.reason !== "fainted" && result.reason !== "hospital") {
+          // Collapsed, but the save wasn't taken (moved too fast for it, say): the collapse still stands.
+          void confirmCollapse();
           return;
         }
         // Go back to the last accepted spot.
@@ -4100,11 +4116,11 @@ export function GameMap({
       /** After a save: the server's energy, wear, and whether the vehicle stopped or the hunter fainted. */
       function onSaved(result: SaveResult) {
         if (typeof result.energy === "number") {
-          traveller.energy = result.energy;
-          if (traveller.phase === "fainted" && !result.fainted && result.energy > 0 && !visit) {
-            traveller.phase = "idle"; // the server counted a little more energy than this device: still on your feet, just
-            say("You're about to collapse: rest now!", true);
-          }
+          if (traveller.phase === "fainted" && !result.fainted && !visit) {
+            // The server counted a little more energy than this device (it measures straight lines between saves):
+            // the collapse this device saw stands, if the server's count is low too.
+            void confirmCollapse();
+          } else traveller.energy = result.energy;
         }
         const mine = ownInUse();
         if (mine) {
@@ -4200,6 +4216,26 @@ export function GameMap({
 
       function showCare(icon: string, title: string, status: string) {
         setHud((h) => (h.care?.title === title && h.care.status === status ? h : { ...h, care: { icon, title, status } }));
+      }
+
+      /**
+       * This device saw the hunter collapse (0 energy on foot or a bicycle) but the server's save didn't: the server
+       * takes its word when its own count is low too (owner, 27 Oct 2026: "the avatar just looks like falling, and then
+       * continue moving"). Only well short of 0 by the server's count do they get up again.
+       */
+      let confirming = false;
+      async function confirmCollapse() {
+        if (confirming || visit) return;
+        confirming = true;
+        const { data } = await supabase.rpc("collapse");
+        confirming = false;
+        if (disposed) return;
+        const r = data as { ok: boolean; reason?: string; energy?: number } | null;
+        if (r?.ok) return faint();
+        if (r?.reason === "busy") return;
+        traveller.phase = "idle";
+        if (typeof r?.energy === "number") traveller.energy = r.energy;
+        say("You're about to collapse: rest now!", true);
       }
 
       /** Collapsed: lie down where you are, and call the ambulance (once the server agrees). */

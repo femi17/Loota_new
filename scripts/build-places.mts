@@ -16,32 +16,13 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const parse = require("osm-pbf-parser") as () => NodeJS.ReadWriteStream;
 
-type Tags = Record<string, string>;
+import { DEFAULT_NAME, kindOf, type PlaceKind, type Tags } from "../src/lib/osm-places.ts";
+
 type OsmItem =
   | { type: "node"; id: number; lat: number; lon: number; tags?: Tags }
   | { type: "way"; id: number; tags: Tags; refs: number[] }
   | { type: "relation" };
-export type PlaceKind = "fuel" | "hospital" | "eat" | "rest" | "tyres" | "mechanic";
-
-const DEFAULT_NAME: Record<PlaceKind, string> = {
-  fuel: "Petrol station",
-  hospital: "Hospital",
-  eat: "Place to eat",
-  rest: "Park",
-  tyres: "Vulcanizer",
-  mechanic: "Mechanic",
-};
-
-/** What kind of place this is, if it's one we want. */
-function kindOf(t: Tags): PlaceKind | null {
-  if (t.amenity === "fuel") return "fuel";
-  if (t.amenity === "hospital" || t.amenity === "clinic" || t.healthcare === "hospital" || t.healthcare === "clinic") return "hospital";
-  if (t.shop === "tyres" || /vulcani[sz]/i.test(t.name ?? "")) return "tyres";
-  if (t.shop === "car_repair" || t.shop === "motorcycle_repair" || t.craft === "mechanic") return "mechanic";
-  if (["restaurant", "fast_food", "cafe", "food_court"].includes(t.amenity)) return "eat";
-  if (t.leisure === "park" || t.leisure === "garden") return "rest";
-  return null;
-}
+export type { PlaceKind };
 
 const [input, output] = process.argv.slice(2);
 if (!input || !output) {

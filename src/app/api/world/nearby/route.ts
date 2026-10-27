@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { stockCell } from "@/lib/world-spawn";
 import { fillPlaceStreets } from "@/lib/place-streets";
 import { stockCruise } from "@/lib/cruise-drops";
+import { fillArea } from "@/lib/fill-area";
 
 type Nearby = { items: unknown[]; leads: unknown[]; decoysFound: number; staleCells: string[] };
 
@@ -13,7 +14,9 @@ type Nearby = { items: unknown[]; leads: unknown[]; decoysFound: number; staleCe
  * are stocked after the reply (closest first, one per call), so new finds show
  * up on the player's next refresh instead of holding this one up. Places around
  * get their street spots (for Detours) the same way, a few per call, and the
- * square around the player its cruise tokens.
+ * square around the player its cruise tokens. Outside Nigeria, a square the
+ * player comes to gets its petrol stations, places to eat and rest, tyre shops,
+ * mechanics, hospitals and bus stops from OpenStreetMap, once (fillArea).
  */
 export async function POST() {
   const supabase = await createClient();
@@ -31,6 +34,7 @@ export async function POST() {
     if (next) await stockCell(admin, next);
     const { data: pos } = await admin.from("player_positions").select("lng, lat").eq("user_id", user).maybeSingle();
     if (pos) {
+      await fillArea(admin, pos.lng, pos.lat); // outside Nigeria: the places and bus stops of a new square, once
       await stockCruise(admin, pos.lng, pos.lat); // cruise tokens in the streets around
       await fillPlaceStreets(admin, pos.lng, pos.lat);
     }

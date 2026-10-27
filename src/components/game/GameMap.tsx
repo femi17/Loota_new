@@ -3380,13 +3380,15 @@ export function GameMap({
 
       /** A bus from this stop to the bus stop nearest a place, along the roads a car would take. */
       async function quoteBus(from: TransitStop, place: Place): Promise<TransitQuote | string> {
+        // Abroad, the place's stops come in first if they aren't yet (a few seconds).
+        const pending = await lookUpArea(place);
         const far = geo.distanceM([from.lng, from.lat], [place.lng, place.lat]) > BUS_RANGE_M;
         let to: TransitStop | undefined;
         if (!far) {
           const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: place.lng, p_lat: place.lat, p_limit: 1 });
           to = (data as TransitStop[] | null)?.[0];
           if (!to || to.metres > 2000) {
-            if (await lookUpArea(place)) return `Looking up the bus stops around ${place.name}: try again in a minute.`;
+            if (pending) return `The bus stops around ${place.name} are still being looked up: try again in a moment.`;
             return `There's no bus stop within 2 km of ${place.name}.`;
           }
         } else {
@@ -3408,7 +3410,7 @@ export function GameMap({
             .map((p) => ({ ...p, line: null, metres: Math.round(geo.distanceM([place.lng, place.lat], [p.lng, p.lat])) }))
             .sort((a, b) => a.metres - b.metres)[0];
           if (!to) {
-            if (await lookUpArea(place)) return `Looking up the bus stations around ${place.name}: try again in a minute.`;
+            if (pending) return `The bus stations around ${place.name} are still being looked up: try again in a moment.`;
             return `There's no ${inNigeria(place) ? "motor park" : "bus station"} within 25 km of ${place.name}, so no long-distance bus goes there.`;
           }
         }
@@ -3417,10 +3419,12 @@ export function GameMap({
         if (straight > COACH_RANGE_M) return "That's too far for a bus. Take a plane.";
         // City trips on our own roads, long ones on our main-road network; the routing service if those fail.
         let path: import("@/game/geo").Coord[] | null = null;
-        if (far) {
+        if (far && inNigeria(from) && inNigeria(to)) {
+          // Our main-road network is Nigeria's: elsewhere it took Calgary to Red Deer by way of Nigeria (21,311 km), so
+          // a long way abroad goes by the routing service below.
           const highways = await loadHighways(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public`);
           path = highways ? highwayRoute(highways, [from.lng, from.lat], [to.lng, to.lat]) : null;
-        } else {
+        } else if (!far) {
           path = (await routeOnOwnRoads({ lng: from.lng, lat: from.lat }, { lng: to.lng, lat: to.lat }, "car"))?.path ?? null;
         }
         if (!path) {
@@ -4274,7 +4278,14 @@ export function GameMap({
         let route: import("@/game/geo").Coord[] | null = null;
         let approach: import("@/game/geo").Coord[] | null = null;
         if (hospital) {
-          const way = (await routeOnOwnRoads(at, hospital, "car"))?.path ?? null;
+          // Our own roads, or (abroad, where we have none) the routing service, as for a taxi.
+          const byRoad = async (from: LngLat, to: LngLat) => {
+            const own = (await routeOnOwnRoads(from, to, "car"))?.path ?? null;
+            if (own) return own;
+            const { route: r, fallback } = await fetchRoute(from, to, "car");
+            return fallback ? null : r.coords;
+          };
+          const way = await byRoad(at, hospital);
           if (way) route = thinPath([[at.lng, at.lat], ...way, [hospital.lng, hospital.lat]]);
           // The ambulance comes from 1–2 km away, along the roads.
           for (let i = 0; i < 4 && route && !approach; i++) {
@@ -4284,7 +4295,7 @@ export function GameMap({
               lng: at.lng + (Math.sin(angle) * m) / (111320 * Math.cos((at.lat * Math.PI) / 180)),
               lat: at.lat + (Math.cos(angle) * m) / 110574,
             };
-            const found = (await routeOnOwnRoads(start, at, "car"))?.path ?? null;
+            const found = await byRoad(start, at);
             if (found && cumulativeOf(found).at(-1)! > 300) approach = thinPath([...found, [at.lng, at.lat]]);
           }
         }
@@ -5110,14 +5121,16 @@ export function GameMap({
           return;
         }
         setJourneyPlan({ place, options: null, message: null });
-        const [options, lookingUp] = await Promise.all([journeyOptions(place), lookUpArea(place)]);
+        // Abroad, the place's stops come in first if they aren't yet (a few seconds), then the ways there.
+        const lookingUp = await lookUpArea(place);
+        const options = await journeyOptions(place);
         if (disposed) return;
         if (!options) {
           setJourneyPlan(null);
           void planDirections({ lng: place.lng, lat: place.lat }, place.name);
           return;
         }
-        const soon = lookingUp ? ` Its bus stations and train lines are being looked up: check again in a minute.` : "";
+        const soon = lookingUp ? ` Its bus stations are still being looked up: check again in a moment.` : "";
         setJourneyPlan({
           place,
           options,
@@ -5127,7 +5140,8 @@ export function GameMap({
 
       /**
        * Outside Nigeria a place's area may not have its bus stops, stations and lines yet (they come in as hunters go:
-       * src/lib/fill-area.ts): asks for them. True while they're still being looked up.
+       * src/lib/fill-area.ts): brings them in (its own square before the answer, a few seconds; the rest after). True
+       * if they're still not in (the service busy, or another fill nearby going on).
        */
       async function lookUpArea(p: { lng: number; lat: number }) {
         if (inNigeria(p)) return false;

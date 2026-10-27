@@ -13,9 +13,29 @@ type PhotonFeature = {
   properties: Record<string, string | undefined>;
 };
 
-/** Photon (komoot): made for search-as-you-type, and favours places near the player. */
+/**
+ * Photon (komoot): made for search-as-you-type, and favours places near the player. So much so that from Calgary,
+ * "Edmonton" found six times Edmonton Trail, a street there, and never the city (owner, 27 Oct 2026): a town or city by
+ * that name is asked for too, and comes first.
+ */
 async function photon(q: string, lng: number, lat: number): Promise<Place[]> {
-  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=6&lang=en`;
+  const [near, towns] = await Promise.all([photonAsk(q, lng, lat, ""), photonAsk(q, lng, lat, "&layer=city").catch(() => [])]);
+  const out: Place[] = [];
+  const seen = new Set<string>();
+  const add = (p: Place) => {
+    const key = `${p.name}|${p.detail}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(p);
+  };
+  const typed = q.trim().toLowerCase();
+  for (const t of towns.filter((t) => t.name.toLowerCase().startsWith(typed)).slice(0, 2)) add(t);
+  for (const p of near) add(p);
+  return out.slice(0, 7);
+}
+
+async function photonAsk(q: string, lng: number, lat: number, extra: string): Promise<Place[]> {
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=6&lang=en${extra}`;
   const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`photon ${res.status}`);
   const data = (await res.json()) as { features: PhotonFeature[] };

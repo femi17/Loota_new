@@ -375,6 +375,13 @@ function buildLine(rel: Element, nodes: Map<number, { lat: number; lon: number; 
 export async function fillTrainLinesAround(admin: SupabaseClient, lng: number, lat: number): Promise<number> {
   const { ix, iy } = cellOf(lng, lat);
   let stations = 0;
-  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) stations += await fillTrainLines(admin, ix + dx, iy + dy);
+  for (let dx = -1; dx <= 1; dx++)
+    for (let dy = -1; dy <= 1; dy++) {
+      try {
+        stations += await fillTrainLines(admin, ix + dx, iy + dy);
+      } catch (e) {
+        console.error(`train lines ${ix + dx}_${iy + dy}:`, e); // the service busy: the next square goes on
+      }
+    }
   return stations;
 }

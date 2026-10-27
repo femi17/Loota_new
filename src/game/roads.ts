@@ -11,7 +11,60 @@ import { ROAD_FLAGS, type RoadCellData, type RoadClass } from "./roadData";
 export type RoadFeature = {
   geometry: { type: string; coordinates: unknown };
   properties: Record<string, unknown> | null;
+  /** The tile it came from (MapLibre's query results carry it). */
+  _x?: number;
+  _y?: number;
+  _z?: number;
 };
+
+/** A map tile's own area (without the margin of its neighbours' roads it also carries). */
+function tileBox(z: number, x: number, y: number) {
+  const n = 2 ** z;
+  const lat = (row: number) => (Math.atan(Math.sinh(Math.PI * (1 - (2 * row) / n))) * 180) / Math.PI;
+  return { w: (x / n) * 360 - 180, e: ((x + 1) / n) * 360 - 180, n: lat(y), s: lat(y + 1) };
+}
+
+/** The parts of a line inside a box (Liang–Barsky, piece by piece). */
+function clipLine(line: Coord[], b: ReturnType<typeof tileBox>): Coord[][] {
+  const out: Coord[][] = [];
+  let cur: Coord[] = [];
+  for (let i = 1; i < line.length; i++) {
+    const [x0, y0] = line[i - 1];
+    const [x1, y1] = line[i];
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    let t0 = 0;
+    let t1 = 1;
+    let inside = true;
+    for (const [p, q] of [[-dx, x0 - b.w], [dx, b.e - x0], [-dy, y0 - b.s], [dy, b.n - y0]]) {
+      if (p === 0) {
+        if (q < 0) inside = false;
+      } else {
+        const r = q / p;
+        if (p < 0) t0 = Math.max(t0, r);
+        else t1 = Math.min(t1, r);
+      }
+    }
+    if (!inside || t0 > t1) {
+      if (cur.length > 1) out.push(cur);
+      cur = [];
+      continue;
+    }
+    const from: Coord = t0 === 0 ? line[i - 1] : [x0 + dx * t0, y0 + dy * t0];
+    const to: Coord = t1 === 1 ? line[i] : [x0 + dx * t1, y0 + dy * t1];
+    if (!cur.length || t0 > 0) {
+      if (cur.length > 1) out.push(cur);
+      cur = [from];
+    }
+    cur.push(to);
+    if (t1 < 1) {
+      out.push(cur); // left the box
+      cur = [];
+    }
+  }
+  if (cur.length > 1) out.push(cur);
+  return out;
+}
 
 type RoadNode = { lng: number; lat: number; edges: number[] };
 /** `level`: 1 on a bridge, −1 in a tunnel, 0 on the ground (roads only meet at the same level). */
@@ -142,18 +195,31 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     }
   };
 
+  // Each tile also carries a margin of its neighbours' roads, so near every tile edge the same road came twice, half a
+  // metre apart: tangles that turned a hunter round on a straight street (owner, 27 Oct 2026, Palo Alto: "it turns
+  // back, then turn back again acting as if both ends are dead"). Each tile's roads are cut to the tile itself, from
+  // the most detailed tiles only (a coarser one still held from zooming out would draw them a third time).
+  const finest = features.reduce((z, f) => Math.max(z, f._z ?? -1), -1);
   for (const f of features) {
     if (!allowed(mode, f.properties)) continue;
+    if (f._z !== undefined && f._z < finest) continue;
     const brunnel = f.properties?.brunnel;
     const level = brunnel === "bridge" ? 1 : brunnel === "tunnel" ? -1 : 0;
     const closed = f.properties?.access === "no" || f.properties?.access === "private";
-    if (f.geometry.type === "LineString") addLine(f.geometry.coordinates as Coord[], level, closed);
-    else if (f.geometry.type === "MultiLineString") for (const line of f.geometry.coordinates as Coord[][]) addLine(line, level, closed);
+    const box = f._z !== undefined && f._x !== undefined && f._y !== undefined ? tileBox(f._z, f._x, f._y) : null;
+    const lines = f.geometry.type === "LineString" ? [f.geometry.coordinates as Coord[]] : f.geometry.type === "MultiLineString" ? (f.geometry.coordinates as Coord[][]) : [];
+    for (const line of lines) for (const piece of box ? clipLine(line, box) : [line]) addLine(piece, level, closed);
   }
 
   joinCrossings(nodes, edges, local);
   joinLooseEnds(nodes, edges, local);
-  return { nodes, ...mergeTinyGaps(nodes, edges), centre, radius: radiusM };
+  let joined = mergeTinyGaps(nodes, edges).edges;
+  // Overlapping tiles draw the same stretch of road twice. Joined tip to tip, the two copies end at a point with two
+  // roads (so not loose), then merge into one piece whose tip is loose again, lying on the road it belongs to: a dead end
+  // in the middle of a straight street (owner, 27 Oct 2026, Palo Alto: "acting as if both ends are dead"). So once more.
+  joinLooseEnds(nodes, joined, local);
+  joined = mergeTinyGaps(nodes, joined).edges;
+  return { nodes, edges: joined, centre, radius: radiusM };
 }
 
 /**

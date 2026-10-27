@@ -428,26 +428,19 @@ const pocketsOf = new WeakMap<RoadNetwork, Uint8Array>();
 export function cutOffEdges(net: RoadNetwork): Uint8Array {
   const known = pocketsOf.get(net);
   if (known) return known;
-  const parent = net.nodes.map((_, i) => i);
-  const root = (i: number): number => {
-    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
-    return i;
-  };
-  for (const e of net.edges) parent[root(e.a)] = root(e.b);
-  const length = new Map<number, number>();
+  const { group, length } = groupsOf(net);
   const inside = new Map<number, boolean>();
   const closed = new Map<number, number>(); // how much of each group has no public access
   const local = projector(net.centre);
   const margin = net.radius - 100;
-  for (const e of net.edges) {
-    const r = root(e.a);
-    length.set(r, (length.get(r) ?? 0) + e.length);
+  net.edges.forEach((e, i) => {
+    const r = group[i];
     if (e.closed) closed.set(r, (closed.get(r) ?? 0) + e.length);
-    if (inside.get(r) === false) continue;
+    if (inside.get(r) === false) return;
     const p = local(net.nodes[e.a]);
     const q = local(net.nodes[e.b]);
     inside.set(r, Math.hypot(p.x, p.y) < margin && Math.hypot(q.x, q.y) < margin);
-  }
+  });
   const largest = Math.max(0, ...length.values());
   const fenced = (r: number) => {
     const all = length.get(r) ?? 0;
@@ -456,12 +449,55 @@ export function cutOffEdges(net: RoadNetwork): Uint8Array {
   };
   const flags = new Uint8Array(net.edges.length);
   net.edges.forEach((e, i) => {
-    const r = root(e.a);
+    const r = group[i];
     if (fenced(r)) flags[i] = 2;
     else if (largest > 3000 && inside.get(r) && (length.get(r) ?? 0) < largest * 0.1) flags[i] = 1;
   });
   pocketsOf.set(net, flags);
   return flags;
+}
+
+/** Which group of joined-up roads each edge is in (`group[edge]`), and each group's total length. */
+const groupsMemo = new WeakMap<RoadNetwork, { group: Int32Array; length: Map<number, number> }>();
+function groupsOf(net: RoadNetwork) {
+  const known = groupsMemo.get(net);
+  if (known) return known;
+  const parent = net.nodes.map((_, i) => i);
+  const root = (i: number): number => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  for (const e of net.edges) parent[root(e.a)] = root(e.b);
+  const group = new Int32Array(net.edges.length);
+  const length = new Map<number, number>();
+  net.edges.forEach((e, i) => {
+    group[i] = root(e.a);
+    length.set(group[i], (length.get(group[i]) ?? 0) + e.length);
+  });
+  const found = { group, length };
+  groupsMemo.set(net, found);
+  return found;
+}
+
+/**
+ * "Get me out" (owner, 27 Oct 2026: "we need an everlasting solution"): the nearest road on the biggest group of roads
+ * that leads somewhere (not a pocket, not behind a fence), whatever the map got wrong about the hunter's own. Null when
+ * the hunter is already on it (their road does lead out) or there's none.
+ */
+export function wayOut(net: RoadNetwork, pos: LngLat, heading: number, here: RoadPosition | null): RoadPosition | null {
+  const flags = cutOffEdges(net);
+  const { group } = groupsOf(net);
+  const open = new Map<number, number>();
+  net.edges.forEach((e, i) => {
+    if (!flags[i]) open.set(group[i], (open.get(group[i]) ?? 0) + e.length);
+  });
+  let best = -1;
+  let most = 0;
+  for (const [g, len] of open) if (len > most) [best, most] = [g, len];
+  if (best < 0 || (here && group[here.edge] === best)) return null;
+  const skip = new Uint8Array(net.edges.length);
+  for (let i = 0; i < skip.length; i++) skip[i] = group[i] === best ? 0 : 1;
+  return snapToNetwork(net, pos, heading, skip);
 }
 
 /** The nearest road to a point (`skip`: edges not to use, e.g. cut-off pockets). */

@@ -126,6 +126,8 @@ type Hud = {
   actions: { id: LimitAction; icon: string; short: string; label: string }[];
   /** A warning that needs acting on (tired, fuel low, soft tyres, a worn engine), with the nearest place that helps. */
   advice: { key: string; title: string; text: string; where: string | null; place: { name: string; lng: number; lat: number } | null } | null;
+  /** Going nowhere (dead end after dead end, round in circles, shut in): the offer to be put on a road that leads out. */
+  stuck: boolean;
   /** Being looked after: the ambulance, the hospital, a mechanic on the way. */
   care: { icon: string; title: string; status: string } | null;
   /** The fuel keg the player carries, if any. */
@@ -338,6 +340,9 @@ export function GameMap({
     /** What's happening in the scene, for the place on the map to show it. */
     sceneMoment: (m: SceneMoment) => void;
     getOff: () => void;
+    /** Stuck: put on the nearest road that leads somewhere (or told the way out), or the offer put away. */
+    getOut: () => void;
+    notStuck: () => void;
     refuel: () => void;
     eat: () => void;
     /** Use a relic from the bag; resolves to a message for the bag. */
@@ -411,6 +416,7 @@ export function GameMap({
     ticketHere: null,
     actions: [],
     advice: null,
+    stuck: false,
     care: null,
     keg: null,
     tyreKits: 0,
@@ -761,6 +767,7 @@ export function GameMap({
       const ROAD_REACH_M = 1600; // the network covers 1.5 km around the hunter
       let snapReachM = 400; // how far the hunter may be put onto the nearest road (more just after landing)
       let landedUntil = 0; // while the server still allows the landing's long hop (save_position: 60 s)
+      let roadless = 0; // since when no road has been near enough to stand on
       // For checking: whether the hunter's road is shut in (scripts/tests/airside-browser-test.mjs).
       if (process.env.NODE_ENV !== "production") {
         Object.assign(window, { __lootaRoad: () => (network && onRoad ? { pocket: roads.cutOffEdges(network)[onRoad.edge], ...traveller.pos } : null) });
@@ -843,14 +850,18 @@ export function GameMap({
           const main = roads.snapToNetwork(network, traveller.pos, facing, pockets);
           const m = main ? roads.positionOf(network, main) : null;
           if (main && m && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [m.lng, m.lat]) <= reach) onRoad = main;
+          else offerWayOut(true); // no road out near enough to step onto: offer the longer way out
         }
-        if (!onRoad) return false;
-        const p = roads.positionOf(network, onRoad);
-        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > reach) {
-          // Only far-away roads loaded so far (e.g. just thrown out of a trial): wait for nearer tiles.
+        const p = onRoad ? roads.positionOf(network, onRoad) : null;
+        if (!onRoad || !p || geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > reach) {
+          // Only far-away roads loaded so far (e.g. just thrown out of a trial): wait for nearer tiles. Still none
+          // after a while (a field, a lagoon's edge): offer the way out.
           onRoad = null;
+          roadless ||= performance.now();
+          if (performance.now() - roadless > 8000) offerWayOut(true);
           return false;
         }
+        roadless = 0;
         traveller.pos = { lng: p.lng, lat: p.lat };
         // Just landed and still airside (the town's roads not loaded yet): keep the landing's reach a little longer.
         if (!pockets[onRoad.edge] || performance.now() > landedUntil) snapReachM = 400;
@@ -869,6 +880,92 @@ export function GameMap({
         saving = false;
         const r = data as { ok: boolean; lng?: number; lat?: number } | null;
         if (r?.ok && r.lng != null && r.lat != null) saved = { lng: r.lng, lat: r.lat };
+      }
+
+      // ---- Stuck? "Get me out" (owner, 27 Oct 2026: "we need an everlasting solution") -----------------------------
+      // Whatever the map's roads get wrong (a fence, an airfield, roads that don't join up), the hunter can always be put
+      // on the nearest road that leads somewhere: offered when they're going nowhere, and always in the help panel.
+      let stuckOfferOff = 0; // put away: not offered again until then
+      let offeredAt: LngLat | null = null;
+      const deadEnds: { t: number; lng: number; lat: number }[] = [];
+      const progress: { t: number; lng: number; lat: number; walked: number }[] = []; // a sample a minute
+      let walked = 0;
+      let freeing = false;
+
+      function offerWayOut(on: boolean) {
+        if (!on) stuckOfferOff = performance.now() + 600_000;
+        else if (performance.now() < stuckOfferOff) return;
+        offeredAt = on ? { ...traveller.pos } : null;
+        setHud((h) => (h.stuck === on ? h : { ...h, stuck: on }));
+      }
+
+      /** Turned back by a road's end: three within 3 minutes, all close together, is going nowhere. */
+      function noteDeadEnd(now: number) {
+        deadEnds.push({ t: now, ...traveller.pos });
+        while (deadEnds.length && deadEnds[0].t < now - 180_000) deadEnds.shift();
+        const near = deadEnds.every((d) => geo.distanceM([d.lng, d.lat], [traveller.pos.lng, traveller.pos.lat]) < 300);
+        if (deadEnds.length >= 3 && near) offerWayOut(true);
+      }
+
+      /** Moving on the roads: 600 m and more in 8 minutes without ever getting 200 m from where it began is round in circles. */
+      function noteProgress(now: number, metres: number) {
+        walked += metres;
+        if (offeredAt && geo.distanceM([offeredAt.lng, offeredAt.lat], [traveller.pos.lng, traveller.pos.lat]) > 400) {
+          offeredAt = null; // found the way after all
+          setHud((h) => (h.stuck ? { ...h, stuck: false } : h));
+        }
+        if (progress.length && now - progress[progress.length - 1].t < 60_000) return;
+        progress.push({ t: now, ...traveller.pos, walked });
+        if (progress.length > 9) progress.shift();
+        const first = progress[0];
+        const round = progress.length === 9 && walked - first.walked >= 600 && progress.every((s) => geo.distanceM([s.lng, s.lat], [first.lng, first.lat]) < 200);
+        if (round) offerWayOut(true);
+      }
+
+      async function getOut() {
+        if (freeing) return;
+        if (ride) return say("Not while you're on a trip.", true);
+        if (!network) return say("The roads are still loading: try again in a moment.", true);
+        const out = roads.wayOut(network, traveller.pos, traveller.heading, onRoad);
+        if (!out) {
+          offerWayOut(false);
+          return say("Your road does lead out: tap Directions, choose a place and follow the blue line.", true);
+        }
+        const p = roads.positionOf(network, out);
+        const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]);
+        if (away > 2000) return say("There's no road out within 2 km of here. Take a taxi or a plane from the transport button.", true);
+        freeing = true;
+        saving = true; // no ordinary save meanwhile: it would be refused as too fast a move
+        const { data } = await supabase.rpc("free_me", { p_lng: p.lng, p_lat: p.lat });
+        saving = false;
+        freeing = false;
+        const r = data as { ok: boolean; reason?: string; next?: string } | null;
+        if (disposed) return;
+        if (!r?.ok) {
+          const mins = r?.next ? Math.max(1, Math.ceil((new Date(r.next).getTime() - Date.now()) / 60000)) : 10;
+          return say(
+            r?.reason === "wait"
+              ? `You were helped out a moment ago. Try again in ${mins} min, or follow Directions.`
+              : r?.reason === "today"
+                ? "That's 3 times today already. Take a taxi from the transport button, or follow Directions."
+              : r?.reason === "frozen"
+                ? "The Hourglass holds you: wait for it to run out."
+                : r?.reason === "dome"
+                  ? "A Lockdown dome stands over the nearest road out. Wait for it to fall."
+                  : "Couldn't get you out just now: try again.",
+            true,
+          );
+        }
+        traveller.pos = { lng: p.lng, lat: p.lat };
+        traveller.v = 0;
+        saved = { lng: p.lng, lat: p.lat };
+        onRoad = out;
+        deadEnds.length = 0;
+        progress.length = 0;
+        offeredAt = null;
+        setHud((h) => ({ ...h, stuck: false }));
+        lastNetworkCheck = 0; // the roads around the new spot
+        say(away > 30 ? `Out you come: on a road that leads somewhere, ${geo.formatDistance(away)} from where you were.` : "You're on a road that leads somewhere.", true);
       }
 
       const setTurn = (turn: -1 | 0 | 1) => {
@@ -1911,6 +2008,8 @@ export function GameMap({
         leaveShop: () => closePlace(),
         sceneMoment: (m) => sceneMoment(m),
         getOff: () => void getOff(),
+        getOut: () => void getOut(),
+        notStuck: () => offerWayOut(false),
         refuel: () => void refuelHere(),
         eat() {
           void act("eat");
@@ -7428,6 +7527,7 @@ export function GameMap({
             if (passed && !held) justPassed = passed;
             else if (justPassed && !held) justPassed.metresSince += distance;
             onRoad = held ? before : position;
+            if (!held) noteProgress(now, distance);
             if (deadEnd && !held) {
               traveller.v = 0;
               if (now - lastDeadEndCheck > 2000) {
@@ -7437,6 +7537,7 @@ export function GameMap({
                 buildRoads();
               } else if (onRoad) {
                 onRoad = roads.reverse(onRoad);
+                noteDeadEnd(now);
                 if (cruiseOn) stopCruise("This road ends here: cruise off.");
                 else say("This road ends here. Keep going to head back, or pick another way.");
               }
@@ -8165,6 +8266,22 @@ export function GameMap({
               </div>
             )}
 
+            {/* Going nowhere: the offer to be put on a road that leads out. */}
+            {hud.stuck && !inside && !hud.ride && (
+              <div className="pointer-events-auto flex w-full max-w-md items-center gap-2 rounded-2xl bg-ink p-2.5 text-sm text-paper ring-1 ring-gold" role="alert" aria-label="Stuck">
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="font-bold text-gold">🧭 Going nowhere?</span>
+                  <span className="text-xs text-paper/80">We&apos;ll put you on a road that leads out.</span>
+                </span>
+                <button type="button" onClick={() => actions.current?.getOut()} className="h-10 shrink-0 rounded-xl bg-gold px-3 text-sm font-bold text-ink">
+                  Get me out
+                </button>
+                <button type="button" aria-label="Dismiss" onClick={() => actions.current?.notStuck()} className="flex size-9 shrink-0 items-center justify-center rounded-lg text-paper/70">
+                  <CloseIcon />
+                </button>
+              </div>
+            )}
+
             {/* On a bus, train or plane: where to, and when it leaves or arrives. */}
             {hud.ride && !inside && (
               <div className="pointer-events-auto flex w-full max-w-md flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
@@ -8281,6 +8398,16 @@ export function GameMap({
                     className="rounded-xl bg-ink-2 px-3 py-2 text-sm font-bold"
                   >
                     ▶ Show the welcome tour again
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHelpOpen(false);
+                      actions.current?.getOut();
+                    }}
+                    className="rounded-xl bg-ink-2 px-3 py-2 text-sm font-bold"
+                  >
+                    🧭 Stuck? Get me out
                   </button>
                 </div>
                 <button type="button" onClick={() => setHelpOpen(false)} className="h-11 rounded-xl bg-gold font-bold text-ink">

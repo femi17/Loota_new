@@ -33,6 +33,8 @@ type RoadEdge = {
   cls?: RoadClass;
   stretch?: number;
   urban?: number;
+  /** No public access (an airport's airside, a private yard): walkable, but nobody should be put down there. */
+  closed?: boolean;
 };
 
 /** How built-up a road square is, 0 (countryside) to 1 (a city), from how many roads it has. */
@@ -122,7 +124,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     return id;
   };
 
-  const addLine = (line: Coord[], level: number) => {
+  const addLine = (line: Coord[], level: number, closed: boolean) => {
     for (let i = 1; i < line.length; i++) {
       const p = local({ lng: line[i - 1][0], lat: line[i - 1][1] });
       const q = local({ lng: line[i][0], lat: line[i][1] });
@@ -134,7 +136,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
       if (seen.has(key)) continue; // the same road from two overlapping tiles
       seen.add(key);
       const id = edges.length;
-      edges.push({ a, b, length: Math.hypot(q.x - p.x, q.y - p.y), level });
+      edges.push({ a, b, length: Math.hypot(q.x - p.x, q.y - p.y), level, ...(closed && { closed }) });
       nodes[a].edges.push(id);
       nodes[b].edges.push(id);
     }
@@ -144,8 +146,9 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     if (!allowed(mode, f.properties)) continue;
     const brunnel = f.properties?.brunnel;
     const level = brunnel === "bridge" ? 1 : brunnel === "tunnel" ? -1 : 0;
-    if (f.geometry.type === "LineString") addLine(f.geometry.coordinates as Coord[], level);
-    else if (f.geometry.type === "MultiLineString") for (const line of f.geometry.coordinates as Coord[][]) addLine(line, level);
+    const closed = f.properties?.access === "no" || f.properties?.access === "private";
+    if (f.geometry.type === "LineString") addLine(f.geometry.coordinates as Coord[], level, closed);
+    else if (f.geometry.type === "MultiLineString") for (const line of f.geometry.coordinates as Coord[][]) addLine(line, level, closed);
   }
 
   joinCrossings(nodes, edges, local);
@@ -267,7 +270,7 @@ function joinCrossings(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: n
     const piece = (from: number, to: number) => Math.max(0.01, Math.hypot(xy[to].x - xy[from].x, xy[to].y - xy[from].y));
     e.b = chain[1];
     e.length = piece(chain[0], chain[1]);
-    for (let k = 1; k < chain.length - 1; k++) edges.push({ a: chain[k], b: chain[k + 1], length: piece(chain[k], chain[k + 1]), level: e.level });
+    for (let k = 1; k < chain.length - 1; k++) edges.push({ a: chain[k], b: chain[k + 1], length: piece(chain[k], chain[k + 1]), level: e.level, closed: e.closed });
   }
   for (const n of nodes) n.edges = [];
   edges.forEach((e, id) => {
@@ -359,7 +362,7 @@ function joinLooseEnds(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: n
       xy.push(local(nodes[target]));
       const oldB = e.b;
       const tail = edges.length;
-      edges.push({ a: target, b: oldB, length: e.length * (1 - bestT), level: e.level });
+      edges.push({ a: target, b: oldB, length: e.length * (1 - bestT), level: e.level, closed: e.closed });
       e.b = target;
       e.length *= bestT;
       nodes[target].edges.push(bestEdge, tail);
@@ -415,7 +418,11 @@ function headingAway(net: RoadNetwork, node: number, id: number, lookM = 10) {
  * Road pieces cut off from the rest: a small group of roads joined to nothing
  * else, lying wholly inside the loaded area (so it isn't just cut by its edge),
  * such as an airfield's paths or a fenced car park. A hunter put there could
- * only walk in circles. 1 marks such an edge.
+ * only walk in circles. 1 marks such an edge; 2 a group of roads behind a
+ * fence, however big: no public road in it at all, or (not the town's own,
+ * largest group) mostly roads with no public access. An airport's airside is
+ * joined to the town only by motorways a walker can't use (owner, 27 Oct 2026,
+ * landed at San Francisco "on a road that leads nowhere").
  */
 const pocketsOf = new WeakMap<RoadNetwork, Uint8Array>();
 export function cutOffEdges(net: RoadNetwork): Uint8Array {
@@ -429,24 +436,30 @@ export function cutOffEdges(net: RoadNetwork): Uint8Array {
   for (const e of net.edges) parent[root(e.a)] = root(e.b);
   const length = new Map<number, number>();
   const inside = new Map<number, boolean>();
+  const closed = new Map<number, number>(); // how much of each group has no public access
   const local = projector(net.centre);
   const margin = net.radius - 100;
   for (const e of net.edges) {
     const r = root(e.a);
     length.set(r, (length.get(r) ?? 0) + e.length);
+    if (e.closed) closed.set(r, (closed.get(r) ?? 0) + e.length);
     if (inside.get(r) === false) continue;
     const p = local(net.nodes[e.a]);
     const q = local(net.nodes[e.b]);
     inside.set(r, Math.hypot(p.x, p.y) < margin && Math.hypot(q.x, q.y) < margin);
   }
   const largest = Math.max(0, ...length.values());
+  const fenced = (r: number) => {
+    const all = length.get(r) ?? 0;
+    const shut = closed.get(r) ?? 0;
+    return shut >= all || (all < largest && shut >= all / 2);
+  };
   const flags = new Uint8Array(net.edges.length);
-  if (largest > 3000) {
-    net.edges.forEach((e, i) => {
-      const r = root(e.a);
-      if (inside.get(r) && (length.get(r) ?? 0) < largest * 0.1) flags[i] = 1;
-    });
-  }
+  net.edges.forEach((e, i) => {
+    const r = root(e.a);
+    if (fenced(r)) flags[i] = 2;
+    else if (largest > 3000 && inside.get(r) && (length.get(r) ?? 0) < largest * 0.1) flags[i] = 1;
+  });
   pocketsOf.set(net, flags);
   return flags;
 }
@@ -808,6 +821,7 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
           cls: way.cls,
           stretch: jamStretch(way, pa),
           urban,
+          ...(way.flags & ROAD_FLAGS.private && { closed: true }),
         });
         nodes[a].edges.push(id);
         nodes[b].edges.push(id);

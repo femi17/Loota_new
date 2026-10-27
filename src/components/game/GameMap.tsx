@@ -760,6 +760,11 @@ export function GameMap({
       const ROADS_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/roads/${ROAD_DATA_VERSION}`;
       const ROAD_REACH_M = 1600; // the network covers 1.5 km around the hunter
       let snapReachM = 400; // how far the hunter may be put onto the nearest road (more just after landing)
+      let landedUntil = 0; // while the server still allows the landing's long hop (save_position: 60 s)
+      // For checking: whether the hunter's road is shut in (scripts/tests/airside-browser-test.mjs).
+      if (process.env.NODE_ENV !== "production") {
+        Object.assign(window, { __lootaRoad: () => (network && onRoad ? { pocket: roads.cutOffEdges(network)[onRoad.edge], ...traveller.pos } : null) });
+      }
 
       /** The squares within reach of the hunter, loading any not yet asked for. */
       function squaresAround(): string[] {
@@ -829,21 +834,26 @@ export function GameMap({
           : roads.buildNetwork(features, traveller.mode, traveller.pos);
         onRoad = roads.snapToNetwork(network, traveller.pos, facing);
         // Never on a cut-off pocket of road (an airfield's paths, a fenced car park): it only goes in
-        // circles. The nearest proper road instead, when it's near enough for the server to allow.
-        if (onRoad && roads.cutOffEdges(network)[onRoad.edge]) {
-          const main = roads.snapToNetwork(network, traveller.pos, facing, roads.cutOffEdges(network));
+        // circles. The nearest proper road instead, when it's near enough for the server to allow. Shut in
+        // behind a fence (an airport's airside: no public road at all), out to the street up to 800 m away.
+        const pockets = roads.cutOffEdges(network);
+        let reach = snapReachM;
+        if (onRoad && pockets[onRoad.edge]) {
+          reach = Math.max(snapReachM, pockets[onRoad.edge] === 2 ? 800 : 240);
+          const main = roads.snapToNetwork(network, traveller.pos, facing, pockets);
           const m = main ? roads.positionOf(network, main) : null;
-          if (main && m && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [m.lng, m.lat]) <= Math.max(snapReachM, 240)) onRoad = main;
+          if (main && m && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [m.lng, m.lat]) <= reach) onRoad = main;
         }
         if (!onRoad) return false;
         const p = roads.positionOf(network, onRoad);
-        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > snapReachM) {
+        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]) > reach) {
           // Only far-away roads loaded so far (e.g. just thrown out of a trial): wait for nearer tiles.
           onRoad = null;
           return false;
         }
         traveller.pos = { lng: p.lng, lat: p.lat };
-        snapReachM = 400;
+        // Just landed and still airside (the town's roads not loaded yet): keep the landing's reach a little longer.
+        if (!pockets[onRoad.edge] || performance.now() > landedUntil) snapReachM = 400;
         // Put onto a road some way from where the server last saw the hunter (thrown off any road, say): tell it so,
         // or it takes the jump for walking too fast and refuses every save after (owner, 25 Oct 2026).
         if (geo.distanceM([saved.lng, saved.lat], [p.lng, p.lat]) > 30) void placeOnRoad();
@@ -3158,7 +3168,10 @@ export function GameMap({
         onRoad = null;
         builtFrom = "";
         lastNetworkCheck = 0;
-        if (mode === "plane") snapReachM = 3000; // the server allows this hop too (save_position)
+        if (mode === "plane") {
+          snapReachM = 3000; // the server allows this hop too (save_position)
+          landedUntil = performance.now() + 45_000;
+        }
         buildRoads();
         lastSync = performance.now();
         void syncWorld();

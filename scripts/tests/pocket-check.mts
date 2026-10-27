@@ -17,8 +17,8 @@ const net = roads.buildNetworkFromCells(cells, (process.argv[4] ?? "walk") as ne
 const pockets = roads.cutOffEdges(net);
 const at = roads.snapToNetwork(net, { lng, lat }, 0)!;
 const p = roads.positionOf(net, at);
-console.log(`nearest road: ${Math.round(distanceM([lng, lat], [p.lng, p.lat]))} m away, ${pockets[at.edge] ? "IN A CUT-OFF POCKET" : "on the main network"}`);
-console.log(`pocket edges: ${pockets.reduce((n, x) => n + x, 0)} of ${net.edges.length}`);
+console.log(`nearest road: ${Math.round(distanceM([lng, lat], [p.lng, p.lat]))} m away, ${pockets[at.edge] === 2 ? "BEHIND A FENCE (no way out to public roads)" : pockets[at.edge] ? "IN A CUT-OFF POCKET" : "on the main network"}`);
+console.log(`pocket edges: ${pockets.filter(Boolean).length} of ${net.edges.length} (behind a fence: ${pockets.filter((x) => x === 2).length})`);
 if (pockets[at.edge]) {
   const main = roads.snapToNetwork(net, { lng, lat }, 0, pockets)!;
   const m = roads.positionOf(net, main);

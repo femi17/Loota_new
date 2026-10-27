@@ -16,7 +16,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const parse = require("osm-pbf-parser") as () => NodeJS.ReadWriteStream;
 
-import { DEFAULT_NAME, kindOf, type PlaceKind, type Tags } from "../src/lib/osm-places.ts";
+import { kindOf, nameOf, type PlaceKind, type Tags } from "../src/lib/osm-places.ts";
 
 type OsmItem =
   | { type: "node"; id: number; lat: number; lon: number; tags?: Tags }
@@ -49,11 +49,11 @@ const needed = new Set<number>();
 await readAll((it) => {
   if (it.type === "node") {
     const k = it.tags ? kindOf(it.tags) : null;
-    if (k) places.push({ kind: k, name: it.tags!.name ?? DEFAULT_NAME[k], lng: it.lon, lat: it.lat });
+    if (k) places.push({ kind: k, name: nameOf(it.tags!, k), lng: it.lon, lat: it.lat });
   } else if (it.type === "way") {
     const k = kindOf(it.tags);
     if (!k) return;
-    areas.push({ kind: k, name: it.tags.name ?? DEFAULT_NAME[k], refs: it.refs });
+    areas.push({ kind: k, name: nameOf(it.tags, k), refs: it.refs });
     it.refs.forEach((r) => needed.add(r));
   }
 });

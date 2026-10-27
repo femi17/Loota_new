@@ -575,11 +575,15 @@ function logoSides(tone: "dark" | "gold" | "light", height: number, halfWidth: n
   left.rotation.y = -Math.PI / 2;
   return [right, left];
 }
-/** The logo lying on top (a roof, a wing), upright for the camera behind and above. */
-function logoTop(tone: "dark" | "gold" | "light", height: number, x: number, y: number, z: number) {
+/**
+ * The logo lying on top (a roof, a wing), upright for the camera behind and above; `along`: reading from the back to the
+ * front instead, along a long roof (owner, 27 Oct 2026: "the logo and the bus should have been vertical aligned instead
+ * of horizontal so that it can show very well"): the way the bus runs up the screen, and the roof's width for its height.
+ */
+function logoTop(tone: "dark" | "gold" | "light", height: number, x: number, y: number, z: number, along = false) {
   const d = logoDecal(tone, height);
   d.position.set(x, y, z);
-  d.rotation.set(-Math.PI / 2, 0, Math.PI);
+  d.rotation.set(-Math.PI / 2, 0, along ? -Math.PI / 2 : Math.PI);
   return d;
 }
 
@@ -624,7 +628,7 @@ export function makeBus() {
     screen,
     tyre(-1.15, 2.4), tyre(1.15, 2.4), tyre(-1.15, -2.4), tyre(1.15, -2.4),
     ...logoSides("dark", 0.9, 1.215, 1.11, 0.4),
-    logoTop("gold", 1.9, 0, 2.76, 0),
+    logoTop("gold", 2.2, 0, 2.76, 0, true),
   );
   return group;
 }
@@ -640,7 +644,7 @@ export function makeTrainCar(lead: boolean) {
     mesh(T_G.bogie, "#333333", 0, 0.35, 2.8),
     mesh(T_G.bogie, "#333333", 0, 0.35, -2.8),
     ...logoSides("dark", 0.95, 1.315, 1.4, 0),
-    logoTop("gold", 1.9, 0, 3.37, 0),
+    logoTop("gold", 2.2, 0, 3.37, 0, true),
   );
   if (lead) {
     group.add(mesh(T_G.nose, "#F4B41A", 0, 1.3, 4.9), mesh(T_G.noseScreen, "#9FD8FF", 0, 2.6, 4.25));

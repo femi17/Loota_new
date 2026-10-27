@@ -12,12 +12,12 @@ import type { Place } from "./places";
 
 /** Within this, the player just goes (walking, riding, a taxi or a city bus): no journey needed. */
 export const LOCAL_M = 35_000;
-/** Flights only make sense beyond this (or abroad). */
+/** Flights only make sense beyond this. */
 export const FLY_FROM_M = 150_000;
 /** Taxis go up to 40 km (bus_range_m in the database). */
 const TAXI_RANGE_M = 40_000;
 
-/** Nigeria, roughly: where our motor parks, buses and trains are. */
+/** Nigeria, roughly: where our own imported places, stops and lines are (elsewhere they come in as hunters do: src/lib/fill-area.ts). */
 export function inNigeria(p: { lng: number; lat: number }) {
   return p.lng >= 2.6 && p.lng <= 14.7 && p.lat >= 4 && p.lat <= 14;
 }
@@ -68,14 +68,17 @@ export function journeyOf(mode: JourneyMode, place: Place, legs: JourneyLeg[], n
   return { mode, place, legs, seconds, fare, note };
 }
 
-/** Can a long-distance bus do it? Both ends in Nigeria, within its range. */
+/**
+ * Can a long-distance bus do it? Within its range, in any country (owner, 27 Oct 2026: "this has to be one size fits
+ * all"): whether one runs depends on the bus stations at each end.
+ */
 export function coachPossible(from: { lng: number; lat: number }, to: { lng: number; lat: number }) {
-  return inNigeria(from) && inNigeria(to) && distanceM([from.lng, from.lat], [to.lng, to.lat]) <= COACH_RANGE_M;
+  return distanceM([from.lng, from.lat], [to.lng, to.lat]) <= COACH_RANGE_M;
 }
 
-/** A plane is worth it far away, or across a border. */
+/** A plane is worth it far away. */
 export function flyingMakesSense(from: { lng: number; lat: number }, to: { lng: number; lat: number }) {
-  return distanceM([from.lng, from.lat], [to.lng, to.lat]) >= FLY_FROM_M || !inNigeria(to);
+  return distanceM([from.lng, from.lat], [to.lng, to.lat]) >= FLY_FROM_M;
 }
 
 /** "17 min", "1 h 34 min" */

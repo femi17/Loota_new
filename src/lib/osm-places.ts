@@ -25,7 +25,8 @@ export function kindOf(t: Tags): PlaceKind | null {
   if (t.shop === "tyres" || /vulcani[sz]/i.test(t.name ?? "")) return "tyres";
   if (t.shop === "car_repair" || t.shop === "motorcycle_repair" || t.craft === "mechanic") return "mechanic";
   if (["restaurant", "fast_food", "cafe", "food_court"].includes(t.amenity)) return "eat";
-  if (t.leisure === "park" || t.leisure === "garden") return "rest";
+  // Somewhere to sit down and chill: a park, a garden, a shopping mall (owner, 27 Oct 2026: "restaurants or eateries, malls").
+  if (t.leisure === "park" || t.leisure === "garden" || t.shop === "mall") return "rest";
   return null;
 }
 
@@ -34,4 +35,9 @@ export function busStopOf(t: Tags): "stop" | "park" | null {
   if (t.amenity === "bus_station") return "park";
   if (t.highway === "bus_stop" || ((t.public_transport === "platform" || t.public_transport === "stop_position") && t.bus === "yes")) return "stop";
   return null;
+}
+
+/** Its name, or what it is. */
+export function nameOf(t: Tags, kind: PlaceKind) {
+  return t.name ?? (t.shop === "mall" ? "Shopping mall" : DEFAULT_NAME[kind]);
 }

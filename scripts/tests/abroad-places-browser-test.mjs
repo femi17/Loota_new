@@ -1,7 +1,8 @@
 // Places abroad (owner, 27 Oct 2026, in the United States: "I cannot pump my tire at the gas station… when I pass bus
 // signs on the map my bus icon is not lit up"), on a phone in Palo Alto, after its squares were filled from
 // OpenStreetMap (fill-area-check.mts): on a bicycle with soft tyres at the Valero on El Camino the Pump button shows;
-// at the bus stop at Embarcadero Road & Waverley Street the bus tool lights up gold. The test players and bicycles are
+// at the bus stop at Embarcadero Road & Waverley Street the bus tool lights up gold, and its panel offers no Nigerian
+// station or "motor park"; tired by Dumpling Time in San Francisco, a rest there is offered. The test players and bicycles are
 // deleted.
 //   SHOTS=<folder> node scripts/tests/abroad-places-browser-test.mjs
 import { createRequire } from "node:module";
@@ -20,14 +21,14 @@ let browser;
 let fails = 0;
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
-async function open(tag, at, bike) {
+async function open(tag, at, bike, energy = 100) {
   const email = `${tag}-${Date.now()}@example.com`, password = `T3st-${Math.random().toString(36).slice(2)}!`;
   const { data } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   const id = data.user.id;
   ids.push(id);
   await admin.from("profiles").update({ home_lng: at.lng, home_lat: at.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   if (bike) await admin.from("player_vehicles").insert({ user_id: id, kind: "bicycle", fuel: 0, tyre: 60, engine: 100, lng: at.lng, lat: at.lat, in_use: true });
-  await admin.from("player_positions").upsert({ user_id: id, lng: at.lng, lat: at.lat, mode: bike ? "bicycle" : "walk", energy: 100, updated_at: new Date().toISOString() });
+  await admin.from("player_positions").upsert({ user_id: id, lng: at.lng, lat: at.lat, mode: bike ? "bicycle" : "walk", energy, updated_at: new Date().toISOString() });
   await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: soon(3600), created_at: soon(3600) });
   const jar = new Map();
   const c = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { cookies: {
@@ -74,7 +75,30 @@ try {
   const lit = await b.page.evaluate(() => /bg-gold/.test(document.querySelector('[data-tool="transit"]')?.className ?? ""));
   check("at the bus stop: the bus tool lights up", /Take a bus/.test(label) && lit, label);
   await b.page.screenshot({ path: `${OUT}/abroad-2-bus.png` });
+  // The panel goes by the country: no Nigerian station 12,000 km off, and a "bus station" (owner: "the bus, train should
+  // work according to the country not showing nigeria again").
+  await b.page.evaluate(() => document.querySelector('[data-tool="transit"]')?.click());
+  await wait(4000);
+  const panel = await b.page.evaluate(() => document.querySelector('[role="dialog"]')?.innerText ?? "");
+  check("the bus panel: no Nigerian station or 'motor park'", panel.length > 0 && !/Lagos|Kano|Jebba|Nigeria|motor park/i.test(panel), panel.slice(0, 160).replace(/\n/g, " | "));
+  check("…a long-distance 'bus station'", /bus station/.test(panel));
+  await b.page.screenshot({ path: `${OUT}/abroad-3-panel.png` });
   check("no page errors", b.problems.length === 0, b.problems.join(" / "));
+  await b.page.close();
+
+  // ---- Tired in San Francisco, by Dumpling Time (owner: "to chill, it should be either restaurants or eateries, malls.
+  // But it is telling no chill area"): a rest there, not just "Rest here".
+  const c = await open("chill", { lng: -122.402329, lat: 37.769676 }, false, 15);
+  let rest = "";
+  for (let i = 0; i < 20 && !rest; i++) {
+    await wait(1000);
+    rest = await c.page.evaluate(() => [...document.querySelectorAll("button")].map((x) => x.getAttribute("aria-label") ?? x.textContent ?? "").find((t) => /^Rest at /.test(t)) ?? "");
+  }
+  const said = await c.page.evaluate(() => document.body.innerText);
+  check("tired by a café in San Francisco: a rest at it", /^Rest at /.test(rest), rest);
+  check("…not told there's no chill spot", !/No chill spot near/.test(said));
+  await c.page.screenshot({ path: `${OUT}/abroad-4-chill.png` });
+  check("no page errors", c.problems.length === 0, c.problems.join(" / "));
 } catch (e) {
   fails++;
   console.log("ERROR", e);

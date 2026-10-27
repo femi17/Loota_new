@@ -41,7 +41,7 @@ if (refill && !inNigeria({ lng, lat })) {
 
 for (let i = 0; i < 9; i++) {
   const t = Date.now();
-  const key = await fillArea(admin, lng, lat);
+  const key = await fillArea(admin, lng, lat, { lines: false }); // places and stops (train lines: train-lines-check.mts)
   if (!key) break;
   const { data } = await admin.from("filled_areas").select("places, stops, failed_at").eq("cell", key).single();
   console.log(`square ${key}: ${data?.failed_at ? "FAILED" : `${data?.places} places, ${data?.stops} bus stops`} in ${Date.now() - t} ms`);
@@ -49,7 +49,7 @@ for (let i = 0; i < 9; i++) {
 const { data: states } = await admin.from("filled_areas").select("cell, filled_at").in("cell", keys);
 const done = (states ?? []).filter((s) => s.filled_at).length;
 check("the 9 squares around are filled", done === 9, `${done} of 9`);
-check("…and each only once (another call does nothing)", (await fillArea(admin, lng, lat)) === null);
+check("…and each only once (another call does nothing)", (await fillArea(admin, lng, lat, { lines: false })) === null);
 const box = { lng0: lng - 0.03, lng1: lng + 0.03, lat0: lat - 0.03, lat1: lat + 0.03 };
 const count = async (table: string, kind: string) =>
   (await admin.from(table).select("id", { count: "exact", head: true }).eq("kind", kind).gte("lng", box.lng0).lte("lng", box.lng1).gte("lat", box.lat0).lte("lat", box.lat1)).count ?? 0;
@@ -60,5 +60,5 @@ const { data: yard } = await admin.from("places").select("id").ilike("name", "%C
 check("no private fuel yards", !yard?.length);
 const { data: nearest } = await admin.rpc("places_near", { p_kinds: ["fuel"], p_lng: lng, p_lat: lat, p_limit: 1 });
 console.log("nearest petrol station:", JSON.stringify(nearest));
-check("Nigeria is left as it is (its own data)", (await fillArea(admin, 3.3787, 6.5186)) === null);
+check("Nigeria is left as it is (its own data)", (await fillArea(admin, 3.3787, 6.5186, { lines: false })) === null);
 console.log(fails ? `${fails} FAILED` : "all passed");

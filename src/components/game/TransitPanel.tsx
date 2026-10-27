@@ -8,10 +8,17 @@ import { PlaceSearch } from "./PlaceSearch";
 
 /**
  * The stops the player is at, and the nearest of each kind (transit_near); plus
- * the nearest motor park (long-distance buses) and the nearest station on each
+ * the nearest motor park or bus station (long-distance buses) and the nearest station on each
  * train line around.
  */
-export type TransitNear = { here: TransitStop[]; nearest: Partial<Record<TransitMode, TransitStop>>; park?: TransitStop | null; lines?: TransitStop[] };
+export type TransitNear = {
+  here: TransitStop[];
+  nearest: Partial<Record<TransitMode, TransitStop>>;
+  park?: TransitStop | null;
+  lines?: TransitStop[];
+  /** What a long-distance bus station is called here: a "motor park" in Nigeria, a "bus station" elsewhere. */
+  parkWord?: string;
+};
 
 /** A priced trip, ready to pay for and board. */
 export type TransitQuote = {
@@ -216,6 +223,7 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
   const [working, setWorking] = useState(false);
   const [passes, setPasses] = useState(0);
   const [useFastPass, setUseFastPass] = useState(false);
+  const park = (near !== "loading" && near?.parkWord) || "motor park";
 
   useEffect(() => {
     let live = true;
@@ -389,8 +397,8 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
                     <>
                       <p className="text-sm text-muted">
                         {stop.park
-                          ? "Where to? Long-distance buses leave this motor park for motor parks all over Nigeria; city buses go up to 40 km."
-                          : "Where to? City buses go up to 40 km and drop you at the stop nearest the place. For other cities, take a long-distance bus from a motor park."}
+                          ? `Where to? Long-distance buses leave this ${park} for ${park}s in other cities; city buses go up to 40 km.`
+                          : `Where to? City buses go up to 40 km and drop you at the stop nearest the place. For other cities, take a long-distance bus from a ${park}.`}
                       </p>
                       <PlaceSearch inline near={actions.where} onPick={(place) => void run(() => actions.quoteBus(stop, place))} />
                       {heading && (
@@ -457,7 +465,7 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
               ),
             )}
             {near.park && !near.here.some((h) => h.id === near.park!.id) && (
-              <NearestRow title="🚌 Nearest motor park (buses to other cities)" stop={near.park} actions={actions} onClose={onClose} />
+              <NearestRow title={`🚌 Nearest ${park} (buses to other cities)`} stop={near.park} actions={actions} onClose={onClose} />
             )}
             {(near.lines ?? [])
               .filter((st) => st.line_id !== near.nearest.train?.line_id && !near.here.some((h) => h.line_id === st.line_id))

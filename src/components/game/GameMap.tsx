@@ -3354,6 +3354,11 @@ export function GameMap({
         ]);
         if (disposed || !data) return near;
         near = data as TransitNear;
+        // Only what's within reach of here: in the United States the nearest train was a Nigerian one, 12,457 km off
+        // (owner, 27 Oct 2026: "the bus, train should work according to the country not showing nigeria").
+        if ((near.nearest.train?.metres ?? 0) > 100_000) delete near.nearest.train;
+        if ((near.nearest.bus?.metres ?? 0) > 50_000) delete near.nearest.bus;
+        near.parkWord = inNigeria(from) ? "motor park" : "bus station";
         const here: [number, number] = [from.lng, from.lat];
         const withMetres = ((parks ?? []) as Omit<TransitStop, "metres" | "line">[]).map((p) => ({ ...p, line: null, metres: Math.round(geo.distanceM(here, [p.lng, p.lat])) }));
         near.park = withMetres.sort((a, b) => a.metres - b.metres)[0] ?? null;
@@ -3380,12 +3385,15 @@ export function GameMap({
         if (!far) {
           const { data } = await supabase.rpc("stops_near", { p_kind: "bus", p_lng: place.lng, p_lat: place.lat, p_limit: 1 });
           to = (data as TransitStop[] | null)?.[0];
-          if (!to || to.metres > 2000) return `There's no bus stop within 2 km of ${place.name}.`;
+          if (!to || to.metres > 2000) {
+            if (await lookUpArea(place)) return `Looking up the bus stops around ${place.name}: try again in a minute.`;
+            return `There's no bus stop within 2 km of ${place.name}.`;
+          }
         } else {
           // Another city: a long-distance bus, motor park to motor park.
           if (!from.park) {
             const park = near?.park;
-            return `Buses to other cities leave from motor parks.${park ? ` The nearest is ${park.name}, ${geo.formatDistance(park.metres)} away (Directions in this panel).` : ""}`;
+            return `Buses to other cities leave from ${near?.parkWord ?? "motor park"}s.${park ? ` The nearest is ${park.name}, ${geo.formatDistance(park.metres)} away (Directions in this panel).` : ""}`;
           }
           const { data } = await supabase
             .from("transit_stops")
@@ -3399,7 +3407,10 @@ export function GameMap({
           to = ((data ?? []) as Omit<TransitStop, "metres" | "line">[])
             .map((p) => ({ ...p, line: null, metres: Math.round(geo.distanceM([place.lng, place.lat], [p.lng, p.lat])) }))
             .sort((a, b) => a.metres - b.metres)[0];
-          if (!to) return `There's no motor park within 25 km of ${place.name}, so no long-distance bus goes there.`;
+          if (!to) {
+            if (await lookUpArea(place)) return `Looking up the bus stations around ${place.name}: try again in a minute.`;
+            return `There's no ${inNigeria(place) ? "motor park" : "bus station"} within 25 km of ${place.name}, so no long-distance bus goes there.`;
+          }
         }
         const straight = geo.distanceM([from.lng, from.lat], [to.lng, to.lat]);
         if (to.id === from.id || straight < 300) return `${place.name} is within walking distance of this stop.`;
@@ -3693,7 +3704,7 @@ export function GameMap({
           const what = traveller.mode === "car" ? "driving" : "riding";
           if (energy <= 0 && warned.energy > 0) {
             warned.energy = 0;
-            void advise("energy", "Too tired to go on", `You're too tired to keep ${what}. Pull over and rest (Rest here), or take a break at a park or a place to eat.`, ["rest", "eat"], 2000, {
+            void advise("energy", "Too tired to go on", `You're too tired to keep ${what}. Pull over and rest (Rest here), or take a break at a park, a mall or a place to eat.`, ["rest", "eat"], 2000, {
               text: `You're too tired to keep ${what}. Pull over and rest right here (Rest here) until you've got your energy back.`,
               where: "Rest here",
             });
@@ -3705,7 +3716,7 @@ export function GameMap({
             });
           } else if (energy < 50 && warned.energy > 50) {
             warned.energy = 50;
-            void advise("energy", "Time for a break", `You've been ${what} a while. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.`, ["rest", "eat"], 2000, {
+            void advise("energy", "Time for a break", `You've been ${what} a while. Take a break at a chill spot (a park, a mall or a place to eat): energy comes back fast there.`, ["rest", "eat"], 2000, {
               text: `You've been ${what} a while. Pull over for a break (Rest here) when you can.`,
               where: "Rest here",
             });
@@ -3713,13 +3724,13 @@ export function GameMap({
         } else if (traveller.mode === "walk" || traveller.mode === "bicycle") {
           if (energy < 25 && warned.energy > 25) {
             warned.energy = 25;
-            void advise("energy", "Exhausted: rest now", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park or a place to eat, or have a meal.", ["rest", "eat"], chillReachM(), {
+            void advise("energy", "Exhausted: rest now", "You're exhausted! Rest now or you'll faint and need an ambulance: sit down at a park, a mall or a place to eat, or have a meal.", ["rest", "eat"], chillReachM(), {
               text: "You're exhausted! There's no chill spot close by: sit down and rest right where you are (Rest here), or you'll faint and need an ambulance.",
               where: "No chill spot near: rest here",
             });
           } else if (energy < 50 && warned.energy > 50) {
             warned.energy = 50;
-            void advise("energy", "Getting tired", "You're getting tired. Take a break at a chill spot (a park or a place to eat): energy comes back fast there.", ["rest", "eat"], chillReachM(), {
+            void advise("energy", "Getting tired", "You're getting tired. Take a break at a chill spot (a park, a mall or a place to eat): energy comes back fast there.", ["rest", "eat"], chillReachM(), {
               text: "You're getting tired, and there's no chill spot close by. Take a break right where you are (Rest here): energy comes back while you sit.",
               where: "No chill spot near: rest here",
             });
@@ -5067,20 +5078,19 @@ export function GameMap({
             })(),
           );
         }
-        if (inNigeria(from) && inNigeria(place)) {
-          tries.push(
-            (async () => {
-              const [a, b] = await Promise.all([nearestStop("train", from), nearestStop("train", place)]);
-              if (!a || !b || a.id === b.id || !a.line_id || a.line_id !== b.line_id || a.metres > 40_000 || b.metres > 40_000) return;
-              const { data } = await supabase.from("transit_stops").select("id, along_m").in("id", [a.id, b.id]);
-              const along = new Map(((data ?? []) as { id: number; along_m: number }[]).map((s) => [s.id, s.along_m]));
-              if (along.size < 2) return;
-              options.push(journeyOf("train", place, [goLeg(from, a), rideLeg("train", a, b, Math.abs(along.get(a.id)! - along.get(b.id)!)), goLeg(b, place)]));
-            })(),
-          );
-        }
+        // A train, wherever both ends are near stations on the same line.
+        tries.push(
+          (async () => {
+            const [a, b] = await Promise.all([nearestStop("train", from), nearestStop("train", place)]);
+            if (!a || !b || a.id === b.id || !a.line_id || a.line_id !== b.line_id || a.metres > 40_000 || b.metres > 40_000) return;
+            const { data } = await supabase.from("transit_stops").select("id, along_m").in("id", [a.id, b.id]);
+            const along = new Map(((data ?? []) as { id: number; along_m: number }[]).map((s) => [s.id, s.along_m]));
+            if (along.size < 2) return;
+            options.push(journeyOf("train", place, [goLeg(from, a), rideLeg("train", a, b, Math.abs(along.get(a.id)! - along.get(b.id)!)), goLeg(b, place)]));
+          })(),
+        );
         await Promise.all(tries);
-        // Driving: your own motorbike or car, by road within Nigeria.
+        // Driving: your own motorbike or car, by road, within a long-distance bus's range.
         const motor = owned.find((v) => v.kind !== "bicycle" && !v.broken_at);
         if (motor && coachPossible(from, place)) {
           const metres = Math.round(geo.distanceM([from.lng, from.lat], [place.lng, place.lat]) * 1.3);
@@ -5100,18 +5110,33 @@ export function GameMap({
           return;
         }
         setJourneyPlan({ place, options: null, message: null });
-        const options = await journeyOptions(place);
+        const [options, lookingUp] = await Promise.all([journeyOptions(place), lookUpArea(place)]);
         if (disposed) return;
         if (!options) {
           setJourneyPlan(null);
           void planDirections({ lng: place.lng, lat: place.lat }, place.name);
           return;
         }
+        const soon = lookingUp ? ` Its bus stations and train lines are being looked up: check again in a minute.` : "";
         setJourneyPlan({
           place,
           options,
-          message: options.length ? null : "No bus, train or plane goes there from here. You can still take the road.",
+          message: options.length ? (soon ? soon.trim() : null) : `No bus, train or plane goes there from here. You can still take the road.${soon}`,
         });
+      }
+
+      /**
+       * Outside Nigeria a place's area may not have its bus stops, stations and lines yet (they come in as hunters go:
+       * src/lib/fill-area.ts): asks for them. True while they're still being looked up.
+       */
+      async function lookUpArea(p: { lng: number; lat: number }) {
+        if (inNigeria(p)) return false;
+        try {
+          const res = await fetch("/api/world/fill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lng: p.lng, lat: p.lat }) });
+          return res.ok && !((await res.json()) as { filled: boolean }).filled;
+        } catch {
+          return false;
+        }
       }
 
       function startJourney(j: Journey) {

@@ -238,8 +238,11 @@ type Guide = {
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
-/** The one zoom level the game is played at (a few streets around the hunter); players can't change it. */
-const GAME_ZOOM = 17;
+/**
+ * The one zoom level the game is played at (a few streets around the hunter); players can't change it. Closer on a
+ * phone (owner, 27 Oct 2026: "on mobile … zoom to 18"): its small screen showed the streets too far off.
+ */
+const GAME_ZOOM = typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches ? 18 : 17;
 
 /** A button that reports while it's held down (mouse, touch or pen). */
 function HoldButton({

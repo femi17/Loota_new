@@ -86,6 +86,15 @@ export const TrophyIcon = ({ size }: { size?: number }) => (
   </Svg>
 );
 
+/** Loota Radio: a radio with its aerial. */
+export const RadioIcon = ({ size }: { size?: number }) => (
+  <Svg size={size}>
+    <path d="M4 9h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM7 9l10-5" />
+    <circle cx="8.5" cy="14.5" r="2.5" />
+    <path d="M14 13h4M14 16h4" />
+  </Svg>
+);
+
 /** The inventory: a backpack (not a shopping bag: nothing is sold in it). */
 export const BagIcon = () => (
   <Svg>

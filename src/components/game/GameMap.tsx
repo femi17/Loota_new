@@ -40,12 +40,13 @@ import type { SearchResult } from "@/game/hunt";
 import type { Place } from "@/game/places";
 import { ROAD_CELL_DEG, ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { PlaceSearch } from "./PlaceSearch";
-import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, TrophyIcon, VehicleIcon } from "./HudIcons";
+import { BackIcon, BagIcon, BusIcon, CloseIcon, DirectionsIcon, LampIcon, RadioIcon, TrophyIcon, VehicleIcon } from "./HudIcons";
 import { JourneyPanel, legText } from "./JourneyPanel";
 import { DjinnPanel, type ChamberResult, type DjinnActions, type DjinnChamber, type DjinnStage, type DjinnState, type GateVerdict } from "./DjinnPanel";
 import { wonderOf } from "@/game/wonders";
 import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, rideLeg, type Journey } from "@/game/journey";
 import { NewsToasts } from "./NewsToasts";
+import { RadioPanel, useRadio } from "./RadioPanel";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
@@ -484,6 +485,8 @@ export function GameMap({
   };
   const [bagOwned, setBagOwned] = useState<OwnedVehicle[]>([]); // the inventory's vehicles, gear and papers
   const [helpOpen, setHelpOpen] = useState(false);
+  const [radioOpen, setRadioOpen] = useState(false);
+  const radio = useRadio();
   const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
   const [searchOpen, setSearchOpen] = useState(false);
   const [huntShown, setHuntShown] = useState(!huntHidden);
@@ -8360,6 +8363,7 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours and finds (it glows); the Djinn between hunts (purple smoke)</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Inventory: gear, papers, relics</li>
+                  <li className="flex items-center gap-2"><span className="text-[#2EC4B6]"><RadioIcon /></span> Radio: live Nigerian stations while you move</li>
                 </ul>
                 <details className="rounded-xl bg-ink-2 p-2.5">
                   <summary className="cursor-pointer font-bold">Good to know</summary>
@@ -8415,6 +8419,8 @@ export function GameMap({
                 </button>
               </div>
             )}
+
+            {radioOpen && !inside && <RadioPanel onClose={() => setRadioOpen(false)} />}
 
             {/* The hunt (riddle, keys, Search here) */}
             {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
@@ -8490,6 +8496,19 @@ export function GameMap({
             >
               <LampIcon />
               {hud.lamp.has && <span className={`absolute -right-1 -top-1 size-3 rounded-full ring-2 ring-ink ${hud.lamp.unseen ? "bg-ink" : "bg-gold"}`} aria-hidden="true" />}
+            </button>
+            {/* Loota Radio (owner, 27 Oct 2026: "so users can listen as they move so it is not just boring") */}
+            <button
+              type="button"
+              data-tool="radio"
+              aria-label={radio.status === "off" ? "Radio" : "Radio: playing"}
+              title="Radio"
+              aria-expanded={radioOpen}
+              onClick={() => setRadioOpen((o) => !o)}
+              className={`${tool} relative ${radioOpen ? "bg-gold text-ink" : radio.status === "off" ? "bg-ink text-paper" : "bg-ink text-[#2EC4B6]"}`}
+            >
+              <RadioIcon />
+              {radio.status !== "off" && <span className="absolute -right-1 -top-1 size-3 animate-pulse rounded-full bg-[#2EC4B6] ring-2 ring-ink" aria-hidden="true" />}
             </button>
             {huntId && (
               <button

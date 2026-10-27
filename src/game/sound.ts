@@ -6,6 +6,8 @@
  * this device); buzzes follow the same switch.
  */
 
+import { radioDip } from "./radio";
+
 type Ctx = AudioContext;
 let ctx: Ctx | null = null;
 const KEY = "loota:sound";
@@ -116,6 +118,8 @@ export function cue(name: Cue, level = 1) {
   if (buzz && typeof navigator !== "undefined") navigator.vibrate?.(buzz);
   const c = audio();
   if (!c || c.state !== "running") return;
+  // The radio dips so the moment is heard (not for the detector's steady beeps and heartbeat).
+  if (name !== "beep" && name !== "heartbeat" && name !== "tick") radioDip();
   switch (name) {
     case "tap":
       tone(c, 900, 0.05, { type: "triangle", gain: 0.06 });

@@ -118,7 +118,8 @@ type Hud = {
     outcome: { boarded: boolean; score: number; of: number; next: number | null } | null;
   } | null;
   /** On a bus, train or plane (or waiting for one). */
-  ride: { icon: string; title: string; status: string; canCancel: boolean; pass: boolean } | null;
+  /** `toGo`: the distance still to travel once moving ("312 km"), for the trip's icon on a phone. */
+  ride: { icon: string; title: string; status: string; canCancel: boolean; pass: boolean; toGo: string | null } | null;
   /** At a bus stop, station or airport: what the transport button offers. */
   stopHere: { icon: string; label: string } | null;
   /** At a station's ticket office or an airport's check-in desk: the button to go in. */
@@ -2763,19 +2764,24 @@ export function GameMap({
       let busLeftAt = 0; // performance ms: a full bus pulling off without the player
       let lastRushHud = "";
       const TRAIN_SCALE = 0.8;
-      // A phone's narrow screen: the plane smaller, or it fills the view (owner, 28 Oct 2026: "the plane is too big on mobile").
-      const PLANE_GROUND_SCALE = small ? 0.3 : 0.45; // at the gate and on the runway, next to the hunter
-      const PLANE_AIR_SCALE = small ? 0.75 : 1.4; // at cruising height, seen from far above
+      // A phone's narrow screen: the plane smaller, or it fills the view (owner, 28 Oct 2026: "the plane is too big on
+      // mobile"; then, at 0.3 and 0.75, "too small"): halfway.
+      const PLANE_GROUND_SCALE = small ? 0.38 : 0.45; // at the gate and on the runway, next to the hunter
+      const PLANE_AIR_SCALE = small ? 1.05 : 1.4; // at cruising height, seen from far above
 
       function showRide(status: string, canCancel: boolean) {
         if (!ride) return;
         const info = TRANSIT[ride.trip.mode];
         const title = `${info.label} ${ride.trip.mode === "bus" ? "towards" : "to"} ${ride.label}`;
         const pass = canCancel && !!fastPassRelicId && !ride.trip.fastPass; // still waiting, and a Fast Pass in the bag
+        // The distance left, counting down once moving (owner, 28 Oct 2026: "add the km countdown in the icon for travel").
+        const metres = ride.s > 0 ? Math.max(0, ride.cum[ride.cum.length - 1] - ride.s) : null;
+        const toGo =
+          metres === null ? null : metres >= 10_000 ? `${Math.round(metres / 1000)} km` : metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres / 50) * 50} m`;
         setHud((h) =>
-          h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.pass === pass && h.ride.title === title
+          h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.pass === pass && h.ride.title === title && h.ride.toGo === toGo
             ? h
-            : { ...h, ride: { icon: info.icon, title, status, canCancel, pass } },
+            : { ...h, ride: { icon: info.icon, title, status, canCancel, pass, toGo } },
         );
       }
 
@@ -8027,7 +8033,15 @@ export function GameMap({
     });
   if (hud.advice && !inside && !hud.care) statusCards.push({ id: "advice", icon: "⚠", badge: null, tone: "bg-[#3B2F0A] ring-1 ring-gold text-gold", call: false, label: hud.advice.title });
   if (hud.stuck && !inside && !hud.ride) statusCards.push({ id: "stuck", icon: "🧭", badge: "Stuck?", tone: "bg-ink ring-1 ring-gold", call: false, label: "Going nowhere?" });
-  if (hud.ride && !inside) statusCards.push({ id: "ride", icon: hud.ride.icon, badge: shortTime(hud.ride.status), tone: "bg-[#2F6FEB]", call: false, label: hud.ride.title });
+  if (hud.ride && !inside)
+    statusCards.push({
+      id: "ride",
+      icon: hud.ride.icon,
+      badge: [hud.ride.toGo, shortTime(hud.ride.status)].filter(Boolean).join(" · ") || null,
+      tone: "bg-[#2F6FEB]",
+      call: false,
+      label: hud.ride.title,
+    });
   const cardIds = statusCards.map((c) => c.id).join("|");
   const [cardChoice, setCardChoice] = useState<string | null>(null); // tapped open, or "none" (all folded)
   const [cardPeek, setCardPeek] = useState<string | null>(null);

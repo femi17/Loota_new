@@ -15,7 +15,7 @@ const dmSans = DM_Sans({
 
 export const metadata: Metadata = {
   title: "Loota",
-  description: "A real-map treasure hunt. Solve riddles, travel across Nigeria, win real prizes.",
+  description: "Crack riddles that point to real places, travel there on real roads by foot, bike, bus, train or plane, and race rivals for the keys. Real prizes; play from anywhere.",
 };
 
 export const viewport: Viewport = {

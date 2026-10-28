@@ -19,7 +19,7 @@ let huntId = null;
 let browser;
 let fails = 0;
 // An answer already locked in for the first riddle (the riddle clock), far from any key: tests start at the chest.
-const LOCKED = { guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 };
+const LOCKED = { guess_n: 1, guess_name: "Yaba bus stop", guess_lng: 0, guess_lat: 0 };
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 
 // The key: a spot on a road in Yaba (a bus stop stands by the road).
@@ -38,7 +38,7 @@ try {
   if (error) throw error;
   huntId = hunt.id;
   await admin.from("hunt_keys").insert([
-    { hunt_id: huntId, n: 1, riddle: "The test key, by a bus stop in Yaba.", category: "maths", area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, approach_clue: "Near the bus stop.", spot_lng: spot.lng, spot_lat: spot.lat },
+    { hunt_id: huntId, n: 1, riddle: "Where yellow buses wait and conductors shout, the first key waits too.", category: "maths", area_lng: spot.lng, area_lat: spot.lat, area_radius_m: 800, approach_clue: "Listen for the conductors.", spot_lng: spot.lng, spot_lat: spot.lat },
     { hunt_id: huntId, n: 2, riddle: "The second test key.", category: "maths", area_lng: 3.39, area_lat: 6.53, area_radius_m: 800, spot_lng: 3.39, spot_lat: 6.53 },
   ]);
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id, ...LOCKED });
@@ -81,10 +81,10 @@ try {
   await page.evaluate(() => document.querySelector('[data-tool="leaderboard"]')?.click());
   await wait(2000);
   const boardCard = await text('section[aria-label="Hunt"]');
-  check("🏆: the card shows only the leaderboard", /Leaderboard/i.test(boardCard ?? "") && /🗝 0/.test(boardCard ?? "") && !/test key, by a bus stop/.test(boardCard ?? ""), boardCard);
+  check("🏆: the card shows only the leaderboard", /Leaderboard/i.test(boardCard ?? "") && /🗝 0/.test(boardCard ?? "") && !/yellow buses wait/.test(boardCard ?? ""), boardCard);
   await page.evaluate(() => [...document.querySelectorAll('section[aria-label="Hunt"] button')].find((b) => b.textContent?.trim() === "Back to the riddle")?.click());
   await wait(800);
-  check("…and back to the riddle", /test key, by a bus stop/.test((await text('section[aria-label="Hunt"]')) ?? ""));
+  check("…and back to the riddle", /yellow buses wait/.test((await text('section[aria-label="Hunt"]')) ?? ""));
 
   // ---- The metal detector, bought in the inventory (300 coins)
   await page.evaluate(() => document.querySelector('button[aria-label^="Inventory"]')?.click());

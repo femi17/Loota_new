@@ -263,3 +263,8 @@ body {
     font-size: calc(16px * 16 / 14);
   }
 }
+
+/* The home page: chips floating beside the phone. */
+.loota-float { animation: loota-float 3s ease-in-out infinite; }
+@keyframes loota-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@media (prefers-reduced-motion: reduce) { .loota-float { animation: none; } }

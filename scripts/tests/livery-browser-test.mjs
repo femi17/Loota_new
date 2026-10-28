@@ -59,7 +59,12 @@ try {
     let left = Infinity;
     for (let i = 0; i < 60 && left > visible_s - 2; i++) {
       await wait(1000);
-      const status = await page.evaluate(() => document.querySelector('[aria-label="Your trip"]')?.innerText ?? "");
+      // On a phone the trip folds to an icon after a moment: tap it open (it then stays open).
+      const status = await page.evaluate(() => {
+        const pill = document.querySelector('[data-pill="ride"]');
+        if (pill && pill.getAttribute("aria-expanded") !== "true") pill.click();
+        return document.querySelector('[aria-label="Your trip"]')?.innerText ?? "";
+      });
       const m = /leaves in (?:(\d+) min )?(\d+) s/.exec(status);
       if (m) left = (+(m[1] ?? 0)) * 60 + +m[2];
     }

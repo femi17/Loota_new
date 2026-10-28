@@ -237,12 +237,30 @@ const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const SAVE_EVERY_MS = 4000;
 /**
  * The one zoom level the game is played at (a few streets around the hunter); players can't change it. Closer on a
- * phone (owner, 27 Oct 2026: "on mobile … zoom to 18"): its small screen showed the streets too far off.
+ * phone (owner, 27 Oct 2026: "on mobile … zoom to 18"), then 17.5 (28 Oct: at 18 the ground slid past twice as fast as on a laptop).
  */
-const GAME_ZOOM = typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches ? 18 : 17;
+const GAME_ZOOM = typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches ? 17.5 : 17;
 /** A "do it here" button (Refuel, Eat…) ignores taps for this long after it appears, and presses held longer than this. */
 const HERE_ARM_MS = 900;
 const HERE_TAP_MS = 600;
+
+/** A status card folded to an icon on a phone: what it is, a short badge (a time, a distance), and whether it needs the player now. */
+type StatusPill = { id: string; icon: ReactNode; badge: string | null; tone: string; call: boolean; label: string };
+/** How long a new status card shows in full on a phone before folding to its icon. */
+const CARD_PEEK_MS = 4000;
+const PHONE_QUERY = "(max-width: 600px)";
+const isPhone = () => window.matchMedia(PHONE_QUERY).matches;
+function onPhoneChange(fn: () => void) {
+  const q = window.matchMedia(PHONE_QUERY);
+  q.addEventListener("change", fn);
+  return () => q.removeEventListener("change", fn);
+}
+/** The first time in a status line, short: "2 min 30 s" → "2:30", "45 s" → "45s". */
+function shortTime(text: string) {
+  const m = text.match(/(\d+) min(?: (\d+) s)?|(\d+) s\b/);
+  if (!m) return null;
+  return m[3] ? `${m[3]}s` : `${m[1]}:${String(m[2] ?? 0).padStart(2, "0")}`;
+}
 
 /** A button that reports while it's held down (mouse, touch or pen). */
 function HoldButton({
@@ -7966,6 +7984,62 @@ export function GameMap({
     }
   };
 
+  // On a phone the status cards (a taxi coming, a trip, directions…) fold into a row of icons with a short badge
+  // (owner, 28 Oct 2026: "we cannot keep too many toast on the screen on mobile… calling a taxi, we can just show taxi
+  // icon and the time badge"). One card opens at a time: the one tapped, else one waiting for the player (Get in,
+  // Board), else a new one for a few seconds so it's noticed.
+  const phone = useSyncExternalStore(onPhoneChange, isPhone, () => false);
+  const statusCards: StatusPill[] = [];
+  if (hud.journey && !inside && !hud.ride && !hud.care)
+    statusCards.push({ id: "journey", icon: "🧭", badge: `${hud.journey.step}/${hud.journey.total}`, tone: "bg-[#14324A] ring-1 ring-[#5FA8E6]", call: !!hud.journey.board, label: `Your journey to ${hud.journey.place}` });
+  if (hud.guide && !inside)
+    statusCards.push({
+      id: "guide",
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ transform: `rotate(${hud.guide.arrow}deg)` }}>
+          <path d="M12 2l7 9h-4.5v11h-5V11H5z" />
+        </svg>
+      ),
+      badge: hud.guide.step.match(/^In ([\d.,]+ ?k?m)/i)?.[1] ?? "now",
+      tone: "bg-[#1E9E62]",
+      call: false,
+      label: hud.guide.step,
+    });
+  if (hud.care) statusCards.push({ id: "care", icon: hud.care.icon, badge: shortTime(hud.care.status), tone: "bg-[#D62828]", call: false, label: hud.care.title });
+  if (hud.pickup && !inside && !hud.ride && !hud.care)
+    statusCards.push({
+      id: "pickup",
+      icon: hud.pickup.icon,
+      badge: hud.pickup.action ? "here" : (shortTime(hud.pickup.status) ?? hud.pickup.status.match(/[\d.,]+ ?k?m\b/)?.[0] ?? null),
+      tone: "bg-[#1E9E62]",
+      call: !!hud.pickup.action,
+      label: hud.pickup.title,
+    });
+  if (hud.advice && !inside && !hud.care) statusCards.push({ id: "advice", icon: "⚠", badge: null, tone: "bg-[#3B2F0A] ring-1 ring-gold text-gold", call: false, label: hud.advice.title });
+  if (hud.stuck && !inside && !hud.ride) statusCards.push({ id: "stuck", icon: "🧭", badge: "Stuck?", tone: "bg-ink ring-1 ring-gold", call: false, label: "Going nowhere?" });
+  if (hud.ride && !inside) statusCards.push({ id: "ride", icon: hud.ride.icon, badge: shortTime(hud.ride.status), tone: "bg-[#2F6FEB]", call: false, label: hud.ride.title });
+  const cardIds = statusCards.map((c) => c.id).join("|");
+  const [cardChoice, setCardChoice] = useState<string | null>(null); // tapped open, or "none" (all folded)
+  const [cardPeek, setCardPeek] = useState<string | null>(null);
+  const seenCards = useRef<string[]>([]);
+  useEffect(() => {
+    const ids = cardIds ? cardIds.split("|") : [];
+    const fresh = ids.find((id) => !seenCards.current.includes(id));
+    seenCards.current = ids;
+    if (!fresh) return;
+    setCardChoice(null);
+    setCardPeek(fresh);
+    const timer = window.setTimeout(() => setCardPeek((p) => (p === fresh ? null : p)), CARD_PEEK_MS);
+    return () => window.clearTimeout(timer);
+  }, [cardIds]);
+  const openCard = !phone
+    ? null
+    : cardChoice === "none"
+      ? null
+      : (statusCards.find((c) => c.id === cardChoice) ?? statusCards.find((c) => c.call) ?? statusCards.find((c) => c.id === cardPeek))?.id ?? null;
+  /** Whether a status card shows in full: always on a laptop; on a phone, the one open. */
+  const cardShown = (id: string) => !phone || openCard === id;
+
   if (failed) {
     return (
       <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
@@ -8113,7 +8187,7 @@ export function GameMap({
                     {hud.jam === 2 ? "Go-slow" : "Slow traffic"}
                     {/* How much it holds you back: your speed now, and your vehicle's usual top speed. */}
                     {hud.vehicle && (
-                      <span className="font-semibold opacity-90">
+                      <span className="font-semibold opacity-90 max-sm:hidden">
                         · {hud.speedKmh} of {MODES[hud.vehicle.kind].kmh} km/h
                       </span>
                     )}
@@ -8160,7 +8234,7 @@ export function GameMap({
                     <span aria-hidden="true">🔥</span>
                     {hud.heat.level >= 0.85 ? "Burning!" : hud.heat.level >= 0.6 ? "Hot" : hud.heat.level >= 0.3 ? "Warm" : "In the area"}
                     {hud.heat.trend !== "steady" && <span className="font-semibold opacity-90">· {hud.heat.trend === "warmer" ? "↑ warmer" : "↓ colder"}</span>}
-                    {hud.heat.level >= 0.6 && !hud.heat.chest && !hud.heat.trap && <span className="font-semibold opacity-90">· the chest rises within 60 m</span>}
+                    {hud.heat.level >= 0.6 && !hud.heat.chest && !hud.heat.trap && <span className="font-semibold opacity-90 max-sm:hidden">· the chest rises within 60 m</span>}
                   </div>
                 )}
                 {hud.wonders.frozen && (
@@ -8299,8 +8373,32 @@ export function GameMap({
               />
             )}
 
+            {/* On a phone: the status cards as icons with a badge; tap one to open it (the cards below). */}
+            {phone && statusCards.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5" aria-label="What's going on">
+                {statusCards.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    data-pill={c.id}
+                    onClick={() => setCardChoice(openCard === c.id ? "none" : c.id)}
+                    aria-expanded={openCard === c.id}
+                    aria-label={`${c.label}${c.badge ? ` · ${c.badge}` : ""}`}
+                    className={`pointer-events-auto flex h-9 items-center gap-1 rounded-full px-2.5 text-sm font-bold text-paper shadow-lg ${c.tone} ${
+                      c.call ? "loota-lamp-glow ring-2 ring-gold" : ""
+                    } ${openCard === c.id ? "outline outline-2 outline-offset-1 outline-paper/70" : ""}`}
+                  >
+                    <span className="flex items-center text-base leading-none" aria-hidden="true">
+                      {c.icon}
+                    </span>
+                    {c.badge && <span className="text-xs tabular-nums">{c.badge}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* A journey under way: which step, and the Board button at the stop. */}
-            {hud.journey && !inside && !hud.ride && !hud.care && (
+            {hud.journey && !inside && !hud.ride && !hud.care && cardShown("journey") && (
               <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#14324A] p-3 text-paper ring-1 ring-[#5FA8E6]" role="status" aria-label="Your journey">
                 <div className="flex items-center gap-2">
                   <span className="text-xl" aria-hidden="true">
@@ -8325,7 +8423,7 @@ export function GameMap({
             )}
 
             {/* Directions: the next turn. The player steers; this only guides. */}
-            {hud.guide && !inside && (
+            {hud.guide && !inside && cardShown("guide") && (
               <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Directions">
                 <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0" style={{ transform: `rotate(${hud.guide.arrow}deg)` }}>
                   <path d="M12 2l7 9h-4.5v11h-5V11H5z" />
@@ -8341,7 +8439,7 @@ export function GameMap({
             )}
 
             {/* The ambulance, the hospital, a mechanic on the way. */}
-            {hud.care && (
+            {hud.care && cardShown("care") && (
               <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-[#D62828] p-3 text-paper" role="status" aria-label="Being looked after">
                 <span className="text-2xl" aria-hidden="true">
                   {hud.care.icon}
@@ -8354,7 +8452,7 @@ export function GameMap({
             )}
 
             {/* A rental waiting at a bus stop, or a taxi on its way. */}
-            {hud.pickup && !inside && !hud.ride && !hud.care && (
+            {hud.pickup && !inside && !hud.ride && !hud.care && cardShown("pickup") && (
               <div className="pointer-events-auto flex w-full max-w-md flex-col gap-2 rounded-2xl bg-[#1E9E62] p-3 text-paper" role="status" aria-label="Your pickup">
                 <div className="flex items-center gap-3">
                   <span className="text-2xl" aria-hidden="true">
@@ -8382,7 +8480,7 @@ export function GameMap({
             )}
 
             {/* A warning: tired, fuel low, soft tyres, a worn engine; and the nearest place that helps. Tap for the whole story. */}
-            {hud.advice && !inside && !hud.care && (
+            {hud.advice && !inside && !hud.care && cardShown("advice") && (
               <div className="pointer-events-auto flex w-full max-w-md items-start gap-2 rounded-2xl bg-[#3B2F0A] p-2.5 text-sm text-paper ring-1 ring-gold" role="alert">
                 <button type="button" onClick={() => setAdviceOpen((o) => !o)} aria-expanded={adviceOpen} className="flex min-w-0 flex-1 flex-col text-left">
                   <span className="font-bold text-gold">⚠ {hud.advice.title}</span>
@@ -8410,7 +8508,7 @@ export function GameMap({
             )}
 
             {/* Going nowhere: the offer to be put on a road that leads out. */}
-            {hud.stuck && !inside && !hud.ride && (
+            {hud.stuck && !inside && !hud.ride && cardShown("stuck") && (
               <div className="pointer-events-auto flex w-full max-w-md items-center gap-2 rounded-2xl bg-ink p-2.5 text-sm text-paper ring-1 ring-gold" role="alert" aria-label="Stuck">
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="font-bold text-gold">🧭 Going nowhere?</span>
@@ -8426,7 +8524,7 @@ export function GameMap({
             )}
 
             {/* On a bus, train or plane: where to, and when it leaves or arrives. */}
-            {hud.ride && !inside && (
+            {hud.ride && !inside && cardShown("ride") && (
               <div className="pointer-events-auto flex w-full max-w-md flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-[#2F6FEB] p-3 text-paper" role="status" aria-label="Your trip">
                 <span className="text-2xl" aria-hidden="true">
                   {hud.ride.icon}

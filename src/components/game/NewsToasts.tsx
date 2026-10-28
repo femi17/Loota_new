@@ -30,7 +30,8 @@ export function newsLine(n: Pick<News, "kind" | "prize" | "qty" | "place" | "who
 
 /**
  * The news strip over the map: the hunt's news (rivals, keys) and the world's (a relic picked up, a lamp prize won),
- * three at most, a few seconds each. `hidden` while a scene fills the screen.
+ * three at most (on a phone just the newest, in two lines at most; owner, 28 Oct 2026: "we cannot keep too many toast
+ * on the screen on mobile"), a few seconds each. `hidden` while a scene fills the screen.
  */
 export function NewsToasts({ hidden }: { hidden: boolean }) {
   const [toasts, setToasts] = useState<{ id: number; text: string }[]>([]);
@@ -72,7 +73,10 @@ export function NewsToasts({ hidden }: { hidden: boolean }) {
   return (
     <div className="pointer-events-none fixed inset-x-3 bottom-[190px] z-20 mx-auto flex max-w-sm flex-col gap-1.5" aria-live="polite" aria-label="News">
       {toasts.map((t) => (
-        <p key={t.id} className="loota-wonder-banner rounded-xl bg-ink/95 px-3 py-2 text-sm font-bold text-paper ring-1 ring-gold">
+        <p
+          key={t.id}
+          className="loota-wonder-banner rounded-xl bg-ink/95 px-3 py-2 text-sm font-bold text-paper ring-1 ring-gold max-sm:line-clamp-2 max-sm:[&:not(:last-child)]:hidden"
+        >
           {t.text}
         </p>
       ))}

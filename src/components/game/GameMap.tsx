@@ -240,6 +240,9 @@ const SAVE_EVERY_MS = 4000;
  * phone (owner, 27 Oct 2026: "on mobile … zoom to 18"): its small screen showed the streets too far off.
  */
 const GAME_ZOOM = typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches ? 18 : 17;
+/** A "do it here" button (Refuel, Eat…) ignores taps for this long after it appears, and presses held longer than this. */
+const HERE_ARM_MS = 900;
+const HERE_TAP_MS = 600;
 
 /** A button that reports while it's held down (mouse, touch or pen). */
 function HoldButton({
@@ -697,6 +700,11 @@ export function GameMap({
 
       const supabase = createClient();
       const small = window.matchMedia("(max-width: 600px)").matches;
+      /**
+       * On a phone the hunter rides low on the screen, two-thirds of the way down, so more of the road ahead shows
+       * (owner, 28 Oct 2026: "we are too close to the front"); a laptop's screen is big enough to keep them centred.
+       */
+      const chasePad = () => ({ top: small ? Math.round(window.innerHeight * 0.34) : 0, bottom: 0, left: 0, right: 0 });
       // Mouse and keyboard, or touch: the hints describe the controls the player has.
       const traveller = movement.createTraveller({ lng: startLng, lat: startLat }, startMode);
 
@@ -6053,7 +6061,7 @@ export function GameMap({
         me.object.visible = true;
         inWorld = null;
         map.setMaxZoom(GAME_ZOOM);
-        map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+        map.setPadding(chasePad());
         setInside(null);
         for (const el of document.querySelectorAll<HTMLElement>("[data-bubble]")) el.style.visibility = "hidden";
       }
@@ -6259,7 +6267,7 @@ export function GameMap({
           bearing: w.cam.bearing + turn * k,
           zoom: w.cam.zoom + (SCENE_ZOOM - w.cam.zoom) * k,
           pitch: w.cam.pitch + (SCENE_PITCH - w.cam.pitch) * k,
-          padding: { top: 0, left: 0, right: 0, bottom: w.pad * k },
+          padding: { top: chasePad().top * (1 - k), left: 0, right: 0, bottom: w.pad * k },
         });
         if (w.closing !== null) camBearing = w.cam.bearing + turn * k;
 
@@ -7698,7 +7706,7 @@ export function GameMap({
         const diff = ((want - camBearing) % 360 + 540) % 360 - 180;
         camBearing += dragging ? diff : diff * Math.min(1, 2.5 * dt);
         if (inWorld) placeStep(now, dt, t);
-        else map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom: ride ? rideZoom() : undefined });
+        else map.jumpTo({ center: [traveller.pos.lng, traveller.pos.lat], bearing: camBearing, zoom: ride ? rideZoom() : undefined, padding: chasePad() });
 
         if (!ride && !visit && now - lastSave > SAVE_EVERY_MS) {
           lastSave = now;
@@ -7925,6 +7933,38 @@ export function GameMap({
       cleanup();
     };
   }, [startLng, startLat, startMode, lookKey, playerId, username, huntId]);
+
+  // The "do it here" buttons answer only a deliberate tap (owner, 28 Oct 2026: "my hands are mistakenly pressing the
+  // prompts on the screen like refuel"): not in their first moment on screen (a tap meant for the map as one appears
+  // under the thumb), and not the end of a hold (a thumb resting there to move) or of a swipe.
+  const hereKey = [
+    hud.dome?.siege ? "siege" : "",
+    hud.djinnHere?.place,
+    hud.heat?.chest || hud.heat?.trap ? "chest" : "",
+    hud.ticketHere?.name,
+    hud.repairHere?.shop,
+    hud.detourHere?.title,
+    ...hud.actions.map((a) => a.id),
+  ].join("|");
+  const hereArmedAt = useRef(0);
+  const herePress = useRef<{ at: number; x: number; y: number } | null>(null);
+  useEffect(() => {
+    hereArmedAt.current = performance.now() + HERE_ARM_MS;
+  }, [hereKey]);
+  const hereDown = (e: ReactPointerEvent) => {
+    herePress.current = { at: performance.now(), x: e.clientX, y: e.clientY };
+  };
+  const hereClick = (e: ReactMouseEvent) => {
+    if (e.detail === 0) return; // from the keyboard: always meant
+    const press = herePress.current;
+    herePress.current = null;
+    const now = performance.now();
+    const meant = now >= hereArmedAt.current && !!press && now - press.at <= HERE_TAP_MS && Math.hypot(e.clientX - press.x, e.clientY - press.y) <= 12;
+    if (!meant) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
 
   if (failed) {
     return (
@@ -8463,7 +8503,7 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours and finds (it glows); the Djinn between hunts (purple smoke)</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Inventory: gear, papers, relics</li>
-                  <li className="flex items-center gap-2"><span className="text-[#2EC4B6]"><RadioIcon /></span> Radio: live stations from where you are (and Nigeria's) while you move</li>
+                  <li className="flex items-center gap-2"><span className="text-[#2EC4B6]"><RadioIcon /></span> Radio: live stations from where you are (and Nigeria&apos;s) while you move</li>
                 </ul>
                 <details className="rounded-xl bg-ink-2 p-2.5">
                   <summary className="cursor-pointer font-bold">Good to know</summary>
@@ -9034,6 +9074,8 @@ export function GameMap({
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
+          onPointerDownCapture={hereDown}
+          onClickCapture={hereClick}
         >
           {hud.dome?.siege && (
             <button

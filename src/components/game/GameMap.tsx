@@ -119,7 +119,7 @@ type Hud = {
   } | null;
   /** On a bus, train or plane (or waiting for one). */
   /** `toGo`: the distance still to travel once moving ("312 km"), for the trip's icon on a phone. */
-  ride: { icon: string; title: string; status: string; canCancel: boolean; pass: boolean; toGo: string | null } | null;
+  ride: { icon: string; title: string; status: string; canCancel: boolean; pass: boolean; toGo: string | null; to: string } | null;
   /** At a bus stop, station or airport: what the transport button offers. */
   stopHere: { icon: string; label: string } | null;
   /** At a station's ticket office or an airport's check-in desk: the button to go in. */
@@ -246,7 +246,7 @@ const HERE_ARM_MS = 900;
 const HERE_TAP_MS = 600;
 
 /** A status card folded to an icon on a phone: what it is, a short badge (a time, a distance), and whether it needs the player now. */
-type StatusPill = { id: string; icon: ReactNode; badge: string | null; tone: string; call: boolean; label: string };
+type StatusPill = { id: string; icon: ReactNode; badge: string | null; tone: string; call: boolean; label: string; place?: string };
 /** How long a new status card shows in full on a phone before folding to its icon. */
 const CARD_PEEK_MS = 4000;
 const PHONE_QUERY = "(max-width: 600px)";
@@ -2778,10 +2778,11 @@ export function GameMap({
         const metres = ride.s > 0 ? Math.max(0, ride.cum[ride.cum.length - 1] - ride.s) : null;
         const toGo =
           metres === null ? null : metres >= 10_000 ? `${Math.round(metres / 1000)} km` : metres >= 1000 ? `${(metres / 1000).toFixed(1)} km` : `${Math.round(metres / 50) * 50} m`;
+        const to = ride.label;
         setHud((h) =>
-          h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.pass === pass && h.ride.title === title && h.ride.toGo === toGo
+          h.ride?.status === status && h.ride.canCancel === canCancel && h.ride.pass === pass && h.ride.title === title && h.ride.toGo === toGo && h.ride.to === to
             ? h
-            : { ...h, ride: { icon: info.icon, title, status, canCancel, pass, toGo } },
+            : { ...h, ride: { icon: info.icon, title, status, canCancel, pass, toGo, to } },
         );
       }
 
@@ -8007,7 +8008,15 @@ export function GameMap({
   const phone = useSyncExternalStore(onPhoneChange, isPhone, () => false);
   const statusCards: StatusPill[] = [];
   if (hud.journey && !inside && !hud.ride && !hud.care)
-    statusCards.push({ id: "journey", icon: "🧭", badge: `${hud.journey.step}/${hud.journey.total}`, tone: "bg-[#14324A] ring-1 ring-[#5FA8E6]", call: !!hud.journey.board, label: `Your journey to ${hud.journey.place}` });
+    statusCards.push({
+      id: "journey",
+      icon: "🧭",
+      badge: `${hud.journey.step}/${hud.journey.total}`,
+      tone: "bg-[#14324A] ring-1 ring-[#5FA8E6]",
+      call: !!hud.journey.board,
+      label: `Your journey to ${hud.journey.place}`,
+      place: hud.journey.place,
+    });
   if (hud.guide && !inside)
     statusCards.push({
       id: "guide",
@@ -8041,6 +8050,7 @@ export function GameMap({
       tone: "bg-[#2F6FEB]",
       call: false,
       label: hud.ride.title,
+      place: hud.ride.to,
     });
   const cardIds = statusCards.map((c) => c.id).join("|");
   const [cardChoice, setCardChoice] = useState<string | null>(null); // tapped open, or "none" (all folded)
@@ -8408,14 +8418,24 @@ export function GameMap({
                     onClick={() => setCardChoice(openCard === c.id ? "none" : c.id)}
                     aria-expanded={openCard === c.id}
                     aria-label={`${c.label}${c.badge ? ` · ${c.badge}` : ""}`}
-                    className={`pointer-events-auto flex h-9 items-center gap-1 rounded-full px-2.5 text-sm font-bold text-paper shadow-lg ${c.tone} ${
+                    className={`pointer-events-auto flex min-h-9 items-center gap-1 rounded-full px-2.5 text-sm font-bold text-paper shadow-lg ${c.place ? "py-1 pl-3 pr-3.5" : ""} ${c.tone} ${
                       c.call ? "loota-lamp-glow ring-2 ring-gold" : ""
                     } ${openCard === c.id ? "outline outline-2 outline-offset-1 outline-paper/70" : ""}`}
                   >
                     <span className="flex items-center text-base leading-none" aria-hidden="true">
                       {c.icon}
                     </span>
-                    {c.badge && <span className="text-xs tabular-nums">{c.badge}</span>}
+                    {/* Where to, in small letters above the badge (owner, 29 Oct 2026: "travelling without showing the address one is going" makes no sense) */}
+                    {c.place ? (
+                      <span className="flex min-w-0 flex-col items-start leading-tight">
+                        <span data-pill-place className="max-w-[11rem] truncate text-[10px] font-semibold text-paper/85">
+                          {c.place}
+                        </span>
+                        {c.badge && <span className="text-xs tabular-nums">{c.badge}</span>}
+                      </span>
+                    ) : (
+                      c.badge && <span className="text-xs tabular-nums">{c.badge}</span>
+                    )}
                   </button>
                 ))}
               </div>

@@ -1,4 +1,4 @@
-// The trip's icon on a phone counts the kilometres down (owner, 28 Oct 2026: "add the km countdown in the icon for
+// The trip's icon on a phone names where it's going (29 Oct 2026) and counts the kilometres down (owner, 28 Oct 2026: "add the km countdown in the icon for
 // travel"), and the plane is a fair size at cruising height ("too big", then "too small"). A test player is ten minutes
 // into a flight from Lagos towards Abuja: the ✈ icon shows the km to go and the time to landing, and a few seconds later
 // fewer km. Screenshot of the plane in the air. The trip and the test player are deleted.
@@ -56,6 +56,11 @@ try {
     first = await badge();
   }
   check("in the air, the ✈ icon shows the km to go and the time to landing", /✈/.test(first ?? "") && /\d+ km/.test(first ?? "") && /\d+:\d\d/.test(first ?? ""), first);
+  const place = await page.evaluate(() => {
+    const el = document.querySelector('[data-pill="ride"] [data-pill-place]');
+    return el ? { text: el.textContent, size: parseFloat(getComputedStyle(el).fontSize) } : null;
+  });
+  check("…and where to, in small letters (29 Oct 2026)", place?.text === "Abuja" && place.size <= 11, JSON.stringify(place));
   await wait(8000);
   const later = await badge();
   check("…a few seconds later, fewer km", km(later) < km(first), `${first} → ${later}`);

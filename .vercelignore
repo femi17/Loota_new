@@ -1,0 +1,9 @@
+# Never upload: secrets, local builds, Supabase CLI state (Vercel builds from the source).
+.env*
+!.env.example
+.next
+node_modules
+supabase/.temp
+*.tsbuildinfo
+next-env.d.ts
+public/maplibre-gl-worker.mjs

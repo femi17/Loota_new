@@ -5,6 +5,7 @@ import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import { FUEL_PRICE, KEG_CAPACITY, KEG_PRICE } from "@/game/economy";
 import { formatDistance } from "@/game/geo";
+import { local, words } from "@/game/locale";
 
 /**
  * At a petrol station with a motorbike or car that needs fuel: the one ridden, or one in the pocket; or one that ran
@@ -48,7 +49,7 @@ export function FuelScene({
   onMoment?: (m: SceneMoment) => void;
   onClose: () => void;
 }) {
-  const name = offer.kind === "car" ? "car" : "okada";
+  const name = offer.kind === "car" ? "car" : words().okada;
   const want = Math.max(0, Math.floor(100 - offer.fuel)) * FUEL_PRICE;
   const canFill = Math.max(0, Math.floor(KEG_CAPACITY - (offer.kegFuel ?? 0))) * FUEL_PRICE; // filling the jerry can
   const away = offer.stranded ? formatDistance(offer.stranded.metres) : "";
@@ -60,7 +61,7 @@ export function FuelScene({
     {
       who: "them",
       text: offer.stranded
-        ? `${welcome} Your ${name} ran dry on the road, ${away} from here? No wahala: I'll fill a jerry can for you to carry back. ${
+        ? `${welcome} Your ${name} ran dry on the road, ${away} from here? ${local("No wahala", "No problem")}: I'll fill a jerry can for you to carry back. ${
             offer.hasKeg ? `${canFill} coins fills your can` : `A jerry can is ${KEG_PRICE} coins and ${canFill} fills it`
           }: enough to take your tank to ${KEG_CAPACITY}%. A can can't fill a tank to the top.`
         : offer.pocket
@@ -163,7 +164,7 @@ export function FuelScene({
       {
         label: "Not now",
         onPick: () => {
-          say({ who: "you", text: "Not now, thanks." }, { who: "them", text: "No wahala. We dey here." });
+          say({ who: "you", text: "Not now, thanks." }, { who: "them", text: local("No wahala. We dey here.", "No problem. We're here.") });
           setStep("bye");
         },
       },
@@ -176,7 +177,7 @@ export function FuelScene({
       {
         label: "Not today",
         onPick: () => {
-          say({ who: "you", text: "Not today, thanks." }, { who: "them", text: "No wahala. We dey here." });
+          say({ who: "you", text: "Not today, thanks." }, { who: "them", text: local("No wahala. We dey here.", "No problem. We're here.") });
           setStep("bye");
         },
       },

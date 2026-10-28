@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
+import { local } from "@/game/locale";
 
 /** At a vulcanizer's (or a petrol station's air): soft tyres pumped, or a flat patched and pumped. */
 export type PumpOffer = { place: string; keeper: string; flat: boolean; price: number; seconds: number };
@@ -38,7 +39,7 @@ export function PumpScene({
       who: "them",
       text: offer.flat
         ? `Ah, this tyre is flat! I'll find the hole in the water, patch the tube and pump it: ${offer.price} coins, about ${offer.seconds} seconds.`
-        : `Your tyres are soft o. Let me pump them for you: ${offer.price} coins, about ${offer.seconds} seconds.`,
+        : `Your tyres are soft${local(" o", "")}. Let me pump them for you: ${offer.price} coins, about ${offer.seconds} seconds.`,
     },
   ]);
   const say = (...more: SceneLine[]) => setLines((l) => [...l, ...more]);
@@ -86,7 +87,7 @@ export function PumpScene({
       {
         label: "No thanks",
         onPick: () => {
-          say({ who: "you", text: "No thanks." }, { who: "them", text: "No wahala. Ride well." });
+          say({ who: "you", text: "No thanks." }, { who: "them", text: local("No wahala. Ride well.", "No problem. Ride safe.") });
           setStep("bye");
         },
       },

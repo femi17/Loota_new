@@ -177,7 +177,7 @@ function kindOfPoi(cls: string, sub: string): PlaceKind | "stop" | "park" | null
   if (sub === "park" || sub === "garden" || sub === "mall" || cls === "park") return "rest";
   return null;
 }
-const POI_NAME: Record<string, string> = { mall: "Shopping mall", garden: "Garden", food_court: "Food court" };
+const POI_NAME: Record<string, string> = { mall: "Shopping mall", garden: "Garden", food_court: "Food court", tyres: "Tyre shop" };
 
 /** One square's places and bus stops, from the map tiles over it. */
 async function fetchSquare(ix: number, iy: number) {

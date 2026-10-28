@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
+import { local, words } from "@/game/locale";
 
 /**
  * At a mechanic's with a motorbike or car whose engine is worn (or broken down, in the pocket): the job, the price,
@@ -32,7 +33,7 @@ export function ServiceScene({
   onClose: () => void;
 }) {
   type Step = "greet" | "working" | "done" | "bye";
-  const name = offer.kind === "car" ? "car" : "okada";
+  const name = offer.kind === "car" ? "car" : words().okada;
   const [step, setStep] = useState<Step>("greet");
   const [busy, setBusy] = useState(false);
   const [until, setUntil] = useState(0);
@@ -41,7 +42,7 @@ export function ServiceScene({
     {
       who: "them",
       text: offer.broken
-        ? `Ah, your ${name} don break down! I'll open the engine and fix it, then service it: ${offer.price} coins, about ${offer.seconds} seconds.`
+        ? `${local(`Ah, your ${name} don break down!`, `Ah, your ${name} has broken down!`)} I'll open the engine and fix it, then service it: ${offer.price} coins, about ${offer.seconds} seconds.`
         : `Your ${name}'s engine is at ${Math.round(offer.engine)}%. Oil change, plugs, a good tune: ${offer.price} coins, about ${offer.seconds} seconds and it runs like new.`,
     },
   ]);
@@ -88,7 +89,7 @@ export function ServiceScene({
       {
         label: "Not now",
         onPick: () => {
-          say({ who: "you", text: "Not now, thanks." }, { who: "them", text: "No wahala. Don't let that engine knock o." });
+          say({ who: "you", text: "Not now, thanks." }, { who: "them", text: local("No wahala. Don't let that engine knock o.", "No problem. Don't let that engine knock.") });
           setStep("bye");
         },
       },

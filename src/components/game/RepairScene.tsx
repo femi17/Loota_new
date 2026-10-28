@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
 import { keeperLook, keeperWrap, type AvatarLook } from "@/lib/avatar";
 import type { VehicleKind } from "@/game/economy";
+import { local } from "@/game/locale";
 
 /** A broken-down vehicle's repair shop (repair_shop in the database). `readyAt` is on this device's clock (ms). */
 export type RepairJob = {
@@ -54,7 +55,7 @@ export function RepairScene({
   const [step, setStep] = useState<Step>(initial.readyAt ? "working" : "greet");
   const [lines, setLines] = useState<SceneLine[]>(() =>
     initial.readyAt
-      ? [{ who: "them", text: `Welcome back! ${initial.readyAt <= Date.now() ? `Your ${vehicle} is ready.` : "Not yet o, give me small time. I'm still on it."}` }]
+      ? [{ who: "them", text: `Welcome back! ${initial.readyAt <= Date.now() ? `Your ${vehicle} is ready.` : local("Not yet o, give me small time. I'm still on it.", "Not yet, give me a little time. I'm still on it.")}` }]
       : [{ who: "them", text: `Hello! Welcome to ${initial.shop}. How can I help you today?` }],
   );
   const say = (...more: SceneLine[]) => setLines((l) => [...l, ...more]);
@@ -126,7 +127,7 @@ export function RepairScene({
       {
         label: "That's too much for me",
         onPick: () => {
-          say({ who: "you", text: "That's too much for me." }, { who: "them", text: "No wahala. Come back any time." });
+          say({ who: "you", text: "That's too much for me." }, { who: "them", text: local("No wahala. Come back any time.", "No problem. Come back any time.") });
           setStep("declined");
         },
       },

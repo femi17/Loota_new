@@ -1,9 +1,9 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { STATIONS, onRadio, radioOn, radioState, radioStation, radioVolume, type RadioState } from "@/game/radio";
+import { NIGERIA_STATIONS, onRadio, radioOn, radioState, radioStation, radioVolume, type RadioState } from "@/game/radio";
 
-const OFF: RadioState = { station: 0, status: "off", volume: 0.7 };
+const OFF: RadioState = { stations: NIGERIA_STATIONS, station: 0, status: "off", volume: 0.7 };
 
 /** The radio's state, kept up to date (for the tool's button and the panel). */
 export function useRadio() {
@@ -20,7 +20,8 @@ const STATUS: Record<RadioState["status"], string> = {
 /** Loota Radio: on/off, the station (next, previous, or any from the list) and the volume. */
 export function RadioPanel({ onClose }: { onClose: () => void }) {
   const r = useRadio();
-  const st = STATIONS[r.station];
+  const st = r.stations[r.station];
+  const firstNigerian = r.stations.findIndex((s) => s.id === NIGERIA_STATIONS[0].id);
   const playing = r.status !== "off";
   return (
     <div className="pointer-events-auto flex max-h-[64dvh] w-full max-w-md flex-col gap-3 rounded-2xl bg-ink p-4 text-sm text-paper ring-1 ring-line" role="dialog" aria-label="Loota Radio">
@@ -71,8 +72,9 @@ export function RadioPanel({ onClose }: { onClose: () => void }) {
       </label>
 
       <ul className="flex flex-col gap-1 overflow-y-auto" aria-label="Stations">
-        {STATIONS.map((s, i) => (
+        {r.stations.map((s, i) => (
           <li key={s.id}>
+            {i === firstNigerian && i > 0 && <p className="mb-1 mt-2 text-xs font-bold uppercase tracking-wider text-gold">Nigerian stations</p>}
             <button
               type="button"
               onClick={() => radioStation(i)}

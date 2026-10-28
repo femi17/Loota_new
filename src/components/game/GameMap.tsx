@@ -46,6 +46,7 @@ import { DjinnPanel, type ChamberResult, type DjinnActions, type DjinnChamber, t
 import { wonderOf } from "@/game/wonders";
 import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, rideLeg, type Journey } from "@/game/journey";
 import { NewsToasts } from "./NewsToasts";
+import { local, peopleOf, setCountry, words, type Role } from "@/game/locale";
 import { RadioPanel, useRadio } from "./RadioPanel";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -202,24 +203,20 @@ type HunterUpdate = {
   moving: boolean;
 };
 
-/** Who brings a rented bicycle or okada (the same renter for the same request, on the map and in the scene). */
-const RENTERS = ["Musa", "Kunle", "Mama Ronke", "Tunde", "Aunty Joy", "Chidi", "Danjuma", "Iya Bola"];
 /** The Lamp's messenger (in purple, like the lamp's glow). */
 const MESSENGER: AvatarLook = { skin: "#8D5524", hair: "bun", hairColour: "#1B120C", top: "hoodie", topColour: "#7C4DCC", bottomsColour: "#2A1747", extra: "none" };
-/** The pump attendant, the cook, the nurse and the paramedic in the scenes (the same one for the same place or visit). */
-const ATTENDANTS = ["Chidi", "Musa", "Segun", "Ibrahim", "Emeka", "Yusuf", "Sola"];
-const COOKS = ["Mama Nkechi", "Mama Bisi", "Iya Titi", "Mama Ngozi", "Iya Kemi", "Aunty Amaka", "Mama Ronke"];
-const VULCANIZERS = ["Baba Sule", "Emeka", "Kunle", "Alhaji Musa", "Chinedu"];
-const MECHANICS = ["Oga Tunde", "Mr Bayo", "Kalu", "Mallam Idris", "Uche"];
-const NURSES = ["Nurse Funmi", "Nurse Aisha", "Nurse Grace", "Nurse Ifeoma", "Nurse Zainab"];
-const PARAMEDICS = ["Paramedic Tobi", "Paramedic Usman", "Paramedic Ada", "Paramedic Kelechi"];
-function nameFor(list: string[], seed: string) {
+/**
+ * The renter, pump attendant, cook, vulcanizer, mechanic, nurse, paramedic and clerk in the scenes: the same one for
+ * the same place or visit, with a name from the country the hunter is in (src/game/locale.ts).
+ */
+function nameFor(role: Role, seed: string) {
+  const list = peopleOf(role);
   let n = 0;
   for (let i = 0; i < seed.length; i++) n = (n * 31 + seed.charCodeAt(i)) % 9973;
   return list[n % list.length];
 }
 function renterName(requestedAt: string) {
-  return nameFor(RENTERS, requestedAt);
+  return nameFor("renter", requestedAt);
 }
 
 /** Areas for live positions (~2.2 km); each hunter listens to theirs and the 8 around it. */
@@ -659,7 +656,7 @@ export function GameMap({
             if (r.outcome === "won") return { good: true, line: `You got it! ${r.relic ? `The ${RELICS[r.relic].name} is yours: it's in your bag.` : `${r.coins} coins are yours.`}` };
             if (r.outcome === "full") return { good: false, line: "Ah, others got here first: it's all been claimed." };
             if (r.outcome === "late") return { good: false, line: `Too slow! The answer was ${r.answer}. The lamp moves on.` };
-            return { good: false, line: `No o. It was ${r.answer}. The lamp moves on.` };
+            return { good: false, line: `${local("No o", "No")}. It was ${r.answer}. The lamp moves on.` };
           },
         },
       });
@@ -3358,7 +3355,7 @@ export function GameMap({
         // (owner, 27 Oct 2026: "the bus, train should work according to the country not showing nigeria").
         if ((near.nearest.train?.metres ?? 0) > 100_000) delete near.nearest.train;
         if ((near.nearest.bus?.metres ?? 0) > 50_000) delete near.nearest.bus;
-        near.parkWord = inNigeria(from) ? "motor park" : "bus station";
+        near.parkWord = words().park;
         const here: [number, number] = [from.lng, from.lat];
         const withMetres = ((parks ?? []) as Omit<TransitStop, "metres" | "line">[]).map((p) => ({ ...p, line: null, metres: Math.round(geo.distanceM(here, [p.lng, p.lat])) }));
         near.park = withMetres.sort((a, b) => a.metres - b.metres)[0] ?? null;
@@ -3374,6 +3371,32 @@ export function GameMap({
         if (ride || now - nearAt < 3000) return;
         const moved = nearFrom ? geo.distanceM([nearFrom.lng, nearFrom.lat], [traveller.pos.lng, traveller.pos.lat]) : Infinity;
         if (moved > 20 || now - nearAt > 30000) void refreshNear();
+        countryTick();
+      }
+
+      // ---- The country the hunter is in: its words, people's names and radio (src/game/locale.ts) ------------------
+      let countryFrom: LngLat | null = null;
+      let countryAsking = false;
+      function countryTick() {
+        const here = traveller.pos;
+        if (countryAsking || (countryFrom && geo.distanceM([countryFrom.lng, countryFrom.lat], [here.lng, here.lat]) < 20_000)) return;
+        countryAsking = true;
+        if (!countryFrom) setCountry(inNigeria(here) ? "NG" : "ZZ"); // until the answer: Nigeria's flavour only in Nigeria
+        countryFrom = { ...here };
+        void fetch(`/api/world/country?lng=${here.lng}&lat=${here.lat}`)
+          .then((r) => (r.ok ? (r.json() as Promise<{ code: string | null }>) : null))
+          .then((c) => {
+            if (c && !disposed) {
+              setCountry(c.code ?? (inNigeria(here) ? "NG" : "ZZ")); // the open sea: no country's in particular
+              void refreshNear(); // its words (a motor park or a bus station)
+            }
+          })
+          .catch(() => {
+            countryFrom = null; // try again shortly
+          })
+          .finally(() => {
+            countryAsking = false;
+          });
       }
 
       const stopTitle = (st: TransitStop) => (st.kind === "plane" ? `${st.name} (${st.code})` : st.kind === "train" ? `${st.name} station` : st.name);
@@ -3769,10 +3792,10 @@ export function GameMap({
         if (mine?.kind === "bicycle") {
           if (mine.tyre <= 0 && warned.tyre > 0) {
             warned.tyre = 0;
-            void advise("tyre", "Flat tyre", "Flat tyre! You're pushing your bicycle at walking pace. A vulcanizer or petrol station can fix it (20 coins).", ["tyres", "fuel"]);
+            void advise("tyre", "Flat tyre", `Flat tyre! You're pushing your bicycle at walking pace. A ${words().tyres} or petrol station can fix it (20 coins).`, ["tyres", "fuel"]);
           } else if (mine.tyre < 40 && warned.tyre > 40) {
             warned.tyre = 40;
-            void advise("tyre", "Soft tyres", "Your tyres are getting soft. Pump them at a vulcanizer or petrol station (5 coins).", ["tyres", "fuel"]);
+            void advise("tyre", "Soft tyres", `Your tyres are getting soft. Pump them at a ${words().tyres} or petrol station (5 coins).`, ["tyres", "fuel"]);
           }
           if (mine.tyre > 60 && warned.tyre < 100) {
             warned.tyre = 100;
@@ -3929,7 +3952,7 @@ export function GameMap({
           const v = flatVehicle();
           if (!v || v.kind === "bicycle" || metresTo(v) > 25) return false;
           await savePosition(); // the server checks you're beside it
-          const offer: FlatOffer = { kind: v.kind, mechanic: nameFor(VULCANIZERS, `${v.lng.toFixed(4)},${v.lat.toFixed(4)}`), jack: v.jack };
+          const offer: FlatOffer = { kind: v.kind, mechanic: nameFor("vulcanizer", `${v.lng.toFixed(4)},${v.lat.toFixed(4)}`), jack: v.jack };
           openFlatPlace(offer, v);
           setFlatOpen(offer);
           return true;
@@ -3954,7 +3977,7 @@ export function GameMap({
           if (!spot || !v || v.kind === "bicycle") return false;
           const offer: ServiceOffer = {
             place: spot.name,
-            mechanic: nameFor(MECHANICS, String(spot.id)),
+            mechanic: nameFor("mechanic", String(spot.id)),
             kind: v.kind,
             engine: v.engine,
             broken: !!v.broken_at,
@@ -3972,7 +3995,7 @@ export function GameMap({
           if (!spot || bike?.kind !== "bicycle") return false;
           const flat = bike.tyre <= 0;
           const place = spot.kind === "fuel" ? `${spot.name}: air and tyres` : spot.name;
-          const offer = { place, keeper: nameFor(VULCANIZERS, String(spot.id)), flat, price: flat ? 20 : 5, seconds: flat ? 20 : 8 };
+          const offer = { place, keeper: nameFor("vulcanizer", String(spot.id)), flat, price: flat ? 20 : 5, seconds: flat ? 20 : 8 };
           openPumpPlace(offer, spot);
           setPumpOpen(offer);
           return true;
@@ -3981,7 +4004,7 @@ export function GameMap({
           // Sit down with the cook (MealScene).
           const place = spotHere(["eat"]);
           if (place) {
-            const offer = { place: place.name, cook: nameFor(COOKS, String(place.id)), id: place.id, price: MEAL_PRICE, energy: MEAL_ENERGY };
+            const offer = { place: place.name, cook: nameFor("cook", String(place.id)), id: place.id, price: MEAL_PRICE, energy: MEAL_ENERGY };
             openMealPlace(offer, todaysMenu(place.id).map((d) => d.board), place);
             setMealOpen(offer);
           }
@@ -3996,7 +4019,7 @@ export function GameMap({
           if (station && v && v.kind !== "bicycle") {
             const offer = {
               station: station.name,
-              attendant: nameFor(ATTENDANTS, String(station.id)),
+              attendant: nameFor("attendant", String(station.id)),
               kind: v.kind,
               fuel: v.fuel,
               pocket: !v.in_use,
@@ -4459,7 +4482,7 @@ export function GameMap({
         if (broken) void findRepairShop(broken.kind, true);
         const discharge = {
           hospital: vs.v.route ? (r.hospital ?? vs.v.hospital) : null,
-          nurse: nameFor(vs.v.route ? NURSES : PARAMEDICS, vs.v.calledAt),
+          nurse: nameFor(vs.v.route ? "nurse" : "paramedic", vs.v.calledAt),
           bill: vs.v.bill,
           energy: Math.round(traveller.energy),
           damaged: broken?.kind ?? null,
@@ -4535,7 +4558,7 @@ export function GameMap({
           entities.push(car);
         } else {
           renter = models.buildAvatar(keeperLook(renterName(p.requestedAt)));
-          renter.root.add(layer.billboard(models.makeNameplate(p.kind === "bicycle" ? "BICYCLE HIRE" : "OKADA HIRE", "#1E9E62")));
+          renter.root.add(layer.billboard(models.makeNameplate(p.kind === "bicycle" ? "BICYCLE HIRE" : `${words().okada.toUpperCase()} HIRE`, "#1E9E62")));
           entities.push(layer.add({ object: renter.root, lng: p.lng, lat: p.lat, heading: 0 }));
           // The bike stands beside the renter.
           const k = 1.6 * layer.enlargement();
@@ -5706,7 +5729,6 @@ export function GameMap({
       // airport, the user must go and check in"). A station's ticket office stands at the road nearest the station
       // (within the 150 m the server allows), an airport's terminal at the road nearest it (within its 2 km).
       const TICKET_AT_M = 30;
-      const CLERKS = ["Mrs Okafor", "Mr Adeyemi", "Miss Bello", "Mr Danjuma", "Mrs Eze"];
       let pendingTicket: TransitQuote | null = null; // chosen in the travel panel, to buy at the office
       const boards = new Map<number, string[]>(); // each station's or airport's departures, for its board
       /** The desk the server knows (it insists on it), else the road nearest the stop. */
@@ -5723,7 +5745,7 @@ export function GameMap({
         if (st.kind !== "train" && st.kind !== "plane") return;
         const plane = st.kind === "plane";
         const S = plane ? models.TERMINAL_SPOTS : models.TICKET_SPOTS;
-        const clerk = nameFor(CLERKS, String(st.id));
+        const clerk = nameFor("clerk", String(st.id));
         // The departures board: the trip chosen, then where else the line or airport goes (looked up as you approach).
         const board = [...(quote ? [quote.label] : []), ...(boards.get(st.id) ?? []).filter((r) => r !== quote?.label)].slice(0, 5);
         const hall = plane ? null : models.makeTicketHall(st.name, board);
@@ -5967,7 +5989,7 @@ export function GameMap({
       /** At the vulcanizer's: your bicycle on the stand, the compressor, the vulcanizer. */
       function openPumpPlace(offer: PumpOffer, spot: LngLat & { id: number }) {
         const S = models.VULCANIZER_SPOTS;
-        const v = models.makeVulcanizer(offer.place.length > 22 ? "Vulcanizer" : offer.place);
+        const v = models.makeVulcanizer(offer.place.length > 22 ? local("Vulcanizer", "Tyre shop") : offer.place);
         const bike = models.makeVehicleModel("bicycle");
         bike.rotation.y = Math.PI / 2;
         bike.position.set(S.stand.x, 0.1, S.stand.z);
@@ -8441,7 +8463,7 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
                   <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours and finds (it glows); the Djinn between hunts (purple smoke)</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Inventory: gear, papers, relics</li>
-                  <li className="flex items-center gap-2"><span className="text-[#2EC4B6]"><RadioIcon /></span> Radio: live Nigerian stations while you move</li>
+                  <li className="flex items-center gap-2"><span className="text-[#2EC4B6]"><RadioIcon /></span> Radio: live stations from where you are (and Nigeria's) while you move</li>
                 </ul>
                 <details className="rounded-xl bg-ink-2 p-2.5">
                   <summary className="cursor-pointer font-bold">Good to know</summary>

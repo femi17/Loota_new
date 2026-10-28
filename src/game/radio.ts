@@ -1,16 +1,18 @@
 /**
  * Loota Radio (owner, 27 Oct 2026: "enable music or radio, so users can listen as they move so it is not just boring"):
- * real Nigerian stations, live from their own internet streams, played while the hunter walks, rides or drives. One
- * player for the whole game; it carries on through scenes and screens, dips under the game's own sounds, and shows on
- * the phone's lock screen. The station, volume and whether it was on are kept on this device.
+ * real stations, live from their own internet streams (the country the hunter is in, and Nigeria's), played while they
+ * walk, ride or drive. One player for the whole game; it carries on through scenes and screens, dips under the game's
+ * own sounds, and shows on the phone's lock screen. The station, volume and whether it was on are kept on this device.
  *
  * The streams come from a public directory (radio-browser.info), checked 27 Oct 2026: https only (an http stream is
  * blocked on an https page), plain MP3 (plays in every browser). Before launch: the stations' OK (see GAME_DESIGN).
  */
+import { countryNow, onCountry } from "./locale";
 
 export type Station = { id: string; name: string; what: string; url: string };
 
-export const STATIONS: Station[] = [
+/** Nigeria's stations: everywhere (a Nigerian abroad still has them), and all there is at home. */
+export const NIGERIA_STATIONS: Station[] = [
   { id: "coolfm", name: "Cool FM 96.9", what: "Lagos · hits", url: "https://coolfmlagos969-atunwadigital.streamguys1.com/coolfmlagos969" },
   { id: "beatfm", name: "Beat FM 99.9", what: "Lagos · hits", url: "https://beatfmlagos-atunwadigital.streamguys1.com/beatfmlagos" },
   { id: "wazobia", name: "Wazobia FM 95.1", what: "Lagos · pidgin", url: "https://wazobiafmlagos951-atunwadigital.streamguys1.com/wazobiafmlagos951" },
@@ -24,6 +26,8 @@ export const STATIONS: Station[] = [
 ];
 
 export type RadioState = {
+  /** The dial: the stations of the country the hunter is in, then Nigeria's (/api/radio). */
+  stations: Station[];
   station: number;
   /** "off"; "tuning" (asked, not yet sounding); "on"; "down" (the station isn't answering). */
   status: "off" | "tuning" | "on" | "down";
@@ -31,12 +35,14 @@ export type RadioState = {
 };
 
 const KEY = "loota:radio";
-let state: RadioState = { station: 0, status: "off", volume: 0.7 };
+let state: RadioState = { stations: NIGERIA_STATIONS, station: 0, status: "off", volume: 0.7 };
 let wasOn = false;
+let wanted: string | null = null; // the station last chosen, if it's one from abroad (found when that country's dial loads)
 try {
   const kept = JSON.parse(localStorage.getItem(KEY) ?? "null") as { station?: string; volume?: number; on?: boolean } | null;
   if (kept) {
-    const i = STATIONS.findIndex((s) => s.id === kept.station);
+    const i = NIGERIA_STATIONS.findIndex((s) => s.id === kept.station);
+    if (i < 0 && kept.station) wanted = kept.station;
     state = { ...state, station: i >= 0 ? i : 0, volume: typeof kept.volume === "number" ? Math.min(1, Math.max(0, kept.volume)) : state.volume };
     wasOn = !!kept.on;
   }
@@ -53,7 +59,7 @@ export function onRadio(fn: () => void) {
 function set(next: Partial<RadioState>) {
   state = { ...state, ...next };
   try {
-    localStorage.setItem(KEY, JSON.stringify({ station: STATIONS[state.station].id, volume: state.volume, on: state.status !== "off" }));
+    localStorage.setItem(KEY, JSON.stringify({ station: state.stations[state.station].id, volume: state.volume, on: state.status !== "off" }));
   } catch {
     // Not kept: fine.
   }
@@ -80,7 +86,7 @@ function audio() {
 
 function tune() {
   const a = audio();
-  const st = STATIONS[state.station];
+  const st = state.stations[state.station];
   a.src = st.url;
   a.volume = state.volume * dip;
   set({ status: "tuning" });
@@ -105,7 +111,7 @@ export function radioOn(on: boolean) {
 
 /** Another station: by number, or the next (+1) or previous (−1) one. Turns the radio on. */
 export function radioStation(to: number, step = false) {
-  const n = STATIONS.length;
+  const n = state.stations.length;
   set({ station: (((step ? state.station + to : to) % n) + n) % n });
   tune();
 }
@@ -147,3 +153,31 @@ if (typeof window !== "undefined" && wasOn) {
   window.addEventListener("pointerdown", wake, { once: true, capture: true });
   window.addEventListener("keydown", wake, { once: true, capture: true });
 }
+
+/**
+ * The dial follows the hunter (owner, 27 Oct 2026: "it is not only focused on Nigeria but the country which you find
+ * yourself"): the stations of the country they're in, then Nigeria's. What's playing keeps playing across a border.
+ */
+async function dialFor(code: string) {
+  let found: Station[] = [];
+  if (code !== "NG" && /^[A-Z]{2}$/.test(code)) {
+    try {
+      const res = await fetch(`/api/radio?country=${code}`);
+      if (res.ok) found = ((await res.json()) as { stations: Station[] }).stations;
+    } catch {
+      // Offline: Nigeria's for now.
+    }
+  }
+  if (code !== countryNow()) return; // moved on meanwhile
+  const ids = new Set(NIGERIA_STATIONS.map((s) => s.id));
+  const stations = [...found.filter((s) => !ids.has(s.id)), ...NIGERIA_STATIONS];
+  const current = state.stations[state.station];
+  let station = stations.findIndex((s) => s.id === (state.status === "off" && wanted ? wanted : current.id));
+  if (station < 0 && state.status !== "off") {
+    stations.unshift(current); // the one playing stays on the dial
+    station = 0;
+  }
+  if (station >= 0 && stations[station].id === wanted) wanted = null;
+  set({ stations, station: Math.max(0, station) });
+}
+if (typeof window !== "undefined") onCountry(() => void dialFor(countryNow()));

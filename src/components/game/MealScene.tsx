@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, keeperWrap, type AvatarLook } from "@/lib/avatar";
+import { local } from "@/game/locale";
 
 /** At a place to eat: the cook and the day's menu (every dish is one meal: the same price, the same energy). */
 export type MealOffer = { place: string; cook: string; id: number; price: number; energy: number };
@@ -74,7 +75,7 @@ export function MealScene({
       } else {
         setPlate("empty");
         onMoment?.({ type: "plate", state: "empty" });
-        say({ who: "them", text: `Ehen! You cleaned the plate. That one go give you power: +${gained} energy. Come back any time!` });
+        say({ who: "them", text: `${local("Ehen! You cleaned the plate. That one go give you power", "There you go, a clean plate! That'll keep you going")}: +${gained} energy. Come back any time!` });
         setStep("done");
       }
     }, 1400);

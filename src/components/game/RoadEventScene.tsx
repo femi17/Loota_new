@@ -6,6 +6,7 @@ import { keeperLook, keeperWrap, lookForId, type AvatarLook } from "@/lib/avatar
 import { PAPER_FINE, PAPER_NAME, type AddonId, type VehicleKind } from "@/game/economy";
 import { RoadGameBoard, gameIntro, gameSeconds, timeoutMove, type RoadGame, type RoadGameResult } from "./RoadGames";
 import { cue } from "@/game/sound";
+import { local } from "@/game/locale";
 
 /** Something on the road during a hunt (road_event_roll): the question comes without its answer. */
 export type RoadEvent = {
@@ -127,9 +128,9 @@ export function RoadEventScene({
           who: "them",
           text:
             event.game.type === "chess"
-              ? "Oga, you know chess? Sit down small. Mate in one, White to move: find the checkmate and I'll give you 25 coins."
+              ? `${local("Oga, you know chess? Sit down small.", "Do you play chess? Sit down a moment.")} Mate in one, White to move: find the checkmate and I'll give you 25 coins.`
               : event.game.type === "cups"
-                ? "Watch am o! The coin goes under one cup, I shuffle, you find it: 25 coins if your eyes are sharp."
+                ? `${local("Watch am o!", "Watch closely!")} The coin goes under one cup, I shuffle, you find it: 25 coins if your eyes are sharp.`
                 : `Play with us! ${gameIntro(event.game)}, and we'll give you 25 coins.`,
         },
       ];
@@ -158,7 +159,7 @@ export function RoadEventScene({
       say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Get your papers sorted at the vehicle panel before I see you again, o.` });
     else if (r.outcome === "fined" && choice === -2) say(mine, { who: "them", text: `Fine paid: ${r.fine} coins. Wait here while I write your receipt.` });
     else if (r.outcome === "fined") say(mine, { who: "them", text: `Wrong! It's "${r.correct}". That's a ${r.fine}-coin fine, and wait here while I write it.` });
-    else if (r.outcome === "won") say(mine, { who: "them", text: "Correct! You're sharp o. Take your 25 coins." });
+    else if (r.outcome === "won") say(mine, { who: "them", text: local("Correct! You're sharp o. Take your 25 coins.", "Correct! You're sharp. Take your 25 coins.") });
     else if (r.outcome === "lost") say(mine, { who: "them", text: `Ah no! It was "${r.correct}". Better luck next time.` });
     else if (r.outcome === "helped") {
       const g = r.gift ?? null;
@@ -186,7 +187,7 @@ export function RoadEventScene({
       say(mine, { who: "them", text: event.game ? `${thanks} Before you go, a game? ${gameIntro(event.game)}: 20 coins if you do.` : `${thanks} Safe journey.` });
       if (event.game) setGame("offered");
     }
-    else say(mine, { who: "them", text: event.kind === "traveller" ? "No wahala. Safe journey." : "Okay o. Another time." });
+    else say(mine, { who: "them", text: event.kind === "traveller" ? local("No wahala. Safe journey.", "No problem. Safe journey.") : local("Okay o. Another time.", "Okay. Another time.") });
   }
 
   const sent = useRef(false); // one move only (a move and the clock at nought can come together)
@@ -218,7 +219,7 @@ export function RoadEventScene({
             : "Time! Too slow: the pairs beat you this time."
         : g.type === "chess"
           ? r.won
-            ? `Checkmate! ${r.san}. You sabi this game o. Take your ${r.reward} coins.`
+            ? `Checkmate! ${r.san}. ${local("You sabi this game o.", "You know this game.")} Take your ${r.reward} coins.`
             : `Ah no, that's not mate. It was ${r.san}: look at the board.`
           : g.type === "cups"
             ? r.won

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, keeperWrap, type AvatarLook } from "@/lib/avatar";
+import { local, words } from "@/game/locale";
 
 /** The renter waiting at the bus stop with a bicycle or an okada (a motorbike). */
 export type RentalOffer = { kind: "bicycle" | "motorbike"; renter: string; stop: string; rate: number };
@@ -32,7 +33,7 @@ export function RentalScene({
   onClose: () => void;
 }) {
   const bike = offer.kind === "bicycle";
-  const ride = bike ? "bicycle" : "okada";
+  const ride = bike ? "bicycle" : words().okada;
   type Step = "greet" | "price" | "rented" | "short" | "declined";
   const [step, setStep] = useState<Step>("greet");
   const [busy, setBusy] = useState(false);
@@ -41,7 +42,7 @@ export function RentalScene({
       who: "them",
       text: bike
         ? `Hello! You called for a bicycle? Here she is: oiled, pumped and ready to go.`
-        : `You called for an okada? Here it is: full tank, and the engine is sweet.`,
+        : `You called for a${words().okada === "okada" ? "n" : ""} ${words().okada}? Here it is: full tank, and the engine is ${local("sweet", "running nicely")}.`,
     },
   ]);
   const say = (...more: SceneLine[]) => setLines((l) => [...l, ...more]);
@@ -63,7 +64,7 @@ export function RentalScene({
   }
 
   function decline(text: string) {
-    say({ who: "you", text }, { who: "them", text: "No wahala. I'll take it back then. Call me any time." });
+    say({ who: "you", text }, { who: "them", text: `${local("No wahala", "No problem")}. I'll take it back then. Call me any time.` });
     setStep("declined");
   }
 
@@ -78,7 +79,7 @@ export function RentalScene({
             { who: "you", text: "How much is it?" },
             {
               who: "them",
-              text: `${offer.rate} coins a minute. The meter starts when you ride off, and every minute you start counts. When you're done, just get off: I'll come for it.${bike ? "" : " Helmet dey for seat!"}`,
+              text: `${offer.rate} coins a minute. The meter starts when you ride off, and every minute you start counts. When you're done, just get off: I'll come for it.${bike ? "" : local(" Helmet dey for seat!", " The helmet's on the seat!")}`,
             },
           );
           setStep("price");
@@ -110,8 +111,8 @@ export function RentalScene({
   return (
     <EventScene
       stage="bike_hire"
-      title={`${bike ? "Bicycle" : "Okada"} hire at ${offer.stop}`}
-      sign={`${bike ? "Bicycle" : "Okada"} hire`}
+      title={`${bike ? "Bicycle" : local("Okada", "Motorbike")} hire at ${offer.stop}`}
+      sign={`${bike ? "Bicycle" : local("Okada", "Motorbike")} hire`}
       them={{ name: offer.renter, look: keeperLook(offer.renter), wrap: keeperWrap(offer.renter) }}
       you={you}
       vehicle={{ kind: offer.kind, fixed: true, sparkle: step === "rented" }}

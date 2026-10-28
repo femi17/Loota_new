@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import { FLAT_FIX_PRICE, FLAT_FIX_SECONDS, type VehicleKind } from "@/game/economy";
+import { local } from "@/game/locale";
 
 /** A flat by the roadside (owner, 22 Oct 2026): the vehicle, a roadside mechanic, and whether you have a jack. */
 export type FlatOffer = { kind: "motorbike" | "car"; mechanic: string; jack: boolean };
@@ -40,7 +41,7 @@ export function FlatScene({
   const [lines, setLines] = useState<SceneLine[]>([
     {
       who: "them",
-      text: `Wahala! Your ${name}'s tyre is flat flat. I fit change am for you: ${FLAT_FIX_PRICE} coins, about ${FLAT_FIX_SECONDS.mechanic} seconds.${
+      text: `${local(`Wahala! Your ${name}'s tyre is flat flat. I fit change am for you`, `Oh dear, your ${name}'s tyre is flat. I can change it for you`)}: ${FLAT_FIX_PRICE} coins, about ${FLAT_FIX_SECONDS.mechanic} seconds.${
         offer.jack ? " Or you get your own jack? Do am yourself, I go show you." : ""
       }`,
     },
@@ -73,9 +74,9 @@ export function FlatScene({
               : "Eh, something no correct. Try again."
             : r.remounted
               ? how === "jack"
-                ? "See am! The spare is on, nuts tight tight. You sabi this thing. Safe journey!"
+                ? local("See am! The spare is on, nuts tight tight. You sabi this thing. Safe journey!", "There! The spare is on, nuts nice and tight. You know your stuff. Safe journey!")
                 : "Done! The spare is on, tight tight. Safe journey!"
-              : `The tyre is fixed, but your tank is empty o. Bring fuel in a jerry can, then you can go.`,
+              : `The tyre is fixed, but your tank is empty${local(" o", "")}. Bring fuel in a jerry can, then you can go.`,
         });
         setStep("done");
       });
@@ -92,7 +93,7 @@ export function FlatScene({
           who: "them",
           text:
             r.reason === "coins"
-              ? `Ah, you don't have up to ${FLAT_FIX_PRICE} coins o.${offer.jack ? " Use your jack." : " Sorry."}`
+              ? `${local(`Ah, you don't have up to ${FLAT_FIX_PRICE} coins o.`, `Sorry, you don't have ${FLAT_FIX_PRICE} coins.`)}${offer.jack ? " Use your jack." : " Sorry."}`
               : r.reason === "far"
                 ? `Your ${name} is back there o: walk to it first.`
                 : r.reason === "no_jack"
@@ -126,7 +127,7 @@ export function FlatScene({
       {
         label: "Not now",
         onPick: () => {
-          say({ who: "you", text: "Not now, thanks." }, { who: "them", text: "No wahala. I dey here if you need me." });
+          say({ who: "you", text: "Not now, thanks." }, { who: "them", text: local("No wahala. I dey here if you need me.", "No problem. I'm here if you need me.") });
           setStep("bye");
         },
       },

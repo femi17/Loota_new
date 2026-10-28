@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import { clock, gateFor, type TransitDestination, type TransitStop } from "@/game/transit";
+import { local } from "@/game/locale";
 import type { TransitQuote } from "./TransitPanel";
 
 /**
@@ -129,7 +130,7 @@ export function TicketScene({
       {
         label: "That's too much for me",
         onPick: () => {
-          say({ who: "you", text: "That's too much for me." }, { who: "them", text: "No wahala. Another time." });
+          say({ who: "you", text: "That's too much for me." }, { who: "them", text: local("No wahala. Another time.", "No problem. Another time.") });
           setStep("bye");
         },
       },

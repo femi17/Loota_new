@@ -2763,8 +2763,9 @@ export function GameMap({
       let busLeftAt = 0; // performance ms: a full bus pulling off without the player
       let lastRushHud = "";
       const TRAIN_SCALE = 0.8;
-      const PLANE_GROUND_SCALE = 0.45; // at the gate and on the runway, next to the hunter
-      const PLANE_AIR_SCALE = 1.4; // at cruising height, seen from far above
+      // A phone's narrow screen: the plane smaller, or it fills the view (owner, 28 Oct 2026: "the plane is too big on mobile").
+      const PLANE_GROUND_SCALE = small ? 0.3 : 0.45; // at the gate and on the runway, next to the hunter
+      const PLANE_AIR_SCALE = small ? 0.75 : 1.4; // at cruising height, seen from far above
 
       function showRide(status: string, canCancel: boolean) {
         if (!ride) return;
@@ -3012,6 +3013,7 @@ export function GameMap({
         busLeftAt = 0;
         setHud((h) => (h.rush ? { ...h, rush: null } : h));
         ride = null;
+        lampStale = true; // the lamp rested on the way: it looks around where you got off
         setHud((h) => (h.lounge ? { ...h, lounge: null } : h));
         me.object.visible = true;
         map.setMinZoom(GAME_ZOOM); // back to the one zoom players play at
@@ -5328,7 +5330,7 @@ export function GameMap({
           | ({ type: "detour" } & Omit<LampDetour, "endsAt"> & { endsAt: string })
           | { type: "whisper"; id: string; lng: number; lat: number; metres: number; endsAt: string }
           | { type: "orb"; id: string; lng: number; lat: number; metres: number; endsAt: string };
-        const raw = data as { now: string; current: RawItem | null; hunt?: boolean; restUntil?: string } | null;
+        const raw = data as { now: string; current: RawItem | null; hunt?: boolean; restUntil?: string; riding?: boolean } | null;
         if (disposed || !raw) return lamp ?? { current: null };
         const skew = Date.now() - Date.parse(raw.now);
         const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
@@ -5339,7 +5341,7 @@ export function GameMap({
           : c.type === "whisper"
             ? { ...c, endsAt: Date.parse(c.endsAt) + skew, direction: compassWord(geo.compassFromHeading(geo.headingOf(here, [c.lng, c.lat]))) }
             : { ...c, endsAt: Date.parse(c.endsAt) + skew };
-        lamp = { current, inHunt: raw.hunt !== false, restUntil: raw.restUntil ? Date.parse(raw.restUntil) + skew : undefined };
+        lamp = { current, inHunt: raw.hunt !== false, restUntil: raw.restUntil ? Date.parse(raw.restUntil) + skew : undefined, riding: !!raw.riding };
         // Something new: say so (the lamp glows too).
         if (current && current.id !== before && !seenLamp.has(current.id)) {
           say(
@@ -5386,6 +5388,14 @@ export function GameMap({
       }
 
       function lampTick(now: number) {
+        // On a bus, train, plane or taxi the lamp rests (it can't send you anywhere); it looks again once you're off.
+        if (ride) {
+          if (lamp?.current) {
+            lamp = { ...lamp, current: null };
+            showLamp();
+          }
+          return;
+        }
         if (lampStale || now - lampAt > 30_000) {
           lampStale = false;
           void refreshLamp();

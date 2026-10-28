@@ -36,7 +36,7 @@ export type LampOrb = { id: string; lng: number; lat: number; metres: number; en
 export type LampItem = ({ type: "detour" } & LampDetour) | ({ type: "whisper" } & LampWhisper) | ({ type: "orb" } & LampOrb);
 /** `inHunt`: false when the player isn't in a live hunt (finds still come, at half the coins: owner, 22 Oct 2026). */
 /** `restUntil`: the lamp rests after each thing is done (owner, 26 Oct 2026), until then (ms, this device's clock). */
-export type LampState = { current: LampItem | null; inHunt?: boolean; restUntil?: number };
+export type LampState = { current: LampItem | null; inHunt?: boolean; restUntil?: number; riding?: boolean };
 
 export type LampQuestion = { detourId: string; title: string; question: string; options: string[]; seconds: number; endsAt: number };
 export type LampPrizeItem = "cruise" | "tyre_kit";
@@ -263,6 +263,10 @@ export function LampPanel({
           )
         ) : !state ? (
           <p className="text-sm text-muted">The lamp flickers…</p>
+        ) : !item && state.riding ? (
+          <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">
+            🧳 The lamp rests while you travel: it can&apos;t send you anywhere from your seat. It looks around again when you get off.
+          </p>
         ) : !item && state?.restUntil && state.restUntil > now ? (
           <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">
             🌙 The lamp is resting. It glows again in about {Math.max(1, Math.ceil((state.restUntil - now) / 60000))} min: keep roaming.

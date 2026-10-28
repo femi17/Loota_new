@@ -1,6 +1,6 @@
 // The home page, on a phone and a desktop: full-page screenshots (and the phone screen by screen), with no page errors
 // and no sideways scroll; the gallery's pictures all load.
-//   SHOTS=<folder> node scripts/tests/landing-shots.mjs
+//   SHOTS=<folder> [BASE=https://…] node scripts/tests/landing-shots.mjs
 import puppeteer from "puppeteer-core";
 const OUT = process.env.SHOTS ?? (await import("node:os")).tmpdir();
 const browser = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true,
@@ -13,7 +13,7 @@ try {
     const problems = [];
     page.on("pageerror", (e) => problems.push(e.message));
     await page.setViewport(vp);
-    await page.goto("http://localhost:3000/", { waitUntil: "networkidle2", timeout: 120000 });
+    await page.goto(process.env.BASE ?? "http://localhost:3000/", { waitUntil: "networkidle2", timeout: 120000 });
     await page.addStyleTag({ content: "nextjs-portal { display: none !important; }" });
     // Every picture in, as a visitor scrolling (and swiping the gallery) would see it.
     await page.evaluate(() => document.querySelectorAll("img").forEach((i) => (i.loading = "eager")));

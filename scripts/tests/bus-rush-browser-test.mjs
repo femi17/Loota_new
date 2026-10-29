@@ -68,7 +68,15 @@ try {
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   page.on("pageerror", (e) => problems.push(e.message));
   await page.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
-  const text = (sel) => page.evaluate((s, nl) => document.querySelector(s)?.innerText.split(nl).join(" | ") ?? null, sel, NL);
+  const text = (sel) => page.evaluate(async (s, nl) => {
+    // On a phone the trip folds to an icon after a moment: tap it open first.
+    const pill = document.querySelector('[data-pill="ride"]');
+    if (s === '[aria-label="Your trip"]' && pill && pill.getAttribute("aria-expanded") !== "true") {
+      pill.click();
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return document.querySelector(s)?.innerText.split(nl).join(" | ") ?? null;
+  }, sel, NL);
   const strip = () => text('[aria-label="Bus rush"]');
   const shot = (name) => page.screenshot({ path: `${OUT}/rush-${name}.png` });
   /** Answer every question: right (true) or wrong (false). Returns how many were asked. */

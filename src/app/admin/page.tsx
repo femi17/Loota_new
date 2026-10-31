@@ -12,6 +12,7 @@ import { StoryPictures } from "./StoryPictures";
 import { StoryProgress } from "./StoryProgress";
 import { StoryWaiting } from "./StoryWaiting";
 import { StoryTrailer } from "./StoryTrailer";
+import { CreateButton } from "./CreateButton";
 import { DeleteHunt } from "./DeleteHunt";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
@@ -135,9 +136,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
           <Field label="Winners">
             <input name="winners" type="number" min={1} max={1000} defaultValue={3} required className={field} />
           </Field>
-          <button type="submit" className="h-12 rounded-2xl bg-gold font-bold text-ink sm:col-span-3">
-            Create the hunt
-          </button>
+          <CreateButton />
         </form>
         )}
       </section>

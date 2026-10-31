@@ -107,7 +107,7 @@ export async function createStoryHunt(form: FormData) {
   const startsAt = new Date(`${day}T09:00:00+01:00`);
   const endsAt = new Date(startsAt.getTime() + 12 * 3_600_000);
   const { data: taken } = await db.from("hunts").select("title").gte("starts_at", `${day}T00:00:00+01:00`).lt("starts_at", endsAt.toISOString()).limit(1).maybeSingle();
-  if (taken) back(`${dayName(day)} already has its hunt (${taken.title}). One hunt a day: the next day opens at 9 am on ${dayName(day)}.`, true);
+  if (taken) back(`${dayName(day)}'s hunt is already made (it's below). One hunt a day: the next day's opens at 9 am on ${dayName(day)}.`);
   const { error } = await db.from("hunts").insert({
     title: "A new story hunt (waiting for its story)",
     prize: text(form, "prize") || "To be announced",

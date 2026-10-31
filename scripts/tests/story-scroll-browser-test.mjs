@@ -220,7 +220,7 @@ try {
     const card = [...document.querySelectorAll("section")].find((s) => s.querySelector("h2")?.textContent === title);
     return card?.querySelector('[aria-label="Trailer voice-over"]')?.textContent ?? "";
   }, "The Test of the Northern Light");
-  check("…and the trailer's voice-over script, with Copy", vo.includes("the keeper wrote back") && /Copy script/.test(vo), vo.slice(0, 100));
+  check("…and the trailer's narration, with Copy", vo.includes("the keeper wrote back") && /Copy narration/.test(vo), vo.slice(0, 100));
   await ownerPage.screenshot({ path: `${OUT}/story-scroll-5-admin.png` });
 } catch (e) {
   fails++;

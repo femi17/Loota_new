@@ -13,7 +13,7 @@ export function TrailerScript({ trailer, voices }: { trailer: Trailer; voices: {
   return (
     <section className="flex flex-col gap-3 rounded-2xl bg-ink-2 p-4" aria-label="Trailer voice-over">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="font-bold">🎙 The trailer&apos;s voice-over</p>
+        <p className="font-bold">🎙 The trailer&apos;s narration</p>
         <button
           type="button"
           onClick={() => {
@@ -23,10 +23,10 @@ export function TrailerScript({ trailer, voices }: { trailer: Trailer; voices: {
           }}
           className="ml-auto h-9 rounded-lg border border-line px-3 text-xs font-bold"
         >
-          {copied ? "✓ Copied" : "Copy script"}
+          {copied ? "✓ Copied" : "Copy narration"}
         </button>
       </div>
-      <p className="text-xs text-muted">About 45 seconds. Paste it into ElevenLabs, one voice per speaker, then cut the 3 pictures to it.</p>
+      <p className="text-xs text-muted">About 45 seconds, one narrator. Paste it into ElevenLabs as it is (every word is spoken), then cut the 3 pictures to it.</p>
       <pre className="whitespace-pre-wrap rounded-xl bg-ink p-3 font-sans text-sm text-paper/90">{trailer.voiceOver}</pre>
       {trailer.shots.length > 0 && (
         <ol className="flex flex-col gap-1 text-xs text-muted">

@@ -46,7 +46,8 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    key place or its aliases. Every chapter ends on a turn.
 5. **Production** (`production`): the trailer pack: an art style, the characters' fixed looks, **3 picture prompts**
    (ChatGPT makes 3 a day; each complete on its own, 16:9, no text, never a key place recognisably), `trailer.voiceOver`
-   (a ~45-second script for ElevenLabs, [NARRATOR]/[CHARACTER] lines) with `trailer.shots` (which lines over which
+   (a ~45-second narration for ElevenLabs: ONE narrator, third person, inviting players to help the hero win the prize;
+   only the words spoken, no names, brackets or stage directions) with `trailer.shots` (which lines over which
    picture), and voice directions. The scroll is text only.
 
 Edit the JSON with small, careful edits (or a short node script) so it stays valid.

@@ -133,7 +133,7 @@ const Production = z.object({
   pictures: z.array(z.object({ chapter: z.number(), prompt: z.string().describe("A full, self-contained image prompt: style, characters' looks, scene; no text in the image; never shows a key place recognisably") })).describe("The trailer's pictures: 3 (ChatGPT makes 3 a day; owner, 31 Oct 2026)"),
   voices: z.array(z.object({ name: z.string(), direction: z.string().describe("Voice for ElevenLabs: age, accent, pace, mood") })),
   trailer: z.object({
-    voiceOver: z.string().describe("The trailer's voice-over script, about 45 seconds, one line per speaker: [NARRATOR] …, [CHARACTER] …"),
+    voiceOver: z.string().describe("The trailer's narration, about 45 seconds (110–130 words): ONE narrator telling the story in the third person and inviting players to help the hero win the prize. Only the words to be spoken: no speaker names, brackets or stage directions (the voice tool reads everything aloud). Paragraphs, one per picture."),
     shots: z.array(z.object({ picture: z.number().describe("1, 2 or 3"), lines: z.string().describe("The voice-over lines heard over this picture") })),
   }).optional().describe("The trailer the owner makes: the 3 pictures cut to this voice-over (ElevenLabs)"),
 });

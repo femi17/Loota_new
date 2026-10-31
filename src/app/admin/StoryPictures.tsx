@@ -42,9 +42,9 @@ export function StoryPictures({ hunt, pictures }: { hunt: string; pictures: Stor
   return (
     <details className="rounded-2xl bg-ink-2 p-4" open={done < pictures.length}>
       <summary className="cursor-pointer font-bold">
-        🎨 The story&apos;s pictures <span className="text-muted">({done} of {pictures.length} uploaded)</span>
+        🎨 The trailer&apos;s pictures <span className="text-muted">({done} of {pictures.length} uploaded)</span>
       </summary>
-      <p className="mt-2 text-xs text-muted">Copy a prompt, paste it into ChatGPT, then upload the picture it makes here (PNG, JPG or WebP, up to 20 MB).</p>
+      <p className="mt-2 text-xs text-muted">For the trailer only (the scroll is text). Copy a prompt, paste it into ChatGPT, then upload the picture it makes here (PNG, JPG or WebP, up to 20 MB).</p>
       {error && <p className="mt-2 rounded-lg bg-danger/10 p-2 text-sm text-danger-text ring-1 ring-danger">{error}</p>}
       <ol className="mt-3 flex flex-col gap-3">
         {pictures.map((p) => (
@@ -55,7 +55,7 @@ export function StoryPictures({ hunt, pictures }: { hunt: string; pictures: Stor
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-2">
               <p className="text-xs font-bold text-gold">
-                Picture {p.n} · chapter {p.chapter}
+                Picture {p.n}
               </p>
               <p className="whitespace-pre-wrap text-sm text-paper/90">{p.prompt}</p>
               <div className="flex flex-wrap gap-2">

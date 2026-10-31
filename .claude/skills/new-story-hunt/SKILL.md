@@ -1,6 +1,6 @@
 ---
 name: new-story-hunt
-description: Write a complete Loota story hunt (a thriller story hiding N real places, 20+ decoys per key, a live piece per key, picture prompts) and import it into its hunt, without the paid API. Use when the owner sends "/new-story-hunt <hunt id> <N> keys" (copied from a waiting hunt's card in the admin), or asks for a new story or today's hunt.
+description: Write a complete Loota story hunt (one continuous thriller story hiding N real places, 6+ plot decoys per key, a live piece per key, a trailer pack) and import it into its hunt, without the paid API. Use when the owner sends "/new-story-hunt <hunt id> <N> keys" (copied from a waiting hunt's card in the admin), or asks for a new story or today's hunt.
 ---
 
 # New story hunt
@@ -9,7 +9,7 @@ The owner creates a hunt in the admin (Owner tools → New story hunt: keys, pri
 you the request on its card: `/new-story-hunt <hunt id> <N> keys`. You write the story here (no paid API: owner,
 31 Oct 2026) and import it. Arguments: $ARGUMENTS
 
-Work in `C:\Users\oduol\loota`. The bar is high: the owner rejected stories that were "too easy" or "not the juice".
+Work in `C:\Users\oduol\loota`. The bar is high: the owner rejected stories that were "too easy" or "not the juice", and then one that read "like work, not a thrill", jumped between eras and people ("the story does not tally"), and parked its decoys together. Fun first.
 Read the Bible in full every time, and meet every rule in it.
 
 ## 1. Picks
@@ -29,19 +29,23 @@ reaches players), plus everything earlier stories used (never reuse it), and the
 
 ## 3. Write, in this order, into the draft
 
-1. **The plan** (`skeleton`): title, logline, villain, heroes, world rules, chapters (prologue = 0, about keys + 1
-   chapters, epilogue), and each key: question, answer (`searchName` that OpenStreetMap finds, aliases), lockId,
+1. **The plan** (`skeleton`): title, logline, villain, heroes, world rules, chapters (a short cold open = 0, about one
+   chapter per key, a short ending; one hero, one continuous day, chapter times matching the release every 45 minutes
+   from 9 am), and each key: question, answer (`searchName` that OpenStreetMap finds, aliases), lockId,
    channelId, the conditions only the answer meets. Spread the keys around the world. Fiction woven into real places.
 2. **Each key's design** (`designs["<n>"]`): solving steps, plants (chapter + detail), the live piece written out in full
    (the deciding piece AI can't read in advance: never in the chapters), and `check` data when the lock is an acrostic,
    letter shift or anagram (it must decode exactly: the importer works it out).
-3. **Decoys** (`decoys["<n>"]`): 22+ per key, real places, each failing a named condition, at least 1 km from the
-   answer, types A/B/C, woven into named chapters naturally (never as a list).
+3. **Decoys** (`decoys["<n>"]`): 6+ per key, real places, each failing a named condition, at least 1 km from the
+   answer, types A/B/C, and each one a false trail IN THE PLOT (the villain's wrong race, a friend's wrong guess, a
+   forged message), spread across scenes, never as a list.
 4. **Chapters**: write each as `docs/stories/drafts/<date>-<id>/<n>.md` (plain prose, paragraphs separated by a blank
-   line, 1,000–1,400 words). Never name a key place or its aliases. Plant, then pay off. Every chapter ends on a turn.
-5. **Production** (`production`): an art style, each character's fixed look, 3 picture prompts per chapter for ChatGPT
-   (each complete on its own: style + looks + scene, 16:9, no text, never showing a key place recognisably), and a
-   voice direction per speaker and per live piece (ElevenLabs).
+   line, 600–850 words; cold open ~300). One "aha" per key, planted earlier in a funny or emotional moment. Never name a
+   key place or its aliases. Every chapter ends on a turn.
+5. **Production** (`production`): the trailer pack: an art style, the characters' fixed looks, **3 picture prompts**
+   (ChatGPT makes 3 a day; each complete on its own, 16:9, no text, never a key place recognisably), `trailer.voiceOver`
+   (a ~45-second script for ElevenLabs, [NARRATOR]/[CHARACTER] lines) with `trailer.shots` (which lines over which
+   picture), and voice directions. The scroll is text only.
 
 Edit the JSON with small, careful edits (or a short node script) so it stays valid.
 

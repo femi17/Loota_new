@@ -32,14 +32,15 @@ export type RiddleClock =
   | { phase: "locked"; key: number; guess: { name: string; lng: number; lat: number } };
 
 /**
- * A story hunt's story as a hunter reads it on the scroll (owner, 31 Oct 2026): no answers. The chapters and pictures
- * are empty until the hunt opens (opensAt).
+ * A story hunt's story as a hunter reads it on the scroll (owner, 31 Oct 2026): no answers. No chapters until the hunt
+ * opens (opensAt). Pictures: none (they are the trailer's).
  */
 export type HuntStoryView = {
   title: string;
   logline: string;
   opensAt: string;
-  chapters: { n: number; title: string; setting: string; paragraphs: string[] }[];
+  /** Every chapter once the hunt has opened, with when it opens; its setting and text only once it has. */
+  chapters: { n: number; title: string; setting: string; opensAt: string; paragraphs: string[] }[];
   pictures: { chapter: number; url: string }[];
 };
 

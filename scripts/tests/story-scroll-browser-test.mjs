@@ -1,12 +1,14 @@
 // The story scroll and the trailer (owner, 31 Oct 2026: "we create a reader, something like a scroll that user can always
 // open and close. What will be in the lobby, story trailer, I will create that, and there should be a place for me to
 // upload it"). A live story hunt with a story (its answers, decoys and live pieces kept with it), a picture and a trailer:
-//   1. the story the game's server hands a hunter has the chapters and the picture, and none of the answers;
+//   1. the story the game's server hands a hunter: chapters that have opened (the first two at the start, then one every
+//      45 minutes: owner, 31 Oct 2026), the rest locked with their time; text only; none of the answers;
 //      not signed in: refused; a hunt not started yet: no chapters, only when it opens; an unpublished hunt: none;
-//   2. the lobby shows the hunt's trailer, with the story's first picture as its cover;
-//   3. on the map (a phone), the scroll's button glows until read; it opens the story (title, the prologue with its
-//      picture), Next turns the chapter, ✕ and Escape close it, and it reopens at the chapter being read;
-//   4. the owner's card in the admin has the trailer and its Upload button.
+//   2. the lobby shows the hunt's trailer, with the trailer's first picture as its cover;
+//   3. on the map (a phone), the scroll's button glows until read; it opens the story (title, the prologue), Next turns
+//      the chapter, a locked chapter says when it opens, the text can't be copied or long-pressed, ✕ and Escape close
+//      it, and it reopens at the chapter being read;
+//   4. the owner's card in the admin has the trailer's voice-over script (Copy) and the trailer with its Upload button.
 // The hunts, files and test players are deleted.   SHOTS=<folder> node scripts/tests/story-scroll-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -32,7 +34,8 @@ const home = { lng: 3.3787, lat: 6.5186 };
 // What must never reach a hunter: the answer, a decoy, a live piece, the villain's motive.
 const SECRETS = ["Sun Voyager Sculpture", "Harpa Concert Hall", "THE SIX O'CLOCK BULLETIN SAYS", "revenge for the drowned"];
 const work = {
-  keys: 1, writer: "claude-code", designs: { 1: { steps: ["…"], plants: [], live: "THE SIX O'CLOCK BULLETIN SAYS: go to the steel ship." } },
+  keys: 1, writer: "claude-code",
+  production: { style: "test", characters: [], pictures: [], voices: [{ name: "Narrator", direction: "low and urgent" }], trailer: { voiceOver: "[NARRATOR] At nine o'clock this morning, the keeper wrote back.", shots: [{ picture: 1, lines: "At nine o'clock this morning…" }] } },
   decoys: { 1: [{ name: "Harpa Concert Hall", searchName: "Harpa Concert Hall" }] }, map: {}, spent: {}, done: true, log: [],
   skeleton: {
     title: "The Test of the Northern Light", logline: "A lighthouse keeper's last letter, and a ship made of steel.",
@@ -75,7 +78,7 @@ async function hunt(fields) {
 try {
   const hunter = await player();
   const owner = await player(true);
-  const live = await hunt({ title: "The Test of the Northern Light", description: work.skeleton.logline, starts_at: ago(3600), ends_at: ahead(6 * 3600), published: true, all_day: true });
+  const live = await hunt({ title: "The Test of the Northern Light", description: work.skeleton.logline, starts_at: ago(600), ends_at: ahead(6 * 3600), published: true, all_day: true });
   const soon = await hunt({ title: "A story not open yet (automated)", starts_at: ahead(20 * 3600), ends_at: ahead(32 * 3600), published: true });
   const hidden = await hunt({ title: "An unpublished story (automated)", starts_at: ago(3600), ends_at: ahead(6 * 3600), published: false });
   await admin.from("hunt_players").insert({ hunt_id: live, user_id: hunter.id, guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 });
@@ -114,7 +117,11 @@ try {
     return { live: await one(ids[0]), soon: await one(ids[1]), hidden: await one(ids[2]) };
   }, [live, soon, hidden]);
   const story = JSON.parse(got.live.text);
-  check("the story for a hunter: every chapter's text, and the uploaded picture", got.live.status === 200 && story.chapters.length === 3 && story.chapters[1].paragraphs.length === 2 && story.pictures.length === 1 && story.pictures[0].chapter === 0, `${got.live.status}, ${story.chapters?.length} chapters, ${story.pictures?.length} pictures`);
+  const third = story.chapters?.[2];
+  const opensIn = third ? Math.round((Date.parse(third.opensAt) - Date.now()) / 60000) : null;
+  check("the story for a hunter: the first two chapters open at the start, with their text", got.live.status === 200 && story.chapters.length === 3 && story.chapters[0].paragraphs.length === 2 && story.chapters[1].paragraphs.length === 2, `${got.live.status}, ${story.chapters?.length} chapters`);
+  check("…the third locked, opening 45 minutes after the start (no text, no setting yet)", third?.paragraphs.length === 0 && third.setting === "" && opensIn >= 33 && opensIn <= 36, `opens in ${opensIn} min`);
+  check("…text only: no pictures in the scroll (they are the trailer's)", story.pictures.length === 0);
   check("…and none of the answers, decoys, live pieces or the villain's motive", SECRETS.every((x) => !got.live.text.includes(x)), SECRETS.filter((x) => got.live.text.includes(x)).join(", ") || "clean");
   const notIn = await fetch(`http://localhost:3000/api/hunt/story?hunt=${live}`);
   check("not signed in: refused", notIn.status === 401, notIn.status);
@@ -154,13 +161,23 @@ try {
     return d ? { text: d.innerText, img: d.querySelector("article img")?.getAttribute("src") ?? null, chapter: d.querySelector("article")?.getAttribute("data-chapter") } : null;
   });
   check("tapped: the scroll opens on the story's title and the prologue", !!first && first.text.includes("The Test of the Northern Light") && first.text.includes("PROLOGUE") && first.text.includes("The keeper wrote by the lamp") && first.chapter === "0", first?.text.slice(0, 160));
-  check("…with its picture", /1-test\.png$/.test(first?.img ?? ""), first?.img);
+  check("…text only", first?.img === null);
   check("…and nothing of the answers", SECRETS.every((x) => !first?.text.includes(x)));
   await page.screenshot({ path: `${OUT}/story-scroll-3-prologue.png` });
   await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => /Next/.test(b.textContent ?? ""))?.click());
   await wait(400);
   const second = await page.evaluate(() => document.querySelector('[role="dialog"] article')?.innerText ?? "");
   check("Next: chapter 1", /CHAPTER 1/.test(second) && second.includes("The second bell rang at seven"), second.slice(0, 120));
+  const guard = await page.evaluate(() => {
+    const art = document.querySelector('[role="dialog"] article');
+    const fire = (type) => { const e = new Event(type, { bubbles: true, cancelable: true }); art.dispatchEvent(e); return e.defaultPrevented; };
+    return { copy: fire("copy"), menu: fire("contextmenu"), select: getComputedStyle(art).userSelect };
+  });
+  check("the text can't be copied, long-pressed or selected", guard.copy && guard.menu && guard.select === "none", JSON.stringify(guard));
+  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => /Next/.test(b.textContent ?? ""))?.click());
+  await wait(400);
+  const lockedNow = await page.evaluate(() => ({ text: document.querySelector('[role="dialog"] [data-locked]')?.innerText ?? "", option: [...document.querySelectorAll('[role="dialog"] option')].map((o) => o.textContent).join(" | ") }));
+  check("Next again: the locked chapter says when it opens", /opens at/.test(lockedNow.text) && /🔒 opens at/.test(lockedNow.option) && !lockedNow.text.includes("light went out"), lockedNow.text.replace(/\s+/g, " ").slice(0, 120));
   await page.screenshot({ path: `${OUT}/story-scroll-4-chapter.png` });
   await page.click('[aria-label="Close the scroll"]');
   await wait(400);
@@ -169,8 +186,8 @@ try {
   check("…and the button stops glowing (read)", after === "The story", after);
   await page.click('[data-tool="story"]');
   await wait(500);
-  const again = await page.evaluate(() => document.querySelector('[role="dialog"] article')?.getAttribute("data-chapter"));
-  check("opened again: back at the chapter being read", again === "1", again);
+  const again = await page.evaluate(() => document.querySelector('[role="dialog"] [data-chapter]')?.getAttribute("data-chapter"));
+  check("opened again: back at the chapter being read", again === "2", again);
   await page.keyboard.press("Escape");
   await wait(400);
   check("Escape closes it too", !(await page.$('[role="dialog"][aria-label="The story"]')));
@@ -187,6 +204,11 @@ try {
     return t ? { text: t.textContent, video: t.querySelector("video")?.getAttribute("src") ?? null, input: !!t.querySelector('input[type="file"][accept*="video/mp4"]') } : null;
   }, "The Test of the Northern Light");
   check("the admin: the hunt's trailer, with Replace (an MP4, WebM or MOV)", !!box && /uploaded: in the lobby/.test(box.text) && /trailer-test\.mp4$/.test(box.video ?? "") && box.input && /Replace the trailer/.test(box.text), box?.text?.slice(0, 120));
+  const vo = await ownerPage.evaluate((title) => {
+    const card = [...document.querySelectorAll("section")].find((s) => s.querySelector("h2")?.textContent === title);
+    return card?.querySelector('[aria-label="Trailer voice-over"]')?.textContent ?? "";
+  }, "The Test of the Northern Light");
+  check("…and the trailer's voice-over script, with Copy", vo.includes("the keeper wrote back") && /Copy script/.test(vo), vo.slice(0, 100));
   await ownerPage.screenshot({ path: `${OUT}/story-scroll-5-admin.png` });
 } catch (e) {
   fails++;

@@ -13,6 +13,7 @@ import { StoryProgress } from "./StoryProgress";
 import { StoryWaiting } from "./StoryWaiting";
 import { StoryTrailer } from "./StoryTrailer";
 import { CreateButton } from "./CreateButton";
+import { TrailerScript, type Trailer } from "./TrailerScript";
 import { DeleteHunt } from "./DeleteHunt";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
@@ -54,6 +55,9 @@ type HuntRow = {
   story_pictures: { n: number; chapter: number; prompt: string; path: string | null }[];
   /** The story's trailer in Storage (bucket story-trailers), shown in the lobby. */
   trailer_path: string | null;
+  /** The trailer's voice-over script and voices, from the story (not the whole story: it holds the answers). */
+  trailer: Trailer | null;
+  voices: { name: string; direction: string }[] | null;
 };
 
 /** Where a hunt is in its life, read per request (the page is dynamic). */
@@ -90,7 +94,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
   const { data } = await createAdminClient()
     .from("hunts")
-    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, trailer_path, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
+    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, trailer_path, trailer:story->production->trailer, voices:story->production->voices, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
     .order("starts_at", { ascending: false });
   const hunts = (data ?? []) as HuntRow[];
   // Live first, then coming up, drafts, and the finished ones folded away (owner, 31 Oct 2026: tidy the admin).
@@ -196,7 +200,6 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                         <Link href={`/admin/story/${h.id}`} className="flex h-11 w-fit items-center rounded-xl border-[1.5px] border-gold px-4 text-sm font-bold">
                           📖 Read the story and its answers
                         </Link>
-                        <StoryTrailer hunt={h.id} url={h.trailer_path ? trailerUrl(h.trailer_path) : null} />
                         {h.story_pictures.length > 0 && (
                           <StoryPictures
                             hunt={h.id}
@@ -205,6 +208,8 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                               .map((p) => ({ n: p.n, chapter: p.chapter, prompt: p.prompt, url: p.path ? pictureUrl(p.path) : null }))}
                           />
                         )}
+                        {h.trailer && <TrailerScript trailer={h.trailer} voices={h.voices ?? []} />}
+                        <StoryTrailer hunt={h.id} url={h.trailer_path ? trailerUrl(h.trailer_path) : null} />
                       </>
                     )}
                   </section>

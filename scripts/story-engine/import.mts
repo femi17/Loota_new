@@ -2,7 +2,7 @@
 //   - its shape (the same as the engine's: STORY_SHAPES in src/lib/story/engine.ts) and that every chapter is written;
 //   - every code (acrostic, letter shift, anagram) worked out by computer;
 //   - every answer, alias and decoy on the map (the game's map search), no decoy within 1 km of its answer;
-//   - no chapter names a key place; 20 decoys or more per key.
+//   - no chapter names a key place; 6 decoys or more per key, each a false trail in the plot (owner, 31 Oct 2026).
 // Then: the PDFs and files in docs/stories/<date>-<slug>/, and the hunt gets its title, description, keys at the real
 // places, and a picture slot per prompt (shown in the admin with Copy prompt and Upload picture).
 //   npm run story:import -- <draft.json> --hunt <id> [--chapters <folder of 0.md, 1.md…>]
@@ -44,14 +44,17 @@ if (!work.skeleton) throw new Error(`No plan in ${file}:\n${problems.join("\n")}
 for (const k of work.skeleton.keys) {
   shape(`key ${k.n}'s design`, STORY_SHAPES.KeyDesign, work.designs?.[k.n]);
   shape(`key ${k.n}'s decoys`, STORY_SHAPES.Decoys, { decoys: work.decoys?.[k.n] });
-  if ((work.decoys?.[k.n]?.length ?? 0) < 20) problems.push(`key ${k.n} has ${work.decoys?.[k.n]?.length ?? 0} decoys (20 or more)`);
+  if ((work.decoys?.[k.n]?.length ?? 0) < 6) problems.push(`key ${k.n} has ${work.decoys?.[k.n]?.length ?? 0} decoys (6 or more)`);
 }
 for (const c of work.skeleton.chapters) {
   const words = work.chapters?.[c.n]?.text?.split(/\s+/).filter(Boolean).length ?? 0;
   if (!words) problems.push(`chapter ${c.n} ("${c.title}") isn't written`);
-  else if (words < 600) warnings.push(`chapter ${c.n} is short (${words} words)`);
+  else if (words < 250) warnings.push(`chapter ${c.n} is short (${words} words)`);
+  else if (words > 1100) warnings.push(`chapter ${c.n} is long (${words} words): keep chapters quick to read on a phone`);
 }
 shape("the pictures and voices (production)", STORY_SHAPES.Production, work.production);
+if ((work.production?.pictures.length ?? 0) > 3) warnings.push(`${work.production!.pictures.length} picture prompts: the trailer needs 3 (ChatGPT makes 3 a day)`);
+if (work.production && !work.production.trailer) warnings.push("no trailer voice-over script (production.trailer)");
 if (work.skeleton.keys.length !== work.keys) warnings.push(`the plan has ${work.skeleton.keys.length} keys, the draft asked for ${work.keys}`);
 if (problems.length) {
   console.log(`Not ready to import:\n${problems.map((p) => `  ✗ ${p}`).join("\n")}`);

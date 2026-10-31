@@ -88,8 +88,12 @@ const Chapter = z.object({ text: z.string().describe("The chapter's prose. Parag
 const Production = z.object({
   style: z.string().describe("One art direction for every picture"),
   characters: z.array(z.object({ name: z.string(), look: z.string().describe("Fixed appearance to paste into every prompt") })),
-  pictures: z.array(z.object({ chapter: z.number(), prompt: z.string().describe("A full, self-contained image prompt: style, characters' looks, scene; no text in the image; never shows a key place recognisably") })),
+  pictures: z.array(z.object({ chapter: z.number(), prompt: z.string().describe("A full, self-contained image prompt: style, characters' looks, scene; no text in the image; never shows a key place recognisably") })).describe("The trailer's pictures: 3 (ChatGPT makes 3 a day; owner, 31 Oct 2026)"),
   voices: z.array(z.object({ name: z.string(), direction: z.string().describe("Voice for ElevenLabs: age, accent, pace, mood") })),
+  trailer: z.object({
+    voiceOver: z.string().describe("The trailer's voice-over script, about 45 seconds, one line per speaker: [NARRATOR] …, [CHARACTER] …"),
+    shots: z.array(z.object({ picture: z.number().describe("1, 2 or 3"), lines: z.string().describe("The voice-over lines heard over this picture") })),
+  }).optional().describe("The trailer the owner makes: the 3 pictures cut to this voice-over (ElevenLabs)"),
 });
 /** The shapes a story is made of: also used to check a story written in Claude Code before it is imported. */
 export const STORY_SHAPES = { Skeleton, KeyDesign, Decoys, Production };

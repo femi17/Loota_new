@@ -7,6 +7,17 @@
 import * as THREE from "three";
 
 export type HouseRoomView = { id: string; name: string; kind: string; locked: boolean; chest: boolean };
+/** How the house looks (owner, 31 Oct 2026: not every house the same): its ground, walls and floors. */
+export const HOUSE_STYLES = ["cottage", "manor", "stone", "fort", "cave", "keeper"] as const;
+export type HouseStyle = (typeof HOUSE_STYLES)[number];
+const STYLE: Record<HouseStyle, { ground: string; back: string; wall?: string; floor?: string; trim: string }> = {
+  cottage: { ground: "#5E8C4A", back: "#D9C9A6", trim: "#EFE2C4" },
+  manor: { ground: "#4F7D3E", back: "#C9B48A", wall: "#E6D3B0", trim: "#B88A4A" },
+  stone: { ground: "#6E7B5A", back: "#8E8C86", wall: "#A8A49B", floor: "#7D776D", trim: "#6E6A62" },
+  fort: { ground: "#C9B27E", back: "#B8935A", wall: "#CFAE72", floor: "#A98B5C", trim: "#8E6F42" },
+  cave: { ground: "#3B3530", back: "#4E463E", wall: "#5E554B", floor: "#4A433C", trim: "#3A332C" },
+  keeper: { ground: "#5E8C4A", back: "#F2F2EE", wall: "#F4F1EA", trim: "#C23B3B" },
+};
 export type HouseObjectView = { id: string; room: string; kind: string; label: string };
 
 export const ROOM_W = 5.2;
@@ -191,7 +202,8 @@ export type Built = {
 };
 
 /** The whole house: hall, rooms, doors, furniture, the touchable things. */
-export function buildHouse(rooms: HouseRoomView[], objects: HouseObjectView[]): Built {
+export function buildHouse(rooms: HouseRoomView[], objects: HouseObjectView[], style: HouseStyle = "cottage"): Built {
+  const look = STYLE[style] ?? STYLE.cottage;
   const group = new THREE.Group();
   const targets: THREE.Object3D[] = [];
   const { width, depth } = houseSize(rooms.length);
@@ -202,20 +214,37 @@ export function buildHouse(rooms: HouseRoomView[], objects: HouseObjectView[]): 
   };
 
   // The garden, the porch and the hall
-  group.add(box(width + 6, 0.1, depth + PORCH + 6, "#5E8C4A", 0, -0.06, -depth / 2 + PORCH / 2));
+  group.add(box(width + 6, 0.1, depth + PORCH + 6, look.ground, 0, -0.06, -depth / 2 + PORCH / 2));
+  // Something outside that says what kind of place this is
+  if (style === "keeper") {
+    // A lighthouse at the back of the garden: white and red bands, a lamp at the top
+    const lx = -width / 4, lz = -depth - 1.8; // behind the house, where the view has room above it
+    for (let i = 0; i < 4; i++) group.add(cyl(0.9 - i * 0.08, 1.1, i % 2 ? look.trim : "#F4F1EA", lx, 0.55 + i * 1.1, lz, 0.82 - i * 0.08));
+    group.add(cyl(0.5, 0.7, "#F4D35E", lx, 4.8, lz), cyl(0.6, 0.3, "#2B2B2B", lx, 5.3, lz, 0.1));
+  } else if (style === "cave" || style === "stone") {
+    for (const [x, z, r] of [[-width / 2 - 1.6, -1, 0.9], [width / 2 + 1.4, -depth * 0.4, 1.2], [-width / 2 - 1.2, -depth - 0.8, 1.4], [width / 2 + 1.2, 0.8, 0.7]] as const) {
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), mat(style === "cave" ? "#2E2924" : "#7E7A70"));
+      rock.position.set(x, r * 0.5, z);
+      group.add(rock);
+    }
+  } else if (style === "fort") {
+    for (const x of [-width / 2 - 0.4, width / 2 + 0.4]) group.add(box(1.2, 3.2, 1.2, look.back, x, 1.6, -depth - 0.4));
+  } else if (style === "manor") {
+    for (const x of [-1.6, 1.6]) group.add(cyl(0.45, 1.0, "#2F5E2A", x, 0.5, PORCH + 1.2, 0.05));
+  }
   group.add(tag(box(HALL_W, 0.12, PORCH, "#B9AD9C", 0, 0.02, PORCH / 2), "out", "porch"));
   group.add(tag(box(HALL_W, 0.12, depth, FLOOR.hall, 0, 0.04, -depth / 2), "hall", "hall"));
   // The back wall, full height (the camera looks in from the front)
-  group.add(box(width + T, WALL_HIGH, T, "#D9C9A6", 0, WALL_HIGH / 2, -depth - T / 2));
+  group.add(box(width + T, WALL_HIGH, T, look.back, 0, WALL_HIGH / 2, -depth - T / 2));
 
   const doors = new Map<string, THREE.Object3D>();
   const chests = new Map<string, THREE.Object3D>();
   rooms.forEach((r, i) => {
     const p = roomPlace(i);
     const kind = FLOOR[r.kind] ? r.kind : "study";
-    const floor = tag(box(ROOM_W, 0.12, ROOM_D, FLOOR[kind], p.x, 0.04, p.z), "room", r.id);
+    const floor = tag(box(ROOM_W, 0.12, ROOM_D, look.floor ?? FLOOR[kind], p.x, 0.04, p.z), "room", r.id);
     group.add(floor);
-    const wall = WALL[kind];
+    const wall = look.wall ?? WALL[kind];
     const outer = p.x + p.side * (ROOM_W / 2);
     // Outer side wall (full height on the left, the far side from the camera; low on the right)
     const outerH = p.side < 0 ? WALL_HIGH : WALL_LOW;

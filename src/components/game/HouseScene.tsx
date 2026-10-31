@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import type { AvatarLook } from "@/lib/avatar";
 import { animateAvatar, buildAvatar } from "@/game/models3d";
-import { buildHouse, doorOf, houseSize, roomPlace, ROOM_D, type Built, type HouseObjectView, type HouseRoomView } from "@/game/house3d";
+import { buildHouse, doorOf, houseSize, roomPlace, ROOM_D, ROOM_W, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle } from "@/game/house3d";
 import type { Penalty } from "./PenaltyCard";
 
 type Item = { id: string; name: string; icon: string };
@@ -14,6 +14,7 @@ type HouseView = {
   reason?: string;
   key: number;
   title: string;
+  style: HouseStyle;
   room: string | null;
   outUntil: string | null;
   rooms: HouseRoomView[];
@@ -60,7 +61,7 @@ export function HouseScene({
   const [say, setSay] = useState<string>("Tap a room to walk to its door. Tap things to look at them.");
   const [busy, setBusy] = useState(false);
   const [gained, setGained] = useState<Item | null>(null);
-  const scene = useRef<{ built: Built; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void } | null>(null);
+  const scene = useRef<{ built: Built; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, room: number) => void } | null>(null);
   const viewRef = useRef<HouseView | null>(null);
   useEffect(() => {
     viewRef.current = view;
@@ -101,7 +102,7 @@ export function HouseScene({
     const sun = new THREE.DirectionalLight("#FFFFFF", 1.4);
     sun.position.set(6, 12, 8);
     world.add(sun);
-    const house = buildHouse(v.rooms, v.objects);
+    const house = buildHouse(v.rooms, v.objects, v.style);
     world.add(house.group);
     const { width, depth } = houseSize(v.rooms.length);
     const centre = new THREE.Vector3(0, 0, -depth / 2 + 0.4);
@@ -141,11 +142,105 @@ export function HouseScene({
         arrive = resolve;
       });
 
+    // Trap animations (owner, 31 Oct 2026: like the movies): each runs for a second or so; true when done.
+    const fx: ((t: number) => boolean)[] = [];
+    const soft = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+    const trap = (kind: string, i: number) => {
+      const t0 = performance.now();
+      const room = roomPlace(i);
+      const me = av.root.position.clone();
+      const ease = (t: number) => Math.min(1, Math.max(0, (t - t0) / 1000));
+      shakeUntil = t0 + 900;
+      if (kind === "collapse" || kind === "fall") {
+        const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.02, 24), soft("#050505", 0.95));
+        hole.position.set(me.x, 0.13, me.z);
+        world.add(hole);
+        fx.push((t) => {
+          const k = ease(t);
+          hole.scale.setScalar(Math.min(1, k * 3));
+          if (k > 0.3) av.root.position.y = 0.1 - (k - 0.3) * 4;
+          return k >= 1;
+        });
+      } else if (kind === "flood") {
+        const water = new THREE.Mesh(new THREE.BoxGeometry(ROOM_W + 2.4, 1, ROOM_D), soft("#2E7FBF", 0.55));
+        water.position.set(room.x / 2, 0, room.z);
+        world.add(water);
+        fx.push((t) => {
+          const k = ease(t);
+          water.scale.y = 0.05 + k * 1.6;
+          water.position.y = (0.05 + k * 1.6) / 2;
+          return k >= 1;
+        });
+      } else if (kind === "smoke" || kind === "gas" || kind === "fire") {
+        const color = kind === "gas" ? "#7FBF5E" : kind === "fire" ? "#F07A28" : "#B9B9B9";
+        const puffs = Array.from({ length: 9 }, (_, j) => {
+          const puff = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 8), soft(color, 0.6));
+          puff.position.set(me.x + Math.cos(j) * 0.4, 0.5 + (j % 3) * 0.4, me.z + Math.sin(j) * 0.4);
+          world.add(puff);
+          return puff;
+        });
+        fx.push((t) => {
+          const k = ease(t);
+          puffs.forEach((p, j) => {
+            p.scale.setScalar(1 + k * 3);
+            p.position.y += 0.01 * (j % 3 + 1);
+            (p.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - k * 0.5);
+          });
+          return k >= 1;
+        });
+      } else if (kind === "darts" || kind === "swarm") {
+        const bits = Array.from({ length: 14 }, (_, j) => {
+          const b = new THREE.Mesh(kind === "darts" ? new THREE.BoxGeometry(0.05, 0.05, 0.35) : new THREE.SphereGeometry(0.09, 6, 4), soft(kind === "darts" ? "#C8A45C" : "#1A1A1A", 1));
+          b.position.set(room.x + (j % 5 - 2) * 0.5, 1 + (j % 3) * 0.3, room.z - ROOM_D / 2);
+          b.userData.from = b.position.clone();
+          world.add(b);
+          return b;
+        });
+        fx.push((t) => {
+          const k = ease(t);
+          bits.forEach((b, j) => {
+            const kk = Math.min(1, k * 1.4 - j * 0.03);
+            if (kk > 0) b.position.lerpVectors(b.userData.from as THREE.Vector3, new THREE.Vector3(me.x, 1.1 + Math.sin(j) * 0.2, me.z), kk);
+            b.lookAt(me.x, 1.1, me.z);
+          });
+          return k >= 1;
+        });
+      } else if (kind === "net" || kind === "cage") {
+        const net = new THREE.Mesh(new THREE.BoxGeometry(1.4, 2, 1.4), new THREE.MeshBasicMaterial({ color: kind === "cage" ? "#3A3A3A" : "#C9B27E", wireframe: true }));
+        net.position.set(me.x, 5, me.z);
+        world.add(net);
+        fx.push((t) => {
+          const k = ease(t);
+          net.position.y = Math.max(1.1, 5 - k * 8);
+          return k >= 1;
+        });
+      } else if (kind === "boulder") {
+        const ball = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8, 1), new THREE.MeshLambertMaterial({ color: "#7E7A70" }));
+        ball.position.set(room.x, 0.9, room.z - ROOM_D / 2 + 0.9);
+        const from = ball.position.clone();
+        world.add(ball);
+        fx.push((t) => {
+          const k = ease(t);
+          ball.position.lerpVectors(from, new THREE.Vector3(me.x, 0.9, me.z), Math.min(1, k * 1.2));
+          ball.rotation.x -= 0.15;
+          return k >= 1;
+        });
+      } else {
+        // The Masquerade, a mirror, a storm, a snake: the lights flicker
+        fx.push((t) => {
+          const k = ease(t);
+          world.background = new THREE.Color(Math.floor(k * 12) % 2 ? "#3A0A0A" : "#1B2230");
+          return k >= 1;
+        });
+      }
+    };
+
     let raf = 0;
     let last = performance.now();
     const frame = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+      for (let j = fx.length - 1; j >= 0; j--) if (fx[j](now)) fx.splice(j, 1);
       let moved = 0;
       const next = path[0];
       if (next) {
@@ -203,6 +298,7 @@ export function HouseScene({
       walkTo,
       at: () => ({ x: av.root.position.x, z: av.root.position.z }),
       shake: () => (shakeUntil = performance.now() + 700),
+      trap,
     };
     return () => {
       cancelAnimationFrame(raf);
@@ -258,10 +354,10 @@ export function HouseScene({
             return;
           }
           if (r.trap && r.penalty) {
-            s.shake();
-            setSay("…");
             const pen = r.penalty;
-            setTimeout(() => onPenalty(pen), 650);
+            s.trap(pen.scene, i);
+            setSay("…");
+            setTimeout(() => onPenalty(pen), 1300);
             return;
           }
           const next = { ...v, ...(r as HouseView) };

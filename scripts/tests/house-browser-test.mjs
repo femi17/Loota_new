@@ -24,6 +24,7 @@ const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ?
 const PLACE = { lng: 3.3958, lat: 6.4541 };
 const HOUSE = {
   title: "The keeper's house",
+  style: "keeper",
   items: { "brass-key": { name: "A small brass key", icon: "🗝️" } },
   rooms: [
     { id: "study", name: "Study", kind: "study", role: "safe", objects: [
@@ -105,6 +106,9 @@ try {
   const locked = await until(async () => /Locked\. A small brass keyhole/.test(await say()) && (await say()), 20000);
   check("the bedroom: locked, with its hint", !!locked, locked ?? (await say()));
   await tap({ tap: "room", id: "cellar" });
+  await until(async () => (await say()) === "…", 20000);
+  await wait(500);
+  await page.screenshot({ path: `${OUT}/house-2a-trap-springs.png` });
   const card = await until(() => page.evaluate(() => document.querySelector('[role="alertdialog"][data-penalty]')?.innerText ?? null), 20000);
   check("the cellar: a trap, the soft penalty card (wrong room), thrown out", !!card && /WRONG ROOM/i.test(card) && !(await page.$('[aria-label="Inside the house"]')), card?.replace(/\s+/g, " ").slice(0, 120));
   await page.screenshot({ path: `${OUT}/house-2-trap.png` });

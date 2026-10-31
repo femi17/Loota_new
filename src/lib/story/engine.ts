@@ -74,6 +74,7 @@ export const HOUSE_ROOM_KINDS = ["study", "bedroom", "kitchen", "library", "cell
 export const HOUSE_OBJECT_KINDS = ["picture", "drawer", "clock", "rug", "bookcase", "vase", "mirror", "safe", "desk", "bed", "wardrobe", "radio"] as const;
 const House = z.object({
   title: z.string().describe("e.g. 'The keeper's house'"),
+  style: z.enum(["cottage", "manor", "stone", "fort", "cave", "keeper"]).optional().describe("How it looks: a cottage, a manor, a stone house, a fort, a cave, a lighthouse keeper's house"),
   items: z.record(z.string(), z.object({ name: z.string(), icon: z.string() })).describe("Things to carry, by id: { 'brass-key': { name: 'A small brass key', icon: '🗝️' } }"),
   rooms: z.array(z.object({
     id: z.string(),

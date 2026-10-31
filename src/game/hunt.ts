@@ -25,11 +25,14 @@ export function huntResumesAt(now: number) {
  * The riddle clock (owner, 25 Oct 2026): 15 seconds to name the place from when the hunter first sees the riddle, then
  * a 60-second wait before the next 15, until they lock one in. Times are the server's.
  */
-export type RiddleClock =
+export type RiddleClock = (
   | { phase: "ready"; key: number }
   | { phase: "answer"; key: number; now: string; endsAt: string }
+  /** A story hunt: name the place whenever you're ready, no clock (owner, 1 Nov 2026). */
+  | { phase: "open"; key: number }
   | { phase: "wait"; key: number; now: string; until: string }
-  | { phase: "locked"; key: number; guess: { name: string; lng: number; lat: number } };
+  | { phase: "locked"; key: number; guess: { name: string; lng: number; lat: number } }
+) & { story?: boolean };
 
 /**
  * A story hunt's story as a hunter reads it on the scroll (owner, 31 Oct 2026): no answers. No chapters until the hunt

@@ -8693,13 +8693,20 @@ export function GameMap({
                 </div>
                 <p className="text-xs font-bold uppercase tracking-wider text-gold">A hunt, step by step</p>
                 <ol className="flex flex-col gap-2">
-                  {[
-                    ["📜", "Name the place", "You have 15 seconds to type the place the riddle points to. Miss it and you wait a minute."],
-                    ["🗺️", "Get there", "The way to your answer is drawn. Nobody knows if it's right until they arrive: the wrong place means a new 15 seconds."],
+                  {(huntStory.story
+                    ? [
+                        ["📜", "Read the story", "The scroll (📜 on the right) tells the story. Each key's place is hidden in it, and each key you find opens the next chapter."],
+                        ["🗺️", "Name the place, then go", "Name the place whenever you're ready: the way there is drawn. The wrong place springs a trap, so be sure."],
+                      ]
+                    : [
+                        ["📜", "Name the place", "You have 15 seconds to type the place the riddle points to. Miss it and you wait a minute."],
+                        ["🗺️", "Get there", "The way to your answer is drawn. Nobody knows if it's right until they arrive: the wrong place means a new 15 seconds."],
+                      ]
+                  ).concat([
                     ["🔥", "Follow the heat", "In the area the edges glow: Warm, Hot, then Burning as you close in. A metal detector (in your inventory, 300 coins) beeps faster and reaches farther."],
                     ["🗝️", "Open the chest", "Within 60 m of the key it rises out of the ground."],
                     ["🧩", "Beat the Key Trial", "A puzzle or quick questions against the clock. Fail and you're thrown 2 km away."],
-                  ].map(([icon, title, text], i) => (
+                  ]).map(([icon, title, text], i) => (
                     <li key={title} className="flex gap-3 rounded-xl bg-ink-2 p-2.5">
                       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-ink text-lg" aria-hidden="true">{icon}</span>
                       <span>
@@ -8711,9 +8718,11 @@ export function GameMap({
                     </li>
                   ))}
                 </ol>
-                <p className="rounded-xl bg-[#3B1F4F] p-2.5">
-                  🎭 <b>Beware the Masquerade:</b> a chest that rises where the heat isn&apos;t <b>Burning</b> is his trap.
-                </p>
+                {!huntStory.story && (
+                  <p className="rounded-xl bg-[#3B1F4F] p-2.5">
+                    🎭 <b>Beware the Masquerade:</b> a chest that rises where the heat isn&apos;t <b>Burning</b> is his trap.
+                  </p>
+                )}
                 <p className="rounded-xl bg-[#0B1630] p-2.5 text-[#C9D6FF]">
                   🌙 <b>Hunting hours:</b> 9 am to 9 pm, Lagos time. From 9 pm the hunt rests and you roam freely; your keys and place are kept.
                 </p>

@@ -140,6 +140,11 @@ export function HuntPanel({
   const recentTrials = useRef<{ who: string; key: number; at: number }[]>([]);
   const wasGolden = useRef(false);
   const skew = useRef(0); // the server's clock minus this device's
+  // A story hunt (owner, 1 Nov 2026): the story is on the scroll, so no Masquerade, no sealed first riddle, no clock.
+  const storyRef = useRef(storyHunt);
+  useEffect(() => {
+    if (storyHunt) storyRef.current = true;
+  }, [storyHunt]);
   const lastRank = useRef<number | null>(null);
 
   function startTrial(view: AnyTrialView) {
@@ -156,7 +161,11 @@ export function HuntPanel({
     const next = data as HuntState | null;
     if (!next) return;
     setState(next);
-    if (next.phase === "live" && next.joined && next.keysHeld === 0 && next.riddle && !next.finishedAt) {
+    if (next.phase === "live" && next.joined && !next.finishedAt) {
+      const c = await loadClock();
+      if (c?.story) storyRef.current = true;
+    } else setClock(null);
+    if (!storyRef.current && next.phase === "live" && next.joined && next.keysHeld === 0 && next.riddle && !next.finishedAt) {
       const seen = `loota:riddle-seen:${next.id}`;
       let shown = false;
       try {
@@ -170,8 +179,6 @@ export function HuntPanel({
         void tellStory("start"); // the Masquerade first, then the riddle
       }
     }
-    if (next.phase === "live" && next.joined && !next.finishedAt) void loadClock();
-    else setClock(null);
     if (next.thrown) {
       actions.current?.placeAt(next.thrown.lng, next.thrown.lat);
       actions.current?.say("Your Key Trial ran out of time while you were away, so you were thrown 2 km from the key.", true);
@@ -266,7 +273,7 @@ export function HuntPanel({
           if (e.mine) continue;
           toast(newsOf(e));
           cue(e.kind === "key" || e.kind === "first" || e.kind === "finished" ? "rival" : "news");
-          const quip = taunt(e.kind, e.who); // the Masquerade has his say, now and then
+          const quip = storyRef.current ? null : taunt(e.kind, e.who); // the Masquerade has his say, now and then
           if (quip) window.setTimeout(() => toast(quip), 1800);
           if (e.kind === "key" || e.kind === "relay" || e.kind === "finished") keys = true;
         }
@@ -322,7 +329,12 @@ export function HuntPanel({
       const name = (e as CustomEvent<string>).detail;
       cue("wrong");
       setOpen(true);
-      setFeedback({ text: `🚫 Nothing here: the key isn't at ${name}. Quick, 15 seconds to name another place!`, hot: false });
+      setFeedback({
+        text: storyRef.current
+          ? `🚫 Nothing here: the key isn't at ${name}. Read the story again and name another place when you're ready.`
+          : `🚫 Nothing here: the key isn't at ${name}. Quick, 15 seconds to name another place!`,
+        hot: false,
+      });
       void loadClock();
     };
     window.addEventListener("loota:wrong-place", wrong);
@@ -403,6 +415,7 @@ export function HuntPanel({
   async function loadClock() {
     const { data } = await supabase.rpc("riddle_state", { p_hunt: huntId });
     clockFrom(data);
+    return data as RiddleClock | null;
   }
 
   /** Lock in a place for the riddle; then the way there is planned. */
@@ -419,7 +432,7 @@ export function HuntPanel({
         actions.current?.goTo(place);
       } else if (r?.reason === "too_late") {
         cue("wrong");
-        setFeedback({ text: "⏳ Too late! Wait for your next chance.", hot: false });
+        setFeedback({ text: storyRef.current ? "⏳ Not yet: the trap still holds you." : "⏳ Too late! Wait for your next chance.", hot: false });
       }
     } finally {
       setLocking(false);
@@ -481,6 +494,7 @@ export function HuntPanel({
 
   /** Tell a beat of the story, once per device: the hunt's own lines, or the default. */
   async function tellStory(beat: StoryBeat) {
+    if (storyRef.current) return; // a story hunt's story is on the scroll
     const seen = `loota:story:${huntId}:${beat}`;
     try {
       if (localStorage.getItem(seen) === "1") return;
@@ -660,11 +674,24 @@ export function HuntPanel({
                     />
                   </div>
                 )}
+                {tick?.phase === "open" && (
+                  <div className="flex flex-col gap-2 rounded-xl bg-ink-2 p-2.5 ring-1 ring-gold" aria-label="Name the place">
+                    <span className="text-xs font-extrabold text-gold">Where is Key {clock?.key}? Name the place when you&apos;re ready</span>
+                    <span className="text-[11px] text-muted">No rush: read the story (📜) and think. Once you name a place, the way there is drawn.</span>
+                    <PlaceSearch
+                      inline
+                      placeholder="Type the place…"
+                      near={() => actions.current?.where() ?? { lng: 0, lat: 0 }}
+                      onPick={(place) => void lockPlace(place)}
+                    />
+                  </div>
+                )}
                 {tick?.phase === "wait" && (
                   <div className="flex flex-col gap-1.5 rounded-xl bg-[#3A1A1A] p-2.5 ring-1 ring-danger" role="status" aria-label="Waiting">
-                    <span className="text-xs font-extrabold text-danger-text">⏳ Too slow! Others are already on their way.</span>
+                    <span className="text-xs font-extrabold text-danger-text">{clock?.story ? "⏳ The trap holds you." : "⏳ Too slow! Others are already on their way."}</span>
                     <span className="text-xs text-paper">
-                      Your next chance to answer in <b className="tabular-nums">{tick.left}s</b>. Think it through…
+                      {clock?.story ? "You can name a place again in " : "Your next chance to answer in "}
+                      <b className="tabular-nums">{tick.left}s</b>. Think it through…
                     </span>
                   </div>
                 )}

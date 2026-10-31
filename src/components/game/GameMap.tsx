@@ -154,7 +154,8 @@ type Hud = {
   /** At the chosen seal's place: the "Enter the chamber" button. */
   djinnHere: { place: string } | null;
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
-  journey: { place: string; step: number; total: number; text: string; board: string | null } | null;
+  /** lost: this step's way isn't drawn (ended, or a tap on the map replaced it): "Show the way" draws it again. */
+  journey: { place: string; step: number; total: number; text: string; board: string | null; lost: boolean } | null;
   /** The lamp: whether it holds something (one thing at a time), and whether the player has looked at it yet (it glows). */
   lamp: { has: boolean; unseen: boolean };
   /** At a Detour's place, not yet tried: the Claim button. */
@@ -237,6 +238,8 @@ type Guide = {
   step: string;
   /** "To National Theatre · 1.2 km · about 12 minutes" */
   trip: string;
+  /** A tap on the map replaced the way to this place: the way back to it (owner, 1 Nov 2026). */
+  back?: string | null;
 };
 
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
@@ -403,6 +406,10 @@ export function GameMap({
     roadOnly: (place: Place) => void;
     boardJourney: () => void;
     endJourney: () => void;
+    /** Draw the journey's current step again (owner, 1 Nov 2026: "I should be able from the compass get the direction back"). */
+    journeyWay: () => void;
+    /** Back to the way a tap on the map replaced. */
+    routeBack: () => void;
     /** Get off a bus, train or plane that hasn't left yet (fare refunded). */
     cancelTrip: () => void;
     /** Use a Fast Pass on the bus, train, taxi or flight being waited for. */
@@ -1034,9 +1041,14 @@ export function GameMap({
       };
       let trip: Trip | null = null;
       let planId = 0;
+      // The way a tap on the map replaced (a tap by mistake mid-journey: owner, 1 Nov 2026), to go back to.
+      let replaced: { to: LngLat; name: string } | null = null;
 
       async function planDirections(to: LngLat, name: string, quiet = false) {
         const id = ++planId;
+        if (name === "the marked spot") {
+          if (trip && trip.name !== "the marked spot") replaced = { to: trip.to, name: trip.name };
+        } else replaced = null;
         // Nearby places on the loaded roads: the shortest way, straight away.
         let route: import("@/game/geo").Route | null = null;
         let forks: { index: number; side: -1 | 1 }[] = [];
@@ -1192,8 +1204,8 @@ export function GameMap({
           }
           const away = geo.distanceM([here.lng, here.lat], end);
           const arrow = Math.round(geo.compassFromHeading(geo.headingOf([here.lng, here.lat], end)) - camBearing);
-          const guide: Guide = { arrow, step: cap(`${trip.name} is ${directions.roundedDistance(away)} that way`), trip: tripLine };
-          setHud((h) => (h.guide && h.guide.step === guide.step && h.guide.arrow === guide.arrow ? h : { ...h, guide }));
+          const guide: Guide = { arrow, step: cap(`${trip.name} is ${directions.roundedDistance(away)} that way`), trip: tripLine, back: replaced?.name ?? null };
+          setHud((h) => (h.guide && h.guide.step === guide.step && h.guide.arrow === guide.arrow && h.guide.back === guide.back ? h : { ...h, guide }));
           return;
         }
 
@@ -1237,9 +1249,11 @@ export function GameMap({
         } else {
           step = cap(`${trip.name} is ${directions.roundedDistance(left)} ahead`);
         }
-        const guide: Guide = { arrow, step, trip: tripLine };
+        const guide: Guide = { arrow, step, trip: tripLine, back: replaced?.name ?? null };
         setHud((h) =>
-          h.guide && h.guide.step === guide.step && h.guide.trip === guide.trip && h.guide.arrow === guide.arrow ? h : { ...h, guide },
+          h.guide && h.guide.step === guide.step && h.guide.trip === guide.trip && h.guide.arrow === guide.arrow && h.guide.back === guide.back
+            ? h
+            : { ...h, guide },
         );
       }
 
@@ -2119,9 +2133,23 @@ export function GameMap({
           return true;
         },
         endDirections: () => {
+          // Ending the way to a spot tapped on the map by mistake: back to the way it replaced.
+          if (trip?.name === "the marked spot" && replaced) {
+            const back = replaced;
+            say(`Back on your way to ${back.name}.`);
+            void planDirections(back.to, back.name, true);
+            return;
+          }
           endDirections();
           strandGuideOff = performance.now() + 300_000; // the player chose to go their own way
         },
+        routeBack: () => {
+          if (!replaced) return;
+          const back = replaced;
+          say(`Back on your way to ${back.name}.`);
+          void planDirections(back.to, back.name, true);
+        },
+        journeyWay: () => journeyWay(),
         follow() {
           lookOffset = 0;
         },
@@ -5300,12 +5328,15 @@ export function GameMap({
         const { legs } = journey.journey;
         const leg = legs[journey.step];
         const atStop = leg.kind === "ride" && !ride && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [leg.from.lng, leg.from.lat]) <= TRANSIT[leg.mode].reachM;
+        // This step's way isn't drawn: ended, or a tap on the map took its place (owner, 1 Nov 2026).
+        const needsWay = leg.kind === "go" || (!atStop && !ride);
         const view = {
           place: journey.journey.place.name,
           step: journey.step + 1,
           total: legs.length,
           text: leg.kind === "ride" && !atStop && !ride ? `Get to ${leg.from.name} to board` : legText(leg),
           board: atStop && leg.kind === "ride" ? `Board ${TRANSIT[leg.mode].icon} · about ${leg.fare.toLocaleString("en-NG")} coins` : null,
+          lost: needsWay && (!trip || trip.name === "the marked spot"),
         };
         setHud((h) => (JSON.stringify(h.journey) === JSON.stringify(view) ? h : { ...h, journey: view }));
       }
@@ -5333,6 +5364,16 @@ export function GameMap({
         const problem = await board({ ...quote, then: place }, false);
         if (problem) say(problem, true);
         showJourney();
+      }
+
+      /** The journey's current step, drawn again: the way to its end, or to the stop to board at. */
+      function journeyWay() {
+        if (!journey) return;
+        const leg = journey.journey.legs[journey.step];
+        const to = leg.kind === "go" ? leg.to : leg.from;
+        replaced = null;
+        say(`🧭 Back on your journey: the way to ${to.name}.`);
+        void planDirections({ lng: to.lng, lat: to.lat }, to.name, true);
       }
 
       /** Move the journey on as the player gets places. */
@@ -8095,7 +8136,7 @@ export function GameMap({
       icon: "🧭",
       badge: `${hud.journey.step}/${hud.journey.total}`,
       tone: "bg-[#14324A] ring-1 ring-[#5FA8E6]",
-      call: !!hud.journey.board,
+      call: !!hud.journey.board || hud.journey.lost,
       label: `Your journey to ${hud.journey.place}`,
       place: hud.journey.place,
     });
@@ -8545,6 +8586,11 @@ export function GameMap({
                     <CloseIcon />
                   </button>
                 </div>
+                {hud.journey.lost && (
+                  <button type="button" onClick={() => actions.current?.journeyWay()} className="h-10 rounded-xl bg-gold px-3 text-sm font-bold text-ink">
+                    🧭 Show the way
+                  </button>
+                )}
                 {hud.journey.board && (
                   <button type="button" disabled={hud.busy} onClick={() => actions.current?.boardJourney()} className="h-10 rounded-xl bg-gold px-3 text-sm font-bold text-ink disabled:opacity-50">
                     {hud.journey.board}
@@ -8562,6 +8608,11 @@ export function GameMap({
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="font-display text-base font-extrabold leading-tight">{hud.guide.step}</span>
                   <span className="truncate text-xs text-paper/80">{hud.guide.trip}</span>
+                  {hud.guide.back && (
+                    <button type="button" onClick={() => actions.current?.routeBack()} className="mt-1 self-start rounded-lg bg-paper px-2 py-1 text-xs font-bold text-ink">
+                      ↩ Back to {hud.guide.back}
+                    </button>
+                  )}
                 </div>
                 <button type="button" onClick={() => actions.current?.endDirections()} className="shrink-0 rounded-lg bg-ink/30 px-2 py-1 text-xs font-bold">
                   End

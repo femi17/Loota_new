@@ -48,6 +48,7 @@ import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, 
 import { NewsToasts } from "./NewsToasts";
 import { local, peopleOf, setCountry, words, type Role } from "@/game/locale";
 import { RadioPanel, useRadio } from "./RadioPanel";
+import { PenaltyCard, type Penalty } from "./PenaltyCard";
 import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -167,7 +168,8 @@ type Hud = {
   /** At a repair shop the player's vehicle is booked into: the "Enter" button. */
   repairHere: RepairJob | null;
   /** The metal detector in a hunt (key_pulse): in the key's area, how hot (0–1), warmer or colder; the chest within reach. */
-  heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean } | null;
+  /** In a key's area: its heat, or (exact: a story key) simply "this is the place", with no hot and cold. */
+  heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean; exact?: boolean } | null;
   /** The police on your tail (owner, 25 Oct 2026): how far behind, and seconds left until you've lost them. */
   chase: { gap: number; left: number; chaser: "officer" | "patrol" } | null;
   /** Waiting for a flight in the departure lounge (owner, 26 Oct 2026), until it leaves. */
@@ -511,6 +513,8 @@ export function GameMap({
   const [radioOpen, setRadioOpen] = useState(false);
   // A story hunt's story, on a scroll the hunter opens and closes at any time (owner, 31 Oct 2026).
   const [storyOpen, setStoryOpen] = useState(false);
+  // A trap sprung at the wrong place (owner, 31 Oct 2026: a random penalty from the server's table).
+  const [penalty, setPenalty] = useState<Penalty | null>(null);
   const huntStory = useHuntStory(huntId);
   const radio = useRadio();
   const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
@@ -6990,11 +6994,15 @@ export function GameMap({
         wrongPlace?: string;
         /** Whether the hunter owns a metal detector. */
         detector?: boolean;
+        /** A story key (owner, 31 Oct 2026): no hot and cold; in its place, the chest is right there. */
+        exact?: boolean;
+        /** At a story key's wrong place: the trap it sprang, and what it cost. */
+        penalty?: (Penalty & { balance: number | null; energy: number | null; moveTo: LngLat | null }) | null;
       };
       let pulseAt = -Infinity;
       let pulseEvery = 6000;
       let pulsing = false;
-      let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady" } | null = null;
+      let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady"; exact?: boolean } | null = null;
       let chest: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number; scene: KeyScene } | null = null;
       let chestHere = false;
       // The Masquerade's decoy (owner, 25 Oct 2026): it rises just like the key's chest; the heat is the tell.
@@ -7017,7 +7025,7 @@ export function GameMap({
       window.addEventListener("loota:key-earned", keyWon);
 
       function showHeat() {
-        const view: Hud["heat"] = heat ? { level: heat.level, trend: heat.trend, chest: chestHere, trap: trapHere && !chestHere } : null;
+        const view: Hud["heat"] = heat ? { level: heat.level, trend: heat.trend, chest: chestHere, trap: trapHere && !chestHere, exact: heat.exact } : null;
         setHud((h) => (JSON.stringify(h.heat) === JSON.stringify(view) ? h : { ...h, heat: view }));
       }
 
@@ -7105,7 +7113,15 @@ export function GameMap({
         if (p.detector) detectorRef.current = true;
         if (p.wrongPlace) {
           window.dispatchEvent(new CustomEvent("loota:wrong-place", { detail: p.wrongPlace }));
-          say(`🚫 ${p.wrongPlace}: no key here. Name another place!`, true);
+          const pen = p.penalty;
+          if (pen) {
+            // A story key's wrong place: the trap springs, and its cost is already taken on the server.
+            if (pen.moveTo) placeAt(pen.moveTo.lng, pen.moveTo.lat);
+            if (pen.balance != null) setHud((h) => ({ ...h, coins: Number(pen.balance) }));
+            if (pen.energy != null) traveller.energy = pen.energy;
+            setPenalty(pen);
+            cue("failed");
+          } else say(`🚫 ${p.wrongPlace}: no key here. Name another place!`, true);
         }
         if (!p.inArea) {
           pulseEvery = 8000;
@@ -7119,6 +7135,16 @@ export function GameMap({
           return;
         }
         pulseEvery = 2500;
+        if (p.exact) {
+          // A story key: no hot and cold. This is the place, and the chest is right here.
+          const key = p.key ?? 0;
+          if (!heat || heat.key !== key) say(`📍 This is the place. Key ${key}'s chest is right here: find it and open it.`, true);
+          heat = { level: 1, key, trend: "steady", exact: true };
+          if (p.spot) showChest(p.spot, key);
+          hideTrap();
+          showHeat();
+          return;
+        }
         const level = p.heat ?? 0;
         const key = p.key ?? 0;
         if (!heat || heat.key !== key) say(`🔥 You're in Key ${key}'s area! Search here is on your hunt card now. Feel for the heat: the edges glow and pulse faster as you get closer.`, true);
@@ -8263,7 +8289,12 @@ export function GameMap({
                     Lounge · {hud.lounge.left > 20 ? `boards in ${mmss(hud.lounge.left - 20)}` : "boarding!"}
                   </button>
                 )}
-                {hud.heat && (
+                {hud.heat?.exact && (
+                  <span className={`${chip} bg-gold text-ink`} aria-label="This is the place">
+                    📍 This is the place
+                  </span>
+                )}
+                {hud.heat && !hud.heat.exact && (
                   <div
                     className={`${chip} ${hud.heat.level >= 0.7 ? "bg-danger" : hud.heat.level >= 0.35 ? "bg-[#F28C28] text-ink" : "bg-[#7A3A10]"}`}
                     aria-label={`The key's heat: ${Math.round(hud.heat.level * 100)}%`}
@@ -8707,6 +8738,7 @@ export function GameMap({
             )}
 
             {radioOpen && !inside && <RadioPanel onClose={() => setRadioOpen(false)} />}
+            {penalty && <PenaltyCard penalty={penalty} onClose={() => setPenalty(null)} />}
             {storyOpen && huntId && huntStory.story && !inside && <StoryScroll huntId={huntId} story={huntStory.story} reload={huntStory.reload} onClose={() => {
               setStoryOpen(false);
               huntStory.seen();
@@ -9190,7 +9222,7 @@ export function GameMap({
       )}
 
       {/* The metal detector: the edges glow and pulse faster as the key gets closer. */}
-      {hud.heat && (
+      {hud.heat && !hud.heat.exact && (
         <div
           className="loota-heat pointer-events-none absolute inset-0"
           style={{ opacity: 0.12 + 0.6 * hud.heat.level, animationDuration: `${(1.6 - 1.25 * hud.heat.level).toFixed(2)}s` }}

@@ -25,7 +25,8 @@
     "signals:fetch": "node scripts/fetch-signals.mjs",
     "story:new": "node --no-warnings --import ./scripts/tests/ts-ext.mjs scripts/story-engine/engine.mts",
     "story:pick": "node --no-warnings --import ./scripts/tests/ts-ext.mjs scripts/story-engine/pick.mts",
-    "story:import": "node --no-warnings --import ./scripts/tests/ts-ext.mjs scripts/story-engine/import.mts"
+    "story:import": "node --no-warnings --import ./scripts/tests/ts-ext.mjs scripts/story-engine/import.mts",
+    "penalties:seed": "node scripts/penalties/seed.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",

@@ -48,6 +48,7 @@ import { LOCAL_M, coachPossible, flyingMakesSense, goLeg, inNigeria, journeyOf, 
 import { NewsToasts } from "./NewsToasts";
 import { local, peopleOf, setCountry, words, type Role } from "@/game/locale";
 import { RadioPanel, useRadio } from "./RadioPanel";
+import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
@@ -508,6 +509,9 @@ export function GameMap({
   const [bagOwned, setBagOwned] = useState<OwnedVehicle[]>([]); // the inventory's vehicles, gear and papers
   const [helpOpen, setHelpOpen] = useState(false);
   const [radioOpen, setRadioOpen] = useState(false);
+  // A story hunt's story, on a scroll the hunter opens and closes at any time (owner, 31 Oct 2026).
+  const [storyOpen, setStoryOpen] = useState(false);
+  const huntStory = useHuntStory(huntId);
   const radio = useRadio();
   const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
   const [searchOpen, setSearchOpen] = useState(false);
@@ -8703,6 +8707,7 @@ export function GameMap({
             )}
 
             {radioOpen && !inside && <RadioPanel onClose={() => setRadioOpen(false)} />}
+            {storyOpen && huntId && huntStory.story && !inside && <StoryScroll huntId={huntId} story={huntStory.story} reload={huntStory.reload} onClose={() => setStoryOpen(false)} />}
 
             {/* The hunt (riddle, keys, Search here) */}
             {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
@@ -8792,6 +8797,23 @@ export function GameMap({
               <RadioIcon />
               {radio.status !== "off" && <span className="absolute -right-1 -top-1 size-3 animate-pulse rounded-full bg-[#2EC4B6] ring-2 ring-ink" aria-hidden="true" />}
             </button>
+            {huntId && huntStory.story && (
+              <button
+                type="button"
+                data-tool="story"
+                aria-label={`The story${huntStory.unseen ? ": not read yet" : ""}`}
+                title="The story"
+                aria-expanded={storyOpen}
+                onClick={() => {
+                  setStoryOpen((o) => !o);
+                  if (huntStory.story?.chapters.length) huntStory.seen();
+                }}
+                className={`${tool} relative ${storyOpen ? "bg-gold text-ink" : huntStory.unseen ? "loota-lamp-glow bg-ink text-gold" : "bg-ink text-paper"}`}
+              >
+                <ScrollIcon />
+                {huntStory.unseen && <span className="absolute -right-1 -top-1 size-3 rounded-full bg-gold ring-2 ring-ink" aria-hidden="true" />}
+              </button>
+            )}
             {huntId && (
               <button
                 type="button"

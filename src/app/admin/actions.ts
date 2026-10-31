@@ -159,6 +159,30 @@ export async function savePicture(hunt: string, n: number, path: string) {
   return { url: db.storage.from("story-pictures").getPublicUrl(path).data.publicUrl };
 }
 
+/**
+ * A one-time pass to upload the hunt's trailer (owner, 31 Oct 2026: "story trailer, I will create that, and there should
+ * be a place for me to upload it") straight from the browser to Storage (bucket story-trailers, up to 50 MB).
+ */
+export async function trailerUploadPass(hunt: string, ext: string) {
+  await owner();
+  if (!UUID.test(hunt) || !/^(mp4|webm|mov)$/.test(ext)) return { error: "Upload an MP4, WebM or MOV video." };
+  const path = `${hunt}/trailer-${Date.now()}.${ext}`;
+  const { data, error } = await createAdminClient().storage.from("story-trailers").createSignedUploadUrl(path);
+  if (error || !data) return { error: error?.message ?? "Couldn't prepare the upload." };
+  return { path, token: data.token };
+}
+
+/** Record an uploaded trailer (after the browser has sent it to Storage); the lobby shows it on the hunt. */
+export async function saveTrailer(hunt: string, path: string) {
+  await owner();
+  if (!UUID.test(hunt) || !path.startsWith(`${hunt}/`)) return { error: "Unknown trailer." };
+  const db = createAdminClient();
+  const { error } = await db.from("hunts").update({ trailer_path: path }).eq("id", hunt);
+  if (error) return { error: error.message };
+  revalidatePath("/lobby");
+  return { url: db.storage.from("story-trailers").getPublicUrl(path).data.publicUrl };
+}
+
 export async function createHunt(form: FormData) {
   const player = await owner();
   const startsAt = lagosTime(text(form, "starts"));

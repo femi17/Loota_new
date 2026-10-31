@@ -8,6 +8,7 @@ import { ChestArt } from "@/components/ChestArt";
 import { Countdown } from "@/components/Countdown";
 import { getPlayer } from "@/lib/player";
 import { listHunts } from "@/lib/hunts";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { logOut } from "../(auth)/actions";
 import { joinHunt } from "./actions";
 import { huntResumesAt } from "@/game/hunt";
@@ -23,8 +24,27 @@ const when = (iso: string) =>
 
 const ORDER = { live: 0, paused: 1, upcoming: 2, draft: 3, ended: 4 } as const;
 
+const storage = (bucket: string, path: string) => `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/${bucket}/${path}`;
+
+/**
+ * Each story hunt's trailer (owner, 31 Oct 2026: "What will be in the lobby, story trailer, I will create that"), with
+ * the story's first picture as its cover. Read with the server's key: players can't read hunts themselves (it holds the
+ * story's answers), so only these two addresses leave the server.
+ */
+async function trailersOf(ids: string[]) {
+  if (!ids.length) return new Map<string, { video: string; poster: string | null }>();
+  const { data } = await createAdminClient().from("hunts").select("id, trailer_path, story_pictures(n, path)").in("id", ids).not("trailer_path", "is", null);
+  return new Map(
+    (data ?? []).map((h) => {
+      const first = [...(h.story_pictures ?? [])].filter((p) => p.path).sort((a, b) => a.n - b.n)[0];
+      return [h.id, { video: storage("story-trailers", h.trailer_path!), poster: first ? storage("story-pictures", first.path!) : null }];
+    }),
+  );
+}
+
 async function HuntList() {
   const hunts = (await listHunts()).sort((x, y) => ORDER[x.phase] - ORDER[y.phase]);
+  const trailers = await trailersOf(hunts.filter((h) => h.phase !== "ended").map((h) => h.id));
   if (!hunts.length) {
     return (
       <section className="flex items-center gap-4 rounded-3xl border-[1.5px] border-dashed border-line p-6">
@@ -72,6 +92,17 @@ async function HuntList() {
               <h2 className="font-display text-2xl font-extrabold leading-tight">{h.title}</h2>
               {h.description && <p className="mt-1 text-sm text-muted">{h.description}</p>}
             </div>
+            {trailers.has(h.id) && (
+              <video
+                src={trailers.get(h.id)!.video}
+                poster={trailers.get(h.id)!.poster ?? undefined}
+                controls
+                playsInline
+                preload="metadata"
+                aria-label={`${h.title}: the trailer`}
+                className="relative aspect-video w-full rounded-2xl bg-ink object-cover"
+              />
+            )}
             <dl className="grid grid-cols-3 gap-2 text-center">
               <div className="rounded-2xl bg-ink/60 p-2.5">
                 <dt className="text-xs text-muted">Keys</dt>

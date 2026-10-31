@@ -11,6 +11,7 @@ import { dayName, lagosDay, nextHuntDay } from "./huntDay";
 import { StoryPictures } from "./StoryPictures";
 import { StoryProgress } from "./StoryProgress";
 import { StoryWaiting } from "./StoryWaiting";
+import { StoryTrailer } from "./StoryTrailer";
 import { DeleteHunt } from "./DeleteHunt";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
@@ -50,6 +51,8 @@ type HuntRow = {
   story_status: "waiting" | "writing" | "ready" | "failed" | null;
   keys_wanted: number | null;
   story_pictures: { n: number; chapter: number; prompt: string; path: string | null }[];
+  /** The story's trailer in Storage (bucket story-trailers), shown in the lobby. */
+  trailer_path: string | null;
 };
 
 /** Where a hunt is in its life, read per request (the page is dynamic). */
@@ -62,6 +65,7 @@ function huntStatus(h: { published: boolean; starts_at: string; ends_at: string 
 const STATUS = { live: "● Live", upcoming: "Coming up", draft: "Draft", finished: "Finished" } as const;
 /** A story picture's public address in Storage. */
 const pictureUrl = (path: string) => `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/story-pictures/${path}`;
+const trailerUrl = (path: string) => `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/story-trailers/${path}`;
 
 const field = "h-11 rounded-xl border-[1.5px] border-line bg-ink px-3 text-paper outline-none focus:border-gold";
 const lagos = (iso: string) =>
@@ -85,7 +89,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
   const { data } = await createAdminClient()
     .from("hunts")
-    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
+    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, trailer_path, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
     .order("starts_at", { ascending: false });
   const hunts = (data ?? []) as HuntRow[];
   // Live first, then coming up, drafts, and the finished ones folded away (owner, 31 Oct 2026: tidy the admin).
@@ -193,6 +197,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                         <Link href={`/admin/story/${h.id}`} className="flex h-11 w-fit items-center rounded-xl border-[1.5px] border-gold px-4 text-sm font-bold">
                           📖 Read the story and its answers
                         </Link>
+                        <StoryTrailer hunt={h.id} url={h.trailer_path ? trailerUrl(h.trailer_path) : null} />
                         {h.story_pictures.length > 0 && (
                           <StoryPictures
                             hunt={h.id}

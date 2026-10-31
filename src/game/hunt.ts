@@ -39,8 +39,8 @@ export type HuntStoryView = {
   title: string;
   logline: string;
   opensAt: string;
-  /** Every chapter once the hunt has opened, with when it opens; its setting and text only once it has. */
-  chapters: { n: number; title: string; setting: string; opensAt: string; paragraphs: string[] }[];
+  /** Every chapter once the hunt has opened; its setting and text only once this player has opened it. withKey: the key that opens it. */
+  chapters: { n: number; title: string; setting: string; withKey: number | null; paragraphs: string[] }[];
   pictures: { chapter: number; url: string }[];
 };
 

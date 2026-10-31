@@ -35,7 +35,7 @@ async function storyOf(hunt: string): Promise<HuntStoryView | null | undefined> 
 
 /**
  * A story hunt's story (owner, 31 Oct 2026), for the scroll: null while it's loading or when the hunt has no story.
- * Asked again every minute, because its chapters open one by one through the hunt.
+ * Asked again when a key is earned (each key opens the next chapter), and every minute.
  */
 export function useHuntStory(huntId: string | null) {
   const [loaded, setLoaded] = useState<{ hunt: string; story: HuntStoryView | null } | null>(null);
@@ -48,9 +48,11 @@ export function useHuntStory(huntId: string | null) {
     const ask = () => void storyOf(huntId).then((story) => live && story !== undefined && setLoaded({ hunt: huntId, story }));
     ask();
     const timer = setInterval(ask, 60_000);
+    window.addEventListener("loota:key-earned", ask);
     return () => {
       live = false;
       clearInterval(timer);
+      window.removeEventListener("loota:key-earned", ask);
     };
   }, [huntId]);
   const story = huntId && loaded?.hunt === huntId ? loaded.story : null;
@@ -79,7 +81,6 @@ export function ScrollIcon() {
 const chapterName = (c: { n: number }, all: { n: number }[]) =>
   c.n === 0 ? "Prologue" : all.length > 2 && c.n === all[all.length - 1].n ? "The end" : `Chapter ${c.n}`;
 
-const lagosTime = (iso: string) => new Date(iso).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" });
 const opensWhen = (iso: string) =>
   new Date(iso).toLocaleString("en-NG", { weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" });
 
@@ -88,7 +89,7 @@ const noCopy = (e: { preventDefault: () => void }) => e.preventDefault();
 
 /**
  * The story, on a scroll the hunter can open and close at any time (owner, 31 Oct 2026: "a scroll that user can always
- * open and close"): read chapter by chapter as they open through the hunt. Nothing in it is an answer; the answers are
+ * open and close"): read chapter by chapter, each one opened by finding the key before it. Nothing in it is an answer; the answers are
  * dug out of it.
  */
 export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string; story: HuntStoryView; onClose: () => void; reload: () => void }) {
@@ -159,7 +160,7 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
               >
                 {chapters.map((x, i) => (
                   <option key={x.n} value={i}>
-                    {chapterName(x, chapters)} · {x.paragraphs.length ? x.title : `🔒 opens at ${lagosTime(x.opensAt)}`}
+                    {chapterName(x, chapters)} · {x.paragraphs.length ? x.title : `🔒 find Key ${x.withKey}`}
                   </option>
                 ))}
               </select>
@@ -174,7 +175,7 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
               <div className="flex flex-col gap-3">
                 <p className="italic">{story.logline}</p>
                 <p className="rounded-xl bg-[#3B2A16]/10 p-3 text-sm not-italic">
-                  The story opens with the hunt, at {opensWhen(story.opensAt)} (Lagos time), a chapter at a time. Every answer is hidden in it.
+                  The story opens with the hunt, at {opensWhen(story.opensAt)} (Lagos time). Each key you find opens the next chapter. Every answer is hidden in it.
                 </p>
               </div>
             ) : locked ? (
@@ -184,7 +185,7 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
                 </p>
                 <p className="font-display text-xl font-extrabold">{chapterName(c, chapters)}</p>
                 <p className="text-sm">
-                  This chapter opens at <b>{lagosTime(c.opensAt)}</b> (Lagos time). Keep hunting: the scroll glows when it&apos;s here.
+                  This chapter opens when you find <b>Key {c.withKey}</b>. Keep hunting: the scroll glows when it&apos;s here.
                 </p>
               </div>
             ) : (

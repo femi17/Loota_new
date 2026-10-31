@@ -1,8 +1,9 @@
 // The story scroll and the trailer (owner, 31 Oct 2026: "we create a reader, something like a scroll that user can always
 // open and close. What will be in the lobby, story trailer, I will create that, and there should be a place for me to
 // upload it"). A live story hunt with a story (its answers, decoys and live pieces kept with it), a picture and a trailer:
-//   1. the story the game's server hands a hunter: chapters that have opened (the first two at the start, then one every
-//      45 minutes: owner, 31 Oct 2026), the rest locked with their time; text only; none of the answers;
+//   1. the story the game's server hands a hunter: the opening and chapter 1 at the start, each key found opens the next
+//      (owner, 31 Oct 2026: "only when you obtain the first key, you get the next chapter"), and a chapter once open stays
+//      open even if a key is stolen; text only; none of the answers;
 //      not signed in: refused; a hunt not started yet: no chapters, only when it opens; an unpublished hunt: none;
 //   2. the lobby shows the hunt's trailer, with the trailer's first picture as its cover;
 //   3. on the map (a phone), the scroll's button glows until read; it opens the story (title, the prologue), Next turns
@@ -118,9 +119,8 @@ try {
   }, [live, soon, hidden]);
   const story = JSON.parse(got.live.text);
   const third = story.chapters?.[2];
-  const opensIn = third ? Math.round((Date.parse(third.opensAt) - Date.now()) / 60000) : null;
   check("the story for a hunter: the first two chapters open at the start, with their text", got.live.status === 200 && story.chapters.length === 3 && story.chapters[0].paragraphs.length === 2 && story.chapters[1].paragraphs.length === 2, `${got.live.status}, ${story.chapters?.length} chapters`);
-  check("…the third locked, opening 45 minutes after the start (no text, no setting yet)", third?.paragraphs.length === 0 && third.setting === "" && opensIn >= 33 && opensIn <= 36, `opens in ${opensIn} min`);
+  check("…the third locked until Key 1 is found (no text, no setting yet)", third?.paragraphs.length === 0 && third.setting === "" && third.withKey === 1, JSON.stringify({ withKey: third?.withKey, words: third?.paragraphs.length }));
   check("…text only: no pictures in the scroll (they are the trailer's)", story.pictures.length === 0);
   check("…and none of the answers, decoys, live pieces or the villain's motive", SECRETS.every((x) => !got.live.text.includes(x)), SECRETS.filter((x) => got.live.text.includes(x)).join(", ") || "clean");
   const notIn = await fetch(`http://localhost:3000/api/hunt/story?hunt=${live}`);
@@ -177,7 +177,19 @@ try {
   await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => /Next/.test(b.textContent ?? ""))?.click());
   await wait(400);
   const lockedNow = await page.evaluate(() => ({ text: document.querySelector('[role="dialog"] [data-locked]')?.innerText ?? "", option: [...document.querySelectorAll('[role="dialog"] option')].map((o) => o.textContent).join(" | ") }));
-  check("Next again: the locked chapter says when it opens", /opens at/.test(lockedNow.text) && /🔒 opens at/.test(lockedNow.option) && !lockedNow.text.includes("light went out"), lockedNow.text.replace(/\s+/g, " ").slice(0, 120));
+  check("Next again: the locked chapter says which key opens it", /when you find Key 1/.test(lockedNow.text) && /🔒 find Key 1/.test(lockedNow.option) && !lockedNow.text.includes("light went out"), lockedNow.text.replace(/\s+/g, " ").slice(0, 120));
+  // Key 1 found: the game says so (loota:key-earned) and the chapter opens on the open scroll
+  await admin.from("hunt_players").update({ keys_held: 1 }).eq("hunt_id", live).eq("user_id", hunter.id);
+  await page.evaluate(() => window.dispatchEvent(new Event("loota:key-earned")));
+  let unlocked = "";
+  for (let i = 0; i < 20 && !unlocked.includes("light went out"); i++) {
+    await wait(500);
+    unlocked = await page.evaluate(() => document.querySelector('[role="dialog"] article')?.innerText ?? "");
+  }
+  check("Key 1 found: the next chapter opens on the scroll", unlocked.includes("light went out"), unlocked.replace(/\s+/g, " ").slice(0, 100));
+  await admin.from("hunt_players").update({ keys_held: 0 }).eq("hunt_id", live).eq("user_id", hunter.id);
+  const stolen = await page.evaluate(async (h) => (await (await fetch("/api/hunt/story?hunt=" + h)).json()).chapters[2].paragraphs.length, live);
+  check("…and stays open when a Thief's Hand takes the key", stolen === 1, stolen + " paragraph(s)");
   await page.screenshot({ path: `${OUT}/story-scroll-4-chapter.png` });
   await page.click('[aria-label="Close the scroll"]');
   await wait(400);

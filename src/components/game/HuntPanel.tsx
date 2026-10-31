@@ -105,6 +105,7 @@ export function HuntPanel({
   scene = false,
   keeper = "The Keeper",
   inArea = false,
+  storyHunt = false,
 }: {
   huntId: string;
   actions: RefObject<HuntActions | null>;
@@ -114,6 +115,8 @@ export function HuntPanel({
   keeper?: string;
   /** In the key's area (the metal detector feels its heat): only then can you search (owner, 20 Oct 2026). */
   inArea?: boolean;
+  /** A story hunt: each key found opens the next chapter of the story on the scroll (owner, 31 Oct 2026). */
+  storyHunt?: boolean;
 }) {
   const supabase = useRef(createClient()).current;
   const [state, setState] = useState<HuntState | null>(null);
@@ -813,6 +816,11 @@ export function HuntPanel({
                 <p className="text-muted">
                   {ending.keysHeld} of {ending.keys} keys. Your next riddle is ready: you&apos;ll have 15 seconds to name the place.
                 </p>
+                {storyHunt && (
+                  <p className="rounded-xl bg-[#F7EBCF] px-3 py-2 text-sm font-bold text-[#3B2A16]" data-story-unlock>
+                    📜 The next chapter has opened on your scroll.
+                  </p>
+                )}
                 <Bonuses bonuses={ending.bonuses} />
               </>
             )}
@@ -826,6 +834,11 @@ export function HuntPanel({
                   You collected every key and finished <b>{ordinal(ending.place)}</b>.
                 </p>
                 {ending.winner && <p className="text-muted">The Loota team will contact you about your prize.</p>}
+                {storyHunt && (
+                  <p className="rounded-xl bg-[#F7EBCF] px-3 py-2 text-sm font-bold text-[#3B2A16]" data-story-unlock>
+                    📜 The story&apos;s ending has opened on your scroll.
+                  </p>
+                )}
                 <Bonuses bonuses={ending.bonuses} />
                 <button
                   type="button"

@@ -8707,14 +8707,17 @@ export function GameMap({
             )}
 
             {radioOpen && !inside && <RadioPanel onClose={() => setRadioOpen(false)} />}
-            {storyOpen && huntId && huntStory.story && !inside && <StoryScroll huntId={huntId} story={huntStory.story} reload={huntStory.reload} onClose={() => setStoryOpen(false)} />}
+            {storyOpen && huntId && huntStory.story && !inside && <StoryScroll huntId={huntId} story={huntStory.story} reload={huntStory.reload} onClose={() => {
+              setStoryOpen(false);
+              huntStory.seen();
+            }} />}
 
             {/* The hunt (riddle, keys, Search here) */}
             {/* (Out of the way in a scene, but kept: its race news and timers carry on.) */}
             {!huntId && openHunt && !inviteOff && !inside && !touring && !helpOpen && <HuntInvite hunt={openHunt} onDismiss={() => setInviteOff(true)} />}
             {huntId && huntShown && (
               <div className={inside && inside !== "trial" ? "hidden" : "contents"}>
-                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} keeper={trialKeeper} inArea={!!hud.heat} />
+                <HuntPanel huntId={huntId} actions={huntActions} onHide={hideHunt} scene={inside === "trial"} keeper={trialKeeper} inArea={!!hud.heat} storyHunt={!!huntStory.story} />
               </div>
             )}
           </div>

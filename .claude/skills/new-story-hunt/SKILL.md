@@ -30,8 +30,8 @@ reaches players), plus everything earlier stories used (never reuse it), and the
 ## 3. Write, in this order, into the draft
 
 1. **The plan** (`skeleton`): title, logline, villain, heroes, world rules, chapters (a short cold open = 0, about one
-   chapter per key, a short ending; one hero, one continuous day, chapter times matching the release every 45 minutes
-   from 9 am), and each key: question, answer (`searchName` that OpenStreetMap finds, aliases), lockId,
+   chapter per key, a short ending; one hero, one continuous day; chapter k holds key k and opens when key k − 1 is
+   found, so never put a key's clue in a later chapter), and each key: question, answer (`searchName` that OpenStreetMap finds, aliases), lockId,
    channelId, the conditions only the answer meets. Spread the keys around the world. Fiction woven into real places.
 2. **Each key's design** (`designs["<n>"]`): solving steps, plants (chapter + detail), the live piece written out in full
    (the deciding piece AI can't read in advance: never in the chapters), and `check` data when the lock is an acrostic,

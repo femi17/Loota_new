@@ -46,3 +46,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# story engine: work in progress (docs/stories/.work-<date>.json)
+docs/stories/.work-*

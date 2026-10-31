@@ -1,0 +1,28 @@
+{
+  "stories": [
+    {
+      "date": "2026-10-29",
+      "slug": "the-bronze-compass",
+      "title": "The Bronze Compass",
+      "genre": "family mystery",
+      "theme": "a lost bronze or artwork returning home",
+      "locks": ["riddle-conditions", "acrostic", "count-cipher", "time-zone", "old-name"],
+      "channels": ["radio", "voicemail", "player-strip", "phone-call", "compass-tool"],
+      "places": [
+        { "name": "Igun Street, Benin City", "lng": 5.62937, "lat": 6.33677 },
+        { "name": "Belém Tower, Lisbon", "lng": -9.21593, "lat": 38.69159 },
+        { "name": "British Museum, Great Russell Street, London", "lng": -0.12671, "lat": 51.51931 },
+        { "name": "Humboldt Forum, Berlin", "lng": 13.40123, "lat": 52.51703 },
+        { "name": "Oba's Palace, Benin City", "lng": 5.6201, "lat": 6.332 }
+      ],
+      "decoys": [
+        "Sakponba Road", "Akpakpava Road", "Lagos Street, Benin City", "Ihama Road", "Airport Road, Benin City", "Oba Market", "Siluko Road", "Plymouth Road", "Ikpokpan Road", "Ekenhuan Road", "Second West Circular Road", "Benin-Sapele Road", "Mission Road, Benin City", "National Museum, Benin City",
+        "Porto", "Rome", "Accra", "Istanbul", "Kampala", "Entebbe", "Yaoundé", "Rio de Janeiro", "Cristo Rei, Almada", "Jerónimos Monastery", "Monument to the Discoveries",
+        "Horniman Museum", "Tower of London", "Jesus College, Cambridge", "University of Aberdeen", "Glasgow",
+        "Weltmuseum, Vienna", "Christiansborg Palace, Copenhagen", "Royal Palace, Stockholm", "Royal Palace, Madrid", "Louvre, Paris", "Prague Castle", "Buda Castle, Budapest", "Royal Castle, Warsaw", "Berlin Cathedral",
+        "Emotan Shrine, Benin City"
+      ],
+      "characters": ["Ehizogie", "Osayi", "Isoken Osagie", "Professor Osagie", "Pa Eweka", "Margaret", "Lennart Voss", "The Masquerade"]
+    }
+  ]
+}

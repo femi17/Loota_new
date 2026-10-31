@@ -1,0 +1,33 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;700&display=swap");
+@page { size: A4; margin: 18mm 20mm; }
+body { margin: 0; color: #1a1712; background: #fff; }
+h1, h2, h3 { font-family: "Bricolage Grotesque", sans-serif; }
+.small { font-size: 8.5pt; color: #6b6457; }
+
+/* The story, for players */
+.story { font-family: "Lora", Georgia, serif; font-size: 11pt; line-height: 1.62; }
+.story .cover { height: 245mm; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; break-after: page; }
+.story .cover h1 { font-size: 38pt; font-weight: 800; margin: 0 0 6mm; }
+.story .sub { font-family: "DM Sans", sans-serif; color: #6b6457; letter-spacing: 3px; text-transform: uppercase; }
+.story .how { font-family: "DM Sans", sans-serif; max-width: 125mm; margin-top: 20mm; font-size: 10pt; color: #6b6457; }
+.story section { break-before: page; }
+.story h2 { font-size: 17pt; font-weight: 800; margin: 0 0 1mm; }
+.story .where { font-family: "DM Sans", sans-serif; font-size: 9pt; letter-spacing: 2px; text-transform: uppercase; color: #b07d06; margin: 0 0 6mm; }
+.story p { margin: 0 0 3.2mm; text-align: justify; hyphens: auto; }
+.story .end { text-align: center; font-family: "Bricolage Grotesque", sans-serif; font-weight: 800; letter-spacing: 4px; margin-top: 10mm; }
+
+/* The answers, for the owner */
+.answers { font-family: "DM Sans", sans-serif; font-size: 9.5pt; line-height: 1.45; }
+.answers .secret { display: inline-block; background: #b3261e; color: #fff; font-weight: 700; font-size: 8.5pt; padding: 4px 10px; border-radius: 999px; letter-spacing: 1px; }
+.answers h1 { font-size: 22pt; margin: 8px 0 2px; }
+.answers h3 { font-size: 13pt; margin: 14px 0 6px; }
+.answers .verdict { background: #fdf3d8; border-radius: 10px; padding: 8px 12px; margin: 10px 0; }
+.answers .verdict p { margin: 2px 0; }
+.answers .key { border: 1px solid #e6e1d6; border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; }
+.answers .key h2 { font-size: 13pt; margin: 0 0 4px; }
+.answers .ans { display: inline-block; background: #e3f3ea; color: #1e7a4c; font-weight: 700; border-radius: 6px; padding: 2px 8px; margin: 0 0 6px; }
+.answers .live { background: #eef3ff; border-radius: 8px; padding: 6px 10px; margin: 6px 0; font-family: "Lora", Georgia, serif; }
+.answers table { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
+.answers th, .answers td { text-align: left; padding: 3px 5px; border-top: 1px solid #e6e1d6; vertical-align: top; }
+.answers .ok { color: #1e7a4c; }
+.answers .bad { color: #b3261e; }

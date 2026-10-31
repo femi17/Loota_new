@@ -2,7 +2,11 @@
 
 Makes one complete treasure-hunt story a day: a novel-length thriller hiding real places around the world, with 20+ decoys per key, a live piece per key that only the game hands out, picture prompts and voice directions. Nothing it has used before is ever used again.
 
-## Every day
+## In the admin (the easy way)
+
+Owner tools → **New story hunt**: the number of keys, the day it starts (and how many days), the prize and the winners. Hunting hours are always 9 am to 9 pm, Lagos time. Press **Write the story** and keep the page open: it writes one step at a time (10–20 minutes) and shows its progress. When it's ready the hunt takes the story's title and description, gets a key at each real place, and shows every scene's picture prompt with **Copy prompt** and **Upload picture** (PNG, JPG or WebP, up to 20 MB). **Read the story and its answers** opens the full story with the answer sheet. If it stops (no API credit, a lost connection) it says why: press **Carry on**.
+
+## On the command line
 
 ```
 npm run story:new
@@ -33,13 +37,13 @@ It takes 10–20 minutes and costs about a dollar with the default writer. Every
 
 ## Using the Bible by hand
 
-`BIBLE.md` is the full brief. Paste it into any AI chat (Claude, ChatGPT), then add: the genre, the theme, the number of keys, and which lock and channel each key uses (from `library.mts`). Ask for the plan first, then the decoys, then the chapters one by one.
+The full brief is in `src/lib/story/bible.ts`; print it with `npm run story:new -- --bible`. Paste it into any AI chat (Claude, ChatGPT), then add: the genre, the theme, the number of keys, and which lock and channel each key uses (from `src/lib/story/library.ts`). Ask for the plan first, then the decoys, then the chapters one by one.
 
 ## Adding new tricks
 
-- **New lock** (kind of puzzle) or **new channel** (how a live piece reaches players): add a line to `library.mts`. The engine starts using it next time, least-used first.
+- **New lock** (kind of puzzle) or **new channel** (how a live piece reaches players): add a line to `src/lib/story/library.ts`. The engine starts using it next time, least-used first.
 - Channels marked `to-build` need a game feature before a story using them can be played. Today `radio`, `shopkeeper`, `lounge-board`, `lamp-whisper` and `road-stranger` are closest to ready.
 
 ## The registry
 
-`docs/stories/registry.json` lists every story's places, decoys, characters, titles, locks and channels. The engine never reuses a place, decoy, character or title, and picks the locks and channels used longest ago. Keep this file in git.
+The database table `story_registry` lists every story's places, decoys, characters, titles, locks and channels (the admin and the command line share it). The engine never reuses a place, decoy, character or title, and picks the locks and channels used longest ago.

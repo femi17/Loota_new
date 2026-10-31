@@ -9,6 +9,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getPlayer } from "@/lib/player";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { sideStreetSpot } from "@/lib/road-cells";
+import { nearestRoad } from "@/lib/nearest-road";
+import { newWork } from "@/lib/story/engine";
 
 /** Only the owner may change hunts; everything below uses the secret key after this check. */
 async function owner() {
@@ -33,21 +35,6 @@ function coordinates(value: string) {
   const lng = Number(m[2]);
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   return { lng, lat };
-}
-
-/** The nearest point a hunter on foot can reach, so a key is never inside a building or on water. */
-async function nearestRoad(point: { lng: number; lat: number }) {
-  try {
-    const res = await fetch(`https://routing.openstreetmap.de/routed-foot/nearest/v1/foot/${point.lng},${point.lat}?number=1`, {
-      signal: AbortSignal.timeout(8000),
-    });
-    const data = (await res.json()) as { waypoints?: { location: [number, number]; distance: number }[] };
-    const w = data.waypoints?.[0];
-    if (!w) return null;
-    return { lng: w.location[0], lat: w.location[1], movedM: Math.round(w.distance) };
-  } catch {
-    return null;
-  }
 }
 
 const metresBetween = (a: { lng: number; lat: number }, b: { lng: number; lat: number }) =>
@@ -102,6 +89,74 @@ async function guessScene(spot: { lng: number; lat: number }): Promise<{ scene: 
   } catch {
     return { scene: "circle", why: "OpenStreetMap didn't answer in time: choose a scene by hand if it should be one" };
   }
+}
+
+/**
+ * A new story hunt (owner, 31 Oct 2026: "enter the number of keys, the start time is from 9am to 9pm, it will always
+ * be"): the owner gives the keys, the day, how many days, the prize and the winners; the story engine writes the rest
+ * (title, description, keys) while the admin page is open. Hunting hours are always 9 am to 9 pm, Lagos time.
+ */
+export async function createStoryHunt(form: FormData) {
+  const player = await owner();
+  const keys = whole(form, "keys");
+  const days = whole(form, "days") || 1;
+  const day = text(form, "day");
+  if (!(keys >= 1 && keys <= 30)) back("Choose between 1 and 30 keys.", true);
+  if (!(days >= 1 && days <= 14)) back("A hunt runs 1 to 14 days.", true);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) back("Choose the day it starts.", true);
+  const startsAt = new Date(`${day}T09:00:00+01:00`);
+  const endsAt = new Date(startsAt.getTime() + (days - 1) * 86_400_000 + 12 * 3_600_000); // 9 pm on the last day
+  if (endsAt.getTime() <= Date.now()) back("That day is already over.", true);
+  const { error } = await createAdminClient().from("hunts").insert({
+    title: "A new story (being written…)",
+    prize: text(form, "prize") || "To be announced",
+    description: "",
+    winners: whole(form, "winners") || 1,
+    questions_per_trial: 3,
+    seconds_per_question: 12,
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
+    created_by: player.id,
+    keys_wanted: keys,
+    story_status: "writing",
+    story: newWork(keys),
+  });
+  if (error) back(`Couldn't start the hunt: ${error.message}`, true);
+  revalidatePath("/admin");
+  back("The story is being written: keep this page open until it's ready (10 to 20 minutes).");
+}
+
+/** Carry on writing a story that stopped (out of credit, a lost connection…). */
+export async function carryOnStory(form: FormData) {
+  await owner();
+  const hunt = text(form, "hunt");
+  if (!UUID.test(hunt)) back("Unknown hunt.", true);
+  await createAdminClient().from("hunts").update({ story_status: "writing" }).eq("id", hunt).eq("story_status", "failed");
+  revalidatePath("/admin");
+  back("Carrying on with the story.");
+}
+
+/**
+ * A one-time pass to upload a story picture straight from the owner's browser to Storage (the live server can't take
+ * big files itself). `ext`: png, jpg, jpeg or webp.
+ */
+export async function pictureUploadPass(hunt: string, n: number, ext: string) {
+  await owner();
+  if (!UUID.test(hunt) || !Number.isInteger(n) || !/^(png|jpe?g|webp)$/.test(ext)) return { error: "Unknown picture." };
+  const path = `${hunt}/${n}-${Date.now()}.${ext}`;
+  const { data, error } = await createAdminClient().storage.from("story-pictures").createSignedUploadUrl(path);
+  if (error || !data) return { error: error?.message ?? "Couldn't prepare the upload." };
+  return { path, token: data.token };
+}
+
+/** Record an uploaded story picture (after the browser has sent it to Storage). */
+export async function savePicture(hunt: string, n: number, path: string) {
+  await owner();
+  if (!UUID.test(hunt) || !path.startsWith(`${hunt}/`)) return { error: "Unknown picture." };
+  const db = createAdminClient();
+  const { error } = await db.from("story_pictures").update({ path, uploaded_at: new Date().toISOString() }).eq("hunt_id", hunt).eq("n", n);
+  if (error) return { error: error.message };
+  return { url: db.storage.from("story-pictures").getPublicUrl(path).data.publicUrl };
 }
 
 export async function createHunt(form: FormData) {

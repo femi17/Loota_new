@@ -23,7 +23,7 @@
     "landmarks:upload": "node scripts/upload-landmarks.mts",
     "djinn:upload": "node scripts/upload-djinn-sites.mts",
     "signals:fetch": "node scripts/fetch-signals.mjs",
-    "story:new": "node scripts/story-engine/engine.mts"
+    "story:new": "node --no-warnings --import ./scripts/tests/ts-ext.mjs scripts/story-engine/engine.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",

@@ -9,7 +9,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
 import { KEY_SCENES, KEY_SCENE_INFO, isKeyScene } from "@/game/keyScenes";
 import { wonderOf } from "@/game/wonders";
-import { addKey, createHunt, removeLastKey, setKeyScene, setKeyTrap, setKeyTrial, setPublished, summonDjinn } from "./actions";
+import { addKey, createHunt, createStoryHunt, removeLastKey, setKeyScene, setKeyTrap, setKeyTrial, setPublished, summonDjinn } from "./actions";
+import { StoryPictures } from "./StoryPictures";
+import { StoryProgress } from "./StoryProgress";
 import { DeleteHunt } from "./DeleteHunt";
 import { RiddleFields } from "./RiddleFields";
 import { StoryEditor } from "./StoryEditor";
@@ -84,6 +86,10 @@ type HuntRow = {
   hunt_keys: KeyRow[];
   hunt_story: { beat: string; lines: { who: string; text: string }[] }[];
   hunt_players: { count: number }[];
+  /** A story hunt: writing, ready or failed (null: made by hand). */
+  story_status: "writing" | "ready" | "failed" | null;
+  keys_wanted: number | null;
+  story_pictures: { n: number; chapter: number; prompt: string; path: string | null }[];
 };
 
 /** Where a hunt is in its life, read per request (the page is dynamic). */
@@ -95,6 +101,10 @@ function huntStatus(h: { published: boolean; starts_at: string; ends_at: string 
 }
 const STATUS = { live: "● Live", upcoming: "Coming up", draft: "Draft", finished: "Finished" } as const;
 const nowIso = () => new Date().toISOString();
+/** Tomorrow's date in Lagos, for the story hunt form. */
+const tomorrow = () => new Date(Date.now() + 25 * 3_600_000).toISOString().slice(0, 10);
+/** A story picture's public address in Storage. */
+const pictureUrl = (path: string) => `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/story-pictures/${path}`;
 
 const field = "h-11 rounded-xl border-[1.5px] border-line bg-ink px-3 text-paper outline-none focus:border-gold";
 const lagos = (iso: string) =>
@@ -118,7 +128,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
   const { data } = await createAdminClient()
     .from("hunts")
-    .select("id, title, prize, winners, starts_at, ends_at, questions_per_trial, seconds_per_question, published, hunt_keys(*), hunt_players(count), hunt_story(beat, lines)")
+    .select("id, title, prize, winners, starts_at, ends_at, questions_per_trial, seconds_per_question, published, story_status, keys_wanted, hunt_keys(*), hunt_players(count), hunt_story(beat, lines), story_pictures(n, chapter, prompt, path)")
     .order("starts_at", { ascending: false });
   const hunts = (data ?? []) as HuntRow[];
   // Live first, then coming up, drafts, and the finished ones folded away (owner, 31 Oct 2026: tidy the admin).
@@ -164,9 +174,37 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
         )}
       </section>
 
+      {/* A story hunt (owner, 31 Oct 2026): the keys, the day and the prize; the story engine writes the rest. */}
       <section className="flex flex-col gap-4 rounded-3xl bg-ink-2 p-6">
-        <h1 className="font-display text-2xl font-extrabold">Create a hunt</h1>
-        <form action={createHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <h1 className="font-display text-2xl font-extrabold">New story hunt</h1>
+          <p className="text-sm text-muted">The story engine writes the story, its title and description, and hides the keys in it. Hunting hours are always 9 am to 9 pm, Lagos time.</p>
+        </div>
+        <form action={createStoryHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-5">
+          <Field label="Keys">
+            <input name="keys" type="number" min={1} max={30} defaultValue={5} required className={field} />
+          </Field>
+          <Field label="Starts on">
+            <input name="day" type="date" defaultValue={tomorrow()} required className={field} />
+          </Field>
+          <Field label="Days" hint="9 am to 9 pm each day">
+            <input name="days" type="number" min={1} max={14} defaultValue={1} required className={field} />
+          </Field>
+          <Field label="Prize">
+            <input name="prize" required minLength={2} maxLength={200} className={field} placeholder="₦50,000 voucher" />
+          </Field>
+          <Field label="Winners">
+            <input name="winners" type="number" min={1} max={1000} defaultValue={3} required className={field} />
+          </Field>
+          <button type="submit" className="h-12 rounded-2xl bg-gold font-bold text-ink sm:col-span-5">
+            ✍️ Write the story
+          </button>
+        </form>
+      </section>
+
+      <details className="rounded-3xl bg-ink-2 p-6">
+        <summary className="cursor-pointer font-bold text-muted">Make a hunt by hand (every field, your own riddles)</summary>
+        <form action={createHunt} className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Title">
             <input name="title" required minLength={3} maxLength={80} className={field} placeholder="Lagos Island Dash" />
           </Field>
@@ -195,7 +233,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
             Create as draft
           </button>
         </form>
-      </section>
+      </details>
 
       {hunts.length === 0 && <p className="text-center text-muted">No hunts yet. Create one above.</p>}
       {groups.map((g) =>
@@ -241,7 +279,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                     ● Broadcast
                   </Link>
                 )}
-                {status(h) !== "finished" && (
+                {status(h) !== "finished" && h.story_status !== "writing" && h.story_status !== "failed" && (
                   <form action={setPublished}>
                     <input type="hidden" name="hunt" value={h.id} />
                     <input type="hidden" name="publish" value={String(!h.published)} />
@@ -257,6 +295,23 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
               Prize: {h.prize} · {h.winners} winners · {lagos(h.starts_at)} to {lagos(h.ends_at)} · {h.questions_per_trial} questions ×{" "}
               {h.seconds_per_question} s · {players} hunters joined
             </p>
+
+            {(h.story_status === "writing" || h.story_status === "failed") && <StoryProgress hunt={h.id} status={h.story_status} />}
+            {h.story_status === "ready" && (
+              <>
+                <Link href={`/admin/story/${h.id}`} className="flex h-11 w-fit items-center rounded-xl border-[1.5px] border-gold px-4 text-sm font-bold">
+                  📖 Read the story and its answers
+                </Link>
+                {h.story_pictures.length > 0 && (
+                  <StoryPictures
+                    hunt={h.id}
+                    pictures={[...h.story_pictures]
+                      .sort((a, b) => a.n - b.n)
+                      .map((p) => ({ n: p.n, chapter: p.chapter, prompt: p.prompt, url: p.path ? pictureUrl(p.path) : null }))}
+                  />
+                )}
+              </>
+            )}
 
             <ol className="flex flex-col gap-2">
               {keys.map((k, idx) => (
@@ -339,7 +394,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
             {keys.length > 0 && <StoryEditor hunt={h.id} beats={beats} initial={storyText} />}
 
-            {!h.published && (
+            {!h.published && h.story_status !== "writing" && h.story_status !== "failed" && (
               <>
                 <form action={addKey} className="grid grid-cols-1 gap-3 rounded-2xl bg-ink-2 p-4 sm:grid-cols-2">
                   <input type="hidden" name="hunt" value={h.id} />

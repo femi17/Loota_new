@@ -31,13 +31,15 @@ reaches players), plus everything earlier stories used (never reuse it), and the
 
 1. **The plan** (`skeleton`): title, logline, villain, heroes, world rules, chapters (a short cold open = 0, about one
    chapter per key, a short ending; one hero, one continuous day; chapter k holds key k and opens when key k − 1 is
-   found, so never put a key's clue in a later chapter), and each key: question, answer (`searchName` that OpenStreetMap finds, aliases), lockId,
+   found, so never put a key's clue in a later chapter), and each key: question, answer (ONE exact place, e.g. the
+   lighthouse not the fort, the gun not the hill; `searchName` that OpenStreetMap finds; `radius` 120 m, up to 300 for a
+   canal or island fortress; aliases only if they land inside it), lockId,
    channelId, the conditions only the answer meets. Spread the keys around the world. Fiction woven into real places.
 2. **Each key's design** (`designs["<n>"]`): solving steps, plants (chapter + detail), the live piece written out in full
    (the deciding piece AI can't read in advance: never in the chapters), and `check` data when the lock is an acrostic,
    letter shift or anagram (it must decode exactly: the importer works it out).
-3. **Decoys** (`decoys["<n>"]`): 6+ per key, real places, each failing a named condition, at least 1 km from the
-   answer, types A/B/C, and each one a false trail IN THE PLOT (the villain's wrong race, a friend's wrong guess, a
+3. **Decoys** (`decoys["<n>"]`): 6+ per key, real places, each failing a named condition, at least radius + 100 m from
+   the answer, including near misses next door (the hotel by the lighthouse) that the story rules out, types A/B/C, and each one a false trail IN THE PLOT (the villain's wrong race, a friend's wrong guess, a
    forged message), spread across scenes, never as a list.
 4. **Chapters**: write each as `docs/stories/drafts/<date>-<id>/<n>.md` (plain prose, paragraphs separated by a blank
    line, 600–850 words; cold open ~300). One "aha" per key, planted earlier in a funny or emotional moment. Never name a

@@ -19,7 +19,15 @@ const SOLVER = "claude-sonnet-5-5";
 const PRICE: Record<string, [number, number]> = { "claude-sonnet-5-5": [2, 10], "claude-haiku-5-5": [0.1, 0.5] };
 /** An answer this close counts as found; a decoy this close to its answer is a second answer, not a decoy. */
 export const FOUND_M = 1500;
-const DECOY_GAP_M = 1000;
+/**
+ * A story key is one exact place (owner, 31 Oct 2026: "the key location has to be in one"): only arriving within its
+ * radius counts in the game (hunt_keys.exact_m). A decoy must lie at least 100 m beyond it, so a near miss (the hotel
+ * by the lighthouse) is a wrong answer, not a second right one.
+ */
+export const EXACT_M = 120;
+const DECOY_MARGIN_M = 100;
+/** How near counts for a key: its own radius, or 120 m. */
+export const radiusOf = (answer: { radius?: number }) => Math.min(400, Math.max(60, answer.radius ?? EXACT_M));
 
 /** What one story used (the registry: no later story reuses its places, decoys, characters or title). */
 export type Used = {
@@ -47,6 +55,7 @@ const Skeleton = z.object({
     answer: z.object({
       name: z.string(),
       searchName: z.string().describe("The name that finds it on OpenStreetMap, e.g. 'Belem Tower' or 'Igun Street, Benin City'"),
+      radius: z.number().optional().describe("How near counts, in metres: the exact place's own size (default 120; up to 300 for a long canal or an island fortress). Anything further is the wrong place."),
       city: z.string(),
       country: z.string(),
       aliases: z.array(z.string()).describe("Other names and spellings players may type"),
@@ -303,13 +312,14 @@ export async function checkMapKey(work: Work, n: number): Promise<MapCheck> {
   const aliases = [];
   for (const alias of key.answer.aliases) {
     const got = await photon(alias);
-    aliases.push({ alias, ok: !!(found && got && metres(found, got) <= FOUND_M), got: got?.name ?? "nothing" });
+    aliases.push({ alias, ok: !!(found && got && metres(found, got) <= radiusOf(key.answer)), got: got?.name ?? "nothing" });
   }
   const decoys = [];
   for (const d of work.decoys[n] ?? []) {
     const got = await photon(d.searchName);
     const gap = found && got ? metres(found, got) : null;
-    decoys.push({ place: d.place, ok: !!got && (gap === null || gap >= DECOY_GAP_M), why: !got ? "not found on the map" : gap !== null && gap < DECOY_GAP_M ? `only ${gap} m from the answer` : "ok" });
+    const min = radiusOf(key.answer) + DECOY_MARGIN_M;
+    decoys.push({ place: d.place, ok: !!got && (gap === null || gap >= min), why: !got ? "not found on the map" : gap !== null && gap < min ? `only ${gap} m from the answer (under ${min} m)` : "ok" });
   }
   const m = { answer: key.answer.name, found, aliases, decoys };
   work.map[n] = m;

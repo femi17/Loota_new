@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { nearestRoad } from "@/lib/nearest-road";
-import { blueprintOf, usedBy, type Used, type Work } from "./engine";
+import { blueprintOf, radiusOf, usedBy, type Used, type Work } from "./engine";
 
 /** How far from a key's place the hot-and-cold search starts. */
 const AREA_M = 1500;
@@ -29,7 +29,10 @@ export async function finishStoryHunt(hunt: string, work: Work): Promise<string[
       notes.push(`Key ${key.n} (${key.answer.name}) isn't on the map: add it by hand.`);
       continue;
     }
-    const spot = (await nearestRoad(found)) ?? { ...found, movedM: null };
+    // The chest on the nearest road or path, if that's still at the place itself (an exact key: owner, 31 Oct 2026).
+    const radius = radiusOf(key.answer);
+    const road = await nearestRoad(found);
+    const spot = road && (road.movedM ?? 0) <= radius ? road : found;
     n += 1;
     const { error } = await db.from("hunt_keys").insert({
       hunt_id: hunt,
@@ -41,6 +44,7 @@ export async function finishStoryHunt(hunt: string, work: Work): Promise<string[
       area_lng: found.lng,
       area_lat: found.lat,
       area_radius_m: AREA_M,
+      exact_m: radius,
       approach_clue: null,
       spot_lng: spot.lng,
       spot_lat: spot.lat,

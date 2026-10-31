@@ -106,8 +106,13 @@ try {
   const locked = await until(async () => /Locked\. A small brass keyhole/.test(await say()) && (await say()), 20000);
   check("the bedroom: locked, with its hint", !!locked, locked ?? (await say()));
   await tap({ tap: "room", id: "cellar" });
-  await until(async () => (await say()) === "…", 20000);
-  await wait(500);
+  const challenge = await until(() => page.evaluate(() => document.querySelector('[aria-label="Dodge the trap"]')?.innerText ?? null), 20000);
+  const answers = await page.evaluate(() => document.querySelectorAll('[aria-label="Dodge the trap"] button').length);
+  check("the cellar: a trap! a challenge to dodge it, with 4 answers", !!challenge && answers === 4, `${answers} answers: ${challenge?.replace(/\s+/g, " ").slice(0, 100)}`);
+  await page.screenshot({ path: `${OUT}/house-2-dodge.png` });
+  const pending = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data.house_dodge;
+  await page.evaluate((n) => document.querySelectorAll('[aria-label="Dodge the trap"] button')[n - 1].click(), pending.answer === 1 ? 2 : 1);
+  await wait(900);
   await page.screenshot({ path: `${OUT}/house-2a-trap-springs.png` });
   const card = await until(() => page.evaluate(() => document.querySelector('[role="alertdialog"][data-penalty]')?.innerText ?? null), 20000);
   check("the cellar: a trap, the soft penalty card (wrong room), thrown out", !!card && /WRONG ROOM/i.test(card) && !(await page.$('[aria-label="Inside the house"]')), card?.replace(/\s+/g, " ").slice(0, 120));
@@ -119,6 +124,14 @@ try {
   await (await until(async () => (await (await button("Go inside")).jsonValue()) !== null && (await button("Go inside")))).click();
   await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Inside the house"] canvas')));
   await wait(800);
+  // The kitchen: dodged
+  await tap({ tap: "room", id: "kitchen" });
+  await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Dodge the trap"]')), 20000);
+  const answer = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data.house_dodge.answer;
+  await page.evaluate((n) => document.querySelectorAll('[aria-label="Dodge the trap"] button')[n - 1].click(), answer);
+  const dodged = await until(async () => /You dodged it/.test(await say()) && (await say()), 15000);
+  check("the kitchen: the right answer in time, dodged, still in the house", !!dodged && !(await page.$('[role="alertdialog"][data-penalty]')) && !!(await page.$('[aria-label="Inside the house"]')), dodged ?? (await say()));
+  await wait(3500); // the doors shut for 3 seconds after a dodge
   await tap({ tap: "room", id: "study" });
   await tap({ tap: "object", id: "portrait" });
   const found = await until(async () => /Taped to the back/.test(await say()) && (await say()), 20000);

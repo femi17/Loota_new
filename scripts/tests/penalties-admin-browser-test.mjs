@@ -13,7 +13,7 @@ const admin = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persi
 let id = null, browser, original = null;
 let fails = 0;
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
-const CODE = "soft-26-wait-3"; // "The goat"
+const CODE = "s-026"; // "The goat"
 
 try {
   const { data: o } = await admin.from("penalties").select("*").eq("code", CODE).single();
@@ -44,8 +44,8 @@ try {
   await page.screenshot({ path: `${OUT}/penalties-1-list.png` });
 
   await page.goto("http://localhost:3000/admin/penalties?tier=deep&effect=coins", { waitUntil: "networkidle2" });
-  const filtered = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Penalties"] > li[data-penalty]')].map((li) => li.getAttribute("data-penalty")));
-  check("filtered: deep coin penalties only", filtered.length > 0 && filtered.every((c) => /^deep-.*-coins-/.test(c)), `${filtered.length}, e.g. ${filtered[0]}`);
+  const filtered = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Penalties"] > li[data-penalty]')].map((li) => li.querySelector("p")?.textContent ?? ""));
+  check("filtered: deep coin penalties only", filtered.length > 0 && filtered.every((t) => /^Deep · wrong place · Coins/i.test(t)), `${filtered.length}, e.g. ${filtered[0]}`);
   await page.goto("http://localhost:3000/admin/penalties?q=goat", { waitUntil: "networkidle2" });
   const goats = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Penalties"] > li[data-penalty]')].map((li) => li.textContent));
   check("search: the goat", goats.length > 0 && goats.every((t) => /goat/i.test(t)), `${goats.length}`);

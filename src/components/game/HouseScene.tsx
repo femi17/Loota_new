@@ -30,6 +30,7 @@ const REFUSED: Record<string, string> = {
   no_house: "There's no house here.",
   not_live: "The hunt isn't on right now.",
   not_hunting: "You're not in this hunt.",
+  dodge: "Answer the challenge first!",
 };
 
 /**
@@ -61,6 +62,8 @@ export function HouseScene({
   const [say, setSay] = useState<string>("Tap a room to walk to its door. Tap things to look at them.");
   const [busy, setBusy] = useState(false);
   const [gained, setGained] = useState<Item | null>(null);
+  // A trap's challenge (owner, 31 Oct 2026: dodge it by answering in time): its room's place, the prompt, the options.
+  const [dodge, setDodge] = useState<{ room: number; prompt: string; options: string[]; seconds: number } | null>(null);
   const scene = useRef<{ built: Built; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, room: number) => void } | null>(null);
   const viewRef = useRef<HouseView | null>(null);
   useEffect(() => {
@@ -74,6 +77,9 @@ export function HouseScene({
       if (!live) return;
       const v = data as HouseView | null;
       if (!v?.ok) {
+        // A challenge left unanswered last time: its trap springs now.
+        const left = (v as { penalty?: Penalty & { balance: number | null; energy: number | null } } | null)?.penalty;
+        if (left) return onPenalty(left);
         setSay(REFUSED[v?.reason ?? ""] ?? "The house won't open right now.");
         return;
       }
@@ -343,7 +349,7 @@ export function HouseScene({
           // Through the door: the server decides what's behind it.
           await s.walkTo(route(s.at(), i, false));
           const { data } = await supabase.rpc("house_enter", { p_hunt: huntId, p_room: roomId });
-          const r = data as (Partial<HouseView> & { locked?: boolean; text?: string; trap?: boolean; used?: { name: string } | null; penalty?: Penalty & { balance: number | null; energy: number | null }; until?: string }) | null;
+          const r = data as (Partial<HouseView> & { locked?: boolean; text?: string; trap?: boolean; used?: { name: string } | null; penalty?: Penalty & { balance: number | null; energy: number | null }; until?: string; dodge?: { prompt: string; options: string[]; seconds: number } }) | null;
           if (!r?.ok) {
             if (r?.reason === "out") setSay(`The doors won't open for you yet: ${Math.max(1, Math.ceil((Date.parse(r.until ?? "") - Date.now()) / 1000))} s.`);
             else setSay(REFUSED[r?.reason ?? ""] ?? "That door won't budge.");
@@ -351,6 +357,13 @@ export function HouseScene({
           }
           if (r.locked) {
             setSay(`🔒 ${v.rooms[i].name}: ${r.text}`);
+            return;
+          }
+          if (r.trap && r.dodge) {
+            // The trap starts to spring: answer in time to dodge it.
+            s.shake();
+            setSay(`Something clicks in the ${v.rooms[i].name.toLowerCase()}…`);
+            setDodge({ room: i, ...r.dodge });
             return;
           }
           if (r.trap && r.penalty) {
@@ -391,6 +404,40 @@ export function HouseScene({
     return () => window.removeEventListener("loota:house-tap", onTap);
   }, [busy, huntId, onClose, onOpenChest, onPenalty, supabase]);
 
+  // The challenge: one answer, in time (the server knows the right one and the time).
+  const answering = useRef(false);
+  async function answer(choice: number) {
+    const d = dodge;
+    const s = scene.current;
+    if (!d || answering.current) return;
+    answering.current = true;
+    setDodge(null);
+    try {
+      const { data } = await supabase.rpc("house_dodge", { p_hunt: huntId, p_choice: choice });
+      const r = data as { ok: boolean; dodged?: boolean; penalty?: Penalty & { balance: number | null; energy: number | null } } | null;
+      const name = viewRef.current?.rooms[d.room]?.name.toLowerCase() ?? "room";
+      if (r?.dodged) {
+        setSay(`💨 You dodged it! You jump clear of the ${name}. That room's a trap, though.`);
+        if (s) await s.walkTo([{ x: 0, z: doorOf(d.room).z }]);
+      } else if (r?.penalty) {
+        const pen = r.penalty;
+        s?.trap(pen.scene, d.room);
+        setSay(choice === 0 ? "Too slow…" : "Wrong!");
+        setTimeout(() => onPenalty(pen), 1300);
+      }
+    } finally {
+      answering.current = false;
+    }
+  }
+  // Out of time: the trap springs (0 is never the answer).
+  useEffect(() => {
+    if (!dodge) return;
+    const t = setTimeout(() => void answer(0), dodge.seconds * 1000);
+    return () => clearTimeout(t);
+    // The timer belongs to this challenge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dodge]);
+
   return (
     <div className="pointer-events-auto fixed inset-0 z-50 flex flex-col bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="Inside the house" data-busy={busy}>
       <div className="flex items-center gap-3 px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
@@ -413,6 +460,22 @@ export function HouseScene({
         </div>
       )}
       <div ref={host} className="relative min-h-0 flex-1 touch-none" data-house>
+        {dodge && (
+          <div className="absolute inset-x-3 top-3 flex flex-col gap-3 rounded-2xl bg-ink/95 p-4 shadow-xl ring-2 ring-danger" role="alertdialog" aria-label="Dodge the trap">
+            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-danger-text">A trap! Dodge it</p>
+            <p className="font-display text-xl font-extrabold">{dodge.prompt}</p>
+            <div className="h-1.5 overflow-hidden rounded-full bg-line" aria-hidden="true">
+              <div className="loota-dodge-bar h-full bg-danger" style={{ animationDuration: `${dodge.seconds}s` }} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {dodge.options.map((o, j) => (
+                <button key={j} type="button" onClick={() => void answer(j + 1)} className="h-12 rounded-xl bg-ink-2 text-lg font-bold ring-1 ring-line active:bg-gold active:text-ink">
+                  {o.trim()}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {gained && (
           <p className="pointer-events-none absolute inset-x-4 top-4 rounded-2xl bg-gold px-4 py-3 text-center font-bold text-ink shadow-lg">
             {gained.icon} {gained.name}: into your bag

@@ -102,9 +102,9 @@ try {
   check("every kind of deep penalty came up: a wait, coins, energy, back to the start", ["wait", "coins", "energy", "back"].every((e) => seen[e]), JSON.stringify(seen));
   check("…each took exactly its cost", wrongCost.length === 0, wrongCost.join(" / "));
   check("…and never the same penalty twice in a row", !repeated);
-  const { count: deep } = await admin.from("penalties").select("code", { count: "exact", head: true }).eq("tier", "deep");
-  const { count: soft } = await admin.from("penalties").select("code", { count: "exact", head: true }).eq("tier", "soft");
-  check("the table: 600 penalties, deep and soft", deep + soft >= 600 && deep > 200 && soft > 300, `${deep} deep, ${soft} soft`);
+  const { count: deep } = await admin.from("penalties").select("code", { count: "exact", head: true }).eq("tier", "deep").eq("active", true);
+  const { count: soft } = await admin.from("penalties").select("code", { count: "exact", head: true }).eq("tier", "soft").eq("active", true);
+  check("the table: 300 different traps in play, deep and soft", deep + soft >= 300 && deep >= 120 && soft >= 180, `${deep} deep, ${soft} soft`);
 } catch (e) {
   fails++;
   console.log("ERROR", e);

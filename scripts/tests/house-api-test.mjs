@@ -66,9 +66,32 @@ try {
   const locked = await rpc("house_enter", { p_room: "bedroom" });
   check("the bedroom: locked, with a hint", locked.locked === true && /brass keyhole/.test(locked.text), JSON.stringify(locked));
   const trap = await rpc("house_enter", { p_room: "cellar" });
-  check("the cellar: a trap, a soft penalty", trap.trap === true && trap.penalty?.tier === "soft" && !!trap.penalty?.body, JSON.stringify(trap.penalty ?? null).slice(0, 160));
+  check("the cellar: a trap, a challenge to dodge it (5 seconds, 4 options), no penalty yet", trap.trap === true && !trap.penalty && trap.dodge?.seconds === 5 && trap.dodge.options.length === 4 && !!trap.dodge.prompt && !("answer" in trap.dodge), JSON.stringify(trap.dodge));
+  const busyDoor = await rpc("house_enter", { p_room: "study" });
+  check("…no other door while it waits", busyDoor.ok === false && busyDoor.reason === "dodge");
+  const pending = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", hunt).eq("user_id", uid).single()).data.house_dodge;
+  const wrongPick = pending.answer === 1 ? 2 : 1;
+  const missed = await rpc("house_dodge", { p_choice: wrongPick });
+  check("a wrong answer: the trap springs, a soft penalty", missed.dodged === false && missed.penalty?.tier === "soft" && !!missed.penalty?.body, JSON.stringify(missed.penalty ?? null).slice(0, 140));
   const shut = await rpc("house_enter", { p_room: "study" });
   check("…thrown out: no door opens for a while", shut.ok === false && shut.reason === "out" && Date.parse(shut.until) > Date.now(), JSON.stringify(shut));
+  await admin.from("hunt_players").update({ house_out_until: null }).eq("hunt_id", hunt).eq("user_id", uid);
+
+  // The kitchen: dodged in time costs nothing; the right answer too late still springs the trap
+  const { data: before } = await admin.from("profiles").select("coins").eq("id", uid).single();
+  const { data: posBefore } = await admin.from("player_positions").select("energy").eq("user_id", uid).single();
+  const k1 = await rpc("house_enter", { p_room: "kitchen" });
+  const a1 = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", hunt).eq("user_id", uid).single()).data.house_dodge.answer;
+  const dodged = await rpc("house_dodge", { p_choice: a1 });
+  const { data: after } = await admin.from("profiles").select("coins").eq("id", uid).single();
+  const { data: posAfter } = await admin.from("player_positions").select("energy").eq("user_id", uid).single();
+  check("the kitchen: the right answer in time, dodged, nothing lost", k1.trap && dodged.dodged === true && !dodged.penalty && after.coins === before.coins && posAfter.energy === posBefore.energy, JSON.stringify(dodged));
+  await admin.from("hunt_players").update({ house_out_until: null }).eq("hunt_id", hunt).eq("user_id", uid);
+  await rpc("house_enter", { p_room: "kitchen" });
+  const { data: hpLate } = await admin.from("hunt_players").select("house_dodge").eq("hunt_id", hunt).eq("user_id", uid).single();
+  await admin.from("hunt_players").update({ house_dodge: { ...hpLate.house_dodge, until: new Date(Date.now() - 1000).toISOString() } }).eq("hunt_id", hunt).eq("user_id", uid);
+  const late = await rpc("house_dodge", { p_choice: hpLate.house_dodge.answer });
+  check("…the right answer too late: the trap springs", late.dodged === false && late.late === true && late.penalty?.tier === "soft");
   await admin.from("hunt_players").update({ house_out_until: null }).eq("hunt_id", hunt).eq("user_id", uid);
 
   // 4. The study, the portrait, the key

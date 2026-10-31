@@ -1,8 +1,10 @@
 // A story hunt's start (owner, 1 Nov 2026: "Remove the masquerade… since we have the scroll icon… If users knows the
-// answer, let them begin to travel when they are ready"). A hunter joins a live story hunt and opens the map:
+// answer, let them begin to travel when they are ready"; then "do we need a modal asking where…? We do not need that.
+// We have a search icon"). A hunter joins a live story hunt and opens the map:
 //   1. no Masquerade scene, no "first riddle is sealed" card;
-//   2. the card asks for Key 1's place with no countdown, and the hunter isn't held still;
-//   3. after waiting longer than the old 15 seconds, they can still name a place: it locks in (the server agrees).
+//   2. no box to name the place and no countdown: a line points to the story and Directions; nothing is started;
+//   3. opening and closing the story scroll draws no route (a tap on the map itself still does);
+//   4. a penalty's wait still holds the hunter.
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/story-start-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -44,40 +46,40 @@ try {
   await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
 
   // 1–2. The start
-  let box = false;
-  for (let i = 0; i < 80 && !box; i++) { box = !!(await page.$('[aria-label="Name the place"]')); if (!box) await wait(500); }
+  let card = false;
+  for (let i = 0; i < 80 && !card; i++) { card = await page.evaluate(() => document.body.innerText.includes("The story (📜) says where")); if (!card) await wait(500); }
   await wait(3000); // anything that would pop up has had its chance
   const seen = await page.evaluate(() => ({
     masquerade: !!document.querySelector('[role="dialog"][aria-label="Story"]'),
     sealed: !!document.querySelector('[role="dialog"][aria-label="The first riddle"]'),
-    box: document.querySelector('[aria-label="Name the place"]')?.innerText ?? "",
-    waiting: !!document.querySelector('[aria-label="Waiting"]'),
+    box: !!document.querySelector('[aria-label="Name the place"]'),
+    clock: document.body.innerText.includes("⏱"),
   }));
   check("no Masquerade scene, no sealed-riddle card", !seen.masquerade && !seen.sealed);
-  check("the card asks for Key 1's place, with no countdown", box && seen.box.includes("Where is Key 1? Name the place when you're ready") && !seen.box.includes("⏱") && !seen.waiting, seen.box.slice(0, 80));
-  const hp0 = (await admin.from("hunt_players").select("riddle_n, riddle_at").eq("hunt_id", huntId).eq("user_id", id).single()).data;
-  check("…the riddle is marked as started (a search still needs a named place)", hp0.riddle_n === 1 && !!hp0.riddle_at);
+  check("no box to name the place, no countdown: a line points to the story and Directions", card && !seen.box && !seen.clock);
+  const hp0 = (await admin.from("hunt_players").select("riddle_n").eq("hunt_id", huntId).eq("user_id", id).single()).data;
+  check("…and nothing is started (a search never waits for a named place)", hp0.riddle_n === null);
   await page.screenshot({ path: `${OUT}/story-start.png` });
 
-  // 3. Long past the old 15 seconds: still free to answer
-  await admin.from("hunt_players").update({ riddle_at: ago(600) }).eq("hunt_id", huntId).eq("user_id", id);
-  const state = await c.rpc("riddle_state", { p_hunt: huntId });
-  check("ten minutes on, the clock is still open", state.data?.phase === "open" && state.data?.story === true, JSON.stringify(state.data));
-  await page.type('[aria-label="Name the place"] input', "Tafawa Balewa Square");
-  let options = 0;
-  for (let i = 0; i < 40 && !options; i++) { options = await page.$$eval('[aria-label="Places found"] [role="option"] button', (b) => b.length).catch(() => 0); if (!options) await wait(500); }
-  await page.evaluate(() => document.querySelector('[aria-label="Places found"] [role="option"] button')?.click());
-  let locked = false;
-  for (let i = 0; i < 30 && !locked; i++) { locked = await page.evaluate(() => document.body.innerText.includes("Locked in:")); if (!locked) await wait(500); }
-  const hp1 = (await admin.from("hunt_players").select("guess_n, guess_name").eq("hunt_id", huntId).eq("user_id", id).single()).data;
-  check("the place locks in, and the server keeps it", locked && hp1.guess_n === 1 && !!hp1.guess_name, `${options} places found; ${hp1.guess_name}`);
-  await page.screenshot({ path: `${OUT}/story-start-locked.png` });
+  // 3. The scroll, opened and closed
+  await page.evaluate(() => document.querySelector('[data-tool="story"]').click());
+  for (let i = 0; i < 20 && !(await page.$('[aria-label="Close the scroll"]')); i++) await wait(300);
+  const x = await (await page.$('[aria-label="Close the scroll"]')).boundingBox();
+  await page.mouse.click(x.x + x.width / 2, x.y + x.height / 2);
+  await wait(2500);
+  const after = await page.evaluate(() => document.body.innerText);
+  check("closing the scroll draws no route", !(await page.$('[aria-label="Close the scroll"]')) && !/Finding a route|marked spot/i.test(after));
 
-  // A penalty's wait still holds: name a place is refused until it ends
-  await admin.from("hunt_players").update({ guess_n: null, riddle_n: 1, riddle_at: new Date(Date.now() + 60e3).toISOString() }).eq("hunt_id", huntId).eq("user_id", id);
-  const held = await c.rpc("lock_guess", { p_hunt: huntId, p_lng: 3.3958, p_lat: 6.4541, p_name: "Somewhere" });
-  const started = await c.rpc("start_riddle", { p_hunt: huntId });
-  check("a penalty's wait still holds (and opening the riddle doesn't cut it short)", held.data?.reason === "too_late" && started.data?.phase === "wait", `${held.data?.reason}, ${started.data?.phase}`);
+  const canvas = await (await page.$("canvas.maplibregl-canvas")).boundingBox();
+  await page.mouse.click(canvas.x + canvas.width * 0.5, canvas.y + canvas.height * 0.8);
+  let routed = false;
+  for (let i = 0; i < 20 && !routed; i++) { routed = await page.evaluate(() => /Finding a route|marked spot|blue line|min/i.test(document.body.innerText)); if (!routed) await wait(300); }
+  check("…while a tap on the map itself still plans a route", routed);
+
+  // 4. A penalty's wait still holds
+  await admin.from("hunt_players").update({ riddle_at: new Date(Date.now() + 60e3).toISOString() }).eq("hunt_id", huntId).eq("user_id", id);
+  const held = await c.rpc("riddle_state", { p_hunt: huntId });
+  check("a penalty's wait still holds the hunter", held.data?.phase === "wait", JSON.stringify(held.data));
 } catch (e) {
   fails++;
   console.log("ERROR", e);

@@ -22,6 +22,7 @@ export async function finishStoryHunt(hunt: string, work: Work): Promise<string[
   const b = blueprintOf(work);
   const notes: string[] = [];
   await db.from("hunt_keys").delete().eq("hunt_id", hunt); // a hunt finished twice starts its keys afresh
+  await db.from("hunt_decoys").delete().eq("hunt_id", hunt);
   let n = 0;
   for (const key of b.keys) {
     const found = work.map[key.n]?.found;
@@ -52,6 +53,12 @@ export async function finishStoryHunt(hunt: string, work: Work): Promise<string[
       scene: "circle",
     });
     if (error) notes.push(`Key ${key.n}: ${error.message}`);
+    // The story's near misses on the map (owner, 1 Nov 2026): stopping at one springs a deep trap.
+    const decoys = (work.map[key.n]?.decoys ?? []).filter((d) => d.ok && d.at).map((d) => ({ hunt_id: hunt, key_n: n, place: d.place, lng: d.at!.lng, lat: d.at!.lat }));
+    if (decoys.length) {
+      const { error: decoyError } = await db.from("hunt_decoys").insert(decoys);
+      if (decoyError) notes.push(`Key ${key.n}'s decoys: ${decoyError.message}`);
+    } else notes.push(`Key ${key.n} has no decoys on the map: run the import's map check again.`);
   }
   // Picture slots: one per prompt (an import done again keeps pictures already uploaded to slots that are still there).
   const pictures = (work.production?.pictures ?? []).map((p, i) => ({ hunt_id: hunt, n: i + 1, chapter: p.chapter, prompt: p.prompt }));

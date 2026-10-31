@@ -176,7 +176,7 @@ export type KeyDesignT = z.infer<typeof KeyDesign>;
 export type DecoyT = z.infer<typeof Decoys>["decoys"][number];
 export type ProductionT = z.infer<typeof Production>;
 export type Spot = { name: string; lng: number; lat: number };
-export type MapCheck = { answer: string; found: Spot | null; aliases: { alias: string; ok: boolean; got: string }[]; decoys: { place: string; ok: boolean; why: string }[] };
+export type MapCheck = { answer: string; found: Spot | null; aliases: { alias: string; ok: boolean; got: string }[]; decoys: { place: string; ok: boolean; why: string; at?: Spot | null }[] };
 export type CodeCheck = { n: number; kind: string; ok: boolean; detail: string };
 export type Attack = { n: number; guess: string; solved: boolean; gap: number | null };
 
@@ -382,7 +382,7 @@ export async function checkMapKey(work: Work, n: number): Promise<MapCheck> {
     const got = await photon(d.searchName);
     const gap = found && got ? metres(found, got) : null;
     const min = radiusOf(key.answer) + DECOY_MARGIN_M;
-    decoys.push({ place: d.place, ok: !!got && (gap === null || gap >= min), why: !got ? "not found on the map" : gap !== null && gap < min ? `only ${gap} m from the answer (under ${min} m)` : "ok" });
+    decoys.push({ place: d.place, ok: !!got && (gap === null || gap >= min), why: !got ? "not found on the map" : gap !== null && gap < min ? `only ${gap} m from the answer (under ${min} m)` : "ok", at: got ?? null });
   }
   const m = { answer: key.answer.name, found, aliases, decoys };
   work.map[n] = m;

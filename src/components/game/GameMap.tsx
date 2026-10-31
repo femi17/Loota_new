@@ -2313,6 +2313,8 @@ export function GameMap({
       window.addEventListener("pointercancel", lookEnd);
       map.on("click", (e) => {
         if (performance.now() - lookedAt < 400) return; // the end of a drag, not a tap
+        // Only a tap on the map itself: never one meant for a card or a sheet closing over it (owner, 1 Nov 2026).
+        if (e.originalEvent && e.originalEvent.target !== map.getCanvas()) return;
         void planDirections({ lng: e.lngLat.lng, lat: e.lngLat.lat }, "the marked spot");
       });
       map.on("error", (e) => {
@@ -8696,7 +8698,7 @@ export function GameMap({
                   {(huntStory.story
                     ? [
                         ["📜", "Read the story", "The scroll (📜 on the right) tells the story. Each key's place is hidden in it, and each key you find opens the next chapter."],
-                        ["🗺️", "Name the place, then go", "Name the place whenever you're ready: the way there is drawn. The wrong place springs a trap, so be sure."],
+                        ["🗺️", "Find the place, then go", "Search for it with Directions and travel there. The story also tempts you with near misses: stop at one and a trap springs."],
                       ]
                     : [
                         ["📜", "Name the place", "You have 15 seconds to type the place the riddle points to. Miss it and you wait a minute."],

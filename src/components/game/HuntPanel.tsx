@@ -331,7 +331,7 @@ export function HuntPanel({
       setOpen(true);
       setFeedback({
         text: storyRef.current
-          ? `🚫 Nothing here: the key isn't at ${name}. Read the story again and name another place when you're ready.`
+          ? `🚫 Nothing here: the key isn't at ${name}. Read the story again.`
           : `🚫 Nothing here: the key isn't at ${name}. Quick, 15 seconds to name another place!`,
         hot: false,
       });
@@ -674,23 +674,15 @@ export function HuntPanel({
                     />
                   </div>
                 )}
+                {/* A story hunt: no box to name the place (owner, 1 Nov 2026: "We have a search icon, user can use that"). */}
                 {tick?.phase === "open" && (
-                  <div className="flex flex-col gap-2 rounded-xl bg-ink-2 p-2.5 ring-1 ring-gold" aria-label="Name the place">
-                    <span className="text-xs font-extrabold text-gold">Where is Key {clock?.key}? Name the place when you&apos;re ready</span>
-                    <span className="text-[11px] text-muted">No rush: read the story (📜) and think. Once you name a place, the way there is drawn.</span>
-                    <PlaceSearch
-                      inline
-                      placeholder="Type the place…"
-                      near={() => actions.current?.where() ?? { lng: 0, lat: 0 }}
-                      onPick={(place) => void lockPlace(place)}
-                    />
-                  </div>
+                  <p className="text-xs text-muted">The story (📜) says where. Find the place with Directions and go: the wrong place springs a trap.</p>
                 )}
                 {tick?.phase === "wait" && (
                   <div className="flex flex-col gap-1.5 rounded-xl bg-[#3A1A1A] p-2.5 ring-1 ring-danger" role="status" aria-label="Waiting">
                     <span className="text-xs font-extrabold text-danger-text">{clock?.story ? "⏳ The trap holds you." : "⏳ Too slow! Others are already on their way."}</span>
                     <span className="text-xs text-paper">
-                      {clock?.story ? "You can name a place again in " : "Your next chance to answer in "}
+                      {clock?.story ? "You can move again in " : "Your next chance to answer in "}
                       <b className="tabular-nums">{tick.left}s</b>. Think it through…
                     </span>
                   </div>

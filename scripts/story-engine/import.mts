@@ -7,10 +7,12 @@
 // places, and a picture slot per prompt (shown in the admin with Copy prompt and Upload picture).
 //   npm run story:import -- <draft.json> --hunt <id> [--chapters <folder of 0.md, 1.md…>]
 //   npm run story:import -- <draft.json> --day 2026-11-02 [--days 1] --prize "₦50,000 voucher" [--winners 3]
-//   --check: only check, change nothing. --force: import even if a check fails.
+//   --check: only check, change nothing. --force: import even if a check fails. --map-here: ask the map search from this
+//   computer instead of through the live site.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { blueprintOf, chapterLeaks, checkCodes, checkMapKey, mapCache, STORY_SHAPES, type Spot, type Work } from "../../src/lib/story/engine.ts";
+import { blueprintOf, chapterLeaks, checkCodes, checkMapKey, mapCache, mapSearch, STORY_SHAPES, type Spot, type Work } from "../../src/lib/story/engine.ts";
+import { mapPass } from "../../src/lib/story/map-pass.ts";
 import { finishStoryHunt } from "../../src/lib/story/finish.ts";
 import { renderStory } from "./render.mts";
 
@@ -73,6 +75,25 @@ if (problems.length && !argv.includes("--force")) {
   process.exit(1);
 }
 const b = blueprintOf(work);
+// The map search through the live site (owner, 31 Oct 2026): the server the players' searches go through, so it's their
+// map search, and Photon stopping this computer doesn't stop the check. --map-here asks Photon from this computer.
+if (!argv.includes("--map-here")) {
+  const site = process.env.STORY_CHECK_SITE ?? "https://loota-plum.vercel.app";
+  const pass = mapPass(process.env.SUPABASE_SECRET_KEY!);
+  mapSearch.ask = async (q) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(`${site}/api/admin/map-check?q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${pass}` }, signal: AbortSignal.timeout(70_000) });
+        if (res.status === 401 || res.status === 404) throw new Error(`The live site's map check isn't there (${res.status}): has the latest version deployed? (Or use --map-here.)`);
+        if (res.ok) return ((await res.json()) as { spot: Spot | null }).spot;
+      } catch (e) {
+        if (e instanceof Error && /live site/.test(e.message)) throw e;
+      }
+      await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+    }
+    return undefined; // never answered: not cached, a rerun asks again
+  };
+}
 // What the map search has already answered, kept between runs (a fix-and-rerun asks it nothing twice).
 const CACHE = "docs/stories/.map-cache.json";
 if (existsSync(CACHE)) for (const [q, spot] of Object.entries(JSON.parse(readFileSync(CACHE, "utf8")))) mapCache.set(q, spot as Spot | null);

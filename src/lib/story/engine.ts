@@ -167,14 +167,19 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 /** Answers already found (the importer saves them between runs: a rerun asks the map search nothing twice). */
 export const mapCache = new Map<string, Spot | null>();
+/**
+ * Who asks the map search: Photon straight from here, or (the importer, owner 31 Oct 2026) through the live site, the
+ * same server the players' searches go through, so a computer Photon has stopped answering can still check a story.
+ */
+export const mapSearch = { ask: photonAsk };
 async function photon(q: string): Promise<Spot | null> {
   if (mapCache.has(q)) return mapCache.get(q)!;
-  const spot = await photonAsk(q);
+  const spot = await mapSearch.ask(q);
   if (spot !== undefined) mapCache.set(q, spot);
   return spot ?? null;
 }
 /** undefined: the map search never answered (not cached, so a later run asks again). */
-async function photonAsk(q: string): Promise<Spot | null | undefined> {
+export async function photonAsk(q: string): Promise<Spot | null | undefined> {
   for (let attempt = 0; attempt < 4; attempt++) {
     await wait(attempt === 0 ? 1000 : 4000 * attempt); // the public map search's fair use: about one a second
     try {

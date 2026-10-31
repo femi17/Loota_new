@@ -65,6 +65,37 @@ const Skeleton = z.object({
     conditions: z.array(z.string()).describe("The conditions only the true answer meets, all of them"),
   })),
 });
+/**
+ * A key's house (owner, 31 Oct 2026: "an open house, like sims"): optional, and not every key has one. One room holds the
+ * chest (right), some are traps (a soft penalty), some are safe and hold things; a room or a thing can need an item found
+ * elsewhere. Nothing glows in the game: the story must make players want to look.
+ */
+export const HOUSE_ROOM_KINDS = ["study", "bedroom", "kitchen", "library", "cellar", "parlour", "bathroom", "chapel", "storeroom"] as const;
+export const HOUSE_OBJECT_KINDS = ["picture", "drawer", "clock", "rug", "bookcase", "vase", "mirror", "safe", "desk", "bed", "wardrobe", "radio"] as const;
+const House = z.object({
+  title: z.string().describe("e.g. 'The keeper's house'"),
+  items: z.record(z.string(), z.object({ name: z.string(), icon: z.string() })).describe("Things to carry, by id: { 'brass-key': { name: 'A small brass key', icon: '🗝️' } }"),
+  rooms: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    kind: z.enum(HOUSE_ROOM_KINDS),
+    role: z.enum(["right", "trap", "safe"]),
+    needs: z.string().optional().describe("An item id that unlocks this room"),
+    lockedText: z.string().optional(),
+    objects: z.array(z.object({
+      id: z.string(),
+      kind: z.enum(HOUSE_OBJECT_KINDS),
+      label: z.string(),
+      look: z.string(),
+      gives: z.string().optional().describe("An item id found here"),
+      found: z.string().optional().describe("What the hunter sees when they find it"),
+      needs: z.string().optional(),
+      lockedText: z.string().optional(),
+    })).max(4).optional(),
+  })).min(3).max(7),
+});
+export type HouseT = z.infer<typeof House>;
+
 const KeyDesign = z.object({
   solveSteps: z.array(z.string()),
   plants: z.array(z.object({ chapter: z.number(), detail: z.string() })),
@@ -74,6 +105,7 @@ const KeyDesign = z.object({
     content: z.string().describe("Exactly what the player sees or hears, in full"),
     perPlayer: z.boolean().describe("True if each player gets a different version"),
   }),
+  house: House.optional().describe("Only for some keys: a house at the place, with its rooms and things"),
   check: z.object({
     kind: z.enum(["none", "acrostic", "caesar", "anagram"]),
     lines: z.array(z.string()).describe("Acrostic: the sentences, in order. Otherwise []"),
@@ -105,7 +137,37 @@ const Production = z.object({
   }).optional().describe("The trailer the owner makes: the 3 pictures cut to this voice-over (ElevenLabs)"),
 });
 /** The shapes a story is made of: also used to check a story written in Claude Code before it is imported. */
-export const STORY_SHAPES = { Skeleton, KeyDesign, Decoys, Production };
+export const STORY_SHAPES = { Skeleton, KeyDesign, Decoys, Production, House };
+
+/** Whether a house can be solved: the problems, if any (one right room; every item findable before it's needed). */
+export function houseProblems(h: HouseT) {
+  const out: string[] = [];
+  const rights = h.rooms.filter((r) => r.role === "right");
+  if (rights.length !== 1) out.push(`${rights.length} right rooms (exactly 1)`);
+  const ids = h.rooms.map((r) => r.id);
+  if (new Set(ids).size !== ids.length) out.push("two rooms with the same id");
+  const objects = h.rooms.flatMap((r) => (r.objects ?? []).map((o) => ({ ...o, room: r })));
+  if (new Set(objects.map((o) => o.id)).size !== objects.length) out.push("two things with the same id");
+  // Walk it: rooms open when their item is carried; things in open, safe or right rooms give their items.
+  const carried = new Set<string>();
+  const open = (r: (typeof h.rooms)[number]) => !r.needs || carried.has(r.needs);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const o of objects) {
+      if (o.room.role === "trap" || !open(o.room) || !o.gives || carried.has(o.gives)) continue;
+      if (o.needs && !carried.has(o.needs)) continue;
+      carried.add(o.gives);
+      grew = true;
+    }
+  }
+  for (const r of h.rooms) if (r.needs && !carried.has(r.needs)) out.push(`room "${r.id}" needs "${r.needs}", which can't be found first`);
+  for (const o of objects) {
+    if (o.gives && !h.items[o.gives]) out.push(`"${o.id}" gives "${o.gives}", which isn't in items`);
+    if (o.room.role === "trap" && o.gives) out.push(`"${o.id}" is in a trap room: nobody can reach it`);
+  }
+  if (rights[0] && !open(rights[0])) out.push("the right room can't be opened");
+  return out;
+}
 const Solved = z.object({ keys: z.array(z.object({ n: z.number(), place: z.string(), city: z.string(), country: z.string(), reasoning: z.string() })) });
 
 export type SkeletonT = z.infer<typeof Skeleton>;

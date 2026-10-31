@@ -45,6 +45,7 @@ export async function finishStoryHunt(hunt: string, work: Work): Promise<string[
       area_lat: found.lat,
       area_radius_m: AREA_M,
       exact_m: radius,
+      house: work.designs?.[key.n]?.house ?? null,
       approach_clue: null,
       spot_lng: spot.lng,
       spot_lat: spot.lat,

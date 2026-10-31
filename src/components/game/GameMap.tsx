@@ -49,6 +49,7 @@ import { NewsToasts } from "./NewsToasts";
 import { local, peopleOf, setCountry, words, type Role } from "@/game/locale";
 import { RadioPanel, useRadio } from "./RadioPanel";
 import { PenaltyCard, type Penalty } from "./PenaltyCard";
+import { HouseScene } from "./HouseScene";
 import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -169,7 +170,7 @@ type Hud = {
   repairHere: RepairJob | null;
   /** The metal detector in a hunt (key_pulse): in the key's area, how hot (0–1), warmer or colder; the chest within reach. */
   /** In a key's area: its heat, or (exact: a story key) simply "this is the place", with no hot and cold. */
-  heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean; exact?: boolean } | null;
+  heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean; exact?: boolean; house?: boolean } | null;
   /** The police on your tail (owner, 25 Oct 2026): how far behind, and seconds left until you've lost them. */
   chase: { gap: number; left: number; chaser: "officer" | "patrol" } | null;
   /** Waiting for a flight in the departure lounge (owner, 26 Oct 2026), until it leaves. */
@@ -515,6 +516,8 @@ export function GameMap({
   const [storyOpen, setStoryOpen] = useState(false);
   // A trap sprung at the wrong place (owner, 31 Oct 2026: a random penalty from the server's table).
   const [penalty, setPenalty] = useState<Penalty | null>(null);
+  // Inside a story key's house (owner, 31 Oct 2026: "an open house, like sims").
+  const [houseOpen, setHouseOpen] = useState(false);
   const huntStory = useHuntStory(huntId);
   const radio = useRadio();
   const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
@@ -6996,13 +6999,15 @@ export function GameMap({
         detector?: boolean;
         /** A story key (owner, 31 Oct 2026): no hot and cold; in its place, the chest is right there. */
         exact?: boolean;
+        /** A story key's place with a house: the chest is in one of its rooms. */
+        house?: boolean;
         /** At a story key's wrong place: the trap it sprang, and what it cost. */
         penalty?: (Penalty & { balance: number | null; energy: number | null; moveTo: LngLat | null }) | null;
       };
       let pulseAt = -Infinity;
       let pulseEvery = 6000;
       let pulsing = false;
-      let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady"; exact?: boolean } | null = null;
+      let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady"; exact?: boolean; house?: boolean } | null = null;
       let chest: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number; scene: KeyScene } | null = null;
       let chestHere = false;
       // The Masquerade's decoy (owner, 25 Oct 2026): it rises just like the key's chest; the heat is the tell.
@@ -7025,7 +7030,7 @@ export function GameMap({
       window.addEventListener("loota:key-earned", keyWon);
 
       function showHeat() {
-        const view: Hud["heat"] = heat ? { level: heat.level, trend: heat.trend, chest: chestHere, trap: trapHere && !chestHere, exact: heat.exact } : null;
+        const view: Hud["heat"] = heat ? { level: heat.level, trend: heat.trend, chest: chestHere, trap: trapHere && !chestHere, exact: heat.exact, house: heat.house } : null;
         setHud((h) => (JSON.stringify(h.heat) === JSON.stringify(view) ? h : { ...h, heat: view }));
       }
 
@@ -7138,9 +7143,11 @@ export function GameMap({
         if (p.exact) {
           // A story key: no hot and cold. This is the place, and the chest is right here.
           const key = p.key ?? 0;
-          if (!heat || heat.key !== key) say(`📍 This is the place. Key ${key}'s chest is right here: find it and open it.`, true);
-          heat = { level: 1, key, trend: "steady", exact: true };
-          if (p.spot) showChest(p.spot, key);
+          if (!heat || heat.key !== key)
+            say(p.house ? `📍 This is the place. A house stands here: Key ${key}'s chest is in one of its rooms. Go inside.` : `📍 This is the place. Key ${key}'s chest is right here: find it and open it.`, true);
+          heat = { level: 1, key, trend: "steady", exact: true, house: !!p.house };
+          if (p.house) hideChest();
+          else if (p.spot) showChest(p.spot, key);
           hideTrap();
           showHeat();
           return;
@@ -8739,6 +8746,23 @@ export function GameMap({
 
             {radioOpen && !inside && <RadioPanel onClose={() => setRadioOpen(false)} />}
             {penalty && <PenaltyCard penalty={penalty} onClose={() => setPenalty(null)} />}
+            {houseOpen && huntId && (
+              <HouseScene
+                huntId={huntId}
+                look={look}
+                onClose={() => setHouseOpen(false)}
+                onOpenChest={() => {
+                  setHouseOpen(false);
+                  openChest();
+                }}
+                onPenalty={(p) => {
+                  setHouseOpen(false);
+                  if (p.balance != null) setHud((h) => ({ ...h, coins: Number(p.balance) }));
+                  setPenalty(p);
+                }}
+                onMoved={(at) => huntActions.current?.placeAt(at.lng, at.lat)}
+              />
+            )}
             {storyOpen && huntId && huntStory.story && !inside && <StoryScroll huntId={huntId} story={huntStory.story} reload={huntStory.reload} onClose={() => {
               setStoryOpen(false);
               huntStory.seen();
@@ -9269,7 +9293,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap) && (
+      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || hud.heat?.house) && (
         <div
           className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -9286,6 +9310,15 @@ export function GameMap({
               <span className="text-xs font-semibold text-paper/85">
                 {hud.dome.siege.attackers} of {hud.dome.siege.needed} hunters attacking together
               </span>
+            </button>
+          )}
+          {hud.heat?.house && !houseOpen && (
+            <button
+              type="button"
+              onClick={() => setHouseOpen(true)}
+              className="pointer-events-auto flex w-full max-w-xs flex-col items-center rounded-2xl bg-gold px-6 py-3 font-display text-lg font-extrabold text-ink shadow-lg active:scale-95"
+            >
+              🚪 Go inside
             </button>
           )}
           {hud.djinnHere && (

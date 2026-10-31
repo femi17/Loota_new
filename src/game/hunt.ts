@@ -127,7 +127,7 @@ export type SearchResult =
   | { ok: true; result: "trial"; trial: AnyTrialView }
   | { ok: true; result: "area"; clue: string; band: string }
   | { ok: true; result: "cold"; band: string }
-  | { ok: false; reason: "not_live" | "not_joined" | "finished" | "wait" | "no_key" | "answer_first" }
+  | { ok: false; reason: "not_live" | "not_joined" | "finished" | "wait" | "no_key" | "answer_first" | "house" }
   | { ok: false; reason: "thrown"; lng: number; lat: number }
   | { ok: false; reason: "position"; lng: number; lat: number };
 

@@ -11,7 +11,7 @@
 //   computer instead of through the live site.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { blueprintOf, chapterLeaks, checkCodes, checkMapKey, mapCache, mapSearch, STORY_SHAPES, type Spot, type Work } from "../../src/lib/story/engine.ts";
+import { blueprintOf, chapterLeaks, checkCodes, checkMapKey, houseProblems, mapCache, mapSearch, STORY_SHAPES, type Spot, type Work } from "../../src/lib/story/engine.ts";
 import { mapPass } from "../../src/lib/story/map-pass.ts";
 import { finishStoryHunt } from "../../src/lib/story/finish.ts";
 import { renderStory } from "./render.mts";
@@ -44,6 +44,8 @@ if (!work.skeleton) throw new Error(`No plan in ${file}:\n${problems.join("\n")}
 for (const k of work.skeleton.keys) {
   shape(`key ${k.n}'s design`, STORY_SHAPES.KeyDesign, work.designs?.[k.n]);
   shape(`key ${k.n}'s decoys`, STORY_SHAPES.Decoys, { decoys: work.decoys?.[k.n] });
+  const house = work.designs?.[k.n]?.house;
+  if (house) for (const p of houseProblems(house)) problems.push(`key ${k.n}'s house: ${p}`);
   if ((work.decoys?.[k.n]?.length ?? 0) < 6) problems.push(`key ${k.n} has ${work.decoys?.[k.n]?.length ?? 0} decoys (6 or more)`);
 }
 for (const c of work.skeleton.chapters) {

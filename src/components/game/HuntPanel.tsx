@@ -370,6 +370,8 @@ export function HuntPanel({
           text: `Cold: the key isn't here. Its area is ${r.band} away. Work out the place the riddle names, travel there, then search again.`,
           hot: false,
         });
+      } else if (r.reason === "house") {
+        setFeedback({ text: "The chest is inside the house, in one of its rooms. Go inside and find the right one.", hot: true });
       } else if (r.reason === "answer_first") {
         setFeedback({ text: "Name the place first: type it in the box under the riddle.", hot: false });
         void loadClock();

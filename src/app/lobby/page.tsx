@@ -9,6 +9,7 @@ import { Countdown } from "@/components/Countdown";
 import { getPlayer } from "@/lib/player";
 import { listHunts } from "@/lib/hunts";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { logOut } from "../(auth)/actions";
 import { joinHunt } from "./actions";
 import { huntResumesAt } from "@/game/hunt";
@@ -169,6 +170,32 @@ function LobbyFallback() {
   );
 }
 
+/** The player's clan, or the offer to start or join one (owner, 31 Oct 2026: "clan up or solo"). */
+async function ClanCard() {
+  const { data } = await (await createClient()).rpc("my_clan");
+  const mine = data as { clan: { name: string; crest: string; colour: string } | null; members?: unknown[] } | null;
+  const clan = mine?.clan;
+  return (
+    <Link
+      href="/clan"
+      className="flex items-center gap-4 rounded-3xl bg-ink-2 p-5 hover:bg-line"
+      style={clan ? { boxShadow: `inset 0 0 0 1.5px ${clan.colour}` } : undefined}
+      aria-label={clan ? `Your clan: ${clan.name}` : "Clan up"}
+    >
+      <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-ink text-2xl" aria-hidden="true">
+        {clan?.crest ?? "⚔️"}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate font-display text-lg font-extrabold">{clan ? clan.name : "Clan up"}</span>
+        <span className="text-sm text-muted">
+          {clan ? `${mine?.members?.length ?? 1} of 5 hunters · chat, gifts, invite a friend` : "Hunt with up to 4 friends: a chat, each other on the map, gifts."}
+        </span>
+      </span>
+      <span className="inline-flex h-11 shrink-0 items-center rounded-xl border-[1.5px] border-gold px-4 font-bold text-gold">{clan ? "Open" : "Start"}</span>
+    </Link>
+  );
+}
+
 async function Lobby() {
   const player = await getPlayer();
   if (!player) redirect("/login?next=/lobby");
@@ -208,6 +235,8 @@ async function Lobby() {
         </section>
 
         <HuntList />
+
+        <ClanCard />
 
         <Link href="/play" className="flex items-center gap-4 rounded-3xl bg-ink-2 p-5 hover:bg-line">
           <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-ink text-2xl" aria-hidden="true">🗺️</span>

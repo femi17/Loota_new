@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Mo
 import Link from "next/link";
 import { LootaLogo } from "@/components/Logo";
 import { HuntInvite, MoveDemo, WelcomeTour, type OpenHunt } from "./WelcomeTour";
-import { keeperLook, lookForId, type AvatarLook } from "@/lib/avatar";
+import { keeperLook, lookForId, normalizeLook, type AvatarLook } from "@/lib/avatar";
+import { ClanChat } from "@/components/ClanChat";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELIC_ICON, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
@@ -512,6 +513,9 @@ export function GameMap({
   const [bagOwned, setBagOwned] = useState<OwnedVehicle[]>([]); // the inventory's vehicles, gear and papers
   const [helpOpen, setHelpOpen] = useState(false);
   const [radioOpen, setRadioOpen] = useState(false);
+  // The player's clan (owner, 31 Oct 2026: a clan chat, and clanmates on the map), and its chat sheet.
+  const [clan, setClan] = useState<{ crest: string; colour: string } | null>(null);
+  const [clanOpen, setClanOpen] = useState(false);
   // A story hunt's story, on a scroll the hunter opens and closes at any time (owner, 31 Oct 2026).
   const [storyOpen, setStoryOpen] = useState(false);
   // A trap sprung at the wrong place (owner, 31 Oct 2026: a random penalty from the server's table).
@@ -2575,6 +2579,38 @@ export function GameMap({
         seen: number;
       };
       const others = new Map<string, OtherHunter>();
+      // Clanmates (owner, 31 Oct 2026: "see each other on the map"): every one of them, wherever they are, as their own
+      // hunter with a nameplate in the clan's colour (from the server every 20 s). One close enough to be seen live is
+      // drawn by the live channel instead, and glides as they move.
+      const clanmates = { colour: "", crest: "", ids: new Set<string>(), shown: new Map<string, import("@/game/ThreeMapLayer").MapEntity>() };
+      async function pullClan() {
+        const { data } = await supabase.rpc("clan_positions");
+        const r = data as { ok: boolean; colour?: string; crest?: string; mates: { id: string; username: string; look: unknown; lng: number; lat: number }[] } | null;
+        if (disposed || !r?.ok) return;
+        clanmates.colour = r.colour ?? "";
+        clanmates.crest = r.crest ?? "";
+        clanmates.ids = new Set(r.mates.map((m) => m.id));
+        setClan(r.colour ? { crest: r.crest ?? "🛡️", colour: r.colour } : null);
+        for (const [id, entity] of clanmates.shown) {
+          if (clanmates.ids.has(id) && !others.has(id)) continue;
+          layer.remove(entity);
+          clanmates.shown.delete(id);
+        }
+        for (const m of r.mates) {
+          if (others.has(m.id)) continue;
+          const known = clanmates.shown.get(m.id);
+          if (known) {
+            known.lng = m.lng;
+            known.lat = m.lat;
+            continue;
+          }
+          const avatar = models.buildAvatar(m.look ? normalizeLook(m.look) : lookForId(m.id));
+          avatar.root.add(layer.billboard(models.makeNameplate(`${clanmates.crest} ${m.username}`.slice(0, 22), clanmates.colour)));
+          clanmates.shown.set(m.id, layer.add({ object: avatar.root, lng: m.lng, lat: m.lat, heading: 0 }));
+        }
+      }
+      void pullClan();
+      const clanTimer = window.setInterval(() => void pullClan(), 20000);
       const areaChannels = new Map<string, import("@supabase/supabase-js").RealtimeChannel>();
       let myArea = "";
       let lastAnnounce = 0;
@@ -2618,8 +2654,14 @@ export function GameMap({
         }
         if (others.size >= MAX_SHOWN) return;
         lastAnnounce = 0; // a newcomer: let them see us straight away too
+        const mate = clanmates.ids.has(u.id) && clanmates.colour;
+        const far = clanmates.shown.get(u.id);
+        if (far) {
+          layer.remove(far);
+          clanmates.shown.delete(u.id);
+        }
         const avatar = models.buildAvatar(u.look);
-        avatar.root.add(layer.billboard(models.makeNameplate(String(u.name).slice(0, 20), "#5B6475")));
+        avatar.root.add(layer.billboard(models.makeNameplate(mate ? `${clanmates.crest} ${u.name}`.slice(0, 22) : String(u.name).slice(0, 20), mate || "#5B6475")));
         const entity = layer.add({ object: avatar.root, lng: u.lng, lat: u.lat, heading: u.heading });
         others.set(u.id, { entity, avatar, to: { lng: u.lng, lat: u.lat, heading: u.heading }, mode: u.mode, moving: u.moving, seen: now });
       }
@@ -7989,6 +8031,7 @@ export function GameMap({
         sayBye();
         window.removeEventListener("pagehide", sayBye);
         document.removeEventListener("visibilitychange", leaving);
+        window.clearInterval(clanTimer);
         for (const channel of areaChannels.values()) void supabase.removeChannel(channel);
         if (huntChannel) void supabase.removeChannel(huntChannel);
         areaChannels.clear();
@@ -8745,6 +8788,21 @@ export function GameMap({
             )}
 
             {radioOpen && !inside && <RadioPanel onClose={() => setRadioOpen(false)} />}
+            {clanOpen && clan && !inside && (
+              <div
+                className="pointer-events-auto fixed inset-x-0 bottom-0 top-[30dvh] z-40 flex flex-col gap-3 rounded-t-3xl bg-ink p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-paper shadow-[0_-12px_40px_rgba(0,0,0,0.5)] ring-1 ring-line sm:static sm:z-auto sm:h-[60dvh] sm:w-full sm:max-w-md sm:rounded-2xl sm:pb-4 sm:shadow-none"
+                role="dialog"
+                aria-label="Your clan"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="font-display text-lg font-extrabold">{clan.crest} Clan chat</p>
+                  <button type="button" aria-label="Close" onClick={() => setClanOpen(false)} className="flex size-9 items-center justify-center rounded-lg bg-ink-2 text-paper">
+                    ✕
+                  </button>
+                </div>
+                <ClanChat className="min-h-0 flex-1" />
+              </div>
+            )}
             {penalty && <PenaltyCard penalty={penalty} onClose={() => setPenalty(null)} />}
             {houseOpen && huntId && (
               <HouseScene
@@ -8856,6 +8914,20 @@ export function GameMap({
               <RadioIcon />
               {radio.status !== "off" && <span className="absolute -right-1 -top-1 size-3 animate-pulse rounded-full bg-[#2EC4B6] ring-2 ring-ink" aria-hidden="true" />}
             </button>
+            {clan && (
+              <button
+                type="button"
+                data-tool="clan"
+                aria-label="Clan chat"
+                title="Clan chat"
+                aria-expanded={clanOpen}
+                onClick={() => setClanOpen((o) => !o)}
+                className={`${tool} text-xl ${clanOpen ? "bg-gold text-ink" : "bg-ink"}`}
+                style={clanOpen ? undefined : { boxShadow: `inset 0 0 0 2px ${clan.colour}` }}
+              >
+                <span aria-hidden="true">{clan.crest}</span>
+              </button>
+            )}
             {huntId && huntStory.story && (
               <button
                 type="button"

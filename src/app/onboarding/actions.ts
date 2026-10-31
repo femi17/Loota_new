@@ -32,5 +32,6 @@ export async function finishOnboarding(_prev: OnboardingState, formData: FormDat
     };
   }
 
-  redirect("/lobby");
+  // Then: clan up or hunt solo (owner, 31 Oct 2026).
+  redirect("/clan?welcome=1");
 }

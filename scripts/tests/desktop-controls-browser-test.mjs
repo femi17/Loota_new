@@ -1,6 +1,6 @@
 // Sprint and Cruise on a desktop screen (owner, 31 Oct 2026: "The sprint and cruise button clashes with icons on the
 // right on desktop"). In a story hunt (the longest tools column: the scroll and the leaderboard too), at several
-// laptop sizes: no tool button may overlap Sprint or Cruise, and every tool stays on the screen.
+// laptop sizes (the player in a clan: its chat button too): no tool button may overlap Sprint or Cruise, and every tool stays on the screen.
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/desktop-controls-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -13,7 +13,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const admin = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
-let id = null, huntId = null, browser;
+let id = null, huntId = null, clan = null, browser;
 let fails = 0;
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 const SIZES = [[1280, 720], [1366, 768], [1440, 900], [1024, 640], [1366, 600], [1280, 560], [1536, 580]]; // the last three: a laptop browser with a bookmarks bar and the taskbar
@@ -35,6 +35,7 @@ try {
     getAll: () => [...jar].map(([n, value]) => ({ name: n, value })),
     setAll: (list) => list.forEach(({ name: n, value }) => (value ? jar.set(n, value) : jar.delete(n))) } });
   await c.auth.signInWithPassword({ email, password });
+  clan = (await c.rpc("create_clan", { p_name: `Desk ${Date.now().toString(36)}`, p_crest: "🦁", p_colour: "#2EC4B6" })).data?.clan ?? null; // the clan chat button too
   browser = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true, protocolTimeout: 300000, args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] });
   const page = await browser.newPage();
   await page.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
@@ -48,7 +49,7 @@ try {
   for (const [w, h] of SIZES) {
     await page.setViewport({ width: w, height: h });
     await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
-    for (let i = 0; i < 40 && !(await page.$('[data-tool="story"]')); i++) await wait(500);
+    for (let i = 0; i < 40 && !(await page.$('[data-tool="story"]') && await page.$('[data-tool="clan"]')); i++) await wait(500);
     await wait(1500);
     const r = await page.evaluate(() => {
       const box = (el) => { const b = el.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
@@ -69,6 +70,7 @@ try {
 } finally {
   await browser?.close();
   if (huntId) await admin.from("hunts").delete().eq("id", huntId);
+  if (clan) await admin.from("clans").delete().eq("id", clan);
   if (id) await admin.auth.admin.deleteUser(id);
   console.log(`hunt and test player deleted; ${fails ? `${fails} FAILED` : "all passed"}`);
   process.exit(fails ? 1 : 0);

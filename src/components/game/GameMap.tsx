@@ -9386,10 +9386,11 @@ export function GameMap({
         </div>
       )}
 
-      {/* Cruise (owner, 25 Oct 2026): beside Sprint, or in its place on a motorbike or in a car. */}
+      {/* Cruise (owner, 25 Oct 2026): beside Sprint, or in its place on a motorbike or in a car. Wider than a phone, both sit
+          left of the tools column, which reaches the bottom of a short laptop window (owner, 31 Oct 2026: they clashed). */}
       {!hud.ride && !hud.care && (
         <div
-          className={`absolute ${canSprint(hud.mode) ? "bottom-11 right-[104px]" : "bottom-9 right-5"}`}
+          className={`absolute ${canSprint(hud.mode) ? "bottom-11 right-[104px] sm:right-[164px]" : "bottom-9 right-5 sm:right-[80px]"}`}
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
         >
           <button
@@ -9422,7 +9423,7 @@ export function GameMap({
 
       {/* Running on foot or pedalling harder; motorbikes and cars have no sprint. */}
       {canSprint(hud.mode) && !hud.ride && !hud.care && (
-        <div className="absolute bottom-9 right-5" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="absolute bottom-9 right-5 sm:right-[80px]" style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
           <HoldButton
             label={hud.mode === "walk" ? "Hold to run" : "Hold to pedal faster"}
             onHold={(down) => {

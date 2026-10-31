@@ -37,7 +37,10 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    channelId, the conditions only the answer meets. Spread the keys around the world. Fiction woven into real places.
 2. **Each key's design** (`designs["<n>"]`): solving steps, plants (chapter + detail), the live piece written out in full
    (the deciding piece AI can't read in advance: never in the chapters), and `check` data when the lock is an acrostic,
-   letter shift or anagram (it must decode exactly: the importer works it out).
+   letter shift or anagram (it must decode exactly: the importer works it out). And its **house** (`house`, every key:
+   owner, 1 Nov 2026, never a chest in the open): the house of the person at that place, 3 rooms at Key 1 growing to 7
+   at the last, one right room the story points to in a chapter the hunter has by then, trap rooms that echo the near
+   misses the story warns about, some safe rooms; things to find and items only in some houses (bible 3b).
 3. **Decoys** (`decoys["<n>"]`): 6+ per key, real places, each failing a named condition, at least radius + 100 m from
    the answer, including near misses next door (the hotel by the lighthouse) that the story rules out, types A/B/C, and each one a false trail IN THE PLOT (the villain's wrong race, a friend's wrong guess, a
    forged message), spread across scenes, never as a list.

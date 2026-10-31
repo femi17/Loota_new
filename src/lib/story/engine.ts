@@ -106,7 +106,7 @@ const KeyDesign = z.object({
     content: z.string().describe("Exactly what the player sees or hears, in full"),
     perPlayer: z.boolean().describe("True if each player gets a different version"),
   }),
-  house: House.optional().describe("Only for some keys: a house at the place, with its rooms and things"),
+  house: House.optional().describe("Every key: the house at the place, with its rooms (and, in some houses, things to find)"),
   check: z.object({
     kind: z.enum(["none", "acrostic", "caesar", "anagram"]),
     lines: z.array(z.string()).describe("Acrostic: the sentences, in order. Otherwise []"),

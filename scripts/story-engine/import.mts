@@ -46,6 +46,7 @@ for (const k of work.skeleton.keys) {
   shape(`key ${k.n}'s decoys`, STORY_SHAPES.Decoys, { decoys: work.decoys?.[k.n] });
   const house = work.designs?.[k.n]?.house;
   if (house) for (const p of houseProblems(house)) problems.push(`key ${k.n}'s house: ${p}`);
+  else problems.push(`key ${k.n} has no house (every key has one: owner, 1 Nov 2026)`);
   if ((work.decoys?.[k.n]?.length ?? 0) < 6) problems.push(`key ${k.n} has ${work.decoys?.[k.n]?.length ?? 0} decoys (6 or more)`);
 }
 for (const c of work.skeleton.chapters) {

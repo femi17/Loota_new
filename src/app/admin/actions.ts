@@ -10,6 +10,7 @@ import { getPlayer } from "@/lib/player";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { sideStreetSpot } from "@/lib/road-cells";
 import { nearestRoad } from "@/lib/nearest-road";
+import { dayName, nextHuntDay } from "./huntDay";
 
 /** Only the owner may change hunts; everything below uses the secret key after this check. */
 async function owner() {
@@ -99,15 +100,14 @@ async function guessScene(spot: { lng: number; lat: number }): Promise<{ scene: 
 export async function createStoryHunt(form: FormData) {
   const player = await owner();
   const keys = whole(form, "keys");
-  const days = whole(form, "days") || 1;
-  const day = text(form, "day");
   if (!(keys >= 1 && keys <= 30)) back("Choose between 1 and 30 keys.", true);
-  if (!(days >= 1 && days <= 14)) back("A hunt runs 1 to 14 days.", true);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) back("Choose the day it starts.", true);
+  // A hunt a day, 9 am to 9 pm Lagos (owner, 31 Oct 2026): it takes the next day without one.
+  const db = createAdminClient();
+  const { data: ahead } = await db.from("hunts").select("starts_at").gte("starts_at", new Date(Date.now() - 86_400_000).toISOString());
+  const day = nextHuntDay((ahead ?? []).map((h) => h.starts_at));
   const startsAt = new Date(`${day}T09:00:00+01:00`);
-  const endsAt = new Date(startsAt.getTime() + (days - 1) * 86_400_000 + 12 * 3_600_000); // 9 pm on the last day
-  if (endsAt.getTime() <= Date.now()) back("That day is already over.", true);
-  const { error } = await createAdminClient().from("hunts").insert({
+  const endsAt = new Date(startsAt.getTime() + 12 * 3_600_000);
+  const { error } = await db.from("hunts").insert({
     title: "A new story hunt (waiting for its story)",
     prize: text(form, "prize") || "To be announced",
     description: "",
@@ -122,7 +122,7 @@ export async function createStoryHunt(form: FormData) {
   });
   if (error) back(`Couldn't start the hunt: ${error.message}`, true);
   revalidatePath("/admin");
-  back("Hunt created. Copy the request on its card and give it to Claude Code to write the story.");
+  back(`Hunt created for ${dayName(day)}, 9 am to 9 pm. Copy the request on its card and give it to Claude Code to write the story.`);
 }
 
 /** Carry on writing a story that stopped (out of credit, a lost connection…). */

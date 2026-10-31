@@ -5,7 +5,7 @@ description: Write a complete Loota story hunt (a thriller story hiding N real p
 
 # New story hunt
 
-The owner creates a hunt in the admin (Owner tools → New story hunt: keys, day, prize; always 9 am–9 pm Lagos) and sends
+The owner creates a hunt in the admin (Owner tools → New story hunt: keys, prize, winners; it takes the next day without a hunt, always 9 am–9 pm Lagos) and sends
 you the request on its card: `/new-story-hunt <hunt id> <N> keys`. You write the story here (no paid API: owner,
 31 Oct 2026) and import it. Arguments: $ARGUMENTS
 

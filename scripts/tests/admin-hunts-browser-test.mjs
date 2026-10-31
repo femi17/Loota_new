@@ -1,7 +1,7 @@
 // The admin's hunt list (owner, 31 Oct 2026: "work on the admin, and remove all hunts we do not need"). Two throwaway
 // hunts: one live, one finished. The list groups them (Live now / Finished, finished folded away); the live one has no
 // Delete; the finished one's Delete asks for DELETE to be typed (the button stays off until then), then the hunt is gone
-// from the database. The Djinn box shows the real state. The test hunts and owner are deleted.
+// from the database. There's no Djinn box (the Wager comes on its own). The test hunts and owner are deleted.
 //   SHOTS=<folder> node scripts/tests/admin-hunts-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -63,7 +63,7 @@ try {
   check("the finished hunt is under Finished", !!f && /Finished/.test(f.group), f?.group);
   check("…folded away at first", await page.evaluate(() => [...document.querySelectorAll("details")].some((d) => /Finished/.test(d.querySelector("summary")?.textContent ?? "") && !d.open)));
   const djinn = await page.evaluate(() => [...document.querySelectorAll("section")].find((s) => /Djinn/.test(s.querySelector("h2")?.textContent ?? ""))?.textContent ?? "");
-  check("the Djinn box says what's on (no more 'off until the chambers are built')", !/off until the chambers/.test(djinn) && /(A Wager is on now|No Wager on)/.test(djinn), djinn.slice(0, 120));
+  check("only hunts on the page: no Djinn box (owner, 31 Oct 2026: just the hunt creation area)", djinn === "", djinn.slice(0, 120));
   await page.screenshot({ path: `${OUT}/admin-1-list.png`, fullPage: false });
 
   // Delete the finished one: open the list, press Delete, the button waits for DELETE

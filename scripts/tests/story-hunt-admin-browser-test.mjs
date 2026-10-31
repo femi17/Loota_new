@@ -1,14 +1,14 @@
 // Story hunts in the admin (owner, 31 Oct 2026: "enter the number of keys, the start time is from 9am to 9pm… a prompt
 // for image generation… and where I will upload it to"):
-//   1. "New story hunt" with 2 keys: a draft hunt, 9 am to 9 pm Lagos, being written; the progress panel starts.
-//   2. Without API credit (or any error) it stops with the reason and Carry on, not a hang. (With credit it carries on.)
+//   1. "New story hunt" with 2 keys: a draft hunt, 9 am to 9 pm Lagos.
+//   2. It waits for its story: its card shows the request to give Claude Code (/new-story-hunt <id> 2 keys), with Copy.
 //   3. Finishing: a hunt holding a nearly finished story (the Keeper's Last Light plan, with stand-in text where Claude
 //      would write) runs its map checks live, then becomes its hunt: the story's title, a key at each real place, and a
 //      picture slot per prompt.
 //   4. A picture uploaded in a slot goes to Storage and shows.
 //   5. The story page shows the story and its answers.
 // The test hunts, their pictures and registry rows, and the test owner are deleted.
-//   SHOTS=<folder> node scripts/tests/story-hunt-admin-browser-test.mjs
+//   SHOTS=<folder> [QUICK=1: only parts 1–2, no map search] node scripts/tests/story-hunt-admin-browser-test.mjs
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -76,30 +76,20 @@ try {
     f.querySelector('input[name="keys"]').value = "2";
     f.querySelector('input[name="prize"]').value = "Test prize (automated)";
   });
-  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 }).catch(() => {}), page.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Write the story/.test(b.textContent ?? ""))?.click())]);
+  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 }).catch(() => {}), page.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Create the hunt/.test(b.textContent ?? ""))?.click())]);
   const { data: made } = await admin.from("hunts").select("id, title, starts_at, ends_at, story_status, keys_wanted, published").eq("created_by", id).order("created_at", { ascending: false }).limit(1).single();
   if (made) huntIds.push(made.id);
   const lagosHour = (iso) => (new Date(iso).getUTCHours() + 1) % 24;
-  check("…a draft hunt being written, 2 keys, 9 am to 9 pm Lagos", made?.story_status && made.keys_wanted === 2 && !made.published && lagosHour(made.starts_at) === 9 && lagosHour(made.ends_at) === 21, made ? `${made.story_status}, ${made.starts_at} → ${made.ends_at}` : "none");
+  check("…a draft hunt, 2 keys, 9 am to 9 pm Lagos", made?.story_status && made.keys_wanted === 2 && !made.published && lagosHour(made.starts_at) === 9 && lagosHour(made.ends_at) === 21, made ? `${made.story_status}, ${made.starts_at} → ${made.ends_at}` : "none");
 
-  // ---- 2. The progress panel runs, and stops cleanly when it can't go on
-  let panel = "";
-  // Until it stops (no credit, shown with Carry on) or writes its plan (credit): up to 3 minutes.
-  for (let i = 0; i < 90 && !/Carry on/.test(panel); i++) {
-    await wait(2000);
-    panel = await page.evaluate(() => document.querySelector('[aria-label="Story progress"]')?.textContent ?? "");
-    const { data: h } = await admin.from("hunts").select("story").eq("id", made.id).single();
-    if (h.story?.skeleton) break;
-  }
-  const { data: after } = await admin.from("hunts").select("story_status, story").eq("id", made.id).single();
-  check("…the progress panel started (the genre and theme were picked)", !!after.story?.picked, after.story?.picked ? `${after.story.picked.genre}, "${after.story.picked.theme}"` : "");
-  if (after.story_status === "failed") {
-    check("…without API credit it stops with the reason and Carry on (no hang)", /credit|stopped/i.test(panel) && /Carry on/.test(panel), panel.slice(0, 160));
-  } else {
-    check("…with API credit it keeps writing", after.story_status === "writing" || after.story_status === "ready", after.story_status);
-  }
-  await page.screenshot({ path: `${OUT}/story-hunt-1-progress.png` });
+  // ---- 2. It waits for its story, showing the request to give Claude Code (no paid API: owner, 31 Oct 2026)
+  check("…waiting for its story (nothing written through the paid API)", made?.story_status === "waiting", made?.story_status);
+  const card = await page.evaluate(() => document.querySelector('[aria-label="Waiting for its story"]')?.textContent ?? "");
+  check("…its card shows the request for Claude Code, with Copy", card.includes(`/new-story-hunt ${made?.id} 2 keys`) && /Copy/.test(card), card.slice(0, 160));
+  check("…and no Publish while it waits", !(await page.evaluate((id) => [...document.querySelectorAll("section")].find((x) => x.querySelector(`input[value="${id}"]`) || x.textContent?.includes(id))?.textContent?.includes("Publish"), made?.id)));
+  await page.screenshot({ path: `${OUT}/story-hunt-1-waiting.png` });
 
+  if (process.env.QUICK) throw new Error("QUICK: stopping before the parts that need the map search");
   // ---- 3. Finishing a nearly finished story
   const { data: near, error: nearErr } = await admin.from("hunts").insert({
     title: "A new story (being written…)", prize: "Test prize (automated)", description: "", winners: 1, questions_per_trial: 3, seconds_per_question: 12,
@@ -146,8 +136,10 @@ try {
   await page.screenshot({ path: `${OUT}/story-hunt-3-story.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
-  fails++;
-  console.log("ERROR", e);
+  if (!/^QUICK/.test(e?.message ?? "")) {
+    fails++;
+    console.log("ERROR", e);
+  }
 } finally {
   await browser?.close();
   for (const h of huntIds) {

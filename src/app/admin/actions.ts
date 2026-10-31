@@ -10,7 +10,6 @@ import { getPlayer } from "@/lib/player";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { sideStreetSpot } from "@/lib/road-cells";
 import { nearestRoad } from "@/lib/nearest-road";
-import { newWork } from "@/lib/story/engine";
 
 /** Only the owner may change hunts; everything below uses the secret key after this check. */
 async function owner() {
@@ -93,8 +92,9 @@ async function guessScene(spot: { lng: number; lat: number }): Promise<{ scene: 
 
 /**
  * A new story hunt (owner, 31 Oct 2026: "enter the number of keys, the start time is from 9am to 9pm, it will always
- * be"): the owner gives the keys, the day, how many days, the prize and the winners; the story engine writes the rest
- * (title, description, keys) while the admin page is open. Hunting hours are always 9 am to 9 pm, Lagos time.
+ * be"): the owner gives the keys, the day, how many days, the prize and the winners. The hunt then waits for its story:
+ * the owner asks Claude Code ("/new-story-hunt <hunt id>"), which writes it and imports it (npm run story:import), so no
+ * paid API is used (owner, 31 Oct 2026). Hunting hours are always 9 am to 9 pm, Lagos time.
  */
 export async function createStoryHunt(form: FormData) {
   const player = await owner();
@@ -108,7 +108,7 @@ export async function createStoryHunt(form: FormData) {
   const endsAt = new Date(startsAt.getTime() + (days - 1) * 86_400_000 + 12 * 3_600_000); // 9 pm on the last day
   if (endsAt.getTime() <= Date.now()) back("That day is already over.", true);
   const { error } = await createAdminClient().from("hunts").insert({
-    title: "A new story (being written…)",
+    title: "A new story hunt (waiting for its story)",
     prize: text(form, "prize") || "To be announced",
     description: "",
     winners: whole(form, "winners") || 1,
@@ -118,12 +118,11 @@ export async function createStoryHunt(form: FormData) {
     ends_at: endsAt.toISOString(),
     created_by: player.id,
     keys_wanted: keys,
-    story_status: "writing",
-    story: newWork(keys),
+    story_status: "waiting",
   });
   if (error) back(`Couldn't start the hunt: ${error.message}`, true);
   revalidatePath("/admin");
-  back("The story is being written: keep this page open until it's ready (10 to 20 minutes).");
+  back("Hunt created. Copy the request on its card and give it to Claude Code to write the story.");
 }
 
 /** Carry on writing a story that stopped (out of credit, a lost connection…). */

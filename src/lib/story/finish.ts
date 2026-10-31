@@ -48,8 +48,12 @@ export async function finishStoryHunt(hunt: string, work: Work): Promise<string[
     });
     if (error) notes.push(`Key ${key.n}: ${error.message}`);
   }
+  // Picture slots: one per prompt (an import done again keeps pictures already uploaded to slots that are still there).
   const pictures = (work.production?.pictures ?? []).map((p, i) => ({ hunt_id: hunt, n: i + 1, chapter: p.chapter, prompt: p.prompt }));
-  if (pictures.length) await db.from("story_pictures").upsert(pictures, { onConflict: "hunt_id,n", ignoreDuplicates: true });
+  if (pictures.length) await db.from("story_pictures").upsert(pictures, { onConflict: "hunt_id,n" });
+  await db.from("story_pictures").delete().eq("hunt_id", hunt).gt("n", pictures.length);
+  // The registry: this story once (an import done again replaces it).
+  await db.from("story_registry").delete().eq("hunt_id", hunt);
   await db.from("story_registry").insert({ ...usedBy(work), hunt_id: hunt });
   await db.from("hunts").update({ title: b.title.slice(0, 80), description: b.logline.slice(0, 1000), story: work, story_status: "ready" }).eq("id", hunt);
   return notes;

@@ -12,6 +12,7 @@ import { wonderOf } from "@/game/wonders";
 import { addKey, createHunt, createStoryHunt, removeLastKey, setKeyScene, setKeyTrap, setKeyTrial, setPublished, summonDjinn } from "./actions";
 import { StoryPictures } from "./StoryPictures";
 import { StoryProgress } from "./StoryProgress";
+import { StoryWaiting } from "./StoryWaiting";
 import { DeleteHunt } from "./DeleteHunt";
 import { RiddleFields } from "./RiddleFields";
 import { StoryEditor } from "./StoryEditor";
@@ -87,7 +88,7 @@ type HuntRow = {
   hunt_story: { beat: string; lines: { who: string; text: string }[] }[];
   hunt_players: { count: number }[];
   /** A story hunt: writing, ready or failed (null: made by hand). */
-  story_status: "writing" | "ready" | "failed" | null;
+  story_status: "waiting" | "writing" | "ready" | "failed" | null;
   keys_wanted: number | null;
   story_pictures: { n: number; chapter: number; prompt: string; path: string | null }[];
 };
@@ -178,7 +179,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
       <section className="flex flex-col gap-4 rounded-3xl bg-ink-2 p-6">
         <div>
           <h1 className="font-display text-2xl font-extrabold">New story hunt</h1>
-          <p className="text-sm text-muted">The story engine writes the story, its title and description, and hides the keys in it. Hunting hours are always 9 am to 9 pm, Lagos time.</p>
+          <p className="text-sm text-muted">Set the keys, the day and the prize; then give the request on the hunt&apos;s card to Claude Code, which writes the story, its title and description, and hides the keys in it. Hunting hours are always 9 am to 9 pm, Lagos time.</p>
         </div>
         <form action={createStoryHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-5">
           <Field label="Keys">
@@ -197,7 +198,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
             <input name="winners" type="number" min={1} max={1000} defaultValue={3} required className={field} />
           </Field>
           <button type="submit" className="h-12 rounded-2xl bg-gold font-bold text-ink sm:col-span-5">
-            ✍️ Write the story
+            Create the hunt
           </button>
         </form>
       </section>
@@ -279,7 +280,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                     ● Broadcast
                   </Link>
                 )}
-                {status(h) !== "finished" && h.story_status !== "writing" && h.story_status !== "failed" && (
+                {status(h) !== "finished" && h.story_status !== "waiting" && h.story_status !== "writing" && h.story_status !== "failed" && (
                   <form action={setPublished}>
                     <input type="hidden" name="hunt" value={h.id} />
                     <input type="hidden" name="publish" value={String(!h.published)} />
@@ -296,6 +297,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
               {h.seconds_per_question} s · {players} hunters joined
             </p>
 
+            {h.story_status === "waiting" && <StoryWaiting hunt={h.id} keys={h.keys_wanted ?? 5} />}
             {(h.story_status === "writing" || h.story_status === "failed") && <StoryProgress hunt={h.id} status={h.story_status} />}
             {h.story_status === "ready" && (
               <>
@@ -394,7 +396,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
             {keys.length > 0 && <StoryEditor hunt={h.id} beats={beats} initial={storyText} />}
 
-            {!h.published && h.story_status !== "writing" && h.story_status !== "failed" && (
+            {!h.published && !h.story_status && (
               <>
                 <form action={addKey} className="grid grid-cols-1 gap-3 rounded-2xl bg-ink-2 p-4 sm:grid-cols-2">
                   <input type="hidden" name="hunt" value={h.id} />

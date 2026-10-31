@@ -49,3 +49,7 @@ next-env.d.ts
 
 # story engine: work in progress (docs/stories/.work-<date>.json)
 docs/stories/.work-*
+# story answers: drafts and finished story folders stay on this computer (the story is in the database with its hunt)
+docs/stories/drafts/
+docs/stories/20*/
+docs/stories/.map-cache.json

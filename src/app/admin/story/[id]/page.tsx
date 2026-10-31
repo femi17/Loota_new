@@ -40,6 +40,7 @@ async function Story({ params }: { params: PageProps<"/admin/story/[id]">["param
   const v = verdict(work);
   const assignment = assignmentOf(work);
   const tick = (ok: boolean) => (ok ? <b className="text-ok">✓</b> : <b className="text-danger-text">✗</b>);
+  const maybe = (ok: boolean | null) => (ok === null ? <b className="text-muted">–</b> : tick(ok));
 
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-8 sm:px-6">
@@ -56,8 +57,8 @@ async function Story({ params }: { params: PageProps<"/admin/story/[id]">["param
           <p>{tick(v.codes)} Codes decode exactly</p>
           <p>{tick(v.answersOnMap)} Every answer is on the map</p>
           <p>{tick(v.noLeaks)} No key place named in the story</p>
-          <p>{tick(v.aiFailsWithout)} An AI with the story alone can&apos;t find the places</p>
-          <p>{tick(v.aiSolvesWith)} An AI with the story and the live pieces can (it&apos;s fair)</p>
+          <p>{maybe(v.aiFailsWithout)} An AI with the story alone can&apos;t find the places{v.aiFailsWithout === null ? " (not run: needs the paid API)" : ""}</p>
+          <p>{maybe(v.aiSolvesWith)} An AI with the story and the live pieces can (it&apos;s fair){v.aiSolvesWith === null ? " (not run)" : ""}</p>
           <p className="mt-2 text-xs text-muted">Cost: {costOf(work).join("; ")}</p>
         </section>
       )}

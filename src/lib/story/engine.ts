@@ -91,6 +91,8 @@ const Production = z.object({
   pictures: z.array(z.object({ chapter: z.number(), prompt: z.string().describe("A full, self-contained image prompt: style, characters' looks, scene; no text in the image; never shows a key place recognisably") })),
   voices: z.array(z.object({ name: z.string(), direction: z.string().describe("Voice for ElevenLabs: age, accent, pace, mood") })),
 });
+/** The shapes a story is made of: also used to check a story written in Claude Code before it is imported. */
+export const STORY_SHAPES = { Skeleton, KeyDesign, Decoys, Production };
 const Solved = z.object({ keys: z.array(z.object({ n: z.number(), place: z.string(), city: z.string(), country: z.string(), reasoning: z.string() })) });
 
 export type SkeletonT = z.infer<typeof Skeleton>;
@@ -159,16 +161,33 @@ async function ask<T>(work: Work, model: string, user: string, schema: z.ZodType
 
 // ---- The map ------------------------------------------------------------------------------------------------------
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/**
+ * The map search the game uses. "Not found" only when it answers with nothing; when it's busy (it throttles a long run
+ * of lookups) or the connection drops, it waits and asks again, up to four times.
+ */
+/** Answers already found (the importer saves them between runs: a rerun asks the map search nothing twice). */
+export const mapCache = new Map<string, Spot | null>();
 async function photon(q: string): Promise<Spot | null> {
-  await wait(300); // the public map search's fair use
-  try {
-    const res = await fetch(`https://photon.komoot.io/api/?limit=1&q=${encodeURIComponent(q)}`, { headers: { "User-Agent": "Loota story engine" }, signal: AbortSignal.timeout(20_000) });
-    const f = ((await res.json()) as { features: { properties: { name?: string; city?: string; country?: string }; geometry: { coordinates: [number, number] } }[] }).features[0];
-    if (!f) return null;
-    return { name: [f.properties.name, f.properties.city, f.properties.country].filter(Boolean).join(", "), lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] };
-  } catch {
-    return null;
+  if (mapCache.has(q)) return mapCache.get(q)!;
+  const spot = await photonAsk(q);
+  if (spot !== undefined) mapCache.set(q, spot);
+  return spot ?? null;
+}
+/** undefined: the map search never answered (not cached, so a later run asks again). */
+async function photonAsk(q: string): Promise<Spot | null | undefined> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await wait(attempt === 0 ? 1000 : 4000 * attempt); // the public map search's fair use: about one a second
+    try {
+      const res = await fetch(`https://photon.komoot.io/api/?limit=1&q=${encodeURIComponent(q)}`, { headers: { "User-Agent": "Loota story engine" }, signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) continue; // busy or throttled: try again
+      const f = ((await res.json()) as { features: { properties: { name?: string; city?: string; country?: string }; geometry: { coordinates: [number, number] } }[] }).features[0];
+      if (!f) return null;
+      return { name: [f.properties.name, f.properties.city, f.properties.country].filter(Boolean).join(", "), lng: f.geometry.coordinates[0], lat: f.geometry.coordinates[1] };
+    } catch {
+      // The connection dropped: try again.
+    }
   }
+  return undefined;
 }
 export function metres(a: { lng: number; lat: number }, b: { lng: number; lat: number }) {
   const k = Math.PI / 180;
@@ -216,8 +235,9 @@ export function verdict(work: Work) {
     codes: (work.codes ?? []).every((c) => c.ok),
     answersOnMap: Object.values(work.map).every((m) => !!m.found),
     noLeaks: Object.values(work.chapters).every((c) => c.leaks.length === 0),
-    aiFailsWithout: (work.without ?? []).every((a) => !a.solved),
-    aiSolvesWith: (work.withLive ?? []).every((a) => a.solved),
+    // The AI attack needs the paid API: null when it wasn't run (a story written in Claude Code and imported).
+    aiFailsWithout: work.without ? work.without.every((a) => !a.solved) : null,
+    aiSolvesWith: work.withLive ? work.withLive.every((a) => a.solved) : null,
   };
 }
 
@@ -243,6 +263,59 @@ export function usedBy(work: Work): Used {
 /** The assignment: which lock and channel each key uses. */
 export function assignmentOf(work: Work) {
   return (work.picked?.locks ?? []).map((id, i) => ({ n: i + 1, lock: LOCKS.find((l) => l.id === id)!, channel: CHANNELS.find((c) => c.id === work.picked!.channels[i])! }));
+}
+
+// ---- The free checks (no Claude): also used to import a story written by hand or in Claude Code ----------------------
+
+/** Every key's code (acrostic, letter shift, anagram) worked out by computer. */
+export function checkCodes(work: Work): CodeCheck[] {
+  return blueprintOf(work).keys.map((k) => {
+    const c = k.check;
+    if (c?.kind === "acrostic") {
+      const got = c.lines.map((l) => letters(l)[0] ?? "").join("");
+      return { n: k.n, kind: c.kind, ok: got === letters(c.plain), detail: `first letters spell ${got}, should spell ${letters(c.plain)}` };
+    }
+    if (c?.kind === "caesar") {
+      const got = shiftBack(c.cipher, c.shift);
+      return { n: k.n, kind: c.kind, ok: letters(got) === letters(c.plain), detail: `${c.cipher} shifted ${c.shift} back gives ${got}, should give ${c.plain}` };
+    }
+    if (c?.kind === "anagram") {
+      const sort = (s: string) => [...letters(s)].sort().join("");
+      return { n: k.n, kind: c.kind, ok: sort(c.cipher) === sort(c.plain), detail: `${c.cipher} vs ${c.plain}` };
+    }
+    return { n: k.n, kind: c?.kind ?? "none", ok: true, detail: "nothing to compute" };
+  });
+}
+
+/** One key on the map: its answer, its aliases (each within 1.5 km of it) and its decoys (found, and 1 km away or more). */
+export async function checkMapKey(work: Work, n: number): Promise<MapCheck> {
+  const key = blueprintOf(work).keys.find((k) => k.n === n)!;
+  const found = (await photon(key.answer.searchName)) ?? (await photon(`${key.answer.name}, ${key.answer.city}`));
+  const aliases = [];
+  for (const alias of key.answer.aliases) {
+    const got = await photon(alias);
+    aliases.push({ alias, ok: !!(found && got && metres(found, got) <= FOUND_M), got: got?.name ?? "nothing" });
+  }
+  const decoys = [];
+  for (const d of work.decoys[n] ?? []) {
+    const got = await photon(d.searchName);
+    const gap = found && got ? metres(found, got) : null;
+    decoys.push({ place: d.place, ok: !!got && (gap === null || gap >= DECOY_GAP_M), why: !got ? "not found on the map" : gap !== null && gap < DECOY_GAP_M ? `only ${gap} m from the answer` : "ok" });
+  }
+  const m = { answer: key.answer.name, found, aliases, decoys };
+  work.map[n] = m;
+  return m;
+}
+
+/** The names a chapter must never write: every key's answer and its aliases. */
+export function secretNames(work: Work) {
+  return blueprintOf(work).keys.flatMap((k) => [k.answer.name, ...k.answer.aliases]).filter((s) => s.length > 3);
+}
+
+/** Which key names each chapter lets slip (it should be none). */
+export function chapterLeaks(work: Work) {
+  const secret = secretNames(work);
+  return Object.fromEntries(Object.entries(work.chapters).map(([n, c]) => [n, secret.filter((s) => fold(c.text).includes(fold(s)))]));
 }
 
 /**
@@ -313,46 +386,19 @@ Plan the story's skeleton now: title, characters, world rules, prologue, ${chapt
 
   // 5. Codes, worked out by computer
   if (!work.codes) {
-    work.codes = blueprint.keys.map((k) => {
-      const c = k.check;
-      if (c.kind === "acrostic") {
-        const got = c.lines.map((l) => letters(l)[0] ?? "").join("");
-        return { n: k.n, kind: c.kind, ok: got === letters(c.plain), detail: `first letters spell ${got}, should spell ${letters(c.plain)}` };
-      }
-      if (c.kind === "caesar") {
-        const got = shiftBack(c.cipher, c.shift);
-        return { n: k.n, kind: c.kind, ok: letters(got) === letters(c.plain), detail: `${c.cipher} shifted ${c.shift} back gives ${got}, should give ${c.plain}` };
-      }
-      if (c.kind === "anagram") {
-        const sort = (s: string) => [...letters(s)].sort().join("");
-        return { n: k.n, kind: c.kind, ok: sort(c.cipher) === sort(c.plain), detail: `${c.cipher} vs ${c.plain}` };
-      }
-      return { n: k.n, kind: c.kind, ok: true, detail: "nothing to compute" };
-    });
+    work.codes = checkCodes(work);
     return `Codes checked: ${work.codes.filter((c) => c.ok).length}/${work.codes.length} right`;
   }
 
   // 6. The map, key by key
   for (const key of blueprint.keys) {
     if (work.map[key.n]) continue;
-    const found = (await photon(key.answer.searchName)) ?? (await photon(`${key.answer.name}, ${key.answer.city}`));
-    const aliases = [];
-    for (const alias of key.answer.aliases) {
-      const got = await photon(alias);
-      aliases.push({ alias, ok: !!(found && got && metres(found, got) <= FOUND_M), got: got?.name ?? "nothing" });
-    }
-    const decoys = [];
-    for (const d of work.decoys[key.n] ?? []) {
-      const got = await photon(d.searchName);
-      const gap = found && got ? metres(found, got) : null;
-      decoys.push({ place: d.place, ok: !!got && (gap === null || gap >= DECOY_GAP_M), why: !got ? "not found on the map" : gap !== null && gap < DECOY_GAP_M ? `only ${gap} m from the answer` : "ok" });
-    }
-    work.map[key.n] = { answer: key.answer.name, found, aliases, decoys };
-    return `Map, key ${key.n}: answer ${found ? "found" : "NOT FOUND"}, ${decoys.filter((d) => d.ok).length}/${decoys.length} decoys on the map`;
+    const m = await checkMapKey(work, key.n);
+    return `Map, key ${key.n}: answer ${m.found ? "found" : "NOT FOUND"}, ${m.decoys.filter((d) => d.ok).length}/${m.decoys.length} decoys on the map`;
   }
 
   // 7. The chapters
-  const secret = blueprint.keys.flatMap((k) => [k.answer.name, ...k.answer.aliases]).filter((s) => s.length > 3);
+  const secret = secretNames(work);
   const leaks = (text: string) => secret.filter((s) => fold(text).includes(fold(s)));
   const decoyNotes = Object.entries(work.decoys).map(([n, list]) => `Key ${n} decoys: ${list.map((d) => `[ch ${d.chapter}] ${d.place}: ${d.how}`).join(" | ")}`).join("\n");
   for (const ch of blueprint.chapters) {

@@ -27,6 +27,9 @@ export default function AdminPage({ searchParams }: { searchParams: SearchParams
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-4 sm:px-6">
           <Logo />
           <span className="text-muted">Owner tools</span>
+          <Link href="/admin/penalties" className="text-sm font-bold text-gold">
+            Penalties
+          </Link>
           <Link href="/lobby" className="ml-auto text-sm font-bold text-gold">
             Back to the lobby
           </Link>

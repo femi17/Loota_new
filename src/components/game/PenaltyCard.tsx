@@ -1,5 +1,7 @@
 "use client";
 
+import { PENALTY_SCENES as SCENE } from "@/game/penaltyScenes";
+
 /** A penalty the server dealt (public.deal_penalty): the trap, and what it cost. */
 export type Penalty = {
   code: string;
@@ -10,25 +12,6 @@ export type Penalty = {
   effect: "wait" | "coins" | "energy" | "back";
   amount: number;
   until: string | null;
-};
-
-/** One picture per kind of trap (scenes are reused across the many penalties). */
-const SCENE: Record<string, string> = {
-  collapse: "🕳️",
-  darts: "🏹",
-  flood: "🌊",
-  smoke: "💨",
-  net: "🕸️",
-  boulder: "🪨",
-  fire: "🔥",
-  swarm: "🦇",
-  masquerade: "🎭",
-  storm: "⛈️",
-  fall: "🧗",
-  gas: "☠️",
-  cage: "⛓️",
-  mirror: "🪞",
-  snake: "🐍",
 };
 
 function cost(p: Penalty) {

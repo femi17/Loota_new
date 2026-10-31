@@ -1,15 +1,12 @@
 /** A day in Lagos (UTC+1 all year), as YYYY-MM-DD. */
-const lagosDay = (ms: number) => new Date(ms + 3_600_000).toISOString().slice(0, 10);
+export const lagosDay = (ms: number) => new Date(ms + 3_600_000).toISOString().slice(0, 10);
 
 /**
- * The day the next story hunt takes (owner, 31 Oct 2026: "hunts is everyday 9am - 9pm"): the first day with no hunt
- * starting on it, from today if it's still before 9 am in Lagos, else from tomorrow.
+ * The day the next story hunt is for (owner, 31 Oct 2026: one hunt a day, 9 am to 9 pm, each made before 9 am on its
+ * day): today until 9 am in Lagos, then tomorrow. Never further ahead: a day that has its hunt waits for the next 9 am.
  */
-export function nextHuntDay(starts: string[], now = Date.now()) {
-  const taken = new Set(starts.map((s) => lagosDay(Date.parse(s))));
-  let t = new Date(now + 3_600_000).getUTCHours() >= 9 ? now + 86_400_000 : now;
-  while (taken.has(lagosDay(t))) t += 86_400_000;
-  return lagosDay(t);
+export function nextHuntDay(now = Date.now()) {
+  return lagosDay(new Date(now + 3_600_000).getUTCHours() >= 9 ? now + 86_400_000 : now);
 }
 
 /** "Saturday 1 November". */

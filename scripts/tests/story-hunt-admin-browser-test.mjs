@@ -70,9 +70,15 @@ try {
 
   // ---- 1. The form
   const fields = await page.evaluate(() => [...document.querySelectorAll("form")].find((f) => f.querySelector('input[name="keys"]'))?.querySelectorAll("input:not([type=hidden])").length ?? 0);
-  check("New story hunt asks only for keys, prize and winners (the day is the next one free, 9 am to 9 pm)", fields === 3, `${fields} fields`);
   const extras = await page.evaluate(() => ({ byHand: /Make a hunt by hand/.test(document.body.textContent ?? ""), djinn: /Summon the Djinn/.test(document.body.textContent ?? ""), keyTools: !!document.querySelector('select[name="scene"], select[name="trial"]') }));
-  check("…and nothing else: no hunt by hand, no Djinn box, no key tools", !extras.byHand && !extras.djinn && !extras.keyTools, JSON.stringify(extras));
+  check("only hunt creation on the page: no hunt by hand, no Djinn box, no key tools", !extras.byHand && !extras.djinn && !extras.keyTools, JSON.stringify(extras));
+  const note = () => page.evaluate(() => document.querySelector('[aria-label="Next hunt made"]')?.textContent ?? "");
+  if (!fields) {
+    // The next day already has its real hunt: the form is closed until 9 am, so nothing can be made to test with.
+    check("the next day has its hunt: the form is closed, saying so", /has its hunt/.test(await note()), await note());
+    throw new Error("SKIP: the next day already has a real hunt, so the rest can't run until 9 am");
+  }
+  check("New story hunt asks only for keys, prize and winners (one hunt a day, 9 am to 9 pm)", fields === 3, `${fields} fields`);
   const shownDay = await page.evaluate(() => document.querySelector("section b")?.textContent ?? "");
   await page.evaluate(() => {
     const f = [...document.querySelectorAll("form")].find((x) => x.querySelector('input[name="keys"]'));
@@ -84,22 +90,13 @@ try {
   if (made) huntIds.push(made.id);
   const lagosHour = (iso) => (new Date(iso).getUTCHours() + 1) % 24;
   check("…a draft hunt, 2 keys, 9 am to 9 pm Lagos", made?.story_status && made.keys_wanted === 2 && !made.published && lagosHour(made.starts_at) === 9 && lagosHour(made.ends_at) === 21, made ? `${made.story_status}, ${made.starts_at} → ${made.ends_at}` : "none");
-  const dayOf = (iso) => new Date(Date.parse(iso) + 3600e3).toISOString().slice(0, 10);
   const nameOf = (iso) => new Date(iso).toLocaleDateString("en-NG", { weekday: "long", day: "numeric", month: "long", timeZone: "Africa/Lagos" });
-  check("…on the day the form showed", !!made && shownDay.startsWith(nameOf(made.starts_at)), `shown "${shownDay}", made ${made && dayOf(made.starts_at)}`);
-  const { data: same } = await admin.from("hunts").select("id").gte("starts_at", `${dayOf(made.starts_at)}T00:00:00+01:00`).lt("starts_at", `${dayOf(made.starts_at)}T23:59:59+01:00`);
-  check("…a day no other hunt has", (same ?? []).length === 1, `${(same ?? []).length} hunts that day`);
-  // A second one takes the day after
-  await page.evaluate(() => {
-    const f = [...document.querySelectorAll("form")].find((x) => x.querySelector('input[name="keys"]'));
-    f.querySelector('input[name="keys"]').value = "1";
-    f.querySelector('input[name="prize"]').value = "Test prize (automated)";
-  });
-  await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 }).catch(() => {}), page.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Create the hunt/.test(b.textContent ?? ""))?.click())]);
-  const { data: second } = await admin.from("hunts").select("id, starts_at").eq("created_by", id).order("created_at", { ascending: false }).limit(1).single();
-  if (second && second.id !== made?.id) huntIds.push(second.id);
-  const next = made && second && second.id !== made.id ? (Date.parse(second.starts_at) - Date.parse(made.starts_at)) / 86400e3 : null;
-  check("…and the next hunt made takes a later free day", next !== null && next >= 1 && Number.isInteger(next), `${next} days later`);
+  const lagosNow = new Date(Date.now() + 3600e3);
+  const expected = new Date(Date.now() + (lagosNow.getUTCHours() >= 9 ? 86400e3 : 0));
+  check("…for the next day (tomorrow after 9 am, today before), as the form showed", !!made && nameOf(made.starts_at) === nameOf(expected.toISOString()) && shownDay.startsWith(nameOf(made.starts_at)), `shown "${shownDay}", made ${made && nameOf(made.starts_at)}`);
+  // One hunt a day: the form closes until 9 am
+  const reopened = await page.evaluate(() => !![...document.querySelectorAll("form")].find((f) => f.querySelector('input[name="keys"]')));
+  check("…then the form closes: one hunt a day, the next opens at 9 am", !reopened && /has its hunt/.test(await note()), await note());
   await page.goto("http://localhost:3000/admin", { waitUntil: "networkidle2", timeout: 120000 });
 
   // ---- 2. It waits for its story, showing the request to give Claude Code (no paid API: owner, 31 Oct 2026)
@@ -156,7 +153,8 @@ try {
   await page.screenshot({ path: `${OUT}/story-hunt-3-story.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
-  if (!/^QUICK/.test(e?.message ?? "")) {
+  if (/^SKIP/.test(e?.message ?? "")) console.log(e.message);
+  else if (!/^QUICK/.test(e?.message ?? "")) {
     fails++;
     console.log("ERROR", e);
   }

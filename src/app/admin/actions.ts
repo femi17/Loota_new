@@ -101,12 +101,13 @@ export async function createStoryHunt(form: FormData) {
   const player = await owner();
   const keys = whole(form, "keys");
   if (!(keys >= 1 && keys <= 30)) back("Choose between 1 and 30 keys.", true);
-  // A hunt a day, 9 am to 9 pm Lagos (owner, 31 Oct 2026): it takes the next day without one.
+  // One hunt a day, 9 am to 9 pm Lagos, made before 9 am on its day (owner, 31 Oct 2026).
   const db = createAdminClient();
-  const { data: ahead } = await db.from("hunts").select("starts_at").gte("starts_at", new Date(Date.now() - 86_400_000).toISOString());
-  const day = nextHuntDay((ahead ?? []).map((h) => h.starts_at));
+  const day = nextHuntDay();
   const startsAt = new Date(`${day}T09:00:00+01:00`);
   const endsAt = new Date(startsAt.getTime() + 12 * 3_600_000);
+  const { data: taken } = await db.from("hunts").select("title").gte("starts_at", `${day}T00:00:00+01:00`).lt("starts_at", endsAt.toISOString()).limit(1).maybeSingle();
+  if (taken) back(`${dayName(day)} already has its hunt (${taken.title}). One hunt a day: the next day opens at 9 am on ${dayName(day)}.`, true);
   const { error } = await db.from("hunts").insert({
     title: "A new story hunt (waiting for its story)",
     prize: text(form, "prize") || "To be announced",

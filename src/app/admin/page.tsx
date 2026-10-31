@@ -7,7 +7,7 @@ import { FormMessage } from "@/components/FormField";
 import { getPlayer } from "@/lib/player";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createStoryHunt, setPublished } from "./actions";
-import { dayName, nextHuntDay } from "./huntDay";
+import { dayName, lagosDay, nextHuntDay } from "./huntDay";
 import { StoryPictures } from "./StoryPictures";
 import { StoryProgress } from "./StoryProgress";
 import { StoryWaiting } from "./StoryWaiting";
@@ -96,8 +96,10 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
     { label: "Drafts", hunts: hunts.filter((h) => status(h) === "draft"), open: true },
     { label: "Finished", hunts: hunts.filter((h) => status(h) === "finished"), open: false },
   ];
-  // A hunt a day, 9 am to 9 pm Lagos (owner, 31 Oct 2026): the next one takes the first day without a hunt.
-  const nextDay = dayName(nextHuntDay(hunts.map((h) => h.starts_at)));
+  // One hunt a day, 9 am to 9 pm Lagos, made before 9 am on its day (owner, 31 Oct 2026).
+  const day = nextHuntDay();
+  const nextDay = dayName(day);
+  const taken = hunts.find((h) => lagosDay(Date.parse(h.starts_at)) === day);
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6">
@@ -107,11 +109,18 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
       <section className="flex flex-col gap-4 rounded-3xl bg-ink-2 p-6">
         <div>
           <h1 className="font-display text-2xl font-extrabold">New story hunt</h1>
-          <p className="text-sm text-muted">
-            The next hunt is on <b className="text-paper">{nextDay}, 9 am to 9 pm</b> (Lagos time). Set the keys and the prize; then give the request on the
-            hunt&apos;s card to Claude Code, which writes the story, its title and description, and hides the keys in it.
-          </p>
+          {taken ? (
+            <p className="text-sm text-muted" aria-label="Next hunt made">
+              <b className="text-paper">{nextDay}</b> has its hunt: {taken.title}. One hunt a day: the next day opens at 9 am on {nextDay}.
+            </p>
+          ) : (
+            <p className="text-sm text-muted">
+              The next hunt is on <b className="text-paper">{nextDay}, 9 am to 9 pm</b> (Lagos time). Set the keys and the prize; then give the request on the
+              hunt&apos;s card to Claude Code, which writes the story, its title and description, and hides the keys in it.
+            </p>
+          )}
         </div>
+        {!taken && (
         <form action={createStoryHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="Keys">
             <input name="keys" type="number" min={1} max={30} defaultValue={5} required className={field} />
@@ -126,6 +135,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
             Create the hunt
           </button>
         </form>
+        )}
       </section>
 
       {hunts.length === 0 && <p className="text-center text-muted">No hunts yet. Create one above.</p>}

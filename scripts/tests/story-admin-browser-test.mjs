@@ -45,7 +45,7 @@ try {
   await page.goto("http://localhost:3000/admin", { waitUntil: "networkidle2", timeout: 120000 });
 
   // This hunt's story (the page lists every hunt's).
-  const mine = `details:has(input[name="hunt"][value="${huntId}"])`;
+  const mine = `details:has(input[name="hunt"][value="${huntId}"]):not(:has(details))`; // the story box itself, not the folding list of hunts round it
   const opened = await page.evaluate((sel) => {
     const d = document.querySelector(sel);
     if (d) d.open = true;

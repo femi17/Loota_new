@@ -8,7 +8,9 @@ import { getPlayer } from "@/lib/player";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CATEGORY_NAMES, type TrialCategory } from "@/game/hunt";
 import { KEY_SCENES, KEY_SCENE_INFO, isKeyScene } from "@/game/keyScenes";
-import { addKey, createHunt, deleteDraft, removeLastKey, setKeyScene, setKeyTrap, setKeyTrial, setPublished, summonDjinn } from "./actions";
+import { wonderOf } from "@/game/wonders";
+import { addKey, createHunt, removeLastKey, setKeyScene, setKeyTrap, setKeyTrial, setPublished, summonDjinn } from "./actions";
+import { DeleteHunt } from "./DeleteHunt";
 import { RiddleFields } from "./RiddleFields";
 import { StoryEditor } from "./StoryEditor";
 
@@ -84,6 +86,16 @@ type HuntRow = {
   hunt_players: { count: number }[];
 };
 
+/** Where a hunt is in its life, read per request (the page is dynamic). */
+function huntStatus(h: { published: boolean; starts_at: string; ends_at: string }) {
+  const now = Date.now();
+  if (Date.parse(h.ends_at) <= now) return "finished";
+  if (!h.published) return "draft";
+  return Date.parse(h.starts_at) > now ? "upcoming" : "live";
+}
+const STATUS = { live: "● Live", upcoming: "Coming up", draft: "Draft", finished: "Finished" } as const;
+const nowIso = () => new Date().toISOString();
+
 const field = "h-11 rounded-xl border-[1.5px] border-line bg-ink px-3 text-paper outline-none focus:border-gold";
 const lagos = (iso: string) =>
   new Date(iso).toLocaleString("en-NG", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" });
@@ -109,6 +121,24 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
     .select("id, title, prize, winners, starts_at, ends_at, questions_per_trial, seconds_per_question, published, hunt_keys(*), hunt_players(count), hunt_story(beat, lines)")
     .order("starts_at", { ascending: false });
   const hunts = (data ?? []) as HuntRow[];
+  // Live first, then coming up, drafts, and the finished ones folded away (owner, 31 Oct 2026: tidy the admin).
+  const status = huntStatus;
+  const groups = [
+    { label: "Live now", hunts: hunts.filter((h) => status(h) === "live"), open: true },
+    { label: "Coming up", hunts: hunts.filter((h) => status(h) === "upcoming"), open: true },
+    { label: "Drafts", hunts: hunts.filter((h) => status(h) === "draft"), open: true },
+    { label: "Finished", hunts: hunts.filter((h) => status(h) === "finished"), open: false },
+  ];
+
+  // The Djinn's Wager: on now (what's at stake, until when), or the next one comes by surprise.
+  const { data: wager } = await createAdminClient()
+    .from("djinn_wagers")
+    .select("wonder, ends_at, winner")
+    .gt("ends_at", nowIso())
+    .is("winner", null)
+    .order("ends_at")
+    .limit(1)
+    .maybeSingle();
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6">
@@ -117,13 +147,21 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
       <section className="flex flex-wrap items-center justify-between gap-4 rounded-3xl bg-[#2A1747] p-6 ring-1 ring-[#9B5DE5]">
         <div>
           <h2 className="font-display text-xl font-extrabold">🧞 The Djinn&apos;s Wager</h2>
-          <p className="text-sm text-muted">The weekly surprise is off until the chambers are built. Summon him by hand to try it.</p>
+          {wager ? (
+            <p className="text-sm text-paper">
+              A Wager is on now: {wonderOf(wager.wonder).icon} <b>{wonderOf(wager.wonder).name}</b> at stake, until {lagos(wager.ends_at)}. Nobody has won it yet.
+            </p>
+          ) : (
+            <p className="text-sm text-muted">No Wager on. The weekly one comes by surprise (never while a hunt is live), or summon him by hand.</p>
+          )}
         </div>
-        <form action={summonDjinn}>
-          <button type="submit" className="h-11 rounded-xl bg-[#9B5DE5] px-4 font-bold text-white">
-            Summon the Djinn now
-          </button>
-        </form>
+        {!wager && (
+          <form action={summonDjinn}>
+            <button type="submit" className="h-11 rounded-xl bg-[#9B5DE5] px-4 font-bold text-white">
+              Summon the Djinn now
+            </button>
+          </form>
+        )}
       </section>
 
       <section className="flex flex-col gap-4 rounded-3xl bg-ink-2 p-6">
@@ -159,7 +197,15 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
         </form>
       </section>
 
-      {hunts.map((h) => {
+      {hunts.length === 0 && <p className="text-center text-muted">No hunts yet. Create one above.</p>}
+      {groups.map((g) =>
+        g.hunts.length === 0 ? null : (
+          <details key={g.label} open={g.open} className="group/list">
+            <summary className="cursor-pointer list-none font-display text-lg font-extrabold [&::-webkit-details-marker]:hidden">
+              <span className="inline-block transition-transform group-open/list:rotate-90">›</span> {g.label} <span className="text-muted">({g.hunts.length})</span>
+            </summary>
+            <div className="mt-4 flex flex-col gap-6">
+      {g.hunts.map((h) => {
         const keys = [...h.hunt_keys].sort((a, b) => a.n - b.n);
         // The story's beats: the start, after each key but the last (that's the finish), each relay chest, the finish.
         const realKeys = keys.filter((k) => !k.relay).length;
@@ -177,12 +223,16 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
         return (
           <section key={h.id} className="flex flex-col gap-4 rounded-3xl border-[1.5px] border-line p-6">
             <div className="flex flex-wrap items-center gap-3">
-              <span className={`rounded-full px-3 py-1 text-xs font-bold ${h.published ? "bg-gold text-ink" : "bg-line"}`}>
-                {h.published ? "Published" : "Draft"}
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  status(h) === "live" ? "bg-danger text-white" : status(h) === "upcoming" ? "bg-gold text-ink" : "bg-line"
+                }`}
+              >
+                {STATUS[status(h)]}
               </span>
               <h2 className="font-display text-xl font-extrabold">{h.title}</h2>
               <div className="ml-auto flex gap-2">
-                {h.published && (
+                {h.published && status(h) !== "finished" && (
                   <Link
                     href={`/broadcast?hunt=${h.id}`}
                     target="_blank"
@@ -191,21 +241,16 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                     ● Broadcast
                   </Link>
                 )}
-                <form action={setPublished}>
-                  <input type="hidden" name="hunt" value={h.id} />
-                  <input type="hidden" name="publish" value={String(!h.published)} />
-                  <button type="submit" className="h-10 rounded-xl border-[1.5px] border-gold px-4 text-sm font-bold">
-                    {h.published ? "Unpublish" : "Publish"}
-                  </button>
-                </form>
-                {!h.published && players === 0 && (
-                  <form action={deleteDraft}>
+                {status(h) !== "finished" && (
+                  <form action={setPublished}>
                     <input type="hidden" name="hunt" value={h.id} />
-                    <button type="submit" className="h-10 rounded-xl border-[1.5px] border-line px-4 text-sm">
-                      Delete
+                    <input type="hidden" name="publish" value={String(!h.published)} />
+                    <button type="submit" className="h-10 rounded-xl border-[1.5px] border-gold px-4 text-sm font-bold">
+                      {h.published ? "Unpublish" : "Publish"}
                     </button>
                   </form>
                 )}
+                {status(h) !== "live" && <DeleteHunt hunt={h.id} title={h.title} />}
               </div>
             </div>
             <p className="text-sm text-muted">
@@ -363,6 +408,10 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
           </section>
         );
       })}
+            </div>
+          </details>
+        ),
+      )}
     </main>
   );
 }

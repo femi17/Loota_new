@@ -252,16 +252,27 @@ export async function setPublished(form: FormData) {
   back(publish ? "Published: hunters can see and join it in the lobby." : "Unpublished: hidden from hunters.");
 }
 
-export async function deleteDraft(form: FormData) {
+/**
+ * Delete a hunt for good (owner, 31 Oct 2026: "remove all hunts we do not need"): its keys, hunters, trials, story and
+ * bonuses go with it; coins already won stay with the hunters. Never a live one (unpublish it first, so nobody racing
+ * loses their place), and only after the owner types DELETE.
+ */
+export async function deleteHunt(form: FormData) {
   await owner();
   const hunt = text(form, "hunt");
   if (!UUID.test(hunt)) back("Unknown hunt.", true);
+  if (text(form, "confirm").toUpperCase() !== "DELETE") back("Type DELETE to confirm.", true);
   const db = createAdminClient();
-  const { count } = await db.from("hunt_players").select("user_id", { count: "exact", head: true }).eq("hunt_id", hunt);
-  if (count) back("Hunters have joined this hunt, so it can't be deleted. Unpublish it instead.", true);
-  await db.from("hunts").delete().eq("id", hunt).eq("published", false);
+  const { data: h } = await db.from("hunts").select("title, published, starts_at, ends_at").eq("id", hunt).maybeSingle();
+  if (!h) back("That hunt is already gone.", true);
+  const now = Date.now();
+  if (h!.published && Date.parse(h!.starts_at) <= now && Date.parse(h!.ends_at) > now) {
+    back(`"${h!.title}" is live: unpublish it first.`, true);
+  }
+  const { error } = await db.from("hunts").delete().eq("id", hunt);
+  if (error) back(`Couldn't delete the hunt: ${error.message}`, true);
   revalidatePath("/admin");
-  back("Draft deleted.");
+  back(`"${h!.title}" deleted.`);
 }
 
 /** Summon the Djinn now (design doc 7.6): opens a Wager if none is on. For testing until the weekly surprise is switched on. */

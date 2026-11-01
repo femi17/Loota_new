@@ -41,9 +41,10 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    owner, 1 Nov 2026, never a chest in the open): the house of the person at that place (`style` and `layout`: hall, gallery or court), 5 rooms at Key 1 growing to 7
    at the last, one right room the story points to in a chapter the hunter has by then, trap rooms that echo the near
    misses the story warns about, some safe rooms; things to find and items only in some houses (bible 3b).
-3. **Decoys** (`decoys["<n>"]`): 6+ per key, real places, each failing a named condition, at least radius + 100 m from
-   the answer, including near misses next door (the hotel by the lighthouse) that the story rules out, types A/B/C, and each one a false trail IN THE PLOT (the villain's wrong race, a friend's wrong guess, a
-   forged message), spread across scenes, never as a list.
+3. **Decoys** (`decoys["<n>"]`): 3+ per key (the short format, owner, 1 Nov 2026), real places a search finds, each
+   failing a named condition, at least radius + 200 m from the answer: the near miss next door the clue rules out (the
+   studio beside the crossing), the famous wrong reading the wording invites, a rival's wrong guess. Each is a phrase in
+   the story, never a list, and each is a TRAP on the map (stopping there springs one).
 4. **Chapters**: write each as `docs/stories/drafts/<date>-<id>/<n>.md` (plain prose, paragraphs separated by a blank
    line). SHORT (owner, 1 Nov 2026): an opening of 80–150 words, then 60–120 words per key, a two-line ending, about 600 words
    for 7 keys. Each clue rests on GENERAL KNOWLEDGE from any walk of life (music, sport, science, film, food, history, nature,

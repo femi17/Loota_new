@@ -2,7 +2,8 @@
 //   - its shape (the same as the engine's: STORY_SHAPES in src/lib/story/engine.ts) and that every chapter is written;
 //   - every code (acrostic, letter shift, anagram) worked out by computer;
 //   - every answer, alias and decoy on the map (the game's map search), no decoy within 1 km of its answer;
-//   - no chapter names a key place; 6 decoys or more per key, each a false trail in the plot (owner, 31 Oct 2026).
+//   - no chapter names a key place; 3 decoys or more per key, each a phrase in the story and a trap on the map (owner,
+//     31 Oct 2026; 3, not 6, in the short format of 1 Nov 2026).
 // Then: the PDFs and files in docs/stories/<date>-<slug>/, and the hunt gets its title, description, keys at the real
 // places, and a picture slot per prompt (shown in the admin with Copy prompt and Upload picture).
 //   npm run story:import -- <draft.json> --hunt <id> [--chapters <folder of 0.md, 1.md…>]
@@ -47,7 +48,7 @@ for (const k of work.skeleton.keys) {
   const house = work.designs?.[k.n]?.house;
   if (house) for (const p of houseProblems(house)) problems.push(`key ${k.n}'s house: ${p}`);
   else problems.push(`key ${k.n} has no house (every key has one: owner, 1 Nov 2026)`);
-  if ((work.decoys?.[k.n]?.length ?? 0) < 6) problems.push(`key ${k.n} has ${work.decoys?.[k.n]?.length ?? 0} decoys (6 or more)`);
+  if ((work.decoys?.[k.n]?.length ?? 0) < 3) problems.push(`key ${k.n} has ${work.decoys?.[k.n]?.length ?? 0} decoys (3 or more: each is a trap on the map)`);
 }
 for (const c of work.skeleton.chapters) {
   const words = work.chapters?.[c.n]?.text?.split(/\s+/).filter(Boolean).length ?? 0;

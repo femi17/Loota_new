@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import type { AvatarLook } from "@/lib/avatar";
 import { animateAvatar, buildAvatar } from "@/game/models3d";
-import { buildHouse, doorOf, houseSize, roomPlace, ROOM_D, ROOM_W, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle } from "@/game/house3d";
+import { buildHouse, doorOf, houseSize, insideOf, roomPlace, ROOM_D, ROOM_W, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle } from "@/game/house3d";
 import type { Penalty } from "./PenaltyCard";
 
 type Item = { id: string; name: string; icon: string };
@@ -59,7 +59,15 @@ export function HouseScene({
   const [supabase] = useState(createClient);
   const host = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<HouseView | null>(null);
-  const [say, setSay] = useState<string>("Tap a room to walk to its door. Tap things to look at them.");
+  const [say, setSay] = useState<string>("Tap a room (or its name below) to walk in. Tap things to look at them.");
+  // Close up and following the hunter, or the whole house (owner, 1 Nov 2026: "on mobile it is so tiny"): close on a phone.
+  const [near, setNear] = useState(() => typeof window !== "undefined" && window.innerWidth < 640);
+  const nearRef = useRef(near);
+  const refit = useRef<() => void>(() => {});
+  useEffect(() => {
+    nearRef.current = near;
+    refit.current();
+  }, [near]);
   const [busy, setBusy] = useState(false);
   const [gained, setGained] = useState<Item | null>(null);
   // A trap's challenge (owner, 31 Oct 2026: dodge it by answering in time): its room's place, the prompt, the options.
@@ -117,16 +125,20 @@ export function HouseScene({
       const w = el.clientWidth, h = el.clientHeight;
       renderer.setSize(w, h);
       const aspect = w / h;
-      const r = 0.5 * Math.hypot(width, depth + 2) * 0.94;
+      // Close up: about a room and the hall across the screen; else the whole house.
+      const r = nearRef.current ? 4.4 : 0.5 * Math.hypot(width, depth + 2) * 0.94;
       const halfW = aspect < 1 ? r : r * aspect;
       const halfH = aspect < 1 ? r / aspect : r;
-      Object.assign(camera, { left: -halfW, right: halfW, top: halfH * 0.86, bottom: -halfH * 1.14 });
+      const lift = nearRef.current ? 1 : 0.86; // close up, the hunter in the middle; the whole house sits a little high
+      Object.assign(camera, { left: -halfW, right: halfW, top: halfH * lift, bottom: -halfH * (2 - lift) });
       camera.updateProjectionMatrix();
     };
     camera.position.set(centre.x + 14, 16, centre.z + 14);
     camera.lookAt(centre);
     fit();
+    refit.current = fit;
     window.addEventListener("resize", fit);
+    const focus = centre.clone(); // where the camera looks: the hunter when close up, the house's middle otherwise
 
     // The hunter, at the front door
     const av = buildAvatar(look);
@@ -272,7 +284,10 @@ export function HouseScene({
       }
       animateAvatar(av, { mode: "walk", phase: "idle", moving: moved > 0 ? 1 : 0, distance: moved / 0.62 }, dt, now / 1000);
       const shaking = now < shakeUntil;
-      camera.position.x = centre.x + 14 + (shaking ? (Math.random() - 0.5) * 0.5 : 0);
+      const want = nearRef.current ? new THREE.Vector3(av.root.position.x, 0, av.root.position.z) : centre;
+      focus.lerp(want, 1 - Math.exp(-4 * dt));
+      camera.position.set(focus.x + 14 + (shaking ? (Math.random() - 0.5) * 0.5 : 0), 16, focus.z + 14);
+      camera.lookAt(focus);
       renderer.render(world, camera);
       raf = requestAnimationFrame(frame);
     };
@@ -309,6 +324,7 @@ export function HouseScene({
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", fit);
+      refit.current = () => {};
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
       renderer.dispose();
@@ -321,12 +337,11 @@ export function HouseScene({
   useEffect(() => {
     const route = (from: Point, i: number, inside: boolean): Point[] => {
       const door = doorOf(i);
-      const room = roomPlace(i);
-      // Out of the room you're in (back to the hall), along the hall, to the door, and in.
+      // Out of the room you're in (back to the hall), along the hall, to the door, and through it into the room.
       const pts: Point[] = [];
       if (Math.abs(from.x) > 1.4) pts.push({ x: Math.sign(from.x) * 0.9, z: from.z });
       pts.push({ x: 0, z: door.z }, { x: door.x * 0.55, z: door.z });
-      if (inside) pts.push({ x: room.x, z: room.z + ROOM_D * 0.12 });
+      if (inside) pts.push({ x: door.x * 1.15, z: door.z }, insideOf(i));
       return pts;
     };
     const onTap = async (e: Event) => {
@@ -347,7 +362,8 @@ export function HouseScene({
       try {
         if (v.room !== roomId) {
           // Through the door: the server decides what's behind it.
-          await s.walkTo(route(s.at(), i, false));
+          // Into the room (owner, 1 Nov 2026: "the avatar cannot walk in the room"), unless its door is shut.
+          await s.walkTo(route(s.at(), i, v.rooms[i].locked !== true));
           const { data } = await supabase.rpc("house_enter", { p_hunt: huntId, p_room: roomId });
           const r = data as (Partial<HouseView> & { locked?: boolean; text?: string; trap?: boolean; used?: { name: string } | null; penalty?: Penalty & { balance: number | null; energy: number | null }; until?: string; dodge?: { prompt: string; options: string[]; seconds: number } }) | null;
           if (!r?.ok) {
@@ -378,14 +394,14 @@ export function HouseScene({
           if (r.used) s.built.setLocked(roomId!, false);
           next.rooms.forEach((room) => room.chest && s.built.setChest(room.id));
           setSay(r.used ? `You use ${r.used.name}. The ${v.rooms[i].name.toLowerCase()} door opens.` : `The ${v.rooms[i].name.toLowerCase()}.`);
-          await s.walkTo([{ x: roomPlace(i).x, z: roomPlace(i).z + ROOM_D * 0.12 }]);
+          if (Math.abs(s.at().x) < 1.4) await s.walkTo(route(s.at(), i, true)); // a door that was shut, now open
           if (next.rooms[i]?.chest) setSay("There, by the wall: an old chest. Tap it to open it.");
           if (tap === "room") return;
         }
         // A thing in this room: go to it, and look.
         if (tap === "object") {
           const room = roomPlace(i);
-          await s.walkTo([{ x: room.x, z: room.z - ROOM_D * 0.08 }]);
+          await s.walkTo([{ x: (insideOf(i).x + room.x) / 2, z: room.z - ROOM_D * 0.22 }]);
           const { data } = await supabase.rpc("house_touch", { p_hunt: huntId, p_object: id });
           const r = data as (Partial<HouseView> & { text?: string; gained?: Item | null }) | null;
           if (!r?.ok) return setSay("You can't reach that from here.");
@@ -445,6 +461,15 @@ export function HouseScene({
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">Key {view?.key ?? ""}</p>
           <h2 className="truncate font-display text-xl font-extrabold">{view?.title ?? "The house"}</h2>
         </div>
+        <button
+          type="button"
+          onClick={() => setNear((n) => !n)}
+          aria-label={near ? "See the whole house" : "Closer"}
+          title={near ? "See the whole house" : "Closer"}
+          className="flex size-10 shrink-0 items-center justify-center rounded-xl border-[1.5px] border-line text-lg"
+        >
+          {near ? "🏠" : "🔍"}
+        </button>
         <button type="button" onClick={onClose} className="h-10 shrink-0 rounded-xl border-[1.5px] border-line px-3 text-sm font-bold">
           Leave
         </button>
@@ -482,7 +507,23 @@ export function HouseScene({
           </p>
         )}
       </div>
-      <p className="min-h-[4.5rem] border-t border-line bg-ink px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-sm leading-relaxed" aria-live="polite" data-house-say>
+      {view && (
+        <div className="flex gap-2 overflow-x-auto border-t border-line bg-ink px-3 py-2" aria-label="Rooms">
+          {view.rooms.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              disabled={busy}
+              onClick={() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "room", id: r.id } }))}
+              className={`h-11 shrink-0 rounded-xl px-3 text-sm font-bold disabled:opacity-60 ${view.room === r.id ? "bg-gold text-ink" : "bg-ink-2 text-paper ring-1 ring-line"}`}
+            >
+              {r.locked ? "🔒 " : "🚪 "}
+              {r.name}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="min-h-[4.5rem] bg-ink px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-base leading-relaxed" aria-live="polite" data-house-say>
         {say}
       </p>
     </div>

@@ -93,13 +93,16 @@ try {
   await wait(1500);
   await page.screenshot({ path: `${OUT}/house-1-inside.png` });
 
-  // 5. A real tap on the house picks something
+  // 5. A real tap on the house picks something (from the whole house: close up is the phone's first view)
+  await page.evaluate(() => document.querySelector('[aria-label="See the whole house"]')?.click());
+  await wait(1200);
   const before = await say();
   const box = await page.evaluate(() => { const r = document.querySelector("[data-house] canvas").getBoundingClientRect(); return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.45 }; });
   await page.mouse.click(box.x, box.y);
   const afterTap = await until(async () => (await say()) !== before && (await say()), 10000);
   check("a real tap in the house hits something and the hunter goes", !!afterTap, afterTap ?? "nothing");
   await wait(800);
+  await page.evaluate(() => document.querySelector('[aria-label="Closer"]')?.click());
 
   // 2. Locked; a trap
   await tap({ tap: "room", id: "bedroom" });

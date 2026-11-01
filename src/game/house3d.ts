@@ -51,6 +51,11 @@ export function roomPlace(i: number) {
   const row = Math.floor(i / 2);
   return { side, row, x: side * (HALL_W / 2 + ROOM_W / 2), z: -(row * ROOM_D + ROOM_D / 2) };
 }
+/** Where the hunter stands once through a room's doorway: inside, clear of the furniture (owner, 1 Nov 2026). */
+export function insideOf(i: number) {
+  const p = roomPlace(i);
+  return { x: p.side * (HALL_W / 2 + 1.0), z: p.z + 0.2 };
+}
 /** The doorway from the hall into a room (on the hall side of the room). */
 export function doorOf(i: number) {
   const p = roomPlace(i);
@@ -180,14 +185,14 @@ function label(text: string) {
   g.roundRect(8, 16, 496, 96, 40);
   g.fill();
   g.fillStyle = "#F4F1EA";
-  g.font = "800 56px system-ui, sans-serif";
+  g.font = "800 60px system-ui, sans-serif";
   g.textAlign = "center";
   g.textBaseline = "middle";
   g.fillText(text, 256, 66);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-  s.scale.set(2.4, 0.6, 1);
+  s.scale.set(3.2, 0.8, 1);
   s.renderOrder = 10;
   return s;
 }
@@ -278,7 +283,7 @@ export function buildHouse(rooms: HouseRoomView[], objects: HouseObjectView[], s
         group.add(m);
       });
     const chest = tag(makeChest(), "chest", r.id);
-    chest.position.set(p.x + p.side * 0.6, 0.1, p.z + 0.3);
+    chest.position.set(p.x - p.side * 0.9, 0.1, p.z + 1.3); // by the front wall, near the doorway, clear of the furniture
     chest.visible = r.chest === true;
     group.add(chest);
     chests.set(r.id, chest);

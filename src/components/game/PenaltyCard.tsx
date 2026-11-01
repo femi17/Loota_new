@@ -39,7 +39,7 @@ export function PenaltyCard({ penalty, onClose }: { penalty: Penalty; onClose: (
         <p className="text-6xl" aria-hidden="true">
           {SCENE[penalty.scene] ?? "💀"}
         </p>
-        <p className={`text-xs font-extrabold uppercase tracking-[0.25em] ${deep ? "text-danger-text" : "text-gold"}`}>{deep ? "Wrong place" : "Wrong room"}</p>
+        <p className={`text-xs font-extrabold uppercase tracking-[0.25em] ${deep ? "text-danger-text" : "text-gold"}`}>{deep ? "Wrong place" : "Wrong spot"}</p>
         <h2 className="font-display text-2xl font-extrabold">{penalty.title}</h2>
         <p className="text-sm leading-relaxed text-paper/90">{penalty.body}</p>
         <p className="rounded-xl bg-danger/15 px-3 py-2 text-sm font-bold text-danger-text ring-1 ring-danger/50">{cost(penalty)}</p>

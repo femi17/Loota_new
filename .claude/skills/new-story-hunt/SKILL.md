@@ -37,10 +37,14 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    channelId, the conditions only the answer meets. Spread the keys around the world. Fiction woven into real places.
 2. **Each key's design** (`designs["<n>"]`): solving steps, plants (chapter + detail), the live piece written out in full
    (the deciding piece AI can't read in advance: never in the chapters), and `check` data when the lock is an acrostic,
-   letter shift or anagram (it must decode exactly: the importer works it out). And its **house** (`house`, every key:
-   owner, 1 Nov 2026, never a chest in the open): the house of the person at that place (`style` and `layout`: hall, gallery or court), 5 rooms at Key 1 growing to 7
-   at the last, one right room the story points to in a chapter the hunter has by then, trap rooms that echo the near
-   misses the story warns about, some safe rooms; things to find and items only in some houses (bible 3b).
+   letter shift or anagram (it must decode exactly: the importer works it out). And its **quarter** (written as `house`,
+   every key: owner, 1 Nov 2026, never a chest in the open): the person's own corner of that place, an open street,
+   lane or square the hunter walks freely (`style`, and `layout`: hall = a lane, gallery = a street, court = a square),
+   5 plots at Key 1 growing to 7 at the last, each an OUTDOOR place named as such (its `kind`: kitchen = food stall,
+   bedroom = cottage, library = book stall, cellar = well, parlour = café, bathroom = fountain, chapel = shrine,
+   storeroom = yard, study = garden); one right plot (where the key is buried) the story points to in a chapter the
+   hunter has by then, trap plots that echo the near misses the story warns about, some safe plots; things to find and
+   items only in some quarters (bible 3b).
 3. **Decoys** (`decoys["<n>"]`): 3+ per key (the short format, owner, 1 Nov 2026), real places a search finds, each
    failing a named condition, at least radius + 200 m from the answer: the near miss next door the clue rules out (the
    studio beside the crossing), the famous wrong reading the wording invites, a rival's wrong guess. Each is a phrase in

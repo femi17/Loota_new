@@ -50,7 +50,7 @@ import { NewsToasts } from "./NewsToasts";
 import { local, peopleOf, setCountry, words, type Role } from "@/game/locale";
 import { RadioPanel, useRadio } from "./RadioPanel";
 import { PenaltyCard, type Penalty } from "./PenaltyCard";
-import { HouseScene } from "./HouseScene";
+import { QuarterScene } from "./QuarterScene";
 import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -7241,7 +7241,7 @@ export function GameMap({
           // A story key: no hot and cold. This is the place, and the chest is right here.
           const key = p.key ?? 0;
           if (!heat || heat.key !== key)
-            say(p.house ? `📍 This is the place. A house stands here: Key ${key}'s chest is in one of its rooms. Go inside.` : `📍 This is the place. Key ${key}'s chest is right here: find it and open it.`, true);
+            say(p.house ? `📍 This is the place. Key ${key} is buried somewhere here: explore the place, and dig where you think it is.` : `📍 This is the place. Key ${key}'s chest is right here: find it and open it.`, true);
           heat = { level: 1, key, trend: "steady", exact: true, house: !!p.house };
           if (p.house) hideChest();
           else if (p.spot) showChest(p.spot, key);
@@ -8879,7 +8879,7 @@ export function GameMap({
             )}
             {penalty && <PenaltyCard penalty={penalty} onClose={() => setPenalty(null)} />}
             {houseOpen && huntId && (
-              <HouseScene
+              <QuarterScene
                 huntId={huntId}
                 look={look}
                 onClose={() => setHouseOpen(false)}
@@ -9464,7 +9464,7 @@ export function GameMap({
               onClick={() => setHouseOpen(true)}
               className="pointer-events-auto flex w-full max-w-xs flex-col items-center rounded-2xl bg-gold px-6 py-3 font-display text-lg font-extrabold text-ink shadow-lg active:scale-95"
             >
-              🚪 Go inside
+              🧭 Explore the place
             </button>
           )}
           {hud.djinnHere && (

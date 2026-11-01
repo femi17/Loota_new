@@ -383,7 +383,7 @@ export function HuntPanel({
           hot: false,
         });
       } else if (r.reason === "house") {
-        setFeedback({ text: "The chest is inside the house, in one of its rooms. Go inside and find the right one.", hot: true });
+        setFeedback({ text: "The key is buried somewhere in this place. Explore it (🧭) and dig where you think it is.", hot: true });
       } else if (r.reason === "answer_first") {
         setFeedback({ text: "Name the place first: type it in the box under the riddle.", hot: false });
         void loadClock();

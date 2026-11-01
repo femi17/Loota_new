@@ -1,11 +1,13 @@
-// The house on a phone (owner, 31 Oct 2026: "an open house, like sims"). A story key with the test house (see
-// house-api-test: a study with a portrait hiding a brass key, a cellar and a kitchen that are traps, a locked bedroom
-// with the chest). The hunter stands at the place:
-//   1. "🚪 Go inside" on the map; the house opens (3D, its rooms, the hunter);
-//   2. the bedroom is locked; the cellar is a trap: the soft penalty card, thrown out;
-//   3. back in: the study, the portrait gives the brass key (shown in what you carry);
-//   4. the bedroom opens with it; the chest; opening it starts the Key Trial;
-//   5. a real tap on the house hits something (the 3D picking works).
+// The key's quarter on a phone (owner, 1 Nov 2026: "our own open street… where user can walk freely… to figure where
+// the treasure is actually buried"; it replaced the house). A story key with the test house (see house-api-test: its
+// rooms are the quarter's plots: a study with a portrait hiding a brass key, a cellar and a kitchen that are traps, a
+// locked bedroom with the chest). The hunter stands at the place:
+//   1. "🧭 Explore the place" on the map; the quarter opens (3D, its plots, the hunter);
+//   2. walking onto plots is free; the bedroom's gate is shut; digging in the cellar springs a trap: the soft penalty
+//      card, thrown out;
+//   3. back in: digging in the kitchen, the trap dodged; the study's portrait gives the brass key;
+//   4. the bedroom's gate opens with it; digging there finds the chest; opening it starts the Key Trial;
+//   5. a real tap in the quarter walks the hunter (the 3D picking works).
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/house-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -75,88 +77,92 @@ try {
   const until = async (fn, ms = 15000) => { for (let t = 0; t < ms; t += 400) { const v = await fn(); if (v) return v; await wait(400); } return null; };
   const button = async (re) => page.evaluateHandle((src) => [...document.querySelectorAll("button")].find((b) => new RegExp(src).test(b.textContent ?? "")) ?? null, re);
   const say = () => page.evaluate(() => document.querySelector("[data-house-say]")?.textContent ?? "");
-  const idle = () => until(() => page.evaluate(() => document.querySelector('[aria-label="Inside the house"]')?.getAttribute("data-busy") === "false"), 20000);
+  const SCENE = '[aria-label="The key\'s place"]';
+  const idle = () => until(() => page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-busy") === "false", SCENE), 20000);
   const tap = async (detail) => {
-    await idle(); // the house takes one thing at a time (a tap while walking is ignored)
+    await idle(); // one thing at a time (a tap while busy is ignored)
     await page.evaluate((d) => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: d })), detail);
     await wait(300);
   };
+  /** Walk onto a plot, then dig there. */
+  const digIn = async (room) => {
+    await tap({ tap: "room", id: room });
+    await idle();
+    const ok = await until(async () => (await (await button("Dig here")).jsonValue()) !== null, 15000);
+    if (ok) await (await button("Dig here")).click();
+    await wait(300);
+    return !!ok;
+  };
+  const explore = async () => (await until(async () => (await (await button("Explore the place")).jsonValue()) !== null && (await button("Explore the place")), 60000));
 
-
-  // 1. Go inside
-  const go = await until(async () => (await (await button("Go inside")).jsonValue()) !== null && (await button("Go inside")), 60000);
-  check("at the place: 🚪 Go inside", !!go);
+  // 1. Explore the place
+  const go = await explore();
+  check("at the place: 🧭 Explore the place", !!go);
   await page.screenshot({ path: `${OUT}/house-0-map.png` });
-  await (await button("Go inside")).click();
-  const inside = await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Inside the house"] canvas') && document.body.innerText.includes("The keeper's house")));
-  check("the house opens: 3D, with its name", !!inside);
+  await go.click();
+  const inside = await until(() => page.evaluate((sel) => !!document.querySelector(`${sel} canvas`) && document.body.innerText.includes("The keeper's house"), SCENE));
+  check("the quarter opens: 3D, with its name", !!inside);
   await wait(1500);
   await page.screenshot({ path: `${OUT}/house-1-inside.png` });
 
-  // 5. A real tap on the house picks something (from the whole house: close up is the phone's first view)
-  await page.evaluate(() => document.querySelector('[aria-label="See the whole house"]')?.click());
-  await wait(1200);
+  // 5. A real tap in the quarter walks the hunter
   const before = await say();
-  // A few spots on the house, until one is something (the framing depends on the screen)
   let afterTap = null;
-  for (const [fx, fy] of [[0.3, 0.45], [0.5, 0.5], [0.4, 0.55], [0.6, 0.45], [0.5, 0.4]]) {
-    const box = await page.evaluate((a, b) => { const r = document.querySelector("[data-house] canvas").getBoundingClientRect(); return { x: r.left + r.width * a, y: r.top + r.height * b }; }, fx, fy);
+  for (const [fx, fy] of [[0.5, 0.45], [0.35, 0.5], [0.65, 0.5], [0.5, 0.6], [0.4, 0.4]]) {
+    const box = await page.evaluate((x, y) => { const r = document.querySelector("[data-house] canvas").getBoundingClientRect(); return { x: r.left + r.width * x, y: r.top + r.height * y }; }, fx, fy);
     await page.mouse.click(box.x, box.y);
     afterTap = await until(async () => (await say()) !== before && (await say()), 3000);
     if (afterTap) break;
   }
-  check("a real tap in the house hits something and the hunter goes", !!afterTap, afterTap ?? "nothing");
-  await wait(800);
-  // The tap may have opened a trap room (the floor plan depends on the house): dodge it and wait out the shut doors.
-  if (await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Dodge the trap"]')), 3000)) {
-    const first = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data.house_dodge.answer;
-    await page.evaluate((n) => document.querySelectorAll('[aria-label="Dodge the trap"] button')[n - 1].click(), first);
-    await wait(3800);
-  }
-  await page.evaluate(() => document.querySelector('[aria-label="Closer"]')?.click());
+  check("a real tap in the quarter reaches a plot", !!afterTap, afterTap ?? "nothing");
+  await wait(1500);
 
-  // 2. Locked; a trap
+  // 2. Free to walk; a shut gate; a trap dug up
+  await tap({ tap: "room", id: "cellar" });
+  await idle();
+  const stood = (await admin.from("hunt_players").select("house_room, house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data;
+  check("walking onto a plot is free: on the cellar, nothing sprung", stood.house_room === "cellar" && !stood.house_dodge && !(await page.$('[aria-label="Dodge the trap"]')), JSON.stringify(stood));
   await tap({ tap: "room", id: "bedroom" });
   const locked = await until(async () => /Locked\. A small brass keyhole/.test(await say()) && (await say()), 20000);
-  check("the bedroom: locked, with its hint", !!locked, locked ?? (await say()));
-  await tap({ tap: "room", id: "cellar" });
+  check("the bedroom: its gate is shut, with its hint", !!locked, locked ?? (await say()));
+  await digIn("cellar");
   const challenge = await until(() => page.evaluate(() => document.querySelector('[aria-label="Dodge the trap"]')?.innerText ?? null), 20000);
   const answers = await page.evaluate(() => document.querySelectorAll('[aria-label="Dodge the trap"] button').length);
-  check("the cellar: a trap! a challenge to dodge it, with 4 answers", !!challenge && answers === 4, `${answers} answers: ${challenge?.replace(/\s+/g, " ").slice(0, 100)}`);
+  check("digging in the cellar: a trap! a challenge to dodge it, with 4 answers", !!challenge && answers === 4, `${answers} answers: ${challenge?.replace(/\s+/g, " ").slice(0, 100)}`);
   await page.screenshot({ path: `${OUT}/house-2-dodge.png` });
   const pending = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data.house_dodge;
   await page.evaluate((n) => document.querySelectorAll('[aria-label="Dodge the trap"] button')[n - 1].click(), pending.answer === 1 ? 2 : 1);
   await wait(900);
-  await page.screenshot({ path: `${OUT}/house-2a-trap-springs.png` });
   const card = await until(() => page.evaluate(() => document.querySelector('[role="alertdialog"][data-penalty]')?.innerText ?? null), 20000);
-  check("the cellar: a trap, the soft penalty card (wrong room), thrown out", !!card && /WRONG ROOM/i.test(card) && !(await page.$('[aria-label="Inside the house"]')), card?.replace(/\s+/g, " ").slice(0, 120));
+  check("…the trap springs: the soft penalty card, thrown out", !!card && /WRONG SPOT/i.test(card) && !(await page.$(SCENE)), card?.replace(/\s+/g, " ").slice(0, 120));
   await page.screenshot({ path: `${OUT}/house-2-trap.png` });
   await (await button("Get up")).click();
   await admin.from("hunt_players").update({ house_out_until: null }).eq("hunt_id", huntId).eq("user_id", id);
 
-  // 3. Back in: the study and the portrait
-  await (await until(async () => (await (await button("Go inside")).jsonValue()) !== null && (await button("Go inside")))).click();
-  await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Inside the house"] canvas')));
+  // 3. Back in: a dodged trap, then the study's portrait
+  await (await explore()).click();
+  await until(() => page.evaluate((sel) => !!document.querySelector(`${sel} canvas`), SCENE));
   await wait(800);
-  // The kitchen: dodged
-  await tap({ tap: "room", id: "kitchen" });
+  await digIn("kitchen");
   await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Dodge the trap"]')), 20000);
   const answer = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data.house_dodge.answer;
   await page.evaluate((n) => document.querySelectorAll('[aria-label="Dodge the trap"] button')[n - 1].click(), answer);
   const dodged = await until(async () => /You dodged it/.test(await say()) && (await say()), 15000);
-  check("the kitchen: the right answer in time, dodged, still in the house", !!dodged && !(await page.$('[role="alertdialog"][data-penalty]')) && !!(await page.$('[aria-label="Inside the house"]')), dodged ?? (await say()));
-  await wait(3500); // the doors shut for 3 seconds after a dodge
-  await tap({ tap: "room", id: "study" });
+  check("digging in the kitchen: the right answer in time, dodged, still here", !!dodged && !(await page.$('[role="alertdialog"][data-penalty]')) && !!(await page.$(SCENE)), dodged ?? (await say()));
+  await wait(3500); // a breather after a dodge
   await tap({ tap: "object", id: "portrait" });
   const found = await until(async () => /Taped to the back/.test(await say()) && (await say()), 20000);
   const carried = await page.evaluate(() => document.querySelector('[aria-label="What you carry"]')?.textContent ?? "");
   check("the study's portrait: the brass key, carried", !!found && carried.includes("A small brass key"), `${found} | ${carried}`);
   await page.screenshot({ path: `${OUT}/house-3-key.png` });
 
-  // 4. The bedroom, the chest, the Key Trial
+  // 4. The bedroom's gate, the dig, the chest, the Key Trial
   await tap({ tap: "room", id: "bedroom" });
-  const opened = await until(async () => /chest/i.test(await say()) && (await say()), 25000);
-  check("the bedroom opens with the key; the chest is there", !!opened, opened ?? (await say()));
+  const opened = await until(async () => /gate of Bedroom opens/.test(await say()) && (await say()), 20000);
+  check("the bedroom's gate opens with the brass key", !!opened, opened ?? (await say()));
+  await digIn("bedroom");
+  const chest = await until(async () => /chest/i.test(await say()) && (await say()), 25000);
+  check("digging in the bedroom: the chest", !!chest, chest ?? (await say()));
   await wait(600);
   await page.screenshot({ path: `${OUT}/house-4-chest.png` });
   await tap({ tap: "chest", id: "bedroom" });

@@ -1,9 +1,9 @@
 // Every story key is a house (owner, 1 Nov 2026: "there shouldn't be open chest… we already agreed it is a house 3d").
 // "Twelve Sharp"'s Key 1 house (Aunty Ìyábọ̀'s dye house at Olumo Rock), copied into a test hunt, on a phone:
-//   1. at the place: "🚪 Go inside", and no chest rising out in the open;
+//   1. at the place: "🧭 Explore the place" (the key's quarter), and no chest rising out in the open;
 //   2. the house: its name and its three rooms;
-//   3. the room the story points to (her indigo): the chest is there;
-//   4. the Key Trial runs out: thrown 2 km away, and "Go inside" is gone (owner, 1 Nov 2026).
+//   3. the plot the story points to (her indigo): walked onto, dug, and the chest is there;
+//   4. the Key Trial runs out: thrown 2 km away, and "Explore the place" is gone (owner, 1 Nov 2026).
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/story-house-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -50,23 +50,25 @@ try {
   const say = () => page.evaluate(() => document.querySelector("[data-house-say]")?.textContent ?? "");
 
   // 1. At the place
-  const go = await until(async () => (await buttonText()).includes("Go inside"), 60000);
+  const go = await until(async () => (await buttonText()).includes("Explore the place"), 60000);
   await wait(2000);
-  check("at the place: Go inside, and no Open the chest", !!go && !/Open the chest/.test(await buttonText()));
+  check("at the place: Explore the place, and no Open the chest", !!go && !/Open the chest/.test(await buttonText()));
   await page.screenshot({ path: `${OUT}/story-house-0-map.png` });
 
   // 2. The house
-  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Go inside"))?.click());
-  const inside = await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Inside the house"] canvas') && document.body.innerText.includes("Aunty Ìyábọ̀'s dye house")));
-  check("the house opens: Aunty Ìyábọ̀'s dye house", !!inside);
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Explore the place"))?.click());
+  const inside = await until(() => page.evaluate(() => !!document.querySelector('[aria-label="The key\'s place"] canvas') && document.body.innerText.includes("Aunty Ìyábọ̀'s dye house")));
+  check("the quarter opens: Aunty Ìyábọ̀'s dye house", !!inside);
   await wait(1500);
   await page.screenshot({ path: `${OUT}/story-house-1-inside.png` });
 
   // 3. The indigo room
-  await until(() => page.evaluate(() => document.querySelector('[aria-label="Inside the house"]')?.getAttribute("data-busy") === "false"), 20000);
+  await until(() => page.evaluate(() => document.querySelector('[aria-label="The key\'s place"]')?.getAttribute("data-busy") === "false"), 20000);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "room", id: "indigo" } })));
+  await until(() => page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.includes("Dig here"))), 20000);
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Dig here"))?.click());
   const chest = await until(async () => /chest/i.test(await say()) && (await say()), 25000);
-  check("the indigo room (the story's \"at her indigo\"): the chest", !!chest, chest ?? (await say()));
+  check("the indigo room (the story's \"at her indigo\"): dug, the chest", !!chest, chest ?? (await say()));
   await wait(800);
   await page.screenshot({ path: `${OUT}/story-house-2-indigo.png` });
 
@@ -79,9 +81,9 @@ try {
   const thrown = await until(async () => {
     const { data: pos } = await admin.from("player_positions").select("lng, lat").eq("user_id", id).single();
     const far = Math.hypot((pos.lng - PLACE.lng) * 110574 * Math.cos((PLACE.lat * Math.PI) / 180), (pos.lat - PLACE.lat) * 110574) > 1000;
-    return far && !(await buttonText()).includes("Go inside");
+    return far && !(await buttonText()).includes("Explore the place");
   }, 30000);
-  check("the trial runs out: thrown away, and Go inside is gone", !!thrown, (await buttonText()).slice(0, 200));
+  check("the trial runs out: thrown away, and Explore the place is gone", !!thrown, (await buttonText()).slice(0, 200));
   await page.screenshot({ path: `${OUT}/story-house-3-thrown.png` });
 } catch (e) {
   fails++;

@@ -24,9 +24,6 @@ const STYLE: Record<HouseStyle, { ground: string; back: string; wall?: string; f
 };
 export type HouseObjectView = { id: string; room: string; kind: string; label: string };
 
-const ROOM_W = 5.4;
-const ROOM_D = 4.8;
-const HALL = 2.8;
 const WALL_LOW = 0.9;
 const WALL_HIGH = 2.8;
 const T = 0.18;
@@ -56,16 +53,22 @@ export function layoutOf(title: string, given?: string | null): HouseLayout {
   return HOUSE_LAYOUTS[h % HOUSE_LAYOUTS.length];
 }
 
-function roomAtDoor(x: number, z: number, w: number, d: number, door: Point, inward: Point): PlanRoom {
+function roomAtDoor(x: number, z: number, w: number, d: number, door: Point, inward: Point, step = 1.1): PlanRoom {
   return {
     x, z, w, d, door,
     front: { x: door.x - inward.x * 0.6, z: door.z - inward.z * 0.6 },
-    inside: { x: door.x + inward.x * 1.1, z: door.z + inward.z * 1.1 },
+    inside: { x: door.x + inward.x * step, z: door.z + inward.z * step },
     facing: Math.atan2(-inward.x, -inward.z), // local +z points back out of the doorway
   };
 }
 
-export function planHouse(n: number, layout: HouseLayout): Plan {
+/** Sizes: a room's width and depth, the hall's width, a courtyard's, how far in the hunter stands. */
+export type PlanSize = { w: number; d: number; hall: number; court: number; step: number };
+export const HOUSE_SIZE: PlanSize = { w: 5.4, d: 4.8, hall: 2.8, court: 5.6, step: 1.1 };
+
+export function planHouse(n: number, layout: HouseLayout, size: PlanSize = HOUSE_SIZE): Plan {
+  const { w: ROOM_W, d: ROOM_D, hall: HALL, court: C, step } = size;
+  const at = (x: number, z: number, w: number, d: number, door: Point, inward: Point) => roomAtDoor(x, z, w, d, door, inward, step);
   const rooms: PlanRoom[] = [];
   let walks: Plan["walks"];
   let start: Point, entrance: Point, porch: Plan["porch"];
@@ -76,8 +79,8 @@ export function planHouse(n: number, layout: HouseLayout): Plan {
     for (let i = 0; i < n; i++) {
       const c = Math.floor(i / 2);
       const x = -len / 2 + c * ROOM_W + ROOM_W / 2;
-      if (i % 2 === 0) rooms.push(roomAtDoor(x, -HALL / 2 - ROOM_D / 2, ROOM_W, ROOM_D, { x, z: -HALL / 2 }, { x: 0, z: -1 }));
-      else rooms.push(roomAtDoor(x, HALL / 2 + ROOM_D / 2, ROOM_W, ROOM_D, { x, z: HALL / 2 }, { x: 0, z: 1 }));
+      if (i % 2 === 0) rooms.push(at(x, -HALL / 2 - ROOM_D / 2, ROOM_W, ROOM_D, { x, z: -HALL / 2 }, { x: 0, z: -1 }));
+      else rooms.push(at(x, HALL / 2 + ROOM_D / 2, ROOM_W, ROOM_D, { x, z: HALL / 2 }, { x: 0, z: 1 }));
     }
     walks = [{ x: 0, z: 0, w: len, d: HALL }];
     porch = { x: -len / 2 - 0.8, z: 0, w: 1.6, d: HALL };
@@ -87,18 +90,17 @@ export function planHouse(n: number, layout: HouseLayout): Plan {
     // Rooms down both sides of an open courtyard and one across its far end; the gate at the front.
     const left = Math.ceil((n - 1) / 2);
     const right = n - 1 - left;
-    const C = 5.6;
     const depth = Math.max(left, 1) * ROOM_D;
     let li = 0, ri = 0;
     for (let i = 0; i < n; i++) {
       if (i === n - 1) {
-        rooms.push(roomAtDoor(0, -depth - ROOM_D / 2, C, ROOM_D, { x: 0, z: -depth }, { x: 0, z: -1 }));
+        rooms.push(at(0, -depth - ROOM_D / 2, C, ROOM_D, { x: 0, z: -depth }, { x: 0, z: -1 }));
       } else if (i % 2 === 0 && li < left) {
         const z = -(li++ * ROOM_D + ROOM_D / 2);
-        rooms.push(roomAtDoor(-C / 2 - ROOM_W / 2, z, ROOM_W, ROOM_D, { x: -C / 2, z }, { x: -1, z: 0 }));
+        rooms.push(at(-C / 2 - ROOM_W / 2, z, ROOM_W, ROOM_D, { x: -C / 2, z }, { x: -1, z: 0 }));
       } else {
         const z = -(ri++ * ROOM_D + ROOM_D / 2);
-        rooms.push(roomAtDoor(C / 2 + ROOM_W / 2, z, ROOM_W, ROOM_D, { x: C / 2, z }, { x: 1, z: 0 }));
+        rooms.push(at(C / 2 + ROOM_W / 2, z, ROOM_W, ROOM_D, { x: C / 2, z }, { x: 1, z: 0 }));
       }
     }
     void right;
@@ -112,7 +114,7 @@ export function planHouse(n: number, layout: HouseLayout): Plan {
     for (let i = 0; i < n; i++) {
       const side = i % 2 === 0 ? -1 : 1;
       const z = -(Math.floor(i / 2) * ROOM_D + ROOM_D / 2);
-      rooms.push(roomAtDoor(side * (HALL / 2 + ROOM_W / 2), z, ROOM_W, ROOM_D, { x: (side * HALL) / 2, z }, { x: side, z: 0 }));
+      rooms.push(at(side * (HALL / 2 + ROOM_W / 2), z, ROOM_W, ROOM_D, { x: (side * HALL) / 2, z }, { x: side, z: 0 }));
     }
     walks = [{ x: 0, z: -(rows * ROOM_D) / 2, w: HALL, d: rows * ROOM_D }];
     porch = { x: 0, z: 0.8, w: HALL, d: 1.6 };
@@ -632,3 +634,5 @@ export function buildHouse(rooms: HouseRoomView[], objects: HouseObjectView[], s
     },
   };
 }
+
+export { box, cyl, ball, mat, floorMaterial, makeObject, makeChest, label, FLOOR, STYLE };

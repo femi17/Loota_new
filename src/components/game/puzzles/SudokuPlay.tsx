@@ -61,7 +61,7 @@ export function SudokuPlay({ p, disabled, onDone, onProgress }: Props) {
       </div>
       <div className="grid grid-cols-10 gap-1">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
-          <button key={d} type="button" disabled={disabled || at === null || !!p.given[at ?? 0]} onClick={() => put(d)} className="h-11 rounded-lg bg-ink font-display text-lg font-extrabold text-paper disabled:opacity-40">
+          <button key={d} type="button" aria-label={`Number ${d}`} disabled={disabled || at === null || !!p.given[at ?? 0]} onClick={() => put(d)} className="h-11 rounded-lg bg-ink font-display text-lg font-extrabold text-paper disabled:opacity-40">
             {d}
           </button>
         ))}

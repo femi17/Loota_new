@@ -115,7 +115,7 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
           <p>
             <b>{openHunt.title}</b>: {openHunt.keys} keys to find. Prize: {openHunt.prize}.
           </p>
-          <p className="text-muted">Join it and open the first riddle: you have 15 seconds to name the place. Then get there before the others.</p>
+          <p className="text-muted">Join it and read the story (📜): it says where each key is. Then get there before the others, and beat the puzzle at the place.</p>
         </>
       ) : (
         <>

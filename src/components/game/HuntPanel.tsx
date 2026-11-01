@@ -835,7 +835,8 @@ export function HuntPanel({
                 <p className="loota-key-spin text-6xl" aria-hidden="true">🗝️</p>
                 <h2 className="font-display text-3xl font-extrabold text-gold">Key {ending.keysHeld} earned!</h2>
                 <p className="text-muted">
-                  {ending.keysHeld} of {ending.keys} keys. Your next riddle is ready: you&apos;ll have 15 seconds to name the place.
+                  {ending.keysHeld} of {ending.keys} keys.{" "}
+                  {storyRef.current ? "Read on: the story says where the next one is." : "Your next riddle is ready: you'll have 15 seconds to name the place."}
                 </p>
                 {storyHunt && (
                   <p className="rounded-xl bg-[#F7EBCF] px-3 py-2 text-sm font-bold text-[#3B2A16]" data-story-unlock>

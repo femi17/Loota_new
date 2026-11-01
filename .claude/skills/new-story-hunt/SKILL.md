@@ -45,7 +45,10 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    the answer, including near misses next door (the hotel by the lighthouse) that the story rules out, types A/B/C, and each one a false trail IN THE PLOT (the villain's wrong race, a friend's wrong guess, a
    forged message), spread across scenes, never as a list.
 4. **Chapters**: write each as `docs/stories/drafts/<date>-<id>/<n>.md` (plain prose, paragraphs separated by a blank
-   line, 600–850 words; cold open ~300). One "aha" per key, planted earlier in a funny or emotional moment. Never name a
+   line). SHORT (owner, 1 Nov 2026): an opening of 80–150 words, then 60–120 words per key, a two-line ending, about 600 words
+   for 7 keys. Each clue rests on GENERAL KNOWLEDGE from any walk of life (music, sport, science, film, food, history, nature,
+   landmarks), fair to a player anywhere in the world, never local knowledge; the trick is in the wording. The real fight is
+   at the place (the house and its puzzle). One "aha" per key, planted earlier in a funny or emotional moment. Never name a
    key place or its aliases. Every chapter ends on a turn.
 5. **Production** (`production`): the trailer pack: an art style, the characters' fixed looks, **3 picture prompts**
    (ChatGPT makes 3 a day; each complete on its own, 16:9, no text, never a key place recognisably), `trailer.voiceOver`

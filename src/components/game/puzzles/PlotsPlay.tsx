@@ -15,6 +15,11 @@ export function PlotsPlay({ p, disabled, onDone, onProgress }: Props) {
   const { n, clues } = p;
   const [plots, setPlots] = useState<PlotsAnswer>([]);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  const dragRef = useRef<{ from: number; to: number } | null>(null); // at once: a quick drag ends before the next render
+  const dragTo = (d: { from: number; to: number } | null) => {
+    dragRef.current = d;
+    setDrag(d);
+  };
   const board = useRef<HTMLDivElement>(null);
   const covered = plots.reduce((s, [t, l, b, r]) => s + (b - t + 1) * (r - l + 1), 0);
   useEffect(() => onProgress(covered / (n * n)), [covered, n, onProgress]);
@@ -40,14 +45,15 @@ export function PlotsPlay({ p, disabled, onDone, onProgress }: Props) {
   ];
   const inside = ([t, l, b, r]: number[], cell: number) => Math.floor(cell / n) >= t && Math.floor(cell / n) <= b && cell % n >= l && cell % n <= r;
   const overlaps = (x: number[], y: number[]) => !(x[2] < y[0] || y[2] < x[0] || x[3] < y[1] || y[3] < x[1]);
-  const finish = (from: number, to: number) => {
-    if (from === to) {
-      const hit = plots.findIndex((q) => inside(q, from));
-      if (hit >= 0) return setPlots(plots.filter((_, k) => k !== hit));
-    }
-    const rect = rectOf(from, to);
-    setPlots([...plots.filter((q) => !overlaps(q, rect)), rect]);
-  };
+  const finish = (from: number, to: number) =>
+    setPlots((now) => {
+      if (from === to) {
+        const hit = now.findIndex((q) => inside(q, from));
+        if (hit >= 0) return now.filter((_, k) => k !== hit);
+      }
+      const rect = rectOf(from, to);
+      return [...now.filter((q) => !overlaps(q, rect)), rect];
+    });
   // A plot's state: right size with one number (a calm colour), or not yet.
   const fine = ([t, l, b, r]: number[]) => {
     const nums = Object.keys(clues).map(Number).filter((c) => inside([t, l, b, r], c));
@@ -66,18 +72,21 @@ export function PlotsPlay({ p, disabled, onDone, onProgress }: Props) {
           if (disabled) return;
           (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           const c = cellAt(e.clientX, e.clientY);
-          if (c >= 0) setDrag({ from: c, to: c });
+          if (c >= 0) dragTo({ from: c, to: c });
         }}
         onPointerMove={(e) => {
-          if (!drag || disabled) return;
+          const d = dragRef.current;
+          if (!d || disabled) return;
           const c = cellAt(e.clientX, e.clientY);
-          if (c >= 0 && c !== drag.to) setDrag({ ...drag, to: c });
+          if (c >= 0 && c !== d.to) dragTo({ ...d, to: c });
         }}
-        onPointerUp={() => {
-          if (drag) finish(drag.from, drag.to);
-          setDrag(null);
+        onPointerUp={(e) => {
+          const d = dragRef.current;
+          const c = cellAt(e.clientX, e.clientY);
+          if (d) finish(d.from, c >= 0 ? c : d.to);
+          dragTo(null);
         }}
-        onPointerCancel={() => setDrag(null)}
+        onPointerCancel={() => dragTo(null)}
       >
         <div className="absolute inset-0 grid" style={{ gridTemplateColumns: `repeat(${n}, 1fr)` }}>
           {[...Array(n * n).keys()].map((i) => (

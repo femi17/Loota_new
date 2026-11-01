@@ -52,8 +52,7 @@ for (const k of work.skeleton.keys) {
 for (const c of work.skeleton.chapters) {
   const words = work.chapters?.[c.n]?.text?.split(/\s+/).filter(Boolean).length ?? 0;
   if (!words) problems.push(`chapter ${c.n} ("${c.title}") isn't written`);
-  else if (words < 250) warnings.push(`chapter ${c.n} is short (${words} words)`);
-  else if (words > 1100) warnings.push(`chapter ${c.n} is long (${words} words): keep chapters quick to read on a phone`);
+  else if (words > 180) warnings.push(`chapter ${c.n} is long (${words} words): 80–150 for the opening, 60–120 a key (owner, 1 Nov 2026: short and straight)`);
 }
 shape("the pictures and voices (production)", STORY_SHAPES.Production, work.production);
 if ((work.production?.pictures.length ?? 0) > 3) warnings.push(`${work.production!.pictures.length} picture prompts: the trailer needs 3 (ChatGPT makes 3 a day)`);

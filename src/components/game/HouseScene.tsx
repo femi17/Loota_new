@@ -123,27 +123,66 @@ export function HouseScene({
     const house = buildHouse(v.rooms, v.objects, v.style, v.title, v.layout);
     world.add(house.group);
     const plan = house.plan;
-    const width = plan.bounds.maxX - plan.bounds.minX;
-    const depth = plan.bounds.maxZ - plan.bounds.minZ;
+    const B = plan.bounds;
     const centre = new THREE.Vector3(plan.centre.x, 0, plan.centre.z);
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+    // The house's box (its rooms and their labels), to frame it exactly (owner, 1 Nov 2026: "why can it take the full
+    // screen. The rooms are too tiny").
+    const corners: THREE.Vector3[] = [];
+    for (const x of [B.minX - 0.4, B.maxX + 0.4]) for (const y of [0, 3.6]) for (const z of [B.minZ - 0.4, B.maxZ + 0.4]) corners.push(new THREE.Vector3(x, y, z));
+    const probe = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+    const extent = (off: THREE.Vector3) => {
+      probe.position.copy(centre).add(off);
+      probe.lookAt(centre);
+      probe.updateMatrixWorld();
+      const xs: number[] = [], ys: number[] = [];
+      for (const c of corners) {
+        const v = c.clone().applyMatrix4(probe.matrixWorldInverse);
+        xs.push(v.x);
+        ys.push(v.y);
+      }
+      return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+    };
+    // Looking in from the front-right (the walls on that side are the low ones), at the angle that shows it biggest.
+    const camOff = new THREE.Vector3(14, 16, 14);
     const fit = () => {
       const w = el.clientWidth, h = el.clientHeight;
+      if (!w || !h) return;
       renderer.setSize(w, h);
-      const aspect = w / h;
-      // Close up: about a room and the hall across the screen; else the whole house.
-      const r = nearRef.current ? 4.4 : 0.5 * Math.hypot(width + 1, depth + 1) * 0.94;
-      const halfW = aspect < 1 ? r : r * aspect;
-      const halfH = aspect < 1 ? r / aspect : r;
-      const lift = nearRef.current ? 1 : 0.86; // close up, the hunter in the middle; the whole house sits a little high
-      Object.assign(camera, { left: -halfW, right: halfW, top: halfH * lift, bottom: -halfH * (2 - lift) });
+      const root = el.parentElement;
+      const top = root?.querySelector<HTMLElement>("[data-house-head]")?.offsetHeight ?? 0;
+      const bottom = root?.querySelector<HTMLElement>("[data-house-foot]")?.offsetHeight ?? 0;
+      root?.style.setProperty("--house-head", `${top}px`);
+      const free = Math.max(120, h - top - bottom);
+      let best: { off: THREE.Vector3; e: ReturnType<typeof extent>; s: number } | null = null;
+      // Anywhere in the front-right quarter keeps the low walls nearest; a phone held upright often fits best nearly
+      // square-on and from higher up, a wide screen from the corner.
+      for (const az of [12, 25, 45, 65, 78]) {
+        for (const up of [40, 52, 62]) {
+          const a = (az * Math.PI) / 180, b = (up * Math.PI) / 180;
+          const off = new THREE.Vector3(Math.sin(a) * Math.cos(b), Math.sin(b), Math.cos(a) * Math.cos(b)).multiplyScalar(30);
+          const e = extent(off);
+          const sc = Math.max((e.maxX - e.minX) / w, (e.maxY - e.minY) / free) * 1.04; // world units a pixel
+          if (!best || sc < best.s) best = { off, e, s: sc };
+        }
+      }
+      camOff.copy(best!.off);
+      // Close up: about a room and the hall across; the hunter in the middle of the free screen. Else the whole house.
+      const sc = nearRef.current ? 11 / Math.min(w, free) : best!.s;
+      const cx = nearRef.current ? 0 : (best!.e.minX + best!.e.maxX) / 2;
+      const cy = nearRef.current ? 0 : (best!.e.minY + best!.e.maxY) / 2;
+      const t = cy + (top + free / 2) * sc;
+      Object.assign(camera, { left: cx - (w / 2) * sc, right: cx + (w / 2) * sc, top: t, bottom: t - h * sc });
       camera.updateProjectionMatrix();
     };
-    camera.position.set(centre.x + 14, 16, centre.z + 14);
+    camera.position.copy(centre).add(camOff);
     camera.lookAt(centre);
     fit();
     refit.current = fit;
-    window.addEventListener("resize", fit);
+    // Again whenever the screen or the bars over it change size (a room list that wraps, the carried things).
+    const sizes = new ResizeObserver(() => fit());
+    sizes.observe(el);
+    for (const bar of el.parentElement?.querySelectorAll("[data-house-head], [data-house-foot]") ?? []) sizes.observe(bar);
     const focus = centre.clone(); // where the camera looks: the hunter when close up, the house's middle otherwise
 
     // The hunter, on the porch (or in the room they were in)
@@ -292,7 +331,8 @@ export function HouseScene({
       const shaking = now < shakeUntil;
       const want = nearRef.current ? new THREE.Vector3(av.root.position.x, 0, av.root.position.z) : centre;
       focus.lerp(want, 1 - Math.exp(-4 * dt));
-      camera.position.set(focus.x + 14 + (shaking ? (Math.random() - 0.5) * 0.5 : 0), 16, focus.z + 14);
+      camera.position.copy(focus).add(camOff);
+      if (shaking) camera.position.x += (Math.random() - 0.5) * 0.5;
       camera.lookAt(focus);
       renderer.render(world, camera);
       raf = requestAnimationFrame(frame);
@@ -329,7 +369,7 @@ export function HouseScene({
     };
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener("resize", fit);
+      sizes.disconnect();
       refit.current = () => {};
       renderer.domElement.removeEventListener("pointerdown", onDown);
       renderer.domElement.removeEventListener("pointerup", onUp);
@@ -348,7 +388,12 @@ export function HouseScene({
       const v = viewRef.current;
       const s = scene.current;
       if (!v || !s || busy) return;
-      if (tap === "out") return onClose();
+      // The porch: back to the front door (a stray tap mustn't throw you out of the house; Leave does that).
+      if (tap === "out") {
+        const pl = s.built.plan;
+        setSay("That's the way out. Tap Leave when you're done here.");
+        return void s.walkTo([...outTo(pl, s.at()), pl.entrance, pl.start]);
+      }
       if (tap === "hall") return void s.walkTo(outTo(s.built.plan, s.at()));
       if (tap === "chest") {
         setSay("You kneel by the chest…");
@@ -454,7 +499,10 @@ export function HouseScene({
   }, [dodge]);
 
   return (
-    <div className="pointer-events-auto fixed inset-0 z-50 flex flex-col bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="Inside the house" data-busy={busy}>
+    <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="Inside the house" data-busy={busy}>
+      {/* The house fills the screen; the bars float over it (it's framed in the space between them). */}
+      <div ref={host} className="absolute inset-0 touch-none" data-house />
+      <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-[#1B2230] via-[#1B2230]/85 to-transparent pb-3" data-house-head>
       <div className="flex items-center gap-3 px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">Key {view?.key ?? ""}</p>
@@ -483,9 +531,10 @@ export function HouseScene({
           ))}
         </div>
       )}
-      <div ref={host} className="relative min-h-0 flex-1 touch-none" data-house>
+      </div>
+      <div className="pointer-events-none absolute inset-x-3 top-[calc(var(--house-head,5rem)+0.25rem)] flex flex-col gap-3">
         {dodge && (
-          <div className="absolute inset-x-3 top-3 flex flex-col gap-3 rounded-2xl bg-ink/95 p-4 shadow-xl ring-2 ring-danger" role="alertdialog" aria-label="Dodge the trap">
+          <div className="pointer-events-auto flex flex-col gap-3 rounded-2xl bg-ink/95 p-4 shadow-xl ring-2 ring-danger" role="alertdialog" aria-label="Dodge the trap">
             <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-danger-text">A trap! Dodge it</p>
             <p className="font-display text-xl font-extrabold">{dodge.prompt}</p>
             <div className="h-1.5 overflow-hidden rounded-full bg-line" aria-hidden="true">
@@ -501,13 +550,14 @@ export function HouseScene({
           </div>
         )}
         {gained && (
-          <p className="pointer-events-none absolute inset-x-4 top-4 rounded-2xl bg-gold px-4 py-3 text-center font-bold text-ink shadow-lg">
+          <p className="rounded-2xl bg-gold px-4 py-3 text-center font-bold text-ink shadow-lg">
             {gained.icon} {gained.name}: into your bag
           </p>
         )}
       </div>
+      <div className="absolute inset-x-0 bottom-0 bg-ink/90 backdrop-blur-sm" data-house-foot>
       {view && (
-        <div className="flex gap-2 overflow-x-auto border-t border-line bg-ink px-3 py-2" aria-label="Rooms">
+        <div className="flex gap-2 overflow-x-auto border-t border-line px-3 py-2" aria-label="Rooms">
           {view.rooms.map((r) => (
             <button
               key={r.id}
@@ -522,9 +572,10 @@ export function HouseScene({
           ))}
         </div>
       )}
-      <p className="min-h-[4.5rem] bg-ink px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] text-base leading-relaxed" aria-live="polite" data-house-say>
+      <p className="min-h-[3.5rem] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 text-base leading-relaxed" aria-live="polite" data-house-say>
         {say}
       </p>
+      </div>
     </div>
   );
 }

@@ -97,9 +97,14 @@ try {
   await page.evaluate(() => document.querySelector('[aria-label="See the whole house"]')?.click());
   await wait(1200);
   const before = await say();
-  const box = await page.evaluate(() => { const r = document.querySelector("[data-house] canvas").getBoundingClientRect(); return { x: r.left + r.width * 0.3, y: r.top + r.height * 0.45 }; });
-  await page.mouse.click(box.x, box.y);
-  const afterTap = await until(async () => (await say()) !== before && (await say()), 10000);
+  // A few spots on the house, until one is something (the framing depends on the screen)
+  let afterTap = null;
+  for (const [fx, fy] of [[0.3, 0.45], [0.5, 0.5], [0.4, 0.55], [0.6, 0.45], [0.5, 0.4]]) {
+    const box = await page.evaluate((a, b) => { const r = document.querySelector("[data-house] canvas").getBoundingClientRect(); return { x: r.left + r.width * a, y: r.top + r.height * b }; }, fx, fy);
+    await page.mouse.click(box.x, box.y);
+    afterTap = await until(async () => (await say()) !== before && (await say()), 3000);
+    if (afterTap) break;
+  }
   check("a real tap in the house hits something and the hunter goes", !!afterTap, afterTap ?? "nothing");
   await wait(800);
   // The tap may have opened a trap room (the floor plan depends on the house): dodge it and wait out the shut doors.

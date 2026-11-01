@@ -1,6 +1,7 @@
 // Pictures of a story hunt's houses on a phone, the whole house and close up (owner, 1 Nov 2026: "the house can be
 // alot different… well visible… only 3 rooms"). Each house is copied into a throwaway hunt; walks into its right room.
-// Everything made is deleted.   SHOTS=<folder> [HUNT=<id>] [KEYS=1,2,3] node scripts/tests/house-shots.mjs
+// DESKTOP=1: a laptop screen instead of a phone.
+// Everything made is deleted.   SHOTS=<folder> [HUNT=<id>] [KEYS=1,2,3] [DESKTOP=1] node scripts/tests/house-shots.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 const app = createRequire(new URL("../../package.json", import.meta.url));
@@ -40,7 +41,7 @@ try {
     const page = await (await browser.createBrowserContext()).newPage();
     const problems = [];
     page.on("pageerror", (e) => problems.push(e.message));
-    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await page.setViewport(process.env.DESKTOP ? { width: 1366, height: 768 } : { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     await page.setCookie(...[...jar].map(([nm, value]) => ({ name: nm, value, domain: "localhost", path: "/" })));
     await page.evaluateOnNewDocument((uid) => { try { localStorage.setItem(`loota:welcome:${uid}`, "1"); } catch {} }, id);
     await page.goto(`http://localhost:3000/play?hunt=${h.id}`, { waitUntil: "domcontentloaded", timeout: 120000 });

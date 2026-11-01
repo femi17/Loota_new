@@ -1,5 +1,5 @@
 /** The Key Trial puzzles' names and rules, for the phone (the puzzles themselves are made on the server). */
-export type PuzzleKind = "sentries" | "route" | "adire" | "tornmap";
+export type PuzzleKind = "sentries" | "route" | "adire" | "tornmap" | "sudoku" | "threads" | "plots" | "patchwork" | "vowels";
 
 export const PUZZLE_NAMES: Record<PuzzleKind, { name: string; rule: string }> = {
   sentries: {
@@ -13,6 +13,26 @@ export const PUZZLE_NAMES: Record<PuzzleKind, { name: string; rule: string }> = 
   tornmap: {
     name: "Torn Map",
     rule: "The map of these very streets was torn to pieces. Tap a piece, then another, to swap them; at the hardest keys tap a chosen piece again to turn it. Put the map back together.",
+  },
+  sudoku: {
+    name: "Sudoku",
+    rule: "Half of it is done. Fill in the rest: every row, every column and every 3×3 box holds 1 to 9, each once.",
+  },
+  threads: {
+    name: "Threads",
+    rule: "Join each pair of matching beads with one thread. Threads never cross or share a square, and together they fill every square.",
+  },
+  plots: {
+    name: "Plots",
+    rule: "Divide the land into rectangular plots. Each plot holds exactly one number: how many squares it covers. Drag from corner to corner to mark a plot.",
+  },
+  patchwork: {
+    name: "Patchwork",
+    rule: "Fill the outline with every patch: no gaps, no overlaps. Pick a patch, turn it if you need to, then tap where its marked square goes.",
+  },
+  vowels: {
+    name: "Lost Vowels",
+    rule: "The vowels have fallen out of these words. Read the theme and the clues, and type each word in full.",
   },
   adire: {
     name: "Adire",

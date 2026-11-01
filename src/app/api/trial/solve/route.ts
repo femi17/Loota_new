@@ -19,14 +19,14 @@ export async function POST(request: Request) {
   const admin = createAdminClient();
   const { data: t } = await admin
     .from("trial_attempts")
-    .select("id, kind, puzzle")
+    .select("id, kind, puzzle, solution")
     .eq("id", body.attempt)
     .eq("user_id", uid)
     .eq("status", "active")
     .maybeSingle();
   if (!t || t.kind === "quiz" || !t.puzzle) return Response.json({ ok: false, reason: "no_trial" });
 
-  const right = body.answer != null && checkPuzzle(t.kind as PuzzleKind, t.puzzle as AnyPuzzle, body.answer);
+  const right = body.answer != null && checkPuzzle(t.kind as PuzzleKind, t.puzzle as AnyPuzzle, body.answer, t.solution);
   const { data, error } = await admin.rpc("puzzle_result", { p_attempt: t.id, p_right: right });
   if (error) return Response.json({ error: "Couldn't check the answer" }, { status: 500 });
   // The map hears of a key won or a trial failed through the hunt's own updates (as with a quiz).

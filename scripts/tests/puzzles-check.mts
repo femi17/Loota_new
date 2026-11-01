@@ -5,6 +5,11 @@
 import { makeSentries, solveSentries, checkSentries } from "../../src/game/puzzles/sentries.ts";
 import { makeRoute, solveRoute, checkRoute } from "../../src/game/puzzles/route.ts";
 import { makeAdire, solveAdire, checkAdire } from "../../src/game/puzzles/adire.ts";
+import { makeSudoku, solveSudoku, checkSudoku } from "../../src/game/puzzles/sudoku.ts";
+import { makeThreads, checkThreads } from "../../src/game/puzzles/threads.ts";
+import { makePlots, solvePlots, checkPlots } from "../../src/game/puzzles/plots.ts";
+import { makePatchwork, checkPatchwork } from "../../src/game/puzzles/patchwork.ts";
+import { makeVowels, checkVowels } from "../../src/game/puzzles/vowels.ts";
 
 const COUNT = Number(process.argv[2] ?? 20);
 let fails = 0;
@@ -51,5 +56,37 @@ for (const [n, clues] of [[6, 10], [6, 8], [6, 6]] as const) {
     (p, a) => checkAdire(p, a),
     (p, a) => checkAdire(p, a.map((v, i) => (i === 0 ? 1 - v : v))),
     (p) => `${Object.keys(p.given).length} squares given, ${p.signs.length} signs`);
+}
+// The puzzles added on 1 Nov 2026 (owner: "lets include these puzzles, for the sudoku, we can half solved it"). Threads
+// and Patchwork take any answer that keeps the rules (no uniqueness needed); Sudoku and Plots have exactly one.
+for (const givens of [44, 40, 36]) {
+  run(`Sudoku (${givens} given)`, (seed) => makeSudoku(seed, givens), (p) => solveSudoku(p.given, 2).length === 1 && p.given.filter(Boolean).length === givens,
+    (p, a) => checkSudoku(p, a),
+    (p, a) => checkSudoku(p, a.map((v, i) => (i === a.findIndex((_, j) => !p.given[j]) ? (v % 9) + 1 : v))),
+    (p) => `${p.given.filter(Boolean).length} of 81 given`);
+}
+for (const [n, colours] of [[5, 4], [6, 5], [7, 6]] as const) {
+  run(`Threads ${n}×${n}`, (seed) => makeThreads(seed, n, colours), () => true,
+    (p, a) => checkThreads(p, a),
+    (p, a) => checkThreads(p, [a[0].slice(0, -1), ...a.slice(1)]),
+    (p) => `${p.ends.length} colours`);
+}
+for (const [n, most] of [[5, 6], [6, 8], [7, 9]] as const) {
+  run(`Plots ${n}×${n}`, (seed) => makePlots(seed, n, most), (p) => solvePlots(p, 2).length === 1,
+    (p, a) => checkPlots(p, a),
+    (p, a) => checkPlots(p, a.slice(1)),
+    (p) => `${Object.keys(p.clues).length} plots`);
+}
+for (const n of [4, 5, 6]) {
+  run(`Patchwork ${n}×${n}`, (seed) => makePatchwork(seed, n), () => true,
+    (p, a) => checkPatchwork(p, a),
+    (p, a) => checkPatchwork(p, a.map((x, i) => (i === 0 ? { ...x, c: x.c + 1 } : x))),
+    (p) => `${p.target.length} squares, ${p.pieces.length} patches`);
+}
+for (const count of [3, 4, 5]) {
+  run(`Lost Vowels (${count} words)`, (seed) => makeVowels(seed, count), (p) => p.words.length === count && p.words.every((w) => !/[AEIOU]/.test(w.shown)),
+    (p, a) => checkVowels(a, a.map((w) => w.toLowerCase())),
+    (p, a) => checkVowels(a, a.map((w, i) => (i === 0 ? w.slice(1) : w))),
+    (p) => `${p.theme}: ${p.words.map((w) => w.shown).join(", ")}`);
 }
 console.log(fails ? `${fails} FAILED` : "all passed");

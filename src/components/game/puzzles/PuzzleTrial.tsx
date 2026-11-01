@@ -9,6 +9,11 @@ import { SentriesBoard } from "./SentriesBoard";
 import { RouteBoard } from "./RouteBoard";
 import { AdireBoard } from "./AdireBoard";
 import { TornMapBoard } from "./TornMapBoard";
+import { SudokuPlay } from "./SudokuPlay";
+import { ThreadsPlay } from "./ThreadsPlay";
+import { PlotsPlay } from "./PlotsPlay";
+import { PatchworkPlay } from "./PatchworkPlay";
+import { VowelsPlay } from "./VowelsPlay";
 import { checkTornMap, type TornMapPuzzle } from "@/game/puzzles/tornmap";
 import { cue } from "@/game/sound";
 
@@ -239,6 +244,16 @@ export function PuzzleTrial({
             <RoutePlay p={view.puzzle as RouteP} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           ) : view.puzzleKind === "tornmap" ? (
             <TornMapPlay p={view.puzzle as TornMapPuzzle} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
+          ) : view.puzzleKind === "sudoku" ? (
+            <SudokuPlay p={view.puzzle as { given: number[] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
+          ) : view.puzzleKind === "threads" ? (
+            <ThreadsPlay p={view.puzzle as { n: number; ends: [number, number][] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
+          ) : view.puzzleKind === "plots" ? (
+            <PlotsPlay p={view.puzzle as { n: number; clues: Record<number, number> }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
+          ) : view.puzzleKind === "patchwork" ? (
+            <PatchworkPlay p={view.puzzle as { n: number; target: number[]; pieces: [number, number][][] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
+          ) : view.puzzleKind === "vowels" ? (
+            <VowelsPlay p={view.puzzle as { theme: string; words: { shown: string; clue: string; letters: number }[] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           ) : (
             <AdirePlay p={view.puzzle as AdireP} warn={warn} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           )}

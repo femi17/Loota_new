@@ -63,14 +63,17 @@ export function HouseScene({
   const host = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<HouseView | null>(null);
   const [say, setSay] = useState<string>("Tap a room (or its name below) to walk in. Tap things to look at them.");
-  // Close up and following the hunter, or the whole house (owner, 1 Nov 2026: "on mobile it is so tiny"): close on a phone.
-  const [near, setNear] = useState(() => typeof window !== "undefined" && window.innerWidth < 640);
-  const nearRef = useRef(near);
+  // The camera (owner, 1 Nov 2026: "show the lobby first, allow the user to pick a room… show each singular room very
+  // spacious and big"): the whole house from the hall; the room alone, filling the screen, once the hunter is in it.
+  // `wide`: the whole house asked for while in a room (until the next room).
+  const [inRoom, setInRoom] = useState(false);
+  const [wide, setWide] = useState(false);
+  const wideRef = useRef(wide);
   const refit = useRef<() => void>(() => {});
   useEffect(() => {
-    nearRef.current = near;
+    wideRef.current = wide;
     refit.current();
-  }, [near]);
+  }, [wide]);
   const [busy, setBusy] = useState(false);
   const [gained, setGained] = useState<Item | null>(null);
   // A trap's challenge (owner, 31 Oct 2026: dodge it by answering in time): its room's place, the prompt, the options.
@@ -128,10 +131,18 @@ export function HouseScene({
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     // The house's box (its rooms and their labels), to frame it exactly (owner, 1 Nov 2026: "why can it take the full
     // screen. The rooms are too tiny").
-    const corners: THREE.Vector3[] = [];
-    for (const x of [B.minX - 0.4, B.maxX + 0.4]) for (const y of [0, 3.6]) for (const z of [B.minZ - 0.4, B.maxZ + 0.4]) corners.push(new THREE.Vector3(x, y, z));
+    const boxCorners = (x0: number, x1: number, z0: number, z1: number) => {
+      const out: THREE.Vector3[] = [];
+      for (const x of [x0, x1]) for (const y of [0, 3.6]) for (const z of [z0, z1]) out.push(new THREE.Vector3(x, y, z));
+      return out;
+    };
+    const houseBox = boxCorners(B.minX - 0.4, B.maxX + 0.4, B.minZ - 0.4, B.maxZ + 0.4);
+    const roomBox = (i: number) => {
+      const r = plan.rooms[i];
+      return boxCorners(r.x - r.w / 2 - 0.2, r.x + r.w / 2 + 0.2, r.z - r.d / 2 - 0.2, r.z + r.d / 2 + 0.2);
+    };
     const probe = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-    const extent = (off: THREE.Vector3) => {
+    const extent = (off: THREE.Vector3, corners = houseBox) => {
       probe.position.copy(centre).add(off);
       probe.lookAt(centre);
       probe.updateMatrixWorld();
@@ -145,20 +156,41 @@ export function HouseScene({
     };
     // Looking in from the front-right (the walls on that side are the low ones), at the angle that shows it biggest.
     const camOff = new THREE.Vector3(14, 16, 14);
+    // The screen left for the house (under the see-through title bar's middle, above the room buttons), and the framing
+    // the camera glides to: centre (cx, cy in the camera's own plane) and scale (world units a pixel).
+    const screen = { w: 1, h: 1, top: 0, free: 1 };
+    let shown = -2; // what's framed: -1 the whole house, else a room
+    const goal = { cx: 0, cy: 0, sc: 0.05 };
+    const cur = { cx: 0, cy: 0, sc: 0 };
+    const frameOn = (i: number) => {
+      const e = extent(camOff, i < 0 ? houseBox : roomBox(i));
+      goal.sc = Math.max((e.maxX - e.minX) / screen.w, (e.maxY - e.minY) / screen.free) * (i < 0 ? 1.04 : 1.06);
+      goal.cx = (e.minX + e.maxX) / 2;
+      goal.cy = (e.minY + e.maxY) / 2;
+      if (!cur.sc) Object.assign(cur, goal);
+    };
+    const project = () => {
+      const t = cur.cy + (screen.top + screen.free / 2) * cur.sc;
+      Object.assign(camera, { left: cur.cx - (screen.w / 2) * cur.sc, right: cur.cx + (screen.w / 2) * cur.sc, top: t, bottom: t - screen.h * cur.sc });
+      camera.updateProjectionMatrix();
+    };
     const fit = () => {
       const w = el.clientWidth, h = el.clientHeight;
       if (!w || !h) return;
       renderer.setSize(w, h);
       const root = el.parentElement;
-      const top = root?.querySelector<HTMLElement>("[data-house-head]")?.offsetHeight ?? 0;
+      const head = root?.querySelector<HTMLElement>("[data-house-head]")?.offsetHeight ?? 0;
       const bottom = root?.querySelector<HTMLElement>("[data-house-foot]")?.offsetHeight ?? 0;
-      root?.style.setProperty("--house-head", `${top}px`);
+      root?.style.setProperty("--house-head", `${head}px`);
+      // The title bar is see-through in the middle: the house may run under part of it.
+      const top = Math.round(head * 0.55);
       const free = Math.max(120, h - top - bottom);
+      Object.assign(screen, { w, h, top, free });
       let best: { off: THREE.Vector3; e: ReturnType<typeof extent>; s: number } | null = null;
       // Anywhere in the front-right quarter keeps the low walls nearest; a phone held upright often fits best nearly
-      // square-on and from higher up, a wide screen from the corner.
+      // square-on and from higher up, a wide short screen from lower down.
       for (const az of [12, 25, 45, 65, 78]) {
-        for (const up of [40, 52, 62]) {
+        for (const up of [30, 40, 52, 62]) {
           const a = (az * Math.PI) / 180, b = (up * Math.PI) / 180;
           const off = new THREE.Vector3(Math.sin(a) * Math.cos(b), Math.sin(b), Math.cos(a) * Math.cos(b)).multiplyScalar(30);
           const e = extent(off);
@@ -167,23 +199,20 @@ export function HouseScene({
         }
       }
       camOff.copy(best!.off);
-      // Close up: about a room and the hall across; the hunter in the middle of the free screen. Else the whole house.
-      const sc = nearRef.current ? 11 / Math.min(w, free) : best!.s;
-      const cx = nearRef.current ? 0 : (best!.e.minX + best!.e.maxX) / 2;
-      const cy = nearRef.current ? 0 : (best!.e.minY + best!.e.maxY) / 2;
-      const t = cy + (top + free / 2) * sc;
-      Object.assign(camera, { left: cx - (w / 2) * sc, right: cx + (w / 2) * sc, top: t, bottom: t - h * sc });
-      camera.updateProjectionMatrix();
+      camera.position.copy(centre).add(camOff);
+      camera.lookAt(centre);
+      frameOn(shown < -1 ? -1 : shown);
+      project();
     };
-    camera.position.copy(centre).add(camOff);
-    camera.lookAt(centre);
     fit();
-    refit.current = fit;
+    refit.current = () => {
+      shown = -2; // framed again on the next frame (the whole house asked for, or back to the room)
+      fit();
+    };
     // Again whenever the screen or the bars over it change size (a room list that wraps, the carried things).
     const sizes = new ResizeObserver(() => fit());
     sizes.observe(el);
     for (const bar of el.parentElement?.querySelectorAll("[data-house-head], [data-house-foot]") ?? []) sizes.observe(bar);
-    const focus = centre.clone(); // where the camera looks: the hunter when close up, the house's middle otherwise
 
     // The hunter, on the porch (or in the room they were in)
     const av = buildAvatar(look);
@@ -300,6 +329,7 @@ export function HouseScene({
 
     let raf = 0;
     let last = performance.now();
+    let lastRoom = -2;
     const frame = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -329,11 +359,29 @@ export function HouseScene({
       }
       animateAvatar(av, { mode: "walk", phase: "idle", moving: moved > 0 ? 1 : 0, distance: moved / AVATAR }, dt, now / 1000);
       const shaking = now < shakeUntil;
-      const want = nearRef.current ? new THREE.Vector3(av.root.position.x, 0, av.root.position.z) : centre;
-      focus.lerp(want, 1 - Math.exp(-4 * dt));
-      camera.position.copy(focus).add(camOff);
+      // In a room: that room fills the screen (unless the whole house was asked for); in the hall: the whole house.
+      const here = roomAt(plan, { x: av.root.position.x, z: av.root.position.z });
+      if (here >= 0 && here !== lastRoom && wideRef.current) {
+        wideRef.current = false; // a new room: show it
+        setWide(false);
+      }
+      if (here !== lastRoom) {
+        lastRoom = here;
+        setInRoom(here >= 0);
+      }
+      const want = here >= 0 && !wideRef.current ? here : -1;
+      if (want !== shown) {
+        shown = want;
+        frameOn(shown);
+      }
+      const k = 1 - Math.exp(-5 * dt);
+      cur.cx += (goal.cx - cur.cx) * k;
+      cur.cy += (goal.cy - cur.cy) * k;
+      cur.sc += (goal.sc - cur.sc) * k;
+      project();
+      camera.position.copy(centre).add(camOff);
       if (shaking) camera.position.x += (Math.random() - 0.5) * 0.5;
-      camera.lookAt(focus);
+      camera.lookAt(centre);
       renderer.render(world, camera);
       raf = requestAnimationFrame(frame);
     };
@@ -508,15 +556,17 @@ export function HouseScene({
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">Key {view?.key ?? ""}</p>
           <h2 className="truncate font-display text-xl font-extrabold">{view?.title ?? "The house"}</h2>
         </div>
-        <button
-          type="button"
-          onClick={() => setNear((n) => !n)}
-          aria-label={near ? "See the whole house" : "Closer"}
-          title={near ? "See the whole house" : "Closer"}
-          className="flex size-10 shrink-0 items-center justify-center rounded-xl border-[1.5px] border-line text-lg"
-        >
-          {near ? "🏠" : "🔍"}
-        </button>
+        {inRoom && (
+          <button
+            type="button"
+            onClick={() => setWide((w) => !w)}
+            aria-label={wide ? "Back to this room" : "See the whole house"}
+            title={wide ? "Back to this room" : "See the whole house"}
+            className="flex size-10 shrink-0 items-center justify-center rounded-xl border-[1.5px] border-line bg-[#1B2230]/70 text-lg"
+          >
+            {wide ? "🔍" : "🏠"}
+          </button>
+        )}
         <button type="button" onClick={onClose} className="h-10 shrink-0 rounded-xl border-[1.5px] border-line px-3 text-sm font-bold">
           Leave
         </button>

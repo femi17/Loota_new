@@ -2192,7 +2192,11 @@ export function GameMap({
       let stuckUntil = 0; // held by a trap (quicksand, a dart wall), performance.now() time
 
       /** Put the hunter at a spot the server has already recorded (e.g. thrown 2 km after a failed trial). */
+      // Moved far in one go (thrown 2 km, a trap, back where you set off): what the key check last said no longer
+      // holds (owner, 1 Nov 2026: "Go inside" stayed after being thrown 2 km). Set by the key check below.
+      let movedFar = () => {};
       function placeAt(lng: number, lat: number) {
+        const far = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [lng, lat]) > 150;
         traveller.pos = { lng, lat };
         traveller.v = 0;
         saved = { lng, lat };
@@ -2201,6 +2205,7 @@ export function GameMap({
         onRoad = null;
         lastNetworkCheck = 0;
         actions.current?.follow();
+        if (far) movedFar();
       }
 
       huntActions.current = {
@@ -7093,6 +7098,13 @@ export function GameMap({
       let pulseEvery = 6000;
       let pulsing = false;
       let heat: { level: number; key: number; trend: "warmer" | "colder" | "steady"; exact?: boolean; house?: boolean } | null = null;
+      movedFar = () => {
+        heat = null;
+        hideChest();
+        hideTrap();
+        showHeat();
+        pulseAt = -Infinity; // and ask again from the new spot straight away
+      };
       let chest: { entity: import("@/game/ThreeMapLayer").MapEntity; body: import("three").Object3D; ring: import("three").Object3D; spot: LngLat; key: number; born: number; scene: KeyScene } | null = null;
       let chestHere = false;
       // The Masquerade's decoy (owner, 25 Oct 2026): it rises just like the key's chest; the heat is the tell.

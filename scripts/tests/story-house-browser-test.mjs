@@ -2,7 +2,8 @@
 // "Twelve Sharp"'s Key 1 house (Aunty Ìyábọ̀'s dye house at Olumo Rock), copied into a test hunt, on a phone:
 //   1. at the place: "🚪 Go inside", and no chest rising out in the open;
 //   2. the house: its name and its three rooms;
-//   3. the room the story points to (her indigo): the chest is there.
+//   3. the room the story points to (her indigo): the chest is there;
+//   4. the Key Trial runs out: thrown 2 km away, and "Go inside" is gone (owner, 1 Nov 2026).
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/story-house-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -68,6 +69,20 @@ try {
   check("the indigo room (the story's \"at her indigo\"): the chest", !!chest, chest ?? (await say()));
   await wait(800);
   await page.screenshot({ path: `${OUT}/story-house-2-indigo.png` });
+
+  // 4. Thrown
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "chest", id: "indigo" } })));
+  const trial = await until(async () => (await admin.from("trial_attempts").select("id").eq("hunt_id", huntId).eq("user_id", id).eq("status", "active").maybeSingle()).data, 20000);
+  check("the chest opens the Key Trial", !!trial);
+  await admin.from("trial_attempts").update({ deadline: new Date(Date.now() - 60e3).toISOString() }).eq("id", trial.id);
+  await page.evaluate(() => window.dispatchEvent(new Event("loota:hunt-changed")));
+  const thrown = await until(async () => {
+    const { data: pos } = await admin.from("player_positions").select("lng, lat").eq("user_id", id).single();
+    const far = Math.hypot((pos.lng - PLACE.lng) * 110574 * Math.cos((PLACE.lat * Math.PI) / 180), (pos.lat - PLACE.lat) * 110574) > 1000;
+    return far && !(await buttonText()).includes("Go inside");
+  }, 30000);
+  check("the trial runs out: thrown away, and Go inside is gone", !!thrown, (await buttonText()).slice(0, 200));
+  await page.screenshot({ path: `${OUT}/story-house-3-thrown.png` });
 } catch (e) {
   fails++;
   console.log("ERROR", e);

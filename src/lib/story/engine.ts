@@ -75,6 +75,7 @@ export const HOUSE_OBJECT_KINDS = ["picture", "drawer", "clock", "rug", "bookcas
 const House = z.object({
   title: z.string().describe("e.g. 'The keeper's house'"),
   style: z.enum(["cottage", "manor", "stone", "fort", "cave", "keeper"]).optional().describe("How it looks: a cottage, a manor, a stone house, a fort, a cave, a lighthouse keeper's house"),
+  layout: z.enum(["hall", "gallery", "court"]).optional().describe("Its floor plan: a hall down the middle, a gallery across, or rooms round an open courtyard"),
   items: z.record(z.string(), z.object({ name: z.string(), icon: z.string() })).describe("Things to carry, by id: { 'brass-key': { name: 'A small brass key', icon: '🗝️' } }"),
   rooms: z.array(z.object({
     id: z.string(),
@@ -93,7 +94,7 @@ const House = z.object({
       needs: z.string().optional(),
       lockedText: z.string().optional(),
     })).max(4).optional(),
-  })).min(3).max(7),
+  })).min(5).max(7),
 });
 export type HouseT = z.infer<typeof House>;
 

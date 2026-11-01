@@ -1,7 +1,7 @@
 // Importing a story written in Claude Code (owner, 31 Oct 2026: no paid API). A draft built from the saved Keeper's Last
 // Light plan (its real keys and 22–25 decoys each) with stand-in chapters and pictures:
 //   1. --check: the free checks run (codes, the map, leaks) and nothing changes;
-//   2. a chapter naming a key place is refused;
+//   2. a chapter naming a key place is refused; so is a key without a house (owner, 1 Nov 2026: every key is a house);
 //   3. imported into a waiting hunt: the hunt gets the story's title, a key at each real place, a picture slot per
 //      prompt, a registry row, and the PDFs are written.
 // Needs docs/stories/.work-2026-10-30.json (the saved plan; kept on this computer only). Everything made is deleted.
@@ -29,6 +29,18 @@ for (const [k, v] of Object.entries(saved)) {
   if (m?.[1] === "key") designs[m[2]] = v;
   if (m?.[1] === "decoys") decoys[m[2]] = v.decoys;
 }
+// Every key is a house now (owner, 1 Nov 2026): the saved plan predates them, so each key gets a plain one.
+const HOUSE = {
+  title: "The keeper's cottage", style: "keeper", layout: "hall", items: {},
+  rooms: [
+    { id: "lamp", name: "The lamp room", kind: "study", role: "right" },
+    { id: "store", name: "The oil store", kind: "storeroom", role: "trap" },
+    { id: "bed", name: "The bedroom", kind: "bedroom", role: "safe" },
+    { id: "galley", name: "The galley", kind: "kitchen", role: "trap" },
+    { id: "parlour", name: "The parlour", kind: "parlour", role: "safe" },
+  ],
+};
+for (const n of Object.keys(designs)) designs[n] = { ...designs[n], house: HOUSE };
 const s = saved.skeleton;
 const filler = "The fog came in off the water and the keeper lit the lamp, as he had every night for thirty years. ".repeat(40);
 const draft = {
@@ -62,6 +74,11 @@ try {
   writeFileSync(file, JSON.stringify(leaky));
   const l = run(file, "--check");
   check("a chapter naming a key place is refused", !l.ok && /names Hook Lighthouse/.test(l.out), l.out.split("\n").find((x) => /names/.test(x)) ?? "");
+  const homeless = structuredClone(draft);
+  delete homeless.designs[s.keys[0].n].house;
+  writeFileSync(file, JSON.stringify(homeless));
+  const nh = run(file, "--check");
+  check("a key without a house is refused", !nh.ok && /has no house/.test(nh.out), nh.out.split("\n").find((x) => /house/.test(x)) ?? "");
 
   // 3. Into a waiting hunt
   const { data: h, error } = await admin.from("hunts").insert({

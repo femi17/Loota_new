@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import type { AvatarLook } from "@/lib/avatar";
 import { animateAvatar, buildAvatar } from "@/game/models3d";
-import { buildHouse, doorOf, houseSize, insideOf, roomPlace, ROOM_D, ROOM_W, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle } from "@/game/house3d";
+import { buildHouse, outTo, roomAt, routeTo, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle } from "@/game/house3d";
 import type { Penalty } from "./PenaltyCard";
 
 type Item = { id: string; name: string; icon: string };
@@ -15,6 +15,8 @@ type HouseView = {
   key: number;
   title: string;
   style: HouseStyle;
+  /** Its floor plan (none: picked from its name). */
+  layout?: string | null;
   room: string | null;
   outUntil: string | null;
   rooms: HouseRoomView[];
@@ -25,6 +27,7 @@ type HouseView = {
 type Point = { x: number; z: number };
 
 const SPEED = 2.6; // metres a second, walking indoors
+const AVATAR = 0.72; // the hunter's size in the house
 const REFUSED: Record<string, string> = {
   away: "You've moved away from the house.",
   no_house: "There's no house here.",
@@ -73,6 +76,7 @@ export function HouseScene({
   // A trap's challenge (owner, 31 Oct 2026: dodge it by answering in time): its room's place, the prompt, the options.
   const [dodge, setDodge] = useState<{ room: number; prompt: string; options: string[]; seconds: number } | null>(null);
   const scene = useRef<{ built: Built; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, room: number) => void } | null>(null);
+  const plan = () => scene.current?.built.plan;
   const viewRef = useRef<HouseView | null>(null);
   useEffect(() => {
     viewRef.current = view;
@@ -116,17 +120,19 @@ export function HouseScene({
     const sun = new THREE.DirectionalLight("#FFFFFF", 1.4);
     sun.position.set(6, 12, 8);
     world.add(sun);
-    const house = buildHouse(v.rooms, v.objects, v.style);
+    const house = buildHouse(v.rooms, v.objects, v.style, v.title, v.layout);
     world.add(house.group);
-    const { width, depth } = houseSize(v.rooms.length);
-    const centre = new THREE.Vector3(0, 0, -depth / 2 + 0.4);
+    const plan = house.plan;
+    const width = plan.bounds.maxX - plan.bounds.minX;
+    const depth = plan.bounds.maxZ - plan.bounds.minZ;
+    const centre = new THREE.Vector3(plan.centre.x, 0, plan.centre.z);
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
     const fit = () => {
       const w = el.clientWidth, h = el.clientHeight;
       renderer.setSize(w, h);
       const aspect = w / h;
       // Close up: about a room and the hall across the screen; else the whole house.
-      const r = nearRef.current ? 4.4 : 0.5 * Math.hypot(width, depth + 2) * 0.94;
+      const r = nearRef.current ? 4.4 : 0.5 * Math.hypot(width + 1, depth + 1) * 0.94;
       const halfW = aspect < 1 ? r : r * aspect;
       const halfH = aspect < 1 ? r / aspect : r;
       const lift = nearRef.current ? 1 : 0.86; // close up, the hunter in the middle; the whole house sits a little high
@@ -140,15 +146,15 @@ export function HouseScene({
     window.addEventListener("resize", fit);
     const focus = centre.clone(); // where the camera looks: the hunter when close up, the house's middle otherwise
 
-    // The hunter, at the front door
+    // The hunter, on the porch (or in the room they were in)
     const av = buildAvatar(look);
-    av.root.scale.setScalar(0.62);
-    av.root.position.set(0, 0.1, 0.9);
-    av.root.rotation.y = Math.PI;
+    av.root.scale.setScalar(AVATAR);
+    av.root.position.set(plan.start.x, 0.1, plan.start.z);
+    av.root.rotation.y = Math.atan2(plan.entrance.x - plan.start.x, plan.entrance.z - plan.start.z);
     world.add(av.root);
     if (v.room) {
       const i = v.rooms.findIndex((r) => r.id === v.room);
-      if (i >= 0) av.root.position.set(roomPlace(i).x, 0.1, roomPlace(i).z);
+      if (i >= 0) av.root.position.set(plan.rooms[i].inside.x, 0.1, plan.rooms[i].inside.z);
     }
     let path: Point[] = [];
     let arrive: (() => void) | null = null;
@@ -165,7 +171,7 @@ export function HouseScene({
     const soft = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
     const trap = (kind: string, i: number) => {
       const t0 = performance.now();
-      const room = roomPlace(i);
+      const room = plan.rooms[i];
       const me = av.root.position.clone();
       const ease = (t: number) => Math.min(1, Math.max(0, (t - t0) / 1000));
       shakeUntil = t0 + 900;
@@ -180,8 +186,8 @@ export function HouseScene({
           return k >= 1;
         });
       } else if (kind === "flood") {
-        const water = new THREE.Mesh(new THREE.BoxGeometry(ROOM_W + 2.4, 1, ROOM_D), soft("#2E7FBF", 0.55));
-        water.position.set(room.x / 2, 0, room.z);
+        const water = new THREE.Mesh(new THREE.BoxGeometry(room.w, 1, room.d), soft("#2E7FBF", 0.55));
+        water.position.set(room.x, 0, room.z);
         world.add(water);
         fx.push((t) => {
           const k = ease(t);
@@ -209,7 +215,7 @@ export function HouseScene({
       } else if (kind === "darts" || kind === "swarm") {
         const bits = Array.from({ length: 14 }, (_, j) => {
           const b = new THREE.Mesh(kind === "darts" ? new THREE.BoxGeometry(0.05, 0.05, 0.35) : new THREE.SphereGeometry(0.09, 6, 4), soft(kind === "darts" ? "#C8A45C" : "#1A1A1A", 1));
-          b.position.set(room.x + (j % 5 - 2) * 0.5, 1 + (j % 3) * 0.3, room.z - ROOM_D / 2);
+          b.position.set(room.x + (j % 5 - 2) * 0.5, 1 + (j % 3) * 0.3, room.z - room.d / 2);
           b.userData.from = b.position.clone();
           world.add(b);
           return b;
@@ -234,7 +240,7 @@ export function HouseScene({
         });
       } else if (kind === "boulder") {
         const ball = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8, 1), new THREE.MeshLambertMaterial({ color: "#7E7A70" }));
-        ball.position.set(room.x, 0.9, room.z - ROOM_D / 2 + 0.9);
+        ball.position.set(room.x, 0.9, room.z - room.d / 2 + 0.9);
         const from = ball.position.clone();
         world.add(ball);
         fx.push((t) => {
@@ -282,7 +288,7 @@ export function HouseScene({
           moved = step;
         }
       }
-      animateAvatar(av, { mode: "walk", phase: "idle", moving: moved > 0 ? 1 : 0, distance: moved / 0.62 }, dt, now / 1000);
+      animateAvatar(av, { mode: "walk", phase: "idle", moving: moved > 0 ? 1 : 0, distance: moved / AVATAR }, dt, now / 1000);
       const shaking = now < shakeUntil;
       const want = nearRef.current ? new THREE.Vector3(av.root.position.x, 0, av.root.position.z) : centre;
       focus.lerp(want, 1 - Math.exp(-4 * dt));
@@ -335,22 +341,15 @@ export function HouseScene({
 
   // A tap in the house: walk, then ask the server.
   useEffect(() => {
-    const route = (from: Point, i: number, inside: boolean): Point[] => {
-      const door = doorOf(i);
-      // Out of the room you're in (back to the hall), along the hall, to the door, and through it into the room.
-      const pts: Point[] = [];
-      if (Math.abs(from.x) > 1.4) pts.push({ x: Math.sign(from.x) * 0.9, z: from.z });
-      pts.push({ x: 0, z: door.z }, { x: door.x * 0.55, z: door.z });
-      if (inside) pts.push({ x: door.x * 1.15, z: door.z }, insideOf(i));
-      return pts;
-    };
+    // Out of the room you're in, across the hall, through the doorway (and in)
+    const route = (from: Point, i: number, inside: boolean): Point[] => (plan() ? routeTo(plan()!, from, i, inside) : []);
     const onTap = async (e: Event) => {
       const { tap, id } = (e as CustomEvent<{ tap: string; id: string }>).detail;
       const v = viewRef.current;
       const s = scene.current;
       if (!v || !s || busy) return;
       if (tap === "out") return onClose();
-      if (tap === "hall") return void s.walkTo([{ x: Math.sign(s.at().x) * 0.9 || 0, z: s.at().z }, { x: 0, z: Math.min(0.6, s.at().z) }]);
+      if (tap === "hall") return void s.walkTo(outTo(s.built.plan, s.at()));
       if (tap === "chest") {
         setSay("You kneel by the chest…");
         return onOpenChest();
@@ -394,14 +393,14 @@ export function HouseScene({
           if (r.used) s.built.setLocked(roomId!, false);
           next.rooms.forEach((room) => room.chest && s.built.setChest(room.id));
           setSay(r.used ? `You use ${r.used.name}. The ${v.rooms[i].name.toLowerCase()} door opens.` : `The ${v.rooms[i].name.toLowerCase()}.`);
-          if (Math.abs(s.at().x) < 1.4) await s.walkTo(route(s.at(), i, true)); // a door that was shut, now open
+          if (roomAt(s.built.plan, s.at()) !== i) await s.walkTo(route(s.at(), i, true)); // a door that was shut, now open
           if (next.rooms[i]?.chest) setSay("There, by the wall: an old chest. Tap it to open it.");
           if (tap === "room") return;
         }
         // A thing in this room: go to it, and look.
         if (tap === "object") {
-          const room = roomPlace(i);
-          await s.walkTo([{ x: (insideOf(i).x + room.x) / 2, z: room.z - ROOM_D * 0.22 }]);
+          const room = s.built.plan.rooms[i];
+          await s.walkTo([{ x: (room.inside.x + room.x) / 2, z: (room.inside.z + room.z) / 2 }]);
           const { data } = await supabase.rpc("house_touch", { p_hunt: huntId, p_object: id });
           const r = data as (Partial<HouseView> & { text?: string; gained?: Item | null }) | null;
           if (!r?.ok) return setSay("You can't reach that from here.");
@@ -434,7 +433,7 @@ export function HouseScene({
       const name = viewRef.current?.rooms[d.room]?.name.toLowerCase() ?? "room";
       if (r?.dodged) {
         setSay(`💨 You dodged it! You jump clear of the ${name}. That room's a trap, though.`);
-        if (s) await s.walkTo([{ x: 0, z: doorOf(d.room).z }]);
+        if (s) await s.walkTo(outTo(s.built.plan, s.at()));
       } else if (r?.penalty) {
         const pen = r.penalty;
         s?.trap(pen.scene, d.room);

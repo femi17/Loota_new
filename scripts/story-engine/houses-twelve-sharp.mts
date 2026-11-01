@@ -1,6 +1,7 @@
 // The houses of "Twelve Sharp" (owner, 1 Nov 2026: "there shouldn't be open chest… we already agreed it is a house
 // 3d"). The story was written before every key had a house; each right room is pointed to by a line the hunter has
-// already read when they get there, and the trap rooms echo the near misses the story warns about.
+// already read when they get there, and the trap rooms echo the near misses the story warns about. Five rooms at the
+// least (owner, 1 Nov 2026: "only 3 rooms"), each house with the floor plan that suits the place.
 // Checks each house (houseProblems), then saves it to the draft, the hunt's story and its key.
 //   node --no-warnings --import ./scripts/tests/ts-ext.mjs scripts/story-engine/houses-twelve-sharp.mts
 import { readFileSync, writeFileSync } from "node:fs";
@@ -16,10 +17,13 @@ const HOUSES: Record<number, HouseT> = {
   1: {
     title: "Aunty Ìyábọ̀'s dye house",
     style: "cave",
+    layout: "court",
     items: {},
     rooms: [
       { id: "wrappers", name: "The wrapper store", kind: "storeroom", role: "trap" },
-      { id: "indigo", name: "The indigo room", kind: "kitchen", role: "right" },
+      { id: "indigo", name: "The indigo room", kind: "cellar", role: "right" },
+      { id: "cooking", name: "The cooking room", kind: "kitchen", role: "trap" },
+      { id: "aunty", name: "Aunty's bedroom", kind: "bedroom", role: "safe" },
       {
         id: "parlour", name: "The front parlour", kind: "parlour", role: "safe",
         objects: [{ id: "grandma", kind: "picture", label: "An old photograph", look: "A woman laughing in front of a great grey rock", found: "Grandma, young, at the foot of the rock. On the back, in pencil: 'Under the rock is home.'" }],
@@ -30,9 +34,12 @@ const HOUSES: Record<number, HouseT> = {
   2: {
     title: "The keeper's house under the light",
     style: "keeper",
+    layout: "hall",
     items: {},
     rooms: [
       { id: "verandah", name: "The long verandah", kind: "parlour", role: "trap" },
+      { id: "keeperbed", name: "The keeper's bedroom", kind: "bedroom", role: "safe" },
+      { id: "oil", name: "The oil store", kind: "storeroom", role: "trap" },
       {
         id: "clock", name: "The clock room", kind: "library", role: "trap",
         objects: [{ id: "stopped", kind: "clock", label: "A tall clock", look: "Its hands stopped at a quarter to ten" }],
@@ -45,12 +52,15 @@ const HOUSES: Record<number, HouseT> = {
   3: {
     title: "St Colman's tower",
     style: "stone",
+    layout: "gallery",
     items: {},
     rooms: [
       { id: "sacristy", name: "The sacristy", kind: "storeroom", role: "safe" },
       { id: "ringers", name: "The ringers' room", kind: "chapel", role: "trap" },
       { id: "carillon", name: "The carillon", kind: "chapel", role: "right" },
       { id: "organ", name: "The organ loft", kind: "library", role: "trap" },
+      { id: "choir", name: "The choir room", kind: "parlour", role: "trap" },
+      { id: "bishop", name: "The bishop's study", kind: "study", role: "safe" },
     ],
   },
   // Chapter 4: Lars "on the old ketch, the one with the green hull"; the painted houses, red and yellow and blue. The
@@ -58,8 +68,10 @@ const HOUSES: Record<number, HouseT> = {
   4: {
     title: "The painted house on the canal",
     style: "cottage",
+    layout: "gallery",
     items: {},
     rooms: [
+      { id: "attic", name: "The attic", kind: "storeroom", role: "safe" },
       { id: "red", name: "The red room", kind: "parlour", role: "safe" },
       { id: "yellow", name: "The yellow room", kind: "kitchen", role: "trap" },
       { id: "green", name: "The green room", kind: "study", role: "right" },
@@ -71,8 +83,10 @@ const HOUSES: Record<number, HouseT> = {
   5: {
     title: "The fortress barracks",
     style: "fort",
+    layout: "court",
     items: {},
     rooms: [
+      { id: "mess", name: "The officers' mess", kind: "parlour", role: "safe" },
       { id: "cannon", name: "The cannon room", kind: "storeroom", role: "trap" },
       { id: "kitchen", name: "The barracks kitchen", kind: "kitchen", role: "safe" },
       { id: "dock", name: "The dry-dock office", kind: "study", role: "trap" },
@@ -88,6 +102,7 @@ const HOUSES: Record<number, HouseT> = {
   6: {
     title: "The light-keepers' house at the cape",
     style: "keeper",
+    layout: "hall",
     items: {},
     rooms: [
       { id: "lamp", name: "The lamp room", kind: "study", role: "trap" },
@@ -106,6 +121,7 @@ const HOUSES: Record<number, HouseT> = {
   7: {
     title: "The Lion Battery",
     style: "fort",
+    layout: "court",
     items: {},
     rooms: [
       { id: "lookout", name: "The lookout at the top", kind: "study", role: "trap" },

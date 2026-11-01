@@ -102,6 +102,12 @@ try {
   const afterTap = await until(async () => (await say()) !== before && (await say()), 10000);
   check("a real tap in the house hits something and the hunter goes", !!afterTap, afterTap ?? "nothing");
   await wait(800);
+  // The tap may have opened a trap room (the floor plan depends on the house): dodge it and wait out the shut doors.
+  if (await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Dodge the trap"]')), 3000)) {
+    const first = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data.house_dodge.answer;
+    await page.evaluate((n) => document.querySelectorAll('[aria-label="Dodge the trap"] button')[n - 1].click(), first);
+    await wait(3800);
+  }
   await page.evaluate(() => document.querySelector('[aria-label="Closer"]')?.click());
 
   // 2. Locked; a trap

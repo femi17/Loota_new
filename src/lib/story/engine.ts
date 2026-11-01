@@ -25,7 +25,8 @@ export const FOUND_M = 1500;
  * by the lighthouse) is a wrong answer, not a second right one.
  */
 export const EXACT_M = 120;
-const DECOY_MARGIN_M = 100;
+/** How far past the key's reach a decoy must be: its trap reaches 100 m, so it never touches the key's own spot. */
+const DECOY_MARGIN_M = 200;
 /** How near counts for a key: its own radius, or 120 m. */
 export const radiusOf = (answer: { radius?: number }) => Math.min(400, Math.max(60, answer.radius ?? EXACT_M));
 

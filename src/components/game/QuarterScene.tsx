@@ -84,6 +84,11 @@ export function QuarterScene({
   const [say, setSay] = useState<string>("Walk about: tap the street or a plot (or its name below). When you think you know where the key is buried, stand on that plot and dig.");
   const [standing, setStanding] = useState(-1); // the plot the hunter is on (-1: the street)
   const [wide, setWide] = useState(false); // the whole quarter asked for
+  // The joystick (owner, 1 Nov 2026: "a joystick on mobile to move and turn"): on touch screens; where the thumb is,
+  // −1 to 1 each way (y down), read by the walking every frame.
+  const joy = useRef({ x: 0, y: 0 });
+  const [touch] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true);
+  const [thumb, setThumb] = useState<{ x: number; y: number } | null>(null);
   const wideRef = useRef(wide);
   useEffect(() => {
     wideRef.current = wide;
@@ -209,6 +214,7 @@ export function QuarterScene({
       const head = root?.querySelector<HTMLElement>("[data-house-head]")?.offsetHeight ?? 0;
       const bottom = root?.querySelector<HTMLElement>("[data-house-foot]")?.offsetHeight ?? 0;
       root?.style.setProperty("--house-head", `${head}px`);
+      root?.style.setProperty("--house-foot", `${bottom}px`);
       const top = Math.round(head * 0.55);
       Object.assign(screen, { w, h, top, free: Math.max(120, h - top - bottom) });
     };
@@ -348,12 +354,22 @@ export function QuarterScene({
     let raf = 0;
     let last = performance.now();
     let lastPlot = -2;
+    let lastShown = 0;
     let stepping = false;
     const frame = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       for (let j = fx.length - 1; j >= 0; j--) if (fx[j](now)) fx.splice(j, 1);
       let moved = 0;
+      // Steering (the joystick or the keys): it takes over from a walk to a tapped spot.
+      const stick = joy.current;
+      const steering = keys.size > 0 || Math.hypot(stick.x, stick.y) > 0.15;
+      if (steering && path.length && !busyRef.current) {
+        path = [];
+        const done = arrive;
+        arrive = null;
+        done?.();
+      }
       const next = path[0];
       if (next) {
         const dx = next.x - av.root.position.x, dz = next.z - av.root.position.z;
@@ -375,25 +391,35 @@ export function QuarterScene({
           av.root.rotation.y = Math.atan2(dx, dz);
           moved = step;
         }
-      } else if (keys.size && !busyRef.current && !stepping) {
+      } else if (steering && !busyRef.current && !stepping) {
+        // Where the screen points (up is away from you): full speed from the keys, the joystick as far as it's pushed.
         const dir = new THREE.Vector3();
-        if (keys.has("u")) dir.add(ahead);
-        if (keys.has("d")) dir.sub(ahead);
-        if (keys.has("r")) dir.add(rightward);
-        if (keys.has("l")) dir.sub(rightward);
+        let pace = 1;
+        if (keys.size) {
+          if (keys.has("u")) dir.add(ahead);
+          if (keys.has("d")) dir.sub(ahead);
+          if (keys.has("r")) dir.add(rightward);
+          if (keys.has("l")) dir.sub(rightward);
+        } else {
+          dir.addScaledVector(ahead, -stick.y).addScaledVector(rightward, stick.x);
+          pace = Math.min(1, Math.hypot(stick.x, stick.y));
+        }
         if (dir.lengthSq() > 0) {
-          dir.normalize().multiplyScalar(SPEED * dt);
+          dir.normalize();
+          av.root.rotation.y = Math.atan2(dir.x, dir.z); // turn to face the way, even against a hedge
+          dir.multiplyScalar(SPEED * pace * dt);
           const from = { x: av.root.position.x, z: av.root.position.z };
-          const to = { x: from.x + dir.x, z: from.z + dir.z };
           const locked = (i: number) => viewRef.current?.rooms[i]?.locked === true;
-          if (walkable(plan, from, to, locked)) {
+          // Straight on, or sliding along a hedge or the kerb.
+          const tries = [{ x: from.x + dir.x, z: from.z + dir.z }, { x: from.x + dir.x, z: from.z }, { x: from.x, z: from.z + dir.z }];
+          const to = tries.find((t) => (t.x !== from.x || t.z !== from.z) && walkable(plan, from, t, locked));
+          if (to) {
+            moved = Math.hypot(to.x - from.x, to.z - from.z);
             av.root.position.x = to.x;
             av.root.position.z = to.z;
-            av.root.rotation.y = Math.atan2(dir.x, dir.z);
-            moved = dir.length();
           } else {
-            const into = roomAt(plan, to);
-            if (into >= 0 && locked(into) && dist(to, plan.rooms[into].door) < 1.3) setSay(`🔒 ${viewRef.current?.rooms[into]?.name}: the gate is shut. Tap it.`);
+            const into = roomAt(plan, tries[0]);
+            if (into >= 0 && locked(into) && dist(tries[0], plan.rooms[into].door) < 1.3) setSay(`🔒 ${viewRef.current?.rooms[into]?.name}: the gate is shut. Tap it.`);
           }
         }
       }
@@ -401,6 +427,10 @@ export function QuarterScene({
 
       // Onto a plot or off it: tell the server; the camera frames the plot, or follows the hunter on the street.
       const at = { x: av.root.position.x, z: av.root.position.z };
+      if (now - lastShown > 250) {
+        lastShown = now;
+        el.parentElement?.setAttribute("data-at", `${at.x.toFixed(2)},${at.z.toFixed(2)}`); // where the hunter is (tests read it)
+      }
       const here = roomAt(plan, at);
       if (here !== lastPlot) {
         const was = lastPlot;
@@ -675,6 +705,46 @@ export function QuarterScene({
           </p>
         )}
       </div>
+      {touch && view && (
+        <div
+          className="absolute left-4 z-10 size-32 touch-none select-none rounded-full bg-ink/45 ring-2 ring-paper/25 backdrop-blur-[2px]"
+          style={{ bottom: "calc(var(--house-foot, 7rem) + 0.75rem)" }}
+          role="group"
+          aria-label="Joystick: drag to walk and turn"
+          data-joystick
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            const r = e.currentTarget.getBoundingClientRect();
+            const move = (cx: number, cy: number) => {
+              const rad = r.width / 2;
+              let x = (cx - (r.left + rad)) / rad, y = (cy - (r.top + rad)) / rad;
+              const m = Math.hypot(x, y);
+              if (m > 1) [x, y] = [x / m, y / m];
+              joy.current = { x, y };
+              setThumb({ x, y });
+            };
+            move(e.clientX, e.clientY);
+            const el = e.currentTarget;
+            const onMove = (ev: PointerEvent) => move(ev.clientX, ev.clientY);
+            const onUp = () => {
+              joy.current = { x: 0, y: 0 };
+              setThumb(null);
+              el.removeEventListener("pointermove", onMove);
+              el.removeEventListener("pointerup", onUp);
+              el.removeEventListener("pointercancel", onUp);
+            };
+            el.addEventListener("pointermove", onMove);
+            el.addEventListener("pointerup", onUp);
+            el.addEventListener("pointercancel", onUp);
+          }}
+        >
+          <span
+            className="pointer-events-none absolute left-1/2 top-1/2 size-14 rounded-full bg-paper/90 shadow-lg ring-4 ring-gold/70"
+            style={{ transform: `translate(calc(-50% + ${(thumb?.x ?? 0) * 36}px), calc(-50% + ${(thumb?.y ?? 0) * 36}px))` }}
+            aria-hidden="true"
+          />
+        </div>
+      )}
       <div className="absolute inset-x-0 bottom-0 flex flex-col" data-house-foot>
         {canDig && (
           <button

@@ -354,6 +354,17 @@ export function GameMap({
   // next junction (as ← →), pulled back to turn round (as ↓). Once per push; back to the middle to push again.
   const handheld = useHandheld();
   const joy = useRef({ go: false, side: 0, back: false, backOk: true });
+  // The message bar's height: what can be done here sits just above it while it shows, never over it (owner, 2 Nov
+  // 2026: the message was "showing under the action button, user cannot fully read what it says").
+  const [hintH, setHintH] = useState(0);
+  const hintSeen = useRef<ResizeObserver | null>(null);
+  const hintRef = useCallback((el: HTMLParagraphElement | null) => {
+    hintSeen.current?.disconnect();
+    hintSeen.current = null;
+    if (!el) return;
+    hintSeen.current = new ResizeObserver(() => setHintH(el.offsetHeight));
+    hintSeen.current.observe(el);
+  }, []);
   const actions = useRef<{
     vehicles: () => OwnedVehicle[];
     ride: (kind: VehicleKind, how: "own" | "rent" | "buy", addons?: AddonId[]) => void;
@@ -9079,10 +9090,11 @@ export function GameMap({
       )}
 
       <p
+        ref={hintRef}
         role="status"
-        className={`absolute ${
+        className={`absolute z-20 ${
           joyShown
-            ? "bottom-[112px] left-3 right-3 sm:bottom-[100px]" // in the street's place (the bottom row is full)
+            ? "bottom-[120px] left-3 right-3 sm:bottom-[100px]" // in the street's place (the bottom row is full)
             : `bottom-9 left-3 ${hud.ride || hud.care ? "right-3" : canSprint(hud.mode) ? "right-[176px]" : "right-[96px]"}` // clear of CRUISE (and SPRINT)
         } rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
           hud.alert ? "ring-2 ring-gold" : ""
@@ -9472,8 +9484,10 @@ export function GameMap({
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
       {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || hud.heat?.house) && (
         <div
-          className={`pointer-events-none absolute inset-x-3 ${joyShown && hinting ? "bottom-[184px] sm:bottom-[172px]" : "bottom-[156px] sm:bottom-[144px]"} flex flex-wrap items-end justify-center gap-2`}
-          style={{ marginBottom: "env(safe-area-inset-bottom)" }}
+          className={`pointer-events-none absolute inset-x-3 ${
+            joyShown && hinting ? "bottom-[calc(120px+var(--hint-h)+8px)] sm:bottom-[calc(100px+var(--hint-h)+8px)]" : "bottom-[156px] sm:bottom-[144px]"
+          } flex flex-wrap items-end justify-center gap-2`}
+          style={{ marginBottom: "env(safe-area-inset-bottom)", ["--hint-h" as string]: `${hintH}px` }}
           onPointerDownCapture={hereDown}
           onClickCapture={hereClick}
         >

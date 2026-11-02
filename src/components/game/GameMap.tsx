@@ -5963,7 +5963,12 @@ export function GameMap({
             if (st.kind !== "train" && st.kind !== "plane") continue;
             const { door } = ticketDoor(st);
             const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]);
-            here = { kind: st.kind, name: st.kind === "plane" ? st.name : `${st.name} station`, away: away <= TICKET_AT_M ? 0 : Math.round(away / 10) * 10 };
+            // An airport's Check in only once a flight from it is chosen in the travel panel: never just for being
+            // near (an airport reaches 2 km) or having landed there (owner, 2 Nov 2026: following the Lamp near the
+            // airport "it changed to airport check in… when I land in any airport, the check in action button should be
+            // removed. It confuses users").
+            const wanted = st.kind !== "plane" || pendingTicket?.from.id === st.id;
+            if (wanted) here = { kind: st.kind, name: st.kind === "plane" ? st.name : `${st.name} station`, away: away <= TICKET_AT_M ? 0 : Math.round(away / 10) * 10 };
             station = st;
             at = door;
             if (!boards.has(st.id)) {

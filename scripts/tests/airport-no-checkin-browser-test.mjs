@@ -1,7 +1,8 @@
-// The message bar never under what can be done here (owner, 2 Nov 2026: the message was "showing under the action
-// button, user cannot fully read what it says before it goes off"). On a phone (with the joystick), at the airport's
-// check-in desk: while a message shows, it's on top and the 🛫 Check in button sits wholly above it.
-// The test player is deleted.   SHOTS=<folder> node scripts/tests/map-message-actions-browser-test.mjs
+// No Check in at an airport unless a flight was chosen (owner, 2 Nov 2026: following the Lamp near the airport "it
+// changed to airport check in… when I land in any airport, the check in action button should be removed. It confuses
+// users"). On a phone, standing by Lagos airport's check-in desk with no flight chosen: messages come and go, and no
+// 🛫 Check in button shows. (A flight chosen in the travel panel, then Check in: ticket-office-browser-test.mjs.)
+// The test player is deleted.   SHOTS=<folder> node scripts/tests/airport-no-checkin-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 const app = createRequire(new URL("../../package.json", import.meta.url));
@@ -38,26 +39,22 @@ try {
   await page.evaluateOnNewDocument((uid) => { try { localStorage.setItem(`loota:welcome:${uid}`, "1"); } catch {} }, id);
   await page.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
 
-  // Wait for the Check in button and a message at the same time.
-  let seen = null;
-  for (let t = 0; t < 120 && !seen; t++) {
+  // Watch for 25 s once the roads are in: never a Check in button.
+  for (let t = 0; t < 60 && !(await page.evaluate(() => window.__lootaRoad?.() ?? null)); t++) await wait(500);
+  let shown = null, said = "";
+  for (let t = 0; t < 50; t++) {
     await wait(500);
     await page.evaluate(() => document.querySelector('[aria-label="A hunt is live"] button[aria-label="Not now"]')?.click());
-    seen = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll("button")].find((b) => /Check in/.test(b.textContent ?? ""));
-      const msg = document.querySelector('p[role="status"]');
-      if (!btn || !msg || getComputedStyle(msg).visibility === "hidden" || !msg.textContent?.trim()) return null;
-      const b = btn.getBoundingClientRect(), m = msg.getBoundingClientRect();
-      const top = document.elementFromPoint(m.left + m.width / 2, m.top + 6);
-      return { btnBottom: Math.round(b.bottom), msgTop: Math.round(m.top), msgOnTop: !!top && msg.contains(top), text: msg.textContent.trim().slice(0, 80) };
-    });
+    const now = await page.evaluate(() => ({
+      btn: [...document.querySelectorAll("button")].find((b) => /Check in/.test(b.textContent ?? ""))?.textContent ?? null,
+      msg: document.querySelector('p[role="status"]')?.textContent?.trim() ?? "",
+    }));
+    if (now.msg) said = now.msg;
+    if (now.btn) shown = now.btn;
   }
-  await page.screenshot({ path: `${OUT}/map-message-actions.png` });
-  check("at the check-in desk: Check in and a message together", !!seen, seen?.text ?? "never both");
-  if (seen) {
-    check("…Check in sits wholly above the message", seen.btnBottom <= seen.msgTop, `button ends ${seen.btnBottom}, message starts ${seen.msgTop}`);
-    check("…and nothing covers the message", seen.msgOnTop);
-  }
+  await page.screenshot({ path: `${OUT}/airport-no-checkin.png` });
+  check("by the airport's desk with no flight chosen: no Check in button", !shown, shown ?? `last message: ${said.slice(0, 80)}`);
+  check("…and the airport's roads loaded (the test stood there)", !!(await page.evaluate(() => window.__lootaRoad?.() ?? null)));
 } catch (e) {
   fails++;
   console.log("ERROR", e);

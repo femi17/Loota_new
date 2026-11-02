@@ -89,7 +89,7 @@ try {
   await admin.from("hunt_players").update({ house_out_until: null }).eq("hunt_id", hunt).eq("user_id", uid);
   await rpc("house_enter", { p_room: "kitchen" });
   const { data: hpLate } = await admin.from("hunt_players").select("house_dodge").eq("hunt_id", hunt).eq("user_id", uid).single();
-  await admin.from("hunt_players").update({ house_dodge: { ...hpLate.house_dodge, until: new Date(Date.now() - 1000).toISOString() } }).eq("hunt_id", hunt).eq("user_id", uid);
+  await admin.from("hunt_players").update({ house_dodge: { ...hpLate.house_dodge, until: new Date(Date.now() - 30_000).toISOString() } }).eq("hunt_id", hunt).eq("user_id", uid); // (well past: this computer's clock may lag the server's)
   const late = await rpc("house_dodge", { p_choice: hpLate.house_dodge.answer });
   check("…the right answer too late: the trap springs", late.dodged === false && late.late === true && late.penalty?.tier === "soft");
   await admin.from("hunt_players").update({ house_out_until: null }).eq("hunt_id", hunt).eq("user_id", uid);

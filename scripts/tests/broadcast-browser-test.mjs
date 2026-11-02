@@ -1,6 +1,8 @@
 // The broadcast screen (design doc 11), on a laptop-size screen as the owner: a live test hunt with two hunters (one in
 // a Key Trial): the title card, the leaderboard (with TRIAL), a dot and name for each hunter on the map, the ticker;
-// clicking a name follows them (the 3D avatar up close). The hunt, the hunters and the owner account are deleted.
+// clicking a name follows them (the 3D avatar up close). Then, with the screen open, the newer moments reach the
+// ticker (owner, 2 Nov 2026): a story trap sprung with its penalty (one line), the chest dug up in the key's quarter, a
+// faint (the ambulance) and a Lamp prize. The hunt, its log, the hunters and the owner account are deleted.
 //   SHOTS=<folder> node scripts/tests/broadcast-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -38,7 +40,10 @@ try {
   const { data: hunt, error } = await admin.from("hunts").insert({ title: "Broadcast test (automated)", prize: "₦50,000", winners: 1, starts_at: ago(3600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true }).select("id").single();
   if (error) throw error;
   huntId = hunt.id;
-  await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "Where?", category: "general", trial_kind: "sentries", area_lng: 3.38, area_lat: 6.52, area_radius_m: 1500, spot_lng: 3.38, spot_lat: 6.52, exact_m: 120 });
+  const house = { title: "The test quarter", style: "lagos", layout: "court", items: {}, rooms: [{ id: "well", name: "The old well", kind: "cellar", role: "right" }, { id: "stall", name: "The stall", kind: "kitchen", role: "safe" }] };
+  await admin.from("hunt_keys").insert({ hunt_id: huntId, n: 1, riddle: "Where?", category: "general", trial_kind: "sentries", area_lng: 3.38, area_lat: 6.52, area_radius_m: 1500, spot_lng: 3.38, spot_lat: 6.52, exact_m: 120, house });
+  const { data: decoy } = await admin.from("hunt_decoys").insert({ hunt_id: huntId, key_n: 1, place: "the wrong lighthouse", lng: 3.39, lat: 6.51, radius_m: 100 }).select("id").single();
+  const { data: pen } = await admin.from("penalties").select("code, title").eq("active", true).limit(1).single();
   await admin.from("hunt_players").insert([{ hunt_id: huntId, user_id: a.id, joined_at: ago(600) }, { hunt_id: huntId, user_id: b.id, joined_at: ago(500) }]);
   await admin.from("trial_attempts").insert({ hunt_id: huntId, user_id: b.id, key_n: 1, status: "active", started_at: ago(20), kind: "sentries", questions: [] }).then(({ error: e }) => e && console.log("(trial row:", e.message, ")"));
 
@@ -70,13 +75,39 @@ try {
   await wait(5000);
   check("clicking a name follows them", (await body()).includes(`Following ${names[a.id]}`));
   await page.screenshot({ path: `${OUT}/broadcast-2-follow.png` });
+
+  // The newer moments, as they happen (the game's own records changed as its functions do)
+  await admin.from("hunt_players").update({ decoys_sprung: [decoy.id] }).eq("hunt_id", huntId).eq("user_id", b.id);
+  await admin.from("hunt_players").update({ last_penalty: pen.code, penalties_taken: 1 }).eq("hunt_id", huntId).eq("user_id", b.id);
+  await admin.from("hunt_players").update({ house_key: 1, house_dug: "well" }).eq("hunt_id", huntId).eq("user_id", a.id);
+  await admin.from("hospital_visits").upsert({ user_id: a.id, hospital: "Test General Hospital", lng: 3.38, lat: 6.52, bill: 50, approach: null,
+    route: [[3.381, 6.52], [3.38, 6.52]], called_at: ago(1), picked_at: new Date(Date.now() + 60e3).toISOString(), arrives_at: new Date(Date.now() + 120e3).toISOString(), discharged_at: new Date(Date.now() + 180e3).toISOString(), left_at: null });
+  const { data: lamp, error: lampErr } = await admin.from("detours").insert({ kind: "flash", area: "test", title: "Test lamp", story: "x", place_name: "Tejuosho Market", lng: 3.37, lat: 6.51, reward_coins: 10, ends_at: new Date(Date.now() + 600e3).toISOString() }).select("id").single();
+  if (lampErr) console.log("(lamp:", lampErr.message, ")");
+  else await admin.from("detour_claims").insert({ detour_id: lamp.id, user_id: b.id, question: {}, deadline: new Date().toISOString(), outcome: "won", asked_at: ago(2), answered_at: ago(1) });
+  const seenText = new Set();
+  for (let t = 0; t < 30; t++) {
+    await wait(500);
+    for (const line of (await body()).split(" | ")) seenText.add(line);
+  }
+  const all = [...seenText].join(" / ");
+  await page.screenshot({ path: `${OUT}/broadcast-3-moments.png` });
+  check("a story trap sprung, with its penalty, in one line", all.includes(`${names[b.id]} fell for a story trap at the wrong lighthouse: ${pen.title}!`), all.slice(0, 400));
+  check("the chest dug up in the key's quarter", all.includes(`${names[a.id]} dug up the chest at Key 1!`));
+  check("a faint: rushed to hospital", all.includes(`${names[a.id]} fainted from exhaustion and was rushed to Test General Hospital by ambulance`));
+  check("a Lamp prize", all.includes(`${names[b.id]} won the Lamp's prize at Tejuosho Market!`));
+  if (lamp) await admin.from("detours").delete().eq("id", lamp.id);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;
   console.log("ERROR", e);
 } finally {
   await browser?.close();
-  if (huntId) await admin.from("hunts").delete().eq("id", huntId);
+  if (huntId) {
+    await admin.from("hunt_events").delete().eq("hunt_id", huntId);
+    await admin.from("hunts").delete().eq("id", huntId);
+  }
+  for (const id of ids) await admin.from("hospital_visits").delete().eq("user_id", id);
   for (const id of ids) await admin.auth.admin.deleteUser(id);
   console.log(`hunt and test accounts deleted; ${fails ? `${fails} FAILED` : "all passed"}`);
   process.exit(fails ? 1 : 0);

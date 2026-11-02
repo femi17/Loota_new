@@ -364,7 +364,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             <b>{hunt.prize}</b>
           </p>
           <p className="text-sm text-paper/70">
-            {hunt.keys} keys · {hunt.winners} winners · {state?.hunters.length ?? 0} hunters
+            {hunt.keys} {hunt.keys === 1 ? "key" : "keys"} · {hunt.winners} {hunt.winners === 1 ? "winner" : "winners"} · {state?.hunters.length ?? 0}{" "}
+            {state?.hunters.length === 1 ? "hunter" : "hunters"}
             {hunt.phase === "live" ? ` · ends in ${timeLeft(hunt.endsAt, now)}` : ""}
           </p>
           {state?.domes.map((d) => (

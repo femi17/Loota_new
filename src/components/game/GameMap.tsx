@@ -8245,6 +8245,9 @@ export function GameMap({
     const go = Math.hypot(x, y) > 0.3 && !(j.back && !j.backOk);
     if (go !== j.go) controls.current.go = j.go = go;
   };
+  // Shown, it sits bottom left in Sprint and Cruise's row; on a phone the message bar, the street and what can be done here
+  // move up above that row (owner, 2 Nov 2026: "the size of the cruise button… at the same row but only on the left").
+  const joyShown = handheld && !inside && !hud.ride && !hud.care;
   const joyEnd = () => {
     if (joy.current.go) controls.current.go = false;
     joy.current = { go: false, side: 0, back: false, backOk: true };
@@ -9060,7 +9063,7 @@ export function GameMap({
 
       {hud.street && !inside && (
         <div
-          className="pointer-events-none absolute bottom-[112px] left-1/2 sm:bottom-[100px] flex max-w-[calc(100%-200px)] -translate-x-1/2 items-center gap-1.5 rounded-full bg-paper px-4 py-1.5 text-sm font-bold text-ink shadow sm:max-w-md"
+          className={`pointer-events-none absolute ${joyShown ? "bottom-[206px]" : "bottom-[112px]"} left-1/2 sm:bottom-[100px] flex max-w-[calc(100%-200px)] -translate-x-1/2 items-center gap-1.5 rounded-full bg-paper px-4 py-1.5 text-sm font-bold text-ink shadow sm:max-w-md`}
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
           aria-label={`You're on ${hud.street}`}
         >
@@ -9073,8 +9076,10 @@ export function GameMap({
 
       <p
         role="status"
-        className={`absolute bottom-9 left-3 ${
-          hud.ride || hud.care ? "right-3" : canSprint(hud.mode) ? "right-[176px]" : "right-[96px]" // clear of CRUISE (and SPRINT)
+        className={`absolute ${
+          joyShown
+            ? "bottom-[122px] left-3 right-3 sm:bottom-9" // above the joystick's row on a phone
+            : `bottom-9 left-3 ${hud.ride || hud.care ? "right-3" : canSprint(hud.mode) ? "right-[176px]" : "right-[96px]"}` // clear of CRUISE (and SPRINT)
         } rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
           hud.alert ? "ring-2 ring-gold" : ""
         } ${hud.hint && !hud.rush ? "" : "invisible"}`}
@@ -9463,7 +9468,7 @@ export function GameMap({
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
       {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || hud.heat?.house) && (
         <div
-          className="pointer-events-none absolute inset-x-3 bottom-[156px] flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]"
+          className={`pointer-events-none absolute inset-x-3 ${joyShown ? "bottom-[250px]" : "bottom-[156px]"} flex flex-wrap items-end justify-center gap-2 sm:bottom-[144px]`}
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
           onPointerDownCapture={hereDown}
           onClickCapture={hereClick}
@@ -9554,8 +9559,14 @@ export function GameMap({
         </div>
       )}
 
-      {handheld && !inside && !hud.ride && !hud.care && (
-        <Joystick className="absolute bottom-[100px] left-3 sm:left-5" style={{ marginBottom: "env(safe-area-inset-bottom)" }} onMove={joyMove} onEnd={joyEnd} />
+      {joyShown && (
+        <Joystick
+          size={64}
+          className={`absolute left-5 ${canSprint(hud.mode) ? "bottom-11" : "bottom-9"}`}
+          style={{ marginBottom: "env(safe-area-inset-bottom)" }}
+          onMove={joyMove}
+          onEnd={joyEnd}
+        />
       )}
 
       {/* Cruise (owner, 25 Oct 2026): beside Sprint, or in its place on a motorbike or in a car. Wider than a phone, both sit

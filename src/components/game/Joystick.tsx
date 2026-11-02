@@ -26,17 +26,21 @@ export function Joystick({
   onEnd,
   className = "",
   style,
+  size = 112,
 }: {
   onMove: (x: number, y: number) => void;
   onEnd: () => void;
   className?: string;
   style?: CSSProperties;
+  /** Across, in px (the map's is the size of Cruise: owner, 2 Nov 2026). */
+  size?: number;
 }) {
+  const knob = Math.round(size * 0.44), reach = Math.round((size - knob) / 2) - 2;
   const [thumb, setThumb] = useState<{ x: number; y: number } | null>(null);
   return (
     <div
-      className={`pointer-events-auto size-28 touch-none select-none rounded-full bg-ink/45 ring-2 ring-paper/30 backdrop-blur-[2px] ${className}`}
-      style={style}
+      className={`pointer-events-auto touch-none select-none rounded-full bg-ink/80 shadow-lg ring-2 ring-paper/30 ${className}`}
+      style={{ width: size, height: size, ...style }}
       role="group"
       aria-label="Joystick: drag to walk and turn"
       data-joystick
@@ -69,8 +73,8 @@ export function Joystick({
       }}
     >
       <span
-        className="pointer-events-none absolute left-1/2 top-1/2 size-12 rounded-full bg-paper/90 shadow-lg ring-4 ring-gold/70"
-        style={{ transform: `translate(calc(-50% + ${(thumb?.x ?? 0) * 32}px), calc(-50% + ${(thumb?.y ?? 0) * 32}px))` }}
+        className={`pointer-events-none absolute left-1/2 top-1/2 rounded-full bg-paper/90 shadow-lg ${size < 90 ? "ring-[3px]" : "ring-4"} ring-gold/70`}
+        style={{ width: knob, height: knob, transform: `translate(calc(-50% + ${(thumb?.x ?? 0) * reach}px), calc(-50% + ${(thumb?.y ?? 0) * reach}px))` }}
         aria-hidden="true"
       />
     </div>

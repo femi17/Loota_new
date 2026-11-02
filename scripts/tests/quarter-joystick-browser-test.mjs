@@ -3,7 +3,7 @@
 //   1. the joystick shows (bottom left);
 //   2. a finger pushing it walks the hunter (they move several metres), and letting go stops them;
 //   3. it never takes them through a hedge: held long enough, they are still on the street or inside a plot;
-//   4. on a computer it shows too, and dragging it with the mouse walks.
+//   4. on a computer (no touch, a wide window) there is no joystick.
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/quarter-joystick-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -90,20 +90,9 @@ try {
   check("held long to one side: still somewhere walkable", Number.isFinite(end[0]) && Number.isFinite(end[1]), `${end.map((v) => v.toFixed(1)).join(", ")} ${inside ? "" : ""}`);
   await page.screenshot({ path: `${OUT}/joystick-2-after.png` });
 
-  // 4. On a computer too (2 Nov: it was phones only and the owner never saw it), dragged with the mouse
+  // 4. On a computer (owner, 2 Nov 2026: "only needed on tablets and mobile phones")
   const { page: desk } = await open(false);
-  const dstick = await desk.$("[data-joystick]");
-  check("on a computer: the joystick shows too", !!dstick);
-  const db = await dstick.boundingBox();
-  const dx = db.x + db.width / 2, dy = db.y + db.height / 2;
-  const d0 = await at(desk);
-  await desk.mouse.move(dx, dy);
-  await desk.mouse.down();
-  await desk.mouse.move(dx, dy - db.height * 0.45, { steps: 5 });
-  await wait(2000);
-  await desk.mouse.up();
-  const d1 = await at(desk);
-  check("…and dragging it with the mouse walks", Math.hypot(d1[0] - d0[0], d1[1] - d0[1]) > 1.5, `${Math.hypot(d1[0] - d0[0], d1[1] - d0[1]).toFixed(1)} m`);
+  check("on a computer: no joystick", !(await desk.$("[data-joystick]")));
 } catch (e) {
   fails++;
   console.log("ERROR", e);

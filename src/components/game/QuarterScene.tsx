@@ -8,6 +8,7 @@ import { animateAvatar, buildAvatar } from "@/game/models3d";
 import { outTo, roomAt, routeTo, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle, type Plan } from "@/game/house3d";
 import { buildQuarter } from "@/game/quarter3d";
 import type { Penalty } from "./PenaltyCard";
+import { Joystick, useHandheld } from "./Joystick";
 
 type Item = { id: string; name: string; icon: string };
 type QuarterView = {
@@ -81,14 +82,12 @@ export function QuarterScene({
   const [supabase] = useState(createClient);
   const host = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<QuarterView | null>(null);
-  const [say, setSay] = useState<string>("Walk about: drag the joystick, or tap the street or a plot (or its name below). When you think you know where the key is buried, stand on that plot and dig.");
+  const [say, setSay] = useState<string>("Walk about: tap the street or a plot (or its name below). When you think you know where the key is buried, stand on that plot and dig.");
   const [standing, setStanding] = useState(-1); // the plot the hunter is on (-1: the street)
   const [wide, setWide] = useState(false); // the whole quarter asked for
-  // The joystick (owner, 1 Nov 2026: "a joystick on mobile to move and turn"): on every screen (2 Nov: the owner's
-  // phone didn't count as a touch screen, so it never showed); where the thumb is, −1 to 1 each way (y down), read by
-  // the walking every frame.
+  // The joystick on phones and tablets (Joystick.tsx): where the thumb is, read by the walking every frame.
   const joy = useRef({ x: 0, y: 0 });
-  const [thumb, setThumb] = useState<{ x: number; y: number } | null>(null);
+  const handheld = useHandheld();
   const wideRef = useRef(wide);
   useEffect(() => {
     wideRef.current = wide;
@@ -705,45 +704,13 @@ export function QuarterScene({
           </p>
         )}
       </div>
-      {view && (
-        <div
-          className="absolute left-4 z-10 size-32 touch-none select-none rounded-full bg-ink/45 ring-2 ring-paper/25 backdrop-blur-[2px]"
+      {handheld && view && (
+        <Joystick
+          className="absolute left-4 z-10"
           style={{ bottom: "calc(var(--house-foot, 7rem) + 0.75rem)" }}
-          role="group"
-          aria-label="Joystick: drag to walk and turn"
-          data-joystick
-          onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
-            const r = e.currentTarget.getBoundingClientRect();
-            const move = (cx: number, cy: number) => {
-              const rad = r.width / 2;
-              let x = (cx - (r.left + rad)) / rad, y = (cy - (r.top + rad)) / rad;
-              const m = Math.hypot(x, y);
-              if (m > 1) [x, y] = [x / m, y / m];
-              joy.current = { x, y };
-              setThumb({ x, y });
-            };
-            move(e.clientX, e.clientY);
-            const el = e.currentTarget;
-            const onMove = (ev: PointerEvent) => move(ev.clientX, ev.clientY);
-            const onUp = () => {
-              joy.current = { x: 0, y: 0 };
-              setThumb(null);
-              el.removeEventListener("pointermove", onMove);
-              el.removeEventListener("pointerup", onUp);
-              el.removeEventListener("pointercancel", onUp);
-            };
-            el.addEventListener("pointermove", onMove);
-            el.addEventListener("pointerup", onUp);
-            el.addEventListener("pointercancel", onUp);
-          }}
-        >
-          <span
-            className="pointer-events-none absolute left-1/2 top-1/2 size-14 rounded-full bg-paper/90 shadow-lg ring-4 ring-gold/70"
-            style={{ transform: `translate(calc(-50% + ${(thumb?.x ?? 0) * 36}px), calc(-50% + ${(thumb?.y ?? 0) * 36}px))` }}
-            aria-hidden="true"
-          />
-        </div>
+          onMove={(x, y) => (joy.current = { x, y })}
+          onEnd={() => (joy.current = { x: 0, y: 0 })}
+        />
       )}
       <div className="absolute inset-x-0 bottom-0 flex flex-col" data-house-foot>
         {canDig && (

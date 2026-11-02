@@ -51,6 +51,7 @@ import { local, peopleOf, setCountry, words, type Role } from "@/game/locale";
 import { RadioPanel, useRadio } from "./RadioPanel";
 import { PenaltyCard, type Penalty } from "./PenaltyCard";
 import { QuarterScene } from "./QuarterScene";
+import { Joystick, useHandheld } from "./Joystick";
 import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -349,6 +350,10 @@ export function GameMap({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const controls = useRef({ go: false, sprint: false });
+  // The joystick on phones and tablets (owner, 2 Nov 2026): push it any way to walk; to the left or right to turn at the
+  // next junction (as ← →), pulled back to turn round (as ↓). Once per push; back to the middle to push again.
+  const handheld = useHandheld();
+  const joy = useRef({ go: false, side: 0, back: false, backOk: true });
   const actions = useRef<{
     vehicles: () => OwnedVehicle[];
     ride: (kind: VehicleKind, how: "own" | "rent" | "buy", addons?: AddonId[]) => void;
@@ -8227,6 +8232,23 @@ export function GameMap({
   const chip = "pointer-events-auto flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold";
   /** Something to do right here (above the street name). */
   const here = "pointer-events-auto flex h-10 items-center rounded-full bg-gold px-3.5 text-sm font-bold text-ink shadow-lg disabled:opacity-50";
+  const joyMove = (x: number, y: number) => {
+    const j = joy.current;
+    const side = x > 0.55 ? 1 : x < -0.55 ? -1 : 0;
+    if (side && side !== j.side) actions.current?.turn(side);
+    if (!side && Math.abs(x) < 0.3) j.side = 0;
+    else if (side) j.side = side;
+    const back = y > 0.55 && y > Math.abs(x);
+    if (back && !j.back) j.backOk = actions.current?.turnAround() !== false; // not on a one-way street in a vehicle
+    if (back) j.back = true;
+    else if (y < 0.2) [j.back, j.backOk] = [false, true];
+    const go = Math.hypot(x, y) > 0.3 && !(j.back && !j.backOk);
+    if (go !== j.go) controls.current.go = j.go = go;
+  };
+  const joyEnd = () => {
+    if (joy.current.go) controls.current.go = false;
+    joy.current = { go: false, side: 0, back: false, backOk: true };
+  };
   const distanceText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
@@ -9530,6 +9552,10 @@ export function GameMap({
             </button>
           ))}
         </div>
+      )}
+
+      {handheld && !inside && !hud.ride && !hud.care && (
+        <Joystick className="absolute bottom-[100px] left-3 sm:left-5" style={{ marginBottom: "env(safe-area-inset-bottom)" }} onMove={joyMove} onEnd={joyEnd} />
       )}
 
       {/* Cruise (owner, 25 Oct 2026): beside Sprint, or in its place on a motorbike or in a car. Wider than a phone, both sit

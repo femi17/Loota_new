@@ -9565,8 +9565,8 @@ export function GameMap({
 
       {joyShown && (
         <Joystick
-          size={64}
-          className={`absolute right-5 sm:right-[80px] ${canSprint(hud.mode) ? "bottom-11" : "bottom-9"}`}
+          size={84}
+          className="absolute bottom-7 right-5 sm:right-[80px]"
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
           onMove={joyMove}
           onEnd={joyEnd}

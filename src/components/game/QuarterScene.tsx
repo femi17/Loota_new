@@ -81,13 +81,13 @@ export function QuarterScene({
   const [supabase] = useState(createClient);
   const host = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<QuarterView | null>(null);
-  const [say, setSay] = useState<string>("Walk about: tap the street or a plot (or its name below). When you think you know where the key is buried, stand on that plot and dig.");
+  const [say, setSay] = useState<string>("Walk about: drag the joystick, or tap the street or a plot (or its name below). When you think you know where the key is buried, stand on that plot and dig.");
   const [standing, setStanding] = useState(-1); // the plot the hunter is on (-1: the street)
   const [wide, setWide] = useState(false); // the whole quarter asked for
-  // The joystick (owner, 1 Nov 2026: "a joystick on mobile to move and turn"): on touch screens; where the thumb is,
-  // −1 to 1 each way (y down), read by the walking every frame.
+  // The joystick (owner, 1 Nov 2026: "a joystick on mobile to move and turn"): on every screen (2 Nov: the owner's
+  // phone didn't count as a touch screen, so it never showed); where the thumb is, −1 to 1 each way (y down), read by
+  // the walking every frame.
   const joy = useRef({ x: 0, y: 0 });
-  const [touch] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true);
   const [thumb, setThumb] = useState<{ x: number; y: number } | null>(null);
   const wideRef = useRef(wide);
   useEffect(() => {
@@ -705,7 +705,7 @@ export function QuarterScene({
           </p>
         )}
       </div>
-      {touch && view && (
+      {view && (
         <div
           className="absolute left-4 z-10 size-32 touch-none select-none rounded-full bg-ink/45 ring-2 ring-paper/25 backdrop-blur-[2px]"
           style={{ bottom: "calc(var(--house-foot, 7rem) + 0.75rem)" }}

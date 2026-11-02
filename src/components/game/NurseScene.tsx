@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import type { VehicleKind } from "@/game/economy";
@@ -9,6 +9,73 @@ import type { VehicleKind } from "@/game/economy";
 export type Discharge = { hospital: string | null; nurse: string; bill: number; energy: number; damaged: VehicleKind | null };
 
 const VEHICLE: Record<VehicleKind, string> = { bicycle: "bicycle", motorbike: "motorbike", car: "car" };
+
+/** Being treated: where (null: by the road), who, the bill, and when it's over (this device's clock, ms). */
+export type Treatment = { hospital: string | null; nurse: string; bill: number; until: number; total: number };
+
+/**
+ * On the bed being treated, from the moment the ambulance arrives (owner, 2 Nov 2026: "immediately the ambulance stops
+ * there, the scene should appear, you lying on the bed receiving treatments"); or on the ground with the paramedics.
+ * No leaving until it's over: then the nurse's goodbye (NurseScene).
+ */
+export function TreatmentScene({ treatment, you }: { treatment: Treatment; you: AvatarLook }) {
+  const ward = !!treatment.hospital;
+  const hospital = treatment.hospital === "Hospital" ? "the hospital" : treatment.hospital;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const left = Math.max(0, Math.ceil((treatment.until - now) / 1000));
+  const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  const [asked, setAsked] = useState<string[]>([]);
+  const [lines, setLines] = useState<SceneLine[]>([
+    {
+      who: "them",
+      text: ward
+        ? `Lie still, you're safe now. You fainted from exhaustion and the ambulance brought you to ${hospital}. I'm putting up a drip to get your strength back.`
+        : "Stay down, stay still. You fainted from exhaustion, so we're treating you right here: a drip and some water, and you'll be up soon.",
+    },
+  ]);
+  const ask = (key: string, question: string, answer: string) => {
+    setAsked((a) => [...a, key]);
+    setLines((l) => [...l, { who: "you", text: question }, { who: "them", text: answer }]);
+  };
+  const choices: SceneChoice[] = [
+    ...(asked.includes("long")
+      ? []
+      : [{ label: "How long will I be here?", onPick: () => ask("long", "How long will I be here?", `Not long: about ${clock} more. Rest, and you'll be back on your feet.`) }]),
+    ...(asked.includes("bill")
+      ? []
+      : [
+          {
+            label: "How much is this?",
+            onPick: () => ask("bill", "How much is this?", `${treatment.bill} coins, and it's already paid. ${ward ? "The ambulance is part of it." : "Our call-out is part of it."}`),
+          },
+        ]),
+  ];
+  return (
+    <EventScene
+      stage={ward ? "hospital" : "roadside"}
+      title={ward ? `At ${hospital}` : "The paramedics"}
+      sign={treatment.hospital ?? "The paramedics"}
+      them={{
+        name: treatment.nurse,
+        look: ward
+          ? { ...keeperLook(treatment.nurse), hair: "bun", topColour: "#F4F1EA", bottomsColour: "#F4F1EA", extra: "none" }
+          : { ...keeperLook(treatment.nurse), topColour: "#1E9E62", bottomsColour: "#1E9E62", extra: "cap" },
+      }}
+      you={you}
+      lines={lines}
+      choices={choices}
+      work={{ left, total: treatment.total }}
+      workText={{ going: "Back on your feet in", done: "Nearly done…", label: "Being treated" }}
+      world
+      leaveLabel={null}
+      onClose={() => {}}
+    />
+  );
+}
 
 /** The nurse at the door (or the paramedic by the road): what happened, the bill, and some advice for the road. */
 export function NurseScene({

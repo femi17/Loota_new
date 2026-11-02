@@ -44,6 +44,7 @@ export function EventScene({
   overlay = null,
   world = false,
   leaveLabel = "Walk out",
+  workText = { going: "Ready in", done: "Ready!", label: "Repair under way" },
   countdown = null,
   game = null,
   onClose,
@@ -70,8 +71,10 @@ export function EventScene({
    * bubbles don't cover the scene (owner: "the text speech covers most part of the scene").
    */
   world?: boolean;
-  /** In the world, the button that leaves ("Walk out" of a place; on the road, "Ride on"). */
-  leaveLabel?: string;
+  /** In the world, the button that leaves ("Walk out" of a place; on the road, "Ride on"); null: no leaving yet. */
+  leaveLabel?: string | null;
+  /** The work bar's words: while it fills, when it's full, and what it is. */
+  workText?: { going: string; done: string; label: string };
   /** A question against the clock (in the world): seconds left of the total. */
   countdown?: { left: number; total: number } | null;
   /** A game being played (a chess board, the cups, cards), between what they say and the replies. */
@@ -141,9 +144,11 @@ export function EventScene({
         >
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate font-display text-sm font-extrabold text-gold">{sign || title}</span>
-            <button type="button" onClick={onClose} aria-label="Leave" className="flex h-8 items-center rounded-lg border border-line px-2.5 text-xs font-bold text-paper">
-              {leaveLabel}
-            </button>
+            {leaveLabel !== null && (
+              <button type="button" onClick={onClose} aria-label="Leave" className="flex h-8 items-center rounded-lg border border-line px-2.5 text-xs font-bold text-paper">
+                {leaveLabel}
+              </button>
+            )}
           </div>
           {/* What they say: the dialogue box */}
           {themText !== null && (
@@ -154,11 +159,11 @@ export function EventScene({
             </p>
           )}
           {work && work.total > 0 && (
-            <div className="flex items-center gap-2" aria-label="Repair under way">
+            <div className="flex items-center gap-2" aria-label={workText.label}>
               <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-ink-2">
                 <div className="h-full rounded-full bg-gold transition-[width] duration-1000" style={{ width: `${Math.round((100 * (work.total - work.left)) / work.total)}%` }} />
               </div>
-              <span className="text-xs text-muted">{work.left > 0 ? `Ready in ${Math.floor(work.left / 60)}:${String(work.left % 60).padStart(2, "0")}` : "Ready!"}</span>
+              <span className="text-xs text-muted">{work.left > 0 ? `${workText.going} ${Math.floor(work.left / 60)}:${String(work.left % 60).padStart(2, "0")}` : workText.done}</span>
             </div>
           )}
           {game}
@@ -238,11 +243,11 @@ export function EventScene({
             );
           })}
           {work && work.total > 0 && (
-            <div className="mt-1 flex flex-col gap-1" aria-label="Repair under way">
+            <div className="mt-1 flex flex-col gap-1" aria-label={workText.label}>
               <div className="h-2.5 overflow-hidden rounded-full bg-ink-2">
                 <div className="h-full rounded-full bg-gold transition-[width] duration-1000" style={{ width: `${Math.round((100 * (work.total - work.left)) / work.total)}%` }} />
               </div>
-              <span className="text-xs text-muted">{work.left > 0 ? `Ready in ${Math.floor(work.left / 60)}:${String(work.left % 60).padStart(2, "0")}` : "Ready!"}</span>
+              <span className="text-xs text-muted">{work.left > 0 ? `${workText.going} ${Math.floor(work.left / 60)}:${String(work.left % 60).padStart(2, "0")}` : workText.done}</span>
             </div>
           )}
         </div>

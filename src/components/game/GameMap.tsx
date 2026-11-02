@@ -17,7 +17,7 @@ import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
 import { MealScene, todaysMenu, type MealActions, type MealOffer } from "./MealScene";
 import type { SceneMoment } from "./EventScene";
-import { NurseScene, type Discharge } from "./NurseScene";
+import { NurseScene, TreatmentScene, type Discharge, type Treatment } from "./NurseScene";
 import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene";
 import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { CoinShop, confirmPayment } from "./CoinShop";
@@ -662,6 +662,7 @@ export function GameMap({
   const [mealActions, setMealActions] = useState<MealActions | null>(null);
   const [mealOpen, setMealOpen] = useState<MealOffer | null>(null);
   const [discharge, setDischarge] = useState<Discharge | null>(null);
+  const [treatment, setTreatment] = useState<Treatment | null>(null); // lying on the bed, being treated
   const [lampOpen, setLampOpen] = useState<{ quiz: LampQuestion | string | null } | null>(null);
   const [djinnActions, setDjinnActions] = useState<DjinnActions | null>(null);
   const [djinnOpen, setDjinnOpen] = useState<{ chamber: DjinnChamber | string | null } | null>(null);
@@ -4387,6 +4388,8 @@ export function GameMap({
         light: import("three").Object3D;
         leaving: boolean;
         lastTry: number;
+        /** The ward (or the roadside) opened for the treatment. */
+        treated: boolean;
       };
       let visit: Visit | null = null;
       let fainting = false;
@@ -4516,6 +4519,7 @@ export function GameMap({
           light: ambulance.light,
           leaving: false,
           lastTry: 0,
+          treated: false,
         };
         traveller.phase = "fainted";
         traveller.phaseUntil = Infinity;
@@ -4572,17 +4576,40 @@ export function GameMap({
           return true;
         }
         if (serverNow < vs.discharged) {
+          if (!vs.treated) startTreatment(vs, serverNow);
           if (vs.v.route) {
             me.object.visible = false; // inside, being treated
             traveller.pos = { lng: vs.van.lng, lat: vs.van.lat };
           } else {
             vs.van.object.visible = false;
           }
-          showCare("🏥", vs.v.route ? `Being treated at ${vs.v.hospital}` : "Paramedics are treating you", `Out in ${left(vs.discharged)} · bill ${vs.v.bill} coins`);
+          if (inWorld?.treating) setHud((h) => (h.care ? { ...h, care: null } : h)); // the ward shows it (the time left, the bill)
+          else showCare("🏥", vs.v.route ? `Being treated at ${vs.v.hospital}` : "Paramedics are treating you", `Out in ${left(vs.discharged)} · bill ${vs.v.bill} coins`);
           return !!vs.v.route;
         }
         if (!vs.leaving && now - vs.lastTry > 2000) void leaveHospital(now);
         return !!vs.v.route;
+      }
+
+      /**
+       * The ambulance has stopped at the hospital (or the paramedics have reached the hunter): onto the bed, the nurse
+       * beside it, until discharged (owner, 2 Nov 2026: "immediately the ambulance stops there, the scene should appear,
+       * you lying on the bed receiving treatments").
+       */
+      function startTreatment(vs: Visit, serverNow: number) {
+        vs.treated = true;
+        const ward = !!vs.v.route;
+        const t = {
+          hospital: ward ? vs.v.hospital : null,
+          nurse: nameFor(ward ? "nurse" : "paramedic", vs.v.calledAt),
+          bill: vs.v.bill,
+          until: Date.now() + (vs.discharged - serverNow),
+          total: Math.max(1, Math.round((vs.discharged - (ward ? vs.arrives : vs.picked)) / 1000)),
+        };
+        const at = ward ? { lng: vs.v.lng, lat: vs.v.lat } : { ...traveller.pos };
+        if (!openWardPlace({ hospital: t.hospital, nurse: t.nurse, bill: t.bill, energy: 0, damaged: null }, at)) return;
+        inWorld!.treating = true;
+        setTreatment(t);
       }
 
       async function leaveHospital(now: number) {
@@ -4626,7 +4653,15 @@ export function GameMap({
           energy: Math.round(traveller.energy),
           damaged: broken?.kind ?? null,
         };
-        openWardPlace(discharge, { lng, lat });
+        setTreatment(null);
+        if (inWorld?.treating) {
+          // Treated on the bed: now awake, up and over to the nurse for the goodbye.
+          inWorld.treating = false;
+          inWorld.wokeAt = performance.now();
+          me.object.visible = false; // still inside
+        } else {
+          openWardPlace(discharge, { lng, lat });
+        }
         setDischarge(discharge);
       }
 
@@ -5626,6 +5661,10 @@ export function GameMap({
         servedAt: number;
         /** The reply strip's height, as the camera keeps the place above it. */
         pad: number;
+        /** On the ward's bed (or the ground) being treated: lying still, the nurse at the bedside. */
+        treating?: boolean;
+        /** When the treatment ended (else when the place opened): waking up. */
+        wokeAt?: number;
       };
       let inWorld: InWorld | null = null;
 
@@ -5817,7 +5856,10 @@ export function GameMap({
           kerbM: ward ? 8 : 5,
           keeper: { look, at: S.keeper },
           you: { from: S.stand, to: S.customer, lying: true },
-          closeScene: () => setDischarge(null),
+          closeScene: () => {
+            setDischarge(null);
+            setTreatment(null);
+          },
         });
       }
 
@@ -6287,14 +6329,15 @@ export function GameMap({
         } else if (w.kind === "fuel" && (m?.type === "pumping" || m?.type === "meter")) {
           keeperSpot = S.work; // at the pump, nozzle in the tank
           working = true;
-        } else if ((w.kind === "ward" || w.kind === "roadside") && now - w.opened < 2600) {
-          keeperSpot = { x: S.stand.x - 1.4, z: S.stand.z + 0.4 }; // by the bed while you wake
+        } else if ((w.kind === "ward" || w.kind === "roadside") && (w.treating || now - (w.wokeAt ?? w.opened) < 2600)) {
+          keeperSpot = { x: S.stand.x - 1.4, z: S.stand.z + 0.4 }; // by the bed while you're treated, and as you wake
+          working = !!w.treating;
         }
         w.keeper.tx = keeperSpot.x;
         w.keeper.tz = keeperSpot.z;
 
         // Waking up: lying still for a moment, then up and over to talk.
-        if (w.you.lying && now - w.opened > 2200 && w.closing === null) w.you.lying = false;
+        if (w.you.lying && !w.treating && now - (w.wokeAt ?? w.opened) > 2200 && w.closing === null) w.you.lying = false;
 
         const step = (p: Walker, speed: number) => {
           const dx = p.tx - p.x;
@@ -9103,7 +9146,7 @@ export function GameMap({
             : `bottom-9 left-3 ${hud.ride || hud.care ? "right-3" : canSprint(hud.mode) ? "right-[176px]" : "right-[96px]"}` // clear of CRUISE (and SPRINT)
         } rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
           hud.alert ? "ring-2 ring-gold" : ""
-        } ${hinting ? "" : "invisible"}`}
+        } ${hinting && !inside ? "" : "invisible"}`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}
       >
         {hud.hint}
@@ -9365,6 +9408,7 @@ export function GameMap({
           onClose={() => (inside === "ticket" ? actions.current?.leaveShop() : setTicketOpen(null))}
         />
       )}
+      {treatment && !discharge && <TreatmentScene treatment={treatment} you={JSON.parse(lookKey) as AvatarLook} />}
       {discharge && (
         <NurseScene
           discharge={discharge}
@@ -9594,7 +9638,7 @@ export function GameMap({
 
       {/* Cruise (owner, 25 Oct 2026): beside Sprint, or in its place on a motorbike or in a car. Wider than a phone, both sit
           left of the tools column, which reaches the bottom of a short laptop window (owner, 31 Oct 2026: they clashed). */}
-      {!hud.ride && !hud.care && (
+      {!hud.ride && !hud.care && !inside && (
         <div
           className={`absolute ${
             joyShown
@@ -9636,7 +9680,7 @@ export function GameMap({
       )}
 
       {/* Running on foot or pedalling harder; motorbikes and cars have no sprint. */}
-      {canSprint(hud.mode) && !hud.ride && !hud.care && (
+      {canSprint(hud.mode) && !hud.ride && !hud.care && !inside && (
         <div className={`absolute bottom-9 ${joyShown ? "left-5" : "right-5 sm:right-[80px]"}`} style={{ marginBottom: "env(safe-area-inset-bottom)" }}>
           <HoldButton
             label={hud.mode === "walk" ? "Hold to run" : "Hold to pedal faster"}

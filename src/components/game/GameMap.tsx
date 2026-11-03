@@ -2813,9 +2813,14 @@ export function GameMap({
       let cloakedUntil = 0;
       let mirroredUntil = 0;
 
-      function announce(now: number) {
+      /**
+       * Tell the hunters around (and the live show) where we are. `aboard`: on a bus, train, taxi or plane: only the show
+       * hears it (owner, 3 Nov 2026: the broadcast's bus should be where the rider's own screen shows it); the hunters
+       * around just see the hunter leave and arrive.
+       */
+      function announce(now: number, aboard = false) {
         if (Date.now() < cloakedUntil) return;
-        const moving = traveller.v > 0.5;
+        const moving = aboard || traveller.v > 0.5;
         if (now - lastAnnounce < (moving ? 1000 : 8000)) return;
         lastAnnounce = now;
         const { ax, ay } = liveArea(traveller.pos.lng, traveller.pos.lat);
@@ -2835,6 +2840,10 @@ export function GameMap({
           moving,
           sid: device.current ?? undefined,
         };
+        if (aboard) {
+          void huntChannel?.send({ type: "broadcast", event: "pos", payload: update });
+          return;
+        }
         void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: update });
         void huntChannel?.send({ type: "broadcast", event: "pos", payload: update });
         if (Date.now() < mirroredUntil) {
@@ -8187,7 +8196,7 @@ export function GameMap({
           computeActions();
         }
 
-        if (!riding) announce(now); // aboard, others just see the hunter leave (and arrive)
+        announce(now, riding); // aboard: to the live show only (others just see the hunter leave and arrive)
         moveOthers(now, dt, t);
         nearTick(now);
         spotsTick(now);
@@ -8399,7 +8408,7 @@ export function GameMap({
       disposed = true;
       cleanup();
     };
-  }, [startLng, startLat, startMode, lookKey, playerId, username, huntId]);
+  }, [startLng, startLat, startMode, lookKey, playerId, username, huntId, device]);
 
   // The "do it here" buttons answer only a deliberate tap (owner, 28 Oct 2026: "my hands are mistakenly pressing the
   // prompts on the screen like refuel"): not in their first moment on screen (a tap meant for the map as one appears

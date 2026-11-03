@@ -121,10 +121,12 @@ try {
   const speedsInOrder = track.slice(1).map((p, i) => (p.t > track[i].t ? steps[i] / ((p.t - track[i].t) / 1000) : null)).filter((v) => v !== null);
   if (process.env.SHOW_SPEEDS) console.log(speedsInOrder.map((v) => Math.round(v)).join(" "));
   const speeds = [...speedsInOrder].sort((x, y) => x - y);
-  const moving = steps.filter((m) => m > 0.5).length / Math.max(1, steps.length);
+  // Only samples a new frame was drawn between (a busy computer can read the same frame twice).
+  const framed = steps.filter((_, i) => track[i + 1].t > track[i].t);
+  const moving = framed.filter((m) => m > 0.5).length / Math.max(1, framed.length);
   const median = speeds[Math.floor(speeds.length / 2)] ?? 0;
   const fastest = speeds[speeds.length - 1] ?? 0;
-  check("a riding hunter glides: moving in almost every tenth of a second", steps.length > 30 && moving >= 0.85, `${Math.round(moving * 100)}% of ${steps.length} samples`);
+  check("a riding hunter glides: moving in almost every tenth of a second", framed.length > 25 && moving >= 0.85, `${Math.round(moving * 100)}% of ${framed.length} frames`);
   check("…at an even pace, no leaps", median > 20 && fastest <= median * 2, `median ${median.toFixed(0)} m/s, fastest ${fastest.toFixed(0)} m/s (sent: 50 m/s)`);
 
   // ---- On a plane (owner, 3 Nov 2026: "The broadcast is not following the users. Fenzy is on a plane to tokyo now.
@@ -145,7 +147,7 @@ try {
   check("on a plane: drawn along the route, not at the airport", !!plane && plane.lat > 10 && plane.lat < 25, plane ? `lat ${plane.lat.toFixed(2)} (a fifth of the way: about 15.5)` : "not shown");
   const tag = await page.evaluate(() => [...document.querySelectorAll(".loota-hunter-marker")].map((m) => m.innerText).find((x) => x.includes("✈️")) ?? "");
   check("…as ✈️, with where they're going", /✈️/.test(tag) && /→ London Heathrow Airport/.test(tag), tag.replace(/s+/g, " "));
-  check("…the route drawn", flying?.trips?.includes(a.id), JSON.stringify(flying?.trips));
+  check("…known as a trip", flying?.trips?.includes(a.id), JSON.stringify(flying?.trips));
   let took = "";
   for (let i = 0; i < 12 && !/took off from/.test(took); i++) { await wait(500); took = await body(); }
   check("…the ticker: took off", took.includes(`✈️ ${names[a.id]} took off from Murtala Mohammed International Airport for London Heathrow Airport`));
@@ -154,6 +156,25 @@ try {
   const zoom = await page.evaluate(() => window.__broadcastShown?.().zoom ?? null);
   check("…following them: the camera pulls out over the route", zoom !== null && zoom < 6.5, `zoom ${zoom?.toFixed(1)}`);
   await page.screenshot({ path: `${OUT}/broadcast-5-plane.png` });
+
+  // ---- On a bus (owner, 3 Nov 2026: "the bus on the broadcast is not like the bus in th users. The user in the user is
+  // perfect"): the rider's game sends where its bus is (stops, lights and jams by its own timetable); the broadcast shows
+  // the bus there, not where an even slide by the clock would put it.
+  const busFrom = [3.3950, 6.5020];
+  const east = (m) => [busFrom[0] + m / (111320 * Math.cos((6.502 * Math.PI) / 180)), busFrom[1]];
+  const busPath = Array.from({ length: 11 }, (_, i) => east(i * 300));
+  await admin.from("transit_trips").insert({ user_id: b.id, mode: "bus", from_name: "Test stop A", to_name: "Test stop B", to_lng: busPath[10][0], to_lat: busPath[10][1],
+    path: busPath, path_m: 3000, fare: 5, booked_at: ago(60), departs_at: ago(30), arrives_at: new Date(Date.now() + 270e3).toISOString() });
+  const aboard = c.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
+  await new Promise((resolve) => aboard.subscribe((status) => status === "SUBSCRIBED" && resolve()));
+  const busAt = east(1500); // held up nowhere: further on than the clock says (about 10% of the way: 300 m)
+  const sendBus = setInterval(() => void aboard.send({ type: "broadcast", event: "pos", payload: { id: b.id, lng: busAt[0], lat: busAt[1], mode: "walk" } }), 1000);
+  await wait(9000);
+  const seen = await page.evaluate((id) => window.__broadcastShown?.()[id] ?? null, b.id);
+  clearInterval(sendBus);
+  await c.removeChannel(aboard);
+  const offM = seen ? Math.hypot((seen.lng - busAt[0]) * 111320 * Math.cos((6.502 * Math.PI) / 180), (seen.lat - busAt[1]) * 110574) : Infinity;
+  check("on a bus: shown where the rider's game says it is", offM < 60, `${Math.round(offM)} m from it`);
 
   // ---- Auto camera (owner, 3 Nov 2026: "We should show each user 1 min before moving"): each hunter it follows stays
   // on screen a full minute before it moves on.

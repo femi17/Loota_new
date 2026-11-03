@@ -1,7 +1,8 @@
 // One device a player (owner, 3 Nov 2026: "If a user joins on 2 device, we close one so it doesn't affect the
-// broadcast"): the same player opens the game on a phone, then on a second device: the first closes its game ("Loota
-// is open on another device") and the second plays; "Play here instead" on the first takes it back (the second
-// closes). Two browser windows that share nothing stand in for the two devices. The test player is deleted.
+// broadcast… User should get a message on the screens that wont go away until one is closed"): the same player opens
+// the game on two devices: both pause under "Loota is open on 2 …"; "Close it here" on one: the other plays; "Play
+// here" again: both paused; the other device's tab closed: this one plays. Two browser windows that share nothing
+// stand in for the two devices. The test player is deleted.
 //   SHOTS=<folder> node scripts/tests/one-device-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -28,7 +29,7 @@ try {
     args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] });
   const problems = [];
   /** A device: its own browser window, signed in on its own. */
-  const device = async () => {
+  const device = async (phone) => {
     const jar = new Map();
     const c = createServerClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { cookies: {
       getAll: () => [...jar].map(([n, value]) => ({ name: n, value })),
@@ -36,7 +37,10 @@ try {
     await c.auth.signInWithPassword({ email, password });
     const context = await browser.createBrowserContext();
     const page = await context.newPage();
-    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    if (phone) {
+      await page.setUserAgent("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36");
+      await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    } else await page.setViewport({ width: 1280, height: 800 });
     page.on("pageerror", (e) => problems.push(e.message));
     await page.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
     await page.evaluateOnNewDocument((uid) => {
@@ -44,9 +48,10 @@ try {
     }, id);
     return page;
   };
-  const closed = (page) => page.evaluate(() => !!document.querySelector('[role="dialog"][aria-label="Playing on another device"]'));
-  const playing = (page) => page.evaluate(() => !!document.querySelector(".maplibregl-canvas") && !document.querySelector('[aria-label="Playing on another device"]'));
-  const until = async (fn, tries = 30) => {
+  const message = (page) => page.evaluate(() => document.querySelector('[role="dialog"][aria-label="Open on more than one device"]')?.innerText.replace(/\s+/g, " ") ?? "");
+  const playing = (page) => page.evaluate(() => !!document.querySelector(".maplibregl-canvas") && !document.querySelector('[aria-label="Open on more than one device"]'));
+  const tap = (page, label) => page.evaluate((l) => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === l)?.click(), label);
+  const until = async (fn, tries = 40) => {
     for (let i = 0; i < tries; i++) {
       if (await fn()) return true;
       await wait(500);
@@ -54,23 +59,25 @@ try {
     return false;
   };
 
-  const phone = await device();
+  const phone = await device(true);
   await phone.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
   await wait(15000);
-  check("the first device plays", await playing(phone));
-  const laptop = await device();
+  check("the phone plays", await playing(phone));
+  const laptop = await device(false);
   await laptop.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
-  await wait(15000);
-  check("the game opened on a second device: it plays there", await playing(laptop));
-  check("…and the first closes its game: 'open on another device'", await until(() => closed(phone)));
-  await phone.screenshot({ path: `${OUT}/one-device-1-closed.png` });
-  const before = (await admin.from("player_sessions").select("session_id").eq("user_id", id).single()).data?.session_id;
-  await phone.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Play here instead/.test(b.textContent ?? ""))?.click());
-  check("'Play here instead' on the first: it plays again", await until(() => playing(phone), 40));
-  check("…and the second closes", await until(() => closed(laptop)));
-  const after = (await admin.from("player_sessions").select("session_id").eq("user_id", id).single()).data?.session_id;
-  check("…the first is the player's device now", !!after && after !== before, `${before} → ${after}`);
-  await laptop.screenshot({ path: `${OUT}/one-device-2-taken-back.png` });
+  check("opened on a computer too: the computer shows the message", await until(async () => /open on a phone and a computer/.test(await message(laptop))), await message(laptop));
+  check("…and the phone too (its game paused)", await until(async () => /open on a phone and a computer/.test(await message(phone))), await message(phone));
+  await wait(4000);
+  check("…the message stays", /open on a phone and a computer/.test(await message(phone)) && /open on a phone and a computer/.test(await message(laptop)));
+  await phone.screenshot({ path: `${OUT}/one-device-1-both.png` });
+  await tap(laptop, "Close it here");
+  check("'Close it here' on the computer: closed there", await until(async () => /Closed on this device/.test(await message(laptop))));
+  check("…and the phone plays again", await until(() => playing(phone), 60));
+  await tap(laptop, "Play here");
+  check("'Play here' on the computer: both paused again", await until(async () => /open on a phone and a computer/.test(await message(phone))) && await until(async () => /open on a phone and a computer/.test(await message(laptop))));
+  await phone.close();
+  check("the phone's game closed (its tab): the computer plays", await until(() => playing(laptop), 80));
+  await laptop.screenshot({ path: `${OUT}/one-device-2-alone.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

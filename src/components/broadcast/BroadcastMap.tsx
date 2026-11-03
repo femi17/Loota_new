@@ -208,7 +208,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const now = latest?.hunters.find((h) => h.id === p.id)?.session;
         if (p.sid && now && p.sid !== now) return;
         live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
-        if (!routes.has(p.id)) heard(p.id, p.lng, p.lat);
+        heard(p.id, p.lng, p.lat);
       });
       channel.subscribe();
 
@@ -235,7 +235,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             const path = unwrap(trip.path);
             routes.set(trip.userId, { key, trip, path, cum: cumulativeOf(path) });
           }
-          tracks.delete(trip.userId); // after it, they start afresh from where it ends
         }
         for (const id of [...routes.keys()]) if (!going.has(id)) routes.delete(id);
         // Saved spots, for hunters not heard live just now (and not on a trip: their saved spot is where it began).
@@ -302,13 +301,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // ---- The followed hunter in 3D.
       let followPos: { lng: number; lat: number } | null = null;
       const layer = new ThreeMapLayer(() => followPos ?? { lng: map.getCenter().lng, lat: map.getCenter().lat }, 44);
-      let followed: { id: string; avatar: ReturnType<typeof models.buildAvatar>; entity: import("@/game/ThreeMapLayer").MapEntity } | null = null;
+      let followed: { id: string; avatar: ReturnType<typeof models.buildAvatar> | null; entity: import("@/game/ThreeMapLayer").MapEntity } | null = null;
       let orbit = 0;
       let lastView = "";
       let lastFit = 0;
       const markers = new Map<string, { marker: import("maplibre-gl").Marker; el: HTMLDivElement; label: string }>();
       let lastDomeKey = "";
-      let lastRoutes = 0;
       let frame = 0;
       let last = performance.now();
 
@@ -332,8 +330,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         // Every hunter where they were a moment ago, between the positions heard; on a trip, where the trip is.
         const serverNow = Date.now() + skew;
         for (const h of s.hunters) {
+          // On a trip: where the game says the bus, train or plane is (it sends that live, by its own timetable of
+          // stops, lights and jams); only without that, along the route by the clock.
           const r = tripOf(h.id);
-          if (r) {
+          const l = live.get(h.id);
+          if (r && !(l && Date.now() - l.at < 4000)) {
             const at = tripAt(r, serverNow);
             shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
             continue;
@@ -368,7 +369,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           }
           m.marker.setLngLat([p.lng, p.lat]);
           const r = tripOf(h.id);
-          const icon = r ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
+          const inThreeD = !!r && r.trip.mode !== "plane" && h.id === following; // the 3D vehicle is drawn instead
+          const icon = r && !inThreeD ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
           const label = r ? `${icon} ${h.name} → ${r.trip.to}` : `${h.name} · ${h.keysHeld}/${s.hunt.keys}`;
           if (m.label !== label) {
             m.label = label;
@@ -387,25 +389,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             markers.delete(id);
           }
         }
-        // The routes: the way ahead dashed, the part already travelled solid (re-sent a few times a second).
-        if (t - lastRoutes > 300) {
-          lastRoutes = t;
-          const ahead: GeoJSON.Feature[] = [];
-          const behind: GeoJSON.Feature[] = [];
-          for (const [id, r] of routes) {
-            const at = tripAt(r, serverNow);
-            const total = r.cum[r.cum.length - 1] ?? 0;
-            const split = r.cum.findIndex((c) => c >= at.f * total);
-            const cut = split < 0 ? r.path.length : Math.max(1, split);
-            const done: [number, number][] = [...r.path.slice(0, cut), [at.lng, at.lat]];
-            const todo: [number, number][] = [[at.lng, at.lat], ...r.path.slice(cut)];
-            const props = { id, mode: r.trip.mode };
-            if (done.length > 1) behind.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: done } });
-            if (todo.length > 1) ahead.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: todo } });
-          }
-          (map.getSource("b-route-ahead") as import("maplibre-gl").GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: ahead });
-          (map.getSource("b-route-behind") as import("maplibre-gl").GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: behind });
-        }
         // Domes change rarely: only re-send them when they do.
         const domeKey = s.domes.map((d) => d.id).join(",");
         if (domeKey !== lastDomeKey) {
@@ -423,7 +406,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const h = s.hunters.find((x) => x.id === v.id);
           const p = h ? shown.get(h.id) : null;
           const r = h ? tripOf(h.id) : null;
-          if (h && p && r) {
+          const ride = r && r.trip.mode !== "plane" ? r.trip.mode : null;
+          if (h && p && r && !ride) {
             // On a trip: the marker shows the vehicle; the camera pulls back, a plane to see its route.
             followPos = null;
             if (followed) {
@@ -441,11 +425,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             });
           } else if (h && p) {
             followPos = { lng: p.lng, lat: p.lat };
-            if (!followed || followed.id !== h.id) {
+            // Walking or riding their own: the hunter in 3D; on a bus, train or taxi: that vehicle, as the game draws it.
+            const key = ride ? `${h.id}:${ride}` : h.id;
+            if (!followed || followed.id !== key) {
               if (followed) layer.remove(followed.entity);
-              const avatar = models.buildAvatar(normalizeLook(h.look));
-              avatar.root.add(layer.billboard(models.makeNameplate(h.name, "#F4B41A")));
-              followed = { id: h.id, avatar, entity: layer.add({ object: avatar.root, lng: p.lng, lat: p.lat, heading: p.heading }) };
+              const avatar = ride ? null : models.buildAvatar(normalizeLook(h.look));
+              const object = ride === "taxi" ? models.makeTaxi() : ride === "train" ? models.makeTrainCar(true) : ride ? models.makeBus() : avatar!.root;
+              object.add(layer.billboard(models.makeNameplate(h.name, "#F4B41A")));
+              followed = { id: key, avatar, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading }) };
             }
             const before = { lng: followed.entity.lng, lat: followed.entity.lat };
             followed.entity.lng = p.lng;
@@ -453,7 +440,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             followed.entity.heading = p.heading;
             const stepM = geo.distanceM([before.lng, before.lat], [p.lng, p.lat]);
             const mode = live.get(h.id)?.mode ?? h.mode ?? "walk";
-            models.animateAvatar(followed.avatar, { mode, phase: "idle", moving: stepM > 0.02 ? 1 : 0, distance: stepM / layer.enlargement() }, dt, t / 1000);
+            if (followed.avatar) models.animateAvatar(followed.avatar, { mode, phase: "idle", moving: stepM > 0.02 ? 1 : 0, distance: stepM / layer.enlargement() }, dt, t / 1000);
             // Glide in close and circle slowly around them (done by hand each frame:
             // re-centring would cancel the map's own animations).
             if (viewKey !== lastView) orbit = map.getBearing();
@@ -462,7 +449,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             const c = map.getCenter();
             map.jumpTo({
               center: [c.lng + (p.lng - c.lng) * Math.min(1, 4 * dt), c.lat + (p.lat - c.lat) * Math.min(1, 4 * dt)],
-              zoom: map.getZoom() + (17.5 - map.getZoom()) * k,
+              zoom: map.getZoom() + ((ride === "train" ? 15.5 : 17.5) - map.getZoom()) * k,
               pitch: map.getPitch() + (60 - map.getPitch()) * k,
               bearing: orbit,
             });
@@ -478,11 +465,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             lastFit = t;
             const points = s.hunters.map((h) => shown.get(h.id)).filter((p): p is { lng: number; lat: number; heading: number } => !!p);
             for (const d of s.domes) points.push({ lng: d.lng, lat: d.lat, heading: 0 });
-            // Where each trip is going, too.
-            for (const r of routes.values()) {
-              const end = r.path[r.path.length - 1];
-              points.push({ lng: end[0], lat: end[1], heading: 0 });
-            }
             if (points.length) {
               const bounds = new LngLatBounds();
               points.forEach((p) => bounds.extend([p.lng, p.lat]));
@@ -499,12 +481,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         map.addSource("b-domes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         map.addLayer({ id: "b-domes-fill", type: "fill", source: "b-domes", paint: { "fill-color": "#9B5DE5", "fill-opacity": 0.22 } });
         map.addLayer({ id: "b-domes-edge", type: "line", source: "b-domes", paint: { "line-color": "#C89BFF", "line-width": 3 } });
-        // Trips' routes: gold for a plane, blue on the ground; the way ahead dashed.
-        const routeColour: import("maplibre-gl").ExpressionSpecification = ["match", ["get", "mode"], "plane", "#F4B41A", "#3D8BFF"];
-        map.addSource("b-route-ahead", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-        map.addSource("b-route-behind", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-        map.addLayer({ id: "b-route-ahead", type: "line", source: "b-route-ahead", layout: { "line-cap": "round" }, paint: { "line-color": routeColour, "line-width": 3, "line-opacity": 0.8, "line-dasharray": [1.5, 1.5] } });
-        map.addLayer({ id: "b-route-behind", type: "line", source: "b-route-behind", layout: { "line-cap": "round" }, paint: { "line-color": routeColour, "line-width": 4 } });
         map.addLayer(layer);
         frame = requestAnimationFrame(loop);
       });

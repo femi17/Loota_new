@@ -20,6 +20,8 @@ type Hunter = {
   mode: Mode | null;
   seenAt: string | null;
   inTrial: boolean;
+  /** The device they play on now (claim_session): positions from any other are ignored. */
+  session?: string | null;
 };
 type Dome = { id: string; lng: number; lat: number; radiusM: number; endsAt: string; key: number; raisedBy: string | null; needed: number; attackers: number };
 type ShowEvent = { at: string; kind: string; who: string | null; whoId: string | null; text: string };
@@ -42,6 +44,9 @@ const LIVE_FRESH_MS = 15_000; // a live position newer than this beats the saved
 /** A jump this far between two positions (a flight, a hop) is a cut, not a slide across the map. */
 const JUMP_M = 1500;
 const BANNER_MS = 7000;
+/** Auto camera: a minute on each hunter before moving on; the whole field for a moment between rounds. */
+const DWELL_MS = 60_000;
+const FIELD_MS = 15_000;
 
 const eventKey = (e: ShowEvent) => `${e.at}|${e.text}`;
 const TRIP_ICON: Record<string, string> = { plane: "✈️", train: "🚆", bus: "🚌", taxi: "🚕" };
@@ -198,8 +203,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       const channel = supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
       channel.on("broadcast", { event: "pos" }, ({ payload }) => {
-        const p = payload as { id: string; lng: number; lat: number; mode: Mode };
+        const p = payload as { id: string; lng: number; lat: number; mode: Mode; sid?: string };
         if (typeof p.lng !== "number" || typeof p.lat !== "number") return;
+        const now = latest?.hunters.find((h) => h.id === p.id)?.session;
+        if (p.sid && now && p.sid !== now) return;
         live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
         if (!routes.has(p.id)) heard(p.id, p.lng, p.lat);
       });
@@ -208,7 +215,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // ---- The show's state, every few seconds; new events make a banner.
       const seen = new Set<string>();
       let first = true;
-      let focusUntil = 0;
       async function poll() {
         const { data, error } = await supabase.rpc("broadcast_state", { p_hunt: huntId });
         if (disposed) return;
@@ -252,11 +258,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         showing = !!e;
         setBanner(e ?? null);
         if (!e) return;
-        // Auto: go to whoever made it happen.
-        if (autoRef.current && e.whoId) {
-          setView({ kind: "follow", id: e.whoId });
-          focusUntil = Date.now() + 20_000;
-        }
+        // Auto: whoever made it happen is next (once the current minute is up).
+        if (autoRef.current && e.whoId) wantNext = e.whoId;
         // Shorter when more are waiting.
         bannerTimer = window.setTimeout(() => !disposed && nextBanner(), queue.length ? BANNER_MS / 2 : BANNER_MS);
       }
@@ -264,15 +267,37 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       void poll();
       const pollTimer = window.setInterval(() => void poll(), POLL_MS);
 
-      // Auto, when nothing new is happening: the whole field, then each of the top 3 in turn.
-      let autoStep = 0;
+      // Auto: each hunter in turn (leaders first) for a minute before the camera moves on (owner, 3 Nov 2026: "We
+      // should show each user 1 min before moving"), the whole field between rounds. Someone doing something goes
+      // next, without cutting the current minute short.
+      let wantNext: string | null = null;
+      let shownSince = Date.now();
+      let shownView = "field";
+      let round: string[] = [];
       const autoTimer = window.setInterval(() => {
-        if (!autoRef.current || Date.now() < focusUntil || !latest) return;
-        const leaders = latest.hunters.filter((h) => tracks.has(h.id)).slice(0, 3);
-        const steps: View[] = [{ kind: "field" }, ...leaders.map((h) => ({ kind: "follow", id: h.id }) as View)];
-        autoStep = (autoStep + 1) % steps.length;
-        setView(steps[autoStep]);
-      }, 18_000);
+        if (!latest) return;
+        const cur = viewRef.current;
+        const key = cur.kind === "follow" ? cur.id : "field";
+        if (key !== shownView) {
+          shownView = key; // a new view (also one chosen by hand): its minute starts now
+          shownSince = Date.now();
+        }
+        if (!autoRef.current || Date.now() - shownSince < (cur.kind === "field" ? FIELD_MS : DWELL_MS)) return;
+        const here = new Set(latest.hunters.filter((h) => tracks.has(h.id) || routes.has(h.id)).map((h) => h.id));
+        let next: string | null = null;
+        if (wantNext && here.has(wantNext) && wantNext !== key) next = wantNext;
+        wantNext = null;
+        if (!next) {
+          round = round.filter((id) => here.has(id) && id !== key);
+          if (!round.length && cur.kind !== "field") {
+            setView({ kind: "field" });
+            return;
+          }
+          if (!round.length) round = latest.hunters.filter((h) => here.has(h.id)).map((h) => h.id);
+          next = round.shift() ?? null;
+        } else round = round.filter((id) => id !== next);
+        if (next) setView({ kind: "follow", id: next });
+      }, 1000);
 
       // ---- The followed hunter in 3D.
       let followPos: { lng: number; lat: number } | null = null;

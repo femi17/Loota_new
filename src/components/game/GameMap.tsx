@@ -1,7 +1,7 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { LootaLogo } from "@/components/Logo";
 import { HuntInvite, MoveDemo, WelcomeTour, type OpenHunt } from "./WelcomeTour";
@@ -23,6 +23,7 @@ import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
 import { CoinShop, confirmPayment } from "./CoinShop";
 import { PumpScene, type PumpActions, type PumpOffer } from "./PumpScene";
 import { FlatScene, type FlatActions, type FlatOffer } from "./FlatScene";
+import { SessionContext } from "./OneDevice";
 import { PourScene, type PourActions, type PourOffer } from "./PourScene";
 import { LoungeScene, type LoungeView } from "./LoungeScene";
 import { ServiceScene, type ServiceActions, type ServiceOffer } from "./ServiceScene";
@@ -209,6 +210,8 @@ type HunterUpdate = {
   heading: number;
   mode: Mode;
   moving: boolean;
+  /** The device it came from (OneDevice): the broadcast ignores a player's other ones. */
+  sid?: string;
 };
 
 /** The Lamp's messenger (in purple, like the lamp's glow). */
@@ -353,6 +356,7 @@ export function GameMap({
   // The joystick on phones and tablets (owner, 2 Nov 2026): push it any way to walk; to the left or right to turn at the
   // next junction (as ← →), pulled back to turn round (as ↓). Once per push; back to the middle to push again.
   const handheld = useHandheld();
+  const device = useContext(SessionContext); // this device's session (OneDevice), sent with the live position
   const joy = useRef({ go: false, side: 0, back: false, backOk: true });
   // The message bar's height: what can be done here sits just above it while it shows, never over it (owner, 2 Nov
   // 2026: the message was "showing under the action button, user cannot fully read what it says").
@@ -2829,6 +2833,7 @@ export function GameMap({
           heading: traveller.heading,
           mode: traveller.mode,
           moving,
+          sid: device.current ?? undefined,
         };
         void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: update });
         void huntChannel?.send({ type: "broadcast", event: "pos", payload: update });

@@ -155,6 +155,25 @@ try {
   check("…following them: the camera pulls out over the route", zoom !== null && zoom < 6.5, `zoom ${zoom?.toFixed(1)}`);
   await page.screenshot({ path: `${OUT}/broadcast-5-plane.png` });
 
+  // ---- Auto camera (owner, 3 Nov 2026: "We should show each user 1 min before moving"): each hunter it follows stays
+  // on screen a full minute before it moves on.
+  await page.evaluate(() => document.querySelector('button[aria-pressed][aria-label^="Auto camera"]')?.getAttribute("aria-pressed") === "false" && document.querySelector('button[aria-label^="Auto camera"]')?.click());
+  const watched = [];
+  for (let i = 0; i < 50; i++) {
+    const label = await page.evaluate(() => [...document.querySelectorAll("span")].map((x) => x.textContent ?? "").find((x) => x.startsWith("Following ")) ?? "the whole field");
+    watched.push({ t: Date.now(), label });
+    await wait(2000);
+  }
+  const runs = [];
+  for (const w of watched) {
+    const last = runs[runs.length - 1];
+    if (last && last.label === w.label) last.end = w.t;
+    else runs.push({ label: w.label, start: w.t, end: w.t });
+  }
+  const inner = runs.slice(1, -1).filter((r) => r.label !== "the whole field");
+  check("auto camera: each hunter it follows stays a minute before it moves on", runs.length >= 2 && inner.every((r) => r.end - r.start >= 55_000) && runs.some((r) => r.label !== "the whole field" && r.end - r.start >= 55_000),
+    runs.map((r) => `${r.label} ${Math.round((r.end - r.start) / 1000)} s`).join(" → "));
+
   // A phone-size screen: the map stays open
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await page.reload({ waitUntil: "domcontentloaded" });

@@ -68,14 +68,17 @@ export function QuarterScene({
   onOpenChest,
   onPenalty,
   onMoved,
+  onRefused,
 }: {
   huntId: string;
   look: AvatarLook;
   onClose: () => void;
   /** The chest, dug up: open it (the map's usual search, which starts the Key Trial). */
   onOpenChest: () => void;
-  /** A trap: the penalty card shows; the quarter closes. */
-  onPenalty: (p: Penalty & { balance: number | null; energy: number | null }) => void;
+  /** A trap: the penalty card shows; the quarter closes (`moveTo`: it sent the hunter back there). */
+  onPenalty: (p: Penalty & { balance: number | null; energy: number | null; moveTo?: { lng: number; lat: number } | null }) => void;
+  /** The server won't open it (the hunter isn't at the place): closed, with why, never a blank scene. */
+  onRefused?: (text: string) => void;
   /** The server stood the hunter at the place. */
   onMoved: (at: { lng: number; lat: number }) => void;
 }) {
@@ -115,7 +118,9 @@ export function QuarterScene({
         // A challenge left unanswered last time: its trap springs now.
         const left = (v as { penalty?: Penalty & { balance: number | null; energy: number | null } } | null)?.penalty;
         if (left) return onPenalty(left);
-        setSay(REFUSED[v?.reason ?? ""] ?? "This place won't open right now.");
+        const why = REFUSED[v?.reason ?? ""] ?? "This place won't open right now.";
+        if (onRefused) onRefused(why);
+        else setSay(why);
         return;
       }
       onMoved(v.at);

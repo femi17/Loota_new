@@ -380,6 +380,8 @@ export function GameMap({
     findRepairShop: (kind: VehicleKind) => void;
     /** The way by road to a vehicle parked at the roadside (out of fuel). */
     wayToParked: (kind: VehicleKind) => void;
+    /** Ask the key check again now, forgetting what it last said (the quarter wouldn't open here). */
+    recheckKey: () => void;
     /** Go into a repair shop: the open-roof shop on the map, the camera looking in (an in-world scene). */
     enterShop: (job: RepairJob) => void;
     /** Go into the ticket office or check-in hall where the player stands. */
@@ -1337,7 +1339,9 @@ export function GameMap({
           void confirmCollapse();
           return;
         }
-        // Go back to the last accepted spot.
+        // Go back to the last accepted spot. Far from here (the server moved the hunter: a trap sent them back, say):
+        // a move like any other, so what the key check said here no longer holds.
+        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [saved.lng, saved.lat]) > 150) placeAt(saved.lng, saved.lat);
         traveller.pos = { ...saved };
         traveller.v = 0;
         if (result.reason === "vehicle" && result.mode) {
@@ -2160,6 +2164,7 @@ export function GameMap({
         ride: (kind, how, addons) => void chooseVehicle(kind, how, addons),
         buyAddon: (kind, id) => buyAddon(kind, id),
         findRepairShop: (kind) => void findRepairShop(kind, true),
+        recheckKey: () => movedFar(),
         wayToParked: (kind) => {
           const v = owned.find((o) => o.kind === kind && o.stranded_at);
           if (!v) return;
@@ -9232,7 +9237,14 @@ export function GameMap({
                 onPenalty={(p) => {
                   setHouseOpen(false);
                   if (p.balance != null) setHud((h) => ({ ...h, coins: Number(p.balance) }));
+                  if (p.moveTo) huntActions.current?.placeAt(p.moveTo.lng, p.moveTo.lat); // sent back: there, on the map too
                   setPenalty(p);
+                }}
+                onRefused={(text) => {
+                  // Not at the place any more (the server says so): closed, said, and the key check asked again.
+                  setHouseOpen(false);
+                  huntActions.current?.say(text, true);
+                  actions.current?.recheckKey();
                 }}
                 onMoved={(at) => huntActions.current?.placeAt(at.lng, at.lat)}
               />

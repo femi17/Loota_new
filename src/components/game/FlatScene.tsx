@@ -6,8 +6,12 @@ import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import { FLAT_FIX_PRICE, FLAT_FIX_SECONDS, type VehicleKind } from "@/game/economy";
 import { local } from "@/game/locale";
 
-/** A flat by the roadside (owner, 22 Oct 2026): the vehicle, a roadside mechanic, and whether you have a jack. */
-export type FlatOffer = { kind: "motorbike" | "car"; mechanic: string; jack: boolean };
+/**
+ * A flat by the roadside: the vehicle and whether you have a jack and spare (owner, 22 Oct 2026). `helper`: the
+ * vulcanizer you brought back with you is `mechanic`; otherwise nobody fixes tyres by the road (owner, 3 Nov 2026) and
+ * `mechanic` is a passer-by who shows you how with your own jack.
+ */
+export type FlatOffer = { kind: "motorbike" | "car"; mechanic: string; jack: boolean; helper: boolean };
 
 export type FlatActions = {
   /** Start changing it: with the jack (free) or by the mechanic (paid when done). */
@@ -16,7 +20,7 @@ export type FlatActions = {
   finish: () => Promise<{ ok: boolean; reason?: string; remounted?: boolean }>;
 };
 
-/** A roadside mechanic sees the flat; you change it with your jack, or they do it for a fee, while you wait. */
+/** The vulcanizer you brought changes the flat for a fee, or you change it with your jack, while you wait. */
 export function FlatScene({
   offer,
   you,
@@ -41,9 +45,11 @@ export function FlatScene({
   const [lines, setLines] = useState<SceneLine[]>([
     {
       who: "them",
-      text: `${local(`Wahala! Your ${name}'s tyre is flat flat. I fit change am for you`, `Oh dear, your ${name}'s tyre is flat. I can change it for you`)}: ${FLAT_FIX_PRICE} coins, about ${FLAT_FIX_SECONDS.mechanic} seconds.${
-        offer.jack ? " Or you get your own jack? Do am yourself, I go show you." : ""
-      }`,
+      text: offer.helper
+        ? `${local(`So na this ${name}. The tyre is flat flat. I go change am for you`, `So this is the ${name}. The tyre is completely flat. I'll change it for you`)}: ${FLAT_FIX_PRICE} coins, about ${FLAT_FIX_SECONDS.mechanic} seconds.${
+            offer.jack ? " Or you fit use your own jack, I go show you." : ""
+          }`
+        : local(`Wahala! Your ${name}'s tyre is flat flat. You get jack and spare? Oya, do am yourself, I go show you how.`, `Oh dear, your ${name}'s tyre is flat. You've got a jack and a spare? Change it yourself: I'll show you how.`),
     },
   ]);
   const say = (...more: SceneLine[]) => setLines((l) => [...l, ...more]);
@@ -75,7 +81,7 @@ export function FlatScene({
             : r.remounted
               ? how === "jack"
                 ? local("See am! The spare is on, nuts tight tight. You sabi this thing. Safe journey!", "There! The spare is on, nuts nice and tight. You know your stuff. Safe journey!")
-                : "Done! The spare is on, tight tight. Safe journey!"
+                : local("Done! The tyre is on, tight tight. Safe journey!", "Done! The tyre is on, nice and tight. Safe journey!")
               : `The tyre is fixed, but your tank is empty${local(" o", "")}. Bring fuel in a jerry can, then you can go.`,
         });
         setStep("done");
@@ -107,7 +113,7 @@ export function FlatScene({
       say(
         choice === "jack"
           ? { who: "you", text: "I have my jack. I'll do it." }
-          : { who: "you", text: "Please change it for me." },
+          : { who: "you", text: "Please go ahead." },
         {
           who: "them",
           text: choice === "jack" ? "Oya: loosen the nuts first, then jack it up small small…" : "No problem. Hold my torch, let me jack it up…",
@@ -123,7 +129,7 @@ export function FlatScene({
   if (step === "greet") {
     choices = [
       ...(offer.jack ? [{ label: `Change it myself (jack) · free, ${FLAT_FIX_SECONDS.jack} s`, primary: true, onPick: () => begin("jack") }] : []),
-      { label: `Let the mechanic do it · ${FLAT_FIX_PRICE} coins`, primary: !offer.jack, onPick: () => begin("mechanic") },
+      ...(offer.helper ? [{ label: `Go ahead · ${FLAT_FIX_PRICE} coins`, primary: !offer.jack, onPick: () => begin("mechanic") }] : []),
       {
         label: "Not now",
         onPick: () => {

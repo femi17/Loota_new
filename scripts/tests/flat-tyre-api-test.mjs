@@ -1,7 +1,8 @@
 // Flat tyres on motorbikes (owner, 22 Oct 2026: "Yes, fix with a jack"), through the real database functions: a flat
 // on the road stops the motorbike at the roadside and the player is on foot; it can't be ridden; a jerry can fills it
-// but doesn't put you back on; the jack: needed (bought like a helmet, 120 coins), a 30 s wait, then back on it; a
-// roadside mechanic: 40 coins, 25 s; from far away: refused. The test player is deleted.
+// but doesn't put you back on; the jack: needed (bought like a helmet, 120 coins), a 30 s wait, then back on it. No
+// mechanic by the roadside (owner, 3 Nov 2026): roll the wheel to a vulcanizer (20 coins) and back, or bring the
+// vulcanizer back with you (40 coins, 25 s); from far away: refused. The test player is deleted.
 //   node scripts/tests/flat-tyre-api-test.mjs
 import { createRequire } from "node:module";
 const app = createRequire(new URL("../../package.json", import.meta.url));
@@ -70,13 +71,45 @@ try {
   b = await bike();
   check("…done: a full tyre, back on it, nothing paid", r?.ok && r.remounted && b.tyre === 100 && b.in_use && !b.stranded_at && (await mode()) === "motorbike" && (await coins()) === mid, JSON.stringify(r));
 
-  // ---- A roadside mechanic
+  // ---- No mechanic by the roadside: roll the wheel to a vulcanizer
+  const { data: station } = await admin.from("places").select("lng, lat").eq("id", 7306).single(); // a petrol station in Yaba
+  const goTo = (p) => admin.from("player_positions").update({ lng: p.lng, lat: p.lat, updated_at: ago(20) }).eq("user_id", id);
   r = await puncture();
   check("another flat", r?.stopped === "flat", JSON.stringify(r));
   r = await rpc("start_flat_fix", { p_how: "mechanic" });
-  check("a roadside mechanic: 25 s, 40 coins", r?.ok && r.seconds === 25 && r.price === 40, JSON.stringify(r));
+  check("no vulcanizer by the roadside: refused", r?.ok === false && r.reason === "no_helper", JSON.stringify(r));
+  r = await rpc("take_wheel_off", {});
+  check("the wheel off, to roll to one", r?.ok && (await admin.from("player_vehicles").select("flat_wheel").eq("user_id", id).single()).data.flat_wheel === "off", JSON.stringify(r));
+  r = await rpc("start_flat_fix", { p_how: "jack" });
+  check("…the jack can't change a wheel that's off", r?.ok === false && r.reason === "wheel", JSON.stringify(r));
+  r = await rpc("fix_wheel", {});
+  check("…patching it by the roadside: refused", r?.ok === false && r.reason === "not_here", JSON.stringify(r));
+  await goTo(station);
+  let pre = await coins();
+  r = await rpc("fix_wheel", {});
+  check("…at the vulcanizer: patched, 20 coins", r?.ok && r.cost === 20 && (await coins()) === pre - 20, JSON.stringify(r));
+  r = await rpc("put_wheel_on", {});
+  check("…putting it on from the vulcanizer's: walk back first", r?.ok === false && r.reason === "far", JSON.stringify(r));
+  await goTo(north(60));
+  r = await rpc("put_wheel_on", {});
+  b = await bike();
+  check("…back at the motorbike: on, a full tyre, back on it", r?.ok && r.remounted && b.tyre === 100 && b.in_use && !b.stranded_at && (await mode()) === "motorbike", JSON.stringify(r));
+
+  // ---- Or bring the vulcanizer back
+  r = await puncture();
+  check("a third flat", r?.stopped === "flat", JSON.stringify(r));
+  r = await rpc("bring_vulcanizer", { p_name: "Emeka" });
+  check("asking for a vulcanizer by the roadside: refused", r?.ok === false && r.reason === "not_here", JSON.stringify(r));
+  await goTo(station);
+  r = await rpc("bring_vulcanizer", { p_name: "Emeka" });
+  check("…at the vulcanizer: Emeka comes back with you", r?.ok && r.metres > 500 && (await admin.from("player_vehicles").select("flat_helper").eq("user_id", id).single()).data.flat_helper === "Emeka", JSON.stringify(r));
+  r = await rpc("start_flat_fix", { p_how: "mechanic" });
+  check("…not until you're both at the motorbike", r?.ok === false && r.reason === "far", JSON.stringify(r));
+  await goTo(north(60));
+  r = await rpc("start_flat_fix", { p_how: "mechanic" });
+  check("…there: 25 s, 40 coins", r?.ok && r.seconds === 25 && r.price === 40, JSON.stringify(r));
   await readyNow();
-  const pre = await coins();
+  pre = await coins();
   r = await rpc("finish_flat_fix", {});
   b = await bike();
   check("…done: 40 coins paid, back on it", r?.ok && r.remounted && b.tyre === 100 && b.in_use && (await coins()) === pre - 40, JSON.stringify(r));

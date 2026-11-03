@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, PAPER_ICON, REPAIR, VEHICLE_KINDS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, PAPER_ICON, REPAIR, VEHICLE_KINDS, VEHICLES, WHEEL_FIX_PRICE, type AddonId, type VehicleKind } from "@/game/economy";
 import { formatDistance } from "@/game/geo";
 import { CloseIcon, VehicleIcon } from "./HudIcons";
 
@@ -18,6 +18,8 @@ export type OwnedVehicle = {
   away?: number | null;
   /** Dry at the roadside: the fuel the player already carries for it (a jerry can with fuel in it, or the relic). */
   carrying?: "can" | "relic" | null;
+  /** A flat: its wheel rolled to a vulcanizer ('off', then 'fixed'), the vulcanizer walking back with the player, a jack. */
+  flat?: { wheel: "off" | "fixed" | null; helper: string | null; jack: boolean } | null;
   papers: { id: AddonId; name: string; price: number; have: boolean }[];
 };
 export type Riding = { kind: VehicleKind; source: "owned" | "rented" } | null;
@@ -69,10 +71,29 @@ export function GearTiles({
 
 const SPEED: Record<VehicleKind, string> = { bicycle: "16 km/h", motorbike: "35 km/h", car: "45 km/h" };
 
+/** A flat, and what to do next: nobody fixes tyres by the road (owner, 3 Nov 2026), a vulcanizer has to be found. */
+function flatText(v: OwnedVehicle) {
+  const f = v.flat;
+  const name = VEHICLES[v.kind].name.toLowerCase();
+  if (f?.helper) return `🧰 ${f.helper} is walking back with you: at your ${name}, they change the tyre (${FLAT_FIX_PRICE} coins).`;
+  if (f?.wheel === "fixed") return `🛞 The wheel is patched: roll it back to your ${name} and put it on.`;
+  if (f?.wheel === "off") return `🛞 The wheel is off: roll it to a vulcanizer (or a petrol station's tyre man) to be patched for ${WHEEL_FIX_PRICE} coins, then back.`;
+  return `🛞 No vulcanizer by the road: find one. Roll the wheel there (${WHEEL_FIX_PRICE} coins), or bring the vulcanizer back with you (${FLAT_FIX_PRICE} coins).${
+    f?.jack ? " Or change it yourself with your jack and spare, free." : ""
+  }`;
+}
+
 /** Beside it (within 25 m): see to it now; dry with no fuel in hand: a petrol station first; otherwise the way to it. */
 function parkedButton(v: OwnedVehicle) {
   const here = v.away != null && v.away <= 25;
-  if (v.state === "flat") return here ? "🛞 Fix the flat now" : "🧭 The way to it";
+  if (v.state === "flat") {
+    const f = v.flat;
+    if (f?.helper) return here ? "🛞 Fix the flat now" : "🧭 The way to it";
+    if (f?.wheel === "fixed") return here ? "🛞 Put the wheel on" : "🧭 The way to it";
+    if (f?.wheel === "off") return "🛞 The way to a vulcanizer";
+    if (here) return f?.jack ? "🔧 Change it with your jack" : "🛞 Take the wheel off";
+    return "🛞 The way to a vulcanizer";
+  }
   if (v.carrying) return here ? (v.carrying === "can" ? "🛢 Pour the jerry can in" : "⛽ Use the Jerry Can relic") : "🧭 The way to it";
   return "⛽ The way to a petrol station";
 }
@@ -171,7 +192,7 @@ export function VehiclePanel({
               </div>
               <p className="text-xs leading-relaxed text-paper/80">
                 {parked.state === "flat"
-                  ? `🛞 Go to it and tap Fix flat: change it yourself with a jack (free), or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`
+                  ? flatText(parked)
                   : parked.carrying
                     ? `🛢 You already carry fuel for it (${parked.carrying === "can" ? "your jerry can" : "a Jerry Can relic"}): no petrol station needed. Take it there and pour it in: the tank goes to ${KEG_CAPACITY}%.`
                     : `🛢 Fill a jerry can at a petrol station, carry it back and pour it in: it takes the tank to ${KEG_CAPACITY}%.`}
@@ -260,7 +281,7 @@ export function VehiclePanel({
                   {mine && !onIt && (mine.state === "broken" || mine.state === "repairing" || mine.state === "empty" || mine.state === "flat") && (
                     <p className="text-xs text-gold">
                       {mine.state === "flat"
-                        ? `A flat tyre, at the roadside${mine.away ? ` ${mine.away} m away` : ""}. Go to it and tap 🛞 Fix flat: free with a jack, or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`
+                        ? `A flat tyre, at the roadside${mine.away ? ` ${mine.away} m away` : ""}. ${flatText(mine)}`
                         : mine.state === "empty"
                         ? "Empty tank: any petrol station fills it in your pocket, or pour in a jerry can."
                         : mine.state === "broken"

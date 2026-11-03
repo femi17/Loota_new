@@ -1,8 +1,8 @@
 // A car left at the roadside, seen to from the bicycle (phone; owner, 3 Nov 2026: "it says go to the gas station, and
 // when I got there with the jerry can nothing happened… I went back to my car… 'Your car has a flat'… I clicked yet
 // nothing happened"). (1) Dry, with a full jerry can: Vehicles says no petrol station is needed; beside it on the
-// bicycle, its button pours the can in. (2) A flat, beside it on the bicycle: the 🛞 Fix flat button is there, and
-// Vehicles' button opens the roadside mechanic. (3) A petrol station down its own driveway: no Refuel on the main road,
+// bicycle, its button pours the can in. (2) A flat, beside it on the bicycle: 🛞 Wheel off (no vulcanizer by the road:
+// owner, 3 Nov 2026), and Vehicles says find one. (3) A petrol station down its own driveway: no Refuel on the main road,
 // Refuel down the driveway. The test player is deleted.
 //   SHOTS=<folder> node scripts/tests/parked-car-browser-test.mjs
 import { createRequire } from "node:module";
@@ -59,7 +59,7 @@ try {
     try { localStorage.setItem(`loota:welcome:${uid}`, "1"); } catch {}
   }, id);
   const shot = (name) => page.screenshot({ path: `${OUT}/parked-${name}.png` });
-  const goldButtons = () => page.evaluate(() => [...document.querySelectorAll("button")].map((b) => b.textContent?.trim() ?? "").filter((t) => /Fix flat|Pour can|Refuel|Jerry can/.test(t)));
+  const goldButtons = () => page.evaluate(() => [...document.querySelectorAll("button")].map((b) => b.textContent?.trim() ?? "").filter((t) => /Fix flat|Wheel off|Pour can|Refuel|Jerry can/.test(t)));
   const dialog = (label) => page.evaluate((l, nl) => document.querySelector(`[role="dialog"][aria-label="${l}"]`)?.innerText.split(nl).join(" | ") ?? "", label, NL);
   const openAt = async (at, mode = "bicycle") => {
     await admin.from("player_positions").upsert({ user_id: id, lng: at.lng, lat: at.lat, mode, energy: 100, updated_at: ago(20) });
@@ -107,17 +107,17 @@ try {
   await admin.from("player_vehicles").update({ in_use: true }).eq("user_id", id).eq("kind", "bicycle");
   await openAt(car);
   const here = await goldButtons();
-  check("a flat, beside it on the bicycle: the 🛞 Fix flat button", here.some((t) => /Fix flat/.test(t)), here.join(" / "));
+  check("a flat, beside it on the bicycle: the 🛞 Wheel off button", here.some((t) => /Wheel off/.test(t)), here.join(" / "));
   card = await vehicles();
-  check("…Vehicles: 'Fix the flat now'", /Fix the flat now/.test(card), card);
+  check("…Vehicles: find a vulcanizer, 'Take the wheel off'", /No vulcanizer by the road/.test(card) && /Take the wheel off/.test(card), card);
   await tapParked();
-  let s = "";
-  for (let i = 0; i < 30 && !/change am for you/.test(s); i++) { await wait(500); s = await page.evaluate((nl) => document.querySelector('[role="dialog"]')?.innerText.split(nl).join(" | ") ?? "", NL); }
-  check("…tapping it brings the roadside mechanic", /change am for you/.test(s), s.slice(0, 160));
+  let w = null;
+  for (let i = 0; i < 20; i++) { await wait(500); w = (await admin.from("player_vehicles").select("flat_wheel").eq("user_id", id).eq("kind", "car").single()).data; if (w.flat_wheel) break; }
+  check("…tapping it takes the wheel off", w?.flat_wheel === "off", JSON.stringify(w));
   await shot("3-flat");
 
   // ---- (3) A petrol station down its own driveway (an empty car in the pocket wants Refuel)
-  await admin.from("player_vehicles").update({ stranded_at: null, tyre: 100, fuel: 0, in_use: false }).eq("user_id", id).eq("kind", "car");
+  await admin.from("player_vehicles").update({ stranded_at: null, tyre: 100, fuel: 0, in_use: false, flat_wheel: null }).eq("user_id", id).eq("kind", "car");
   await admin.from("player_vehicles").update({ in_use: false }).eq("user_id", id).eq("kind", "bicycle");
   await openAt(mainRoad, "walk");
   const onMain = await goldButtons();

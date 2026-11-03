@@ -45,13 +45,13 @@ export const ADDONS: Record<VehicleKind, { id: AddonId; name: string; price: num
     { id: "helmet", name: "Helmet", price: 80, why: "The law on a motorbike." },
     { id: "rider_licence", name: "Rider's licence", price: 150, why: "Yours, for any motorbike." },
     { id: "registration", name: "Registration (plate number)", price: 200, why: "Papers for this motorbike." },
-    { id: "jack", name: "Jack & spare tyre", price: 120, why: "Change a flat yourself by the roadside, free (or pay a roadside mechanic)." },
+    { id: "jack", name: "Jack & spare tyre", price: 120, why: "Change a flat yourself by the roadside, free (otherwise a vulcanizer has to be found)." },
   ],
   car: [
     { id: "driver_licence", name: "Driver's licence", price: 300, why: "Yours, for any car." },
     { id: "registration", name: "Registration (plate number)", price: 400, why: "Papers for this car." },
     { id: "insurance", name: "Insurance", price: 250, why: "The law for every car." },
-    { id: "jack", name: "Jack & spare tyre", price: 120, why: "Change a flat yourself by the roadside, free (or pay a roadside mechanic)." },
+    { id: "jack", name: "Jack & spare tyre", price: 120, why: "Change a flat yourself by the roadside, free (otherwise a vulcanizer has to be found)." },
   ],
 };
 /** Each piece of gear and papers' picture (the inventory). */
@@ -77,7 +77,14 @@ export const PAPER_NAME: Record<AddonId, string> = {
 /** A fine at a checkpoint, per thing missing. */
 export const PAPER_FINE = 20;
 
-/** A flat on a motorbike or car (owner, 22 Oct 2026): changed by a roadside mechanic for this, or free with a jack. Must match flat_fix_price(). */
+/**
+ * A flat on a motorbike or car: free with your own jack and spare, there and then; otherwise a vulcanizer, who isn't by
+ * the roadside (owner, 3 Nov 2026): bring one back with you to change it for this, or roll the wheel to one and back
+ * (WHEEL_FIX_PRICE). Must match flat_fix_price().
+ */
 export const FLAT_FIX_PRICE = 40;
 /** How long changing a flat takes. Must match flat_fix_seconds(). */
 export const FLAT_FIX_SECONDS = { jack: 30, mechanic: 25 } as const;
+/** A vulcanizer patching the wheel you rolled to them. Must match wheel_fix_price(). */
+export const WHEEL_FIX_PRICE = 20;
+export const WHEEL_FIX_SECONDS = 20;

@@ -10,7 +10,7 @@ import { ClanChat } from "@/components/ClanChat";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELIC_ICON, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
-import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, NOT_PAPERS, VEHICLES, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, NOT_PAPERS, VEHICLES, WHEEL_FIX_PRICE, WHEEL_FIX_SECONDS, type AddonId, type VehicleKind } from "@/game/economy";
 import { cue, setSound, soundOn } from "@/game/sound";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
@@ -194,7 +194,7 @@ type Hud = {
 };
 
 /** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
-type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic" | "jerry_relic" | "tyre_kit" | "flat";
+type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic" | "jerry_relic" | "tyre_kit" | "flat" | "wheel_off" | "fix_wheel" | "wheel_on" | "bring_vulcanizer";
 
 /** A direction and rough distance (bearing: compass degrees). */
 type Pointer = { bearing: number; metres: number };
@@ -1382,6 +1382,10 @@ export function GameMap({
         insured: boolean;
         /** A jack and spare: change a flat yourself (owner, 22 Oct 2026). */
         jack: boolean;
+        /** A flat's wheel rolled to a vulcanizer: off the vehicle ('off'), patched and on the way back ('fixed'). */
+        flat_wheel: "off" | "fixed" | null;
+        /** The vulcanizer walking back with the player to change the flat (their name). */
+        flat_helper: string | null;
       };
       let owned: VehicleRow[] = [];
       let vehiclesLoaded = false; // owned is filled in (refreshVehicles)
@@ -1500,7 +1504,7 @@ export function GameMap({
 
       async function refreshVehicles() {
         const [{ data: vehicles }, { data: rentals }, { data: papers }] = await Promise.all([
-          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured, jack"),
+          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured, jack, flat_wheel, flat_helper"),
           supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
           supabase.from("profiles").select("rider_licence, driver_licence").maybeSingle(),
         ]);
@@ -1562,6 +1566,22 @@ export function GameMap({
       function strandGuideTick(now: number) {
         if (now < nextStrandGuide) return;
         nextStrandGuide = now + 3000;
+        const f = flatVehicle();
+        if (f) {
+          if (trip || inWorld || ride || visit || now < strandGuideOff || busy || !onRoad) return;
+          const away = metresTo(f);
+          if (f.flat_helper || f.flat_wheel === "fixed") {
+            if (away > 25) {
+              nextStrandGuide = now + 20000;
+              adviseFlatBack(f);
+            }
+          } else if ((f.flat_wheel === "off" || away > 25) && !spotHere(["tyres", "fuel"])) {
+            // Rolling the wheel, or gone to fetch the vulcanizer (beside the vehicle the player is still choosing).
+            nextStrandGuide = now + 20000;
+            adviseVulcanizer(f);
+          }
+          return;
+        }
         const s = strandedVehicle();
         if (!s || trip || inWorld || ride || visit || now < strandGuideOff || busy || !onRoad) return;
         if (fuelInHand()) {
@@ -1639,6 +1659,38 @@ export function GameMap({
         setHud((h) => ({ ...h, advice: { key: "fuel", title: "Carry the fuel back", text, where: `Your ${name} · ${geo.formatDistance(away)}`, place: advicePlace } }));
         say(text, true);
         void planDirections({ lng: s.lng, lat: s.lat }, `your ${name}`, true);
+      }
+
+      /**
+       * A flat, and nobody by the roadside to fix it (owner, 3 Nov 2026: "If you have flat, it is not right there you get
+       * a vulcanizer. You find one… roll your tire to the vulcanizer, or you go to the vulcanizer, they come back with
+       * you to fix it"). What to do next, from where things stand.
+       */
+      function flatHowTo(v: VehicleRow) {
+        const name = vehicleName(v.kind);
+        if (v.flat_helper) return `${v.flat_helper} is walking back with you to your ${name}: there, they change the tyre (🛞 Fix flat, ${FLAT_FIX_PRICE} coins).`;
+        if (v.flat_wheel === "fixed") return `The wheel is patched: roll it back to your ${name} and put it on (🛞 Wheel on).`;
+        if (v.flat_wheel === "off") return `Roll the wheel to a vulcanizer: they patch it for ${WHEEL_FIX_PRICE} coins, then you roll it back and put it on.`;
+        return `Your ${name} has a flat and stands at the roadside. No vulcanizer by the road: find one. Take the wheel off and roll it there (🛞 Wheel off, ${WHEEL_FIX_PRICE} coins), or bring the vulcanizer back with you to change it (${FLAT_FIX_PRICE} coins).${
+          v.jack ? " Or change it yourself with your jack and spare, free (🔧 Jack)." : ""
+        }`;
+      }
+      /** On foot from a flat: to the nearest vulcanizer (or a petrol station's tyre man), by road. */
+      function adviseVulcanizer(v: VehicleRow, first = false) {
+        void advise("flat", first ? "Flat tyre" : "Find a vulcanizer", flatHowTo(v), ["tyres", "fuel"], Infinity, undefined, true).then(() => {
+          if (advicePlace && adviceKey === "flat" && !trip) void planDirections({ lng: advicePlace.lng, lat: advicePlace.lat }, advicePlace.name, true);
+        });
+      }
+      /** With the vulcanizer, or the patched wheel: back to the vehicle (`lead`: what just happened, said first). */
+      function adviseFlatBack(v: VehicleRow, lead = "") {
+        const name = vehicleName(v.kind);
+        const away = metresTo(v);
+        adviceKey = "flat";
+        advicePlace = { name: `your ${name}`, lng: v.lng, lat: v.lat };
+        const text = `${lead}${flatHowTo(v)} It's ${geo.formatDistance(away)} away.`;
+        setHud((h) => ({ ...h, advice: { key: "flat", title: "Back to your " + name, text, where: `Your ${name} · ${geo.formatDistance(away)}`, place: advicePlace } }));
+        say(text, true);
+        void planDirections({ lng: v.lng, lat: v.lat }, `your ${name}`, true);
       }
 
       function afterModeChange() {
@@ -1725,8 +1777,8 @@ export function GameMap({
             if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
             else if (started?.reason === "flat") {
               const f = flatVehicle();
-              if (f && metresTo(f) <= 25) void act("flat"); // right beside it: change it now
-              else say(`Your ${vehicleName(kind)} has a flat and stands at the roadside. Go to it and change the tyre (🛞 Fix flat): free with your jack, or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`, true);
+              if (f && metresTo(f) <= 25 && f.flat_wheel !== "off" && (f.flat_helper || f.jack || f.flat_wheel === "fixed")) void act(f.flat_wheel === "fixed" ? "wheel_on" : "flat"); // right beside it: change it now
+              else say(f ? flatHowTo(f) : `Your ${vehicleName(kind)} has a flat.`, true);
             } else if (started?.reason === "stranded")
               say(
                 fuelInHand()
@@ -2092,6 +2144,7 @@ export function GameMap({
                   : "ready",
             away: v.stranded_at ? Math.round(metresTo(v)) : null,
             carrying: v.stranded_at && v.fuel <= 0 ? (keg && keg.fuel > 0 ? "can" : jerryRelicId ? "relic" : null) : null,
+            flat: v.stranded_at && isFlat(v) ? { wheel: v.flat_wheel, helper: v.flat_helper, jack: v.jack } : null,
             papers: ADDONS[v.kind].map((a) => ({ ...a, have: hasPaper(v, a.id) })),
           })),
         ride: (kind, how, addons) => void chooseVehicle(kind, how, addons),
@@ -2104,15 +2157,20 @@ export function GameMap({
           if (metresTo(v) <= 25) {
             // Already beside it: see to it right here (owner, 3 Nov 2026: "The way to it. I clicked yet nothing happened").
             computeActions();
-            if (isFlat(v)) void act("flat");
+            if (isFlat(v)) {
+              if (v.flat_wheel === "off") adviseVulcanizer(v); // the wheel is off: a vulcanizer is where it goes
+              else void act(v.flat_helper ? "flat" : v.flat_wheel === "fixed" ? "wheel_on" : v.jack ? "flat" : "wheel_off");
+            }
             else if (v.fuel > 0) say(`Your ${name} is right here.`);
             else if (keg && keg.fuel > 0) void act("pour_keg");
             else if (jerryRelicId) void act("jerry_relic");
             else adviseFuelWalk(name);
             return;
           }
-          // Dry, with no fuel to bring it: the petrol station first, not the vehicle.
+          // Dry, with no fuel to bring it: the petrol station first, not the vehicle. A flat with no one and nothing
+          // to bring back yet: a vulcanizer first.
           if (!isFlat(v) && v.fuel <= 0 && !fuelInHand()) adviseFuelWalk(name);
+          else if (isFlat(v) && !v.flat_helper && v.flat_wheel !== "fixed") adviseVulcanizer(v);
           else void planDirections({ lng: v.lng, lat: v.lat }, `your ${name}`);
         },
         enterShop: (job) => openShopScene(job),
@@ -2206,7 +2264,7 @@ export function GameMap({
         pickupAction: () => void pickupAction(),
         cancelPickup: () => void cancelPickup(),
         dismissAdvice: () => {
-          if (adviceKey === "fuel") strandGuideOff = performance.now() + 300_000;
+          if (adviceKey === "fuel" || adviceKey === "flat") strandGuideOff = performance.now() + 300_000;
           advicePlace = null;
           setHud((h) => ({ ...h, advice: null }));
         },
@@ -4002,11 +4060,26 @@ export function GameMap({
           const pocketed = (want: (v: VehicleRow) => boolean) => owned.find((v) => !v.in_use && !v.stranded_at && v.kind !== "bicycle" && want(v)) ?? null;
           const stranded = strandedVehicle();
           const atStranded = !!stranded && metresTo(stranded) <= 25;
-          // Beside a motorbike or car with a flat: change the tyre (a roadside mechanic, or your jack). On foot or come
-          // back on the bicycle (owner, 3 Nov 2026: beside the car on the bicycle, there was no button).
+          // A motorbike or car with a flat (on foot, or come back on the bicycle). Beside it: your jack and spare, or
+          // the wheel off to roll to a vulcanizer, or (back with it) on again, or (back with them) the vulcanizer
+          // changes it. At a vulcanizer: the wheel patched, or the vulcanizer brought back (owner, 3 Nov 2026).
           const flat = flatVehicle();
-          if (flat && metresTo(flat) <= 25) {
-            list.push({ id: "flat", icon: "🛞", short: "Fix flat", label: `Change your ${vehicleName(flat.kind)}'s flat tyre` });
+          if (flat) {
+            const name = vehicleName(flat.kind);
+            const beside = metresTo(flat) <= 25;
+            if (beside && flat.flat_helper) list.push({ id: "flat", icon: "🛞", short: "Fix flat", label: `${flat.flat_helper} changes your ${name}'s tyre · ${FLAT_FIX_PRICE} coins` });
+            else if (beside && flat.flat_wheel === "fixed") list.push({ id: "wheel_on", icon: "🛞", short: "Wheel on", label: `Put the patched wheel back on your ${name}` });
+            else if (beside && !flat.flat_wheel) {
+              if (flat.jack) list.push({ id: "flat", icon: "🔧", short: "Jack · free", label: `Change it with your jack and spare · free` });
+              list.push({ id: "wheel_off", icon: "🛞", short: "Wheel off", label: `Take the wheel off, to roll it to a vulcanizer` });
+            }
+            const tyreMan = spotHere(["tyres", "fuel"]);
+            if (tyreMan && flat.flat_wheel === "off") {
+              list.push({ id: "fix_wheel", icon: "🛞", short: `Fix tyre · ${WHEEL_FIX_PRICE}`, label: `Get the wheel patched at ${tyreMan.name} · ${WHEEL_FIX_PRICE} coins` });
+            }
+            if (tyreMan && !beside && !flat.flat_wheel && !flat.flat_helper) {
+              list.push({ id: "bring_vulcanizer", icon: "🧰", short: `Vulcanizer · ${FLAT_FIX_PRICE}`, label: `Bring the vulcanizer back to your ${name}: ${FLAT_FIX_PRICE} coins when it's done` });
+            }
           }
           const eatSpot = spotHere(["eat"]);
           if (eatSpot && traveller.energy < 95) list.push({ id: "eat", icon: "🍲", short: `Eat · ${MEAL_PRICE}`, label: `Eat at ${eatSpot.name} · ${MEAL_PRICE} coins` });
@@ -4068,7 +4141,7 @@ export function GameMap({
       const showKeg = () => setHud((h) => ({ ...h, keg: keg ? { ...keg } : null }));
 
       setFuelActions({ fill: () => refuelHere(true), buyKeg: () => act("buy_keg"), fillKeg: () => fillKegHere() });
-      setPumpActions({ pump: () => act("pump", true) });
+      setPumpActions({ pump: () => act(pumpForWheel ? "fix_wheel" : "pump", true) });
       setPourActions({
         pour: async () => {
           lastPour = null;
@@ -4097,6 +4170,7 @@ export function GameMap({
             saved = { ...traveller.pos };
           }
           await refreshVehicles();
+          clearAdvice("flat");
           if (r.remounted) {
             afterModeChange();
             const onTo = resumeGoing();
@@ -4114,6 +4188,65 @@ export function GameMap({
         },
       });
 
+      /** The vulcanizer's scene is patching a rolled wheel (fix_wheel), not pumping the bicycle. */
+      let pumpForWheel = false;
+
+      /** A flat's wheel off, patched or on again, or the vulcanizer brought back (owner, 3 Nov 2026). */
+      async function wheelAct(id: "wheel_off" | "fix_wheel" | "wheel_on" | "bring_vulcanizer"): Promise<boolean> {
+        setBusy(true);
+        try {
+          await savePosition(); // the server checks where the player is
+          const spot = spotHere(["tyres", "fuel"]);
+          const { data } =
+            id === "bring_vulcanizer"
+              ? await supabase.rpc("bring_vulcanizer", { p_name: spot ? nameFor("vulcanizer", String(spot.id)) : "" })
+              : await supabase.rpc({ wheel_off: "take_wheel_off", fix_wheel: "fix_wheel", wheel_on: "put_wheel_on" }[id]);
+          const r = data as { ok: boolean; reason?: string; kind?: VehicleKind; balance?: number; remounted?: boolean; metres?: number } | null;
+          if (disposed) return false;
+          if (!r?.ok) {
+            const why: Record<string, string> = {
+              far: "Go back to it first: it's further down the road.",
+              not_here: "You need to be right at the vulcanizer for that.",
+              coins: `Not enough coins (${id === "fix_wheel" ? WHEEL_FIX_PRICE : FLAT_FIX_PRICE}).`,
+              wheel: "The wheel is already off: roll it to a vulcanizer.",
+              helper: "The vulcanizer is with you: they change it here.",
+            };
+            say(why[r?.reason ?? ""] ?? "Couldn't do that just now.", true);
+            return false;
+          }
+          if (r.balance != null) {
+            const balance = r.balance;
+            setHud((h) => ({ ...h, coins: balance }));
+          }
+          if (id === "wheel_on" && r.remounted && r.kind) {
+            traveller.mode = r.kind;
+            saved = { ...traveller.pos };
+          }
+          await refreshVehicles();
+          const v = owned.find((o) => o.kind === r.kind) ?? null;
+          const name = vehicleName(r.kind ?? "car");
+          if (id === "wheel_off") {
+            say(`You loosen the nuts and take the wheel off. Roll it to a vulcanizer: the way to the nearest is drawn.`, true);
+            if (v) adviseVulcanizer(v);
+          } else if (id === "fix_wheel") {
+            if (v) adviseFlatBack(v);
+          } else if (id === "bring_vulcanizer") {
+            if (v) adviseFlatBack(v, `${v.flat_helper ?? "The vulcanizer"} picks up the tools: "Lead the way!" `);
+          } else {
+            clearAdvice("flat");
+            if (r.remounted) {
+              afterModeChange();
+              const onTo = resumeGoing();
+              say(`The wheel is back on, nuts tight: you're back on your ${name}${onTo ? `. On to ${onTo}` : ""}.`, true);
+            } else say(`The wheel is back on your ${name}. Its tank is empty: bring it fuel in a jerry can.`, true);
+          }
+          return true;
+        } finally {
+          setBusy(false);
+          computeActions();
+        }
+      }
+
       /** The vehicle the jerry can would go into (computeActions), and how the last pour went. */
       let pourTarget: { kind: VehicleKind; fuel: number } | null = null;
       let lastPour: { tank: number; can: number; usesLeft: number; spoilt: boolean } | null = null;
@@ -4128,12 +4261,30 @@ export function GameMap({
           setPourOpen({ kind: v.kind, tank: v.fuel, can: Math.min(1, keg.fuel / KEG_CAPACITY), usesLeft: keg.usesLeft });
           return true;
         }
+        if (id === "wheel_off" || id === "wheel_on" || id === "bring_vulcanizer" || (id === "fix_wheel" && direct)) return wheelAct(id);
+        if (id === "fix_wheel") {
+          // The rolled wheel at the vulcanizer's (PumpScene): found, patched and pumped (20 s), paid at the end.
+          const spot = spotHere(["tyres", "fuel"]);
+          const v = owned.find((o) => o.flat_wheel === "off");
+          if (!spot || !v || v.kind === "bicycle") return false;
+          const place = spot.kind === "fuel" ? `${spot.name}: air and tyres` : spot.name;
+          const offer: PumpOffer = { place, keeper: nameFor("vulcanizer", String(spot.id)), flat: true, price: WHEEL_FIX_PRICE, seconds: WHEEL_FIX_SECONDS, wheel: v.kind };
+          pumpForWheel = true;
+          openPumpPlace(offer, spot);
+          setPumpOpen(offer);
+          return true;
+        }
         if (id === "flat") {
-          // The flat by the roadside (FlatScene): a roadside mechanic, or your own jack.
+          // The flat by the roadside (FlatScene): the vulcanizer you brought, or your own jack.
           const v = flatVehicle();
-          if (!v || v.kind === "bicycle" || metresTo(v) > 25) return false;
+          if (!v || v.kind === "bicycle" || metresTo(v) > 25 || v.flat_wheel || !(v.flat_helper || v.jack)) return false;
           await savePosition(); // the server checks you're beside it
-          const offer: FlatOffer = { kind: v.kind, mechanic: nameFor("vulcanizer", `${v.lng.toFixed(4)},${v.lat.toFixed(4)}`), jack: v.jack };
+          const offer: FlatOffer = {
+            kind: v.kind,
+            mechanic: v.flat_helper ?? nameFor("mechanic", `${v.lng.toFixed(4)},${v.lat.toFixed(4)}`),
+            jack: v.jack,
+            helper: !!v.flat_helper,
+          };
           openFlatPlace(offer, v);
           setFlatOpen(offer);
           return true;
@@ -4174,6 +4325,7 @@ export function GameMap({
           const spot = spotHere(["tyres", "fuel"]);
           const bike = ownInUse();
           if (!spot || bike?.kind !== "bicycle") return false;
+          pumpForWheel = false;
           const flat = bike.tyre <= 0;
           const place = spot.kind === "fuel" ? `${spot.name}: air and tyres` : spot.name;
           const offer = { place, keeper: nameFor("vulcanizer", String(spot.id)), flat, price: flat ? 20 : 5, seconds: flat ? 20 : 8 };
@@ -4216,7 +4368,7 @@ export function GameMap({
         setBusy(true);
         try {
           await savePosition(); // the server checks where the player is
-          const rpc: Record<Exclude<LimitAction, "eat" | "refuel" | "jerry_relic" | "tyre_kit" | "flat">, string> = {
+          const rpc: Record<Exclude<LimitAction, "eat" | "refuel" | "jerry_relic" | "tyre_kit" | "flat" | "wheel_off" | "fix_wheel" | "wheel_on" | "bring_vulcanizer">, string> = {
             rest: "start_rest",
             rest_here: "rest_here",
             buy_keg: "buy_keg",
@@ -4304,7 +4456,7 @@ export function GameMap({
             say(
               r.remounted
                 ? `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel, and you're back on it${onTo ? `. On to ${onTo}` : ""}. A jerry can only goes so far: fill up at a petrol station.`
-                : `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.flat ? " Change its flat tyre (🛞 Fix flat) to ride on." : ""}${r.spoilt ? " That was your jerry can's last use: it's worn out." : ` Your jerry can has ${r.usesLeft} uses left.`}`,
+                : `Poured: your ${name} has ${Math.round(r.fuel ?? 0)}% fuel.${r.flat ? " It still has a flat: see to that to ride on (a vulcanizer, or your jack)." : ""}${r.spoilt ? " That was your jerry can's last use: it's worn out." : ` Your jerry can has ${r.usesLeft} uses left.`}`,
               true,
             );
             clearAdvice("fuel");
@@ -4369,13 +4521,12 @@ export function GameMap({
           placeAt(saved.lng, saved.lat);
           if (trip) setGoing({ lng: trip.to.lng, lat: trip.to.lat, name: trip.name });
           endDirections();
-          const jack = owned.find((v) => v.kind === kind)?.jack;
-          say(
-            `💥 Flat tyre! Your ${name} stands at the roadside. ${
-              jack ? "Change it with your jack (free)" : "No jack: a roadside mechanic can change it"
-            }${jack ? `, or let a roadside mechanic do it (${FLAT_FIX_PRICE} coins)` : ` for ${FLAT_FIX_PRICE} coins`}: the 🛞 Fix flat button.`,
-            true,
-          );
+          void refreshVehicles().then(() => {
+            const v = flatVehicle();
+            if (!v) return;
+            if (v.jack) say(`💥 Flat tyre! ${flatHowTo(v)}`, true); // the jack is right here: no need to go anywhere
+            else adviseVulcanizer(v, true);
+          });
           return;
         }
         if (why === "fuel") {
@@ -6213,7 +6364,7 @@ export function GameMap({
         if (opened && w) w.keeper.av.root.scale.setScalar(1.6); // bigger than life
       }
 
-      /** A flat by the roadside: your motorbike or car where it stopped, the spare and toolbox on the kerb, a roadside mechanic. */
+      /** A flat by the roadside: your motorbike or car where it stopped, the spare and toolbox on the kerb, the vulcanizer you brought (or a passer-by). */
       function openFlatPlace(offer: FlatOffer, v: VehicleRow) {
         const S = models.ROAD_EVENT_SPOTS;
         const group = models.makeFlatScene();
@@ -6238,9 +6389,10 @@ export function GameMap({
       function openPumpPlace(offer: PumpOffer, spot: LngLat & { id: number }) {
         const S = models.VULCANIZER_SPOTS;
         const v = models.makeVulcanizer(offer.place.length > 22 ? local("Vulcanizer", "Tyre shop") : offer.place);
-        const bike = models.makeVehicleModel("bicycle");
+        const bike = offer.wheel ? models.makeRolledWheel() : models.makeVehicleModel("bicycle");
         bike.rotation.y = Math.PI / 2;
-        bike.position.set(S.stand.x, 0.1, S.stand.z);
+        bike.position.set(S.stand.x, offer.wheel ? 0.5 : 0.1, S.stand.z);
+        if (offer.wheel) bike.scale.setScalar(1.4);
         v.group.add(bike);
         return openPlace({
           kind: "pump",
@@ -7669,6 +7821,39 @@ export function GameMap({
         say(spec.chaser === "officer" ? "🚨 An officer is running after you! Sprint, and don't stop!" : "🚨 The police are after you! Keep moving: a red light or a jam and they'll catch you.", true);
       }
 
+      /** The vulcanizer brought back to the flat: walks a few metres behind the hunter, along their trail. */
+      let helperWalker: { name: string; avatar: ReturnType<typeof models.buildAvatar>; entity: import("@/game/ThreeMapLayer").MapEntity; d: number } | null = null;
+      function helperTick(dt: number, t: number) {
+        const want = inWorld || ride ? null : (flatVehicle()?.flat_helper ?? null);
+        if (helperWalker && helperWalker.name !== want) {
+          layer.remove(helperWalker.entity);
+          helperWalker = null;
+        }
+        if (!want) return;
+        if (!trail.length) trailTick();
+        const playerD = trail[trail.length - 1].d;
+        const gap = 2.5 * layer.enlargement(); // people are drawn enlarged: a body length or two behind, as seen
+        if (!helperWalker) {
+          const avatar = models.buildAvatar({ ...keeperLook(want), topColour: "#5B4636", extra: "cap" });
+          const tag = layer.billboard(models.makeNameplate(want, "#5B4636"));
+          tag.position.y = 2.9;
+          avatar.root.add(tag);
+          const at = trailAt(playerD - gap);
+          helperWalker = { name: want, avatar, entity: layer.add({ object: avatar.root, lng: at.lng, lat: at.lat, heading: traveller.heading }), d: playerD - gap };
+        }
+        const h = helperWalker;
+        const before = trailAt(h.d);
+        // Just behind; quicker when left further back (the hunter can't lose them).
+        h.d = Math.max(trail[0].d, Math.min(playerD - gap, h.d + Math.max(2, (playerD - gap - h.d) * 4) * dt));
+        const at = trailAt(h.d);
+        const ahead = trailAt(h.d + 2);
+        h.entity.lng = at.lng;
+        h.entity.lat = at.lat;
+        if (ahead.lng !== at.lng || ahead.lat !== at.lat) h.entity.heading = geo.headingOf([at.lng, at.lat], [ahead.lng, ahead.lat]);
+        const moved = geo.distanceM([before.lng, before.lat], [at.lng, at.lat]);
+        models.animateAvatar(h.avatar, { mode: "walk", phase: "idle", moving: moved > 0.01 ? 1 : 0, distance: moved / layer.enlargement() }, dt, t);
+      }
+
       function chaseTick(now: number, dt: number, t: number) {
         trailTick();
         if (!chase || chase.over) return;
@@ -7944,6 +8129,7 @@ export function GameMap({
         flightsTick(now, dt);
         // On foot while the vehicle stands at the roadside: the jerry can in hand.
         avatar.jerrycan.visible = traveller.mode === "walk" && !!keg && owned.some((v) => v.stranded_at);
+        avatar.wheel.visible = traveller.mode === "walk" && owned.some((v) => !!v.flat_wheel) && !avatar.jerrycan.visible;
         models.animateAvatar(
           avatar,
           {
@@ -8012,6 +8198,7 @@ export function GameMap({
         pulseTick(now, t);
         tiredTick(now);
         chaseTick(now, dt, t);
+        helperTick(dt, t);
         dropsTick(now, t);
         if (cruiseOn && now - lastCruiseHud > 500) {
           lastCruiseHud = now;

@@ -79,6 +79,8 @@ export type Avatar3D = {
   vehicles: Record<"bicycle" | "motorbike" | "car", Vehicle3D>;
   /** A jerry can in the right hand (hidden until the hunter carries fuel to a vehicle out of it). */
   jerrycan: THREE.Group;
+  /** A motorbike's or car's wheel rolled along beside the hunter, to a vulcanizer and back (hidden until then). */
+  wheel: THREE.Group;
   wt: number;
   amp: number;
 };
@@ -133,6 +135,10 @@ export function buildAvatar(look: AvatarLook): Avatar3D {
   jerrycan.position.set(0.12, -1.2, 0);
   jerrycan.visible = false;
   armR.add(jerrycan);
+  const wheel = makeRolledWheel();
+  wheel.position.set(0.8, ROLLED_WHEEL_R, 0.35);
+  wheel.visible = false;
+  root.add(wheel);
 
   // Vehicles, hidden until the hunter rides one
   const vehicles = { bicycle: buildBicycle(), motorbike: buildMotorbike(), car: buildCar() };
@@ -141,7 +147,7 @@ export function buildAvatar(look: AvatarLook): Avatar3D {
     root.add(v.group);
   }
 
-  return { root, rig, legL, legR, armL, armR, vehicles, jerrycan, wt: Math.random() * 6, amp: 0 };
+  return { root, rig, legL, legR, armL, armR, vehicles, jerrycan, wheel, wt: Math.random() * 6, amp: 0 };
 }
 
 /**
@@ -196,6 +202,18 @@ export function makeSignPost(colour = "#1E9E62") {
   const g = new THREE.Group();
   g.add(mesh(new THREE.CylinderGeometry(0.08, 0.08, 4, 6), "#5B6475", 0, 2, 0));
   g.add(mesh(new THREE.BoxGeometry(0.7, 0.5, 0.08), colour, 0, 4.1, 0));
+  return g;
+}
+
+const ROLLED_WHEEL_R = 0.58;
+/** A tyre on its rim, upright, its axle across the way the hunter walks (it spins about x as it rolls). */
+export function makeRolledWheel() {
+  const g = new THREE.Group();
+  const tyre = new THREE.Mesh(new THREE.TorusGeometry(ROLLED_WHEEL_R - 0.17, 0.17, 10, 20), material("#1B1B1B"));
+  tyre.rotation.y = Math.PI / 2;
+  const rim = mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.1, 14), "#BBBBBB", 0, 0, 0);
+  rim.rotation.z = Math.PI / 2;
+  g.add(tyre, rim);
   return g;
 }
 
@@ -322,6 +340,7 @@ export function animateAvatar(
   }
   const riding = state.mode === "walk" ? null : av.vehicles[state.mode];
   if (riding) for (const w of riding.wheels) w.rotation.x += state.distance / riding.wheelRadius;
+  if (av.wheel.visible) av.wheel.rotation.x += state.distance / ROLLED_WHEEL_R;
   if (state.mode !== "car") rig.position.x = 0;
 
   if (state.phase === "fainted") {

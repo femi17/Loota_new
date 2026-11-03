@@ -5,8 +5,11 @@ import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import { local } from "@/game/locale";
 
-/** At a vulcanizer's (or a petrol station's air): soft tyres pumped, or a flat patched and pumped. */
-export type PumpOffer = { place: string; keeper: string; flat: boolean; price: number; seconds: number };
+/**
+ * At a vulcanizer's (or a petrol station's air): soft tyres pumped, or a flat patched and pumped; `wheel`: the wheel of
+ * a motorbike or car with a flat, rolled here to be patched (owner, 3 Nov 2026).
+ */
+export type PumpOffer = { place: string; keeper: string; flat: boolean; price: number; seconds: number; wheel?: "motorbike" | "car" };
 
 export type PumpActions = {
   /** The job done (the server charges then, and the tyres are full): true if it went through. */
@@ -37,7 +40,9 @@ export function PumpScene({
   const [lines, setLines] = useState<SceneLine[]>([
     {
       who: "them",
-      text: offer.flat
+      text: offer.wheel
+        ? `${local("Ah, you roll am come!", "Ah, you rolled it all the way here!")} Let me find the hole in the water, patch the tube and pump your ${offer.wheel}'s tyre: ${offer.price} coins, about ${offer.seconds} seconds.`
+        : offer.flat
         ? `Ah, this tyre is flat! I'll find the hole in the water, patch the tube and pump it: ${offer.price} coins, about ${offer.seconds} seconds.`
         : `Your tyres are soft${local(" o", "")}. Let me pump them for you: ${offer.price} coins, about ${offer.seconds} seconds.`,
     },
@@ -59,7 +64,9 @@ export function PumpScene({
         say({
           who: "them",
           text: ok
-            ? offer.flat
+            ? offer.wheel
+              ? `Done! The patch is strong and the tyre is hard as rock. Roll it back to your ${offer.wheel} and put it on.`
+              : offer.flat
               ? "Done! The patch is strong and the tyre is hard as rock. Safe journey!"
               : "Done! Hard as rock. Safe journey!"
             : `Ah, you don't have up to ${offer.price} coins. I'll let it go this time, but come back when you do.`,
@@ -68,7 +75,7 @@ export function PumpScene({
       });
     }, 250);
     return () => window.clearInterval(timer);
-  }, [step, until, actions, offer.flat, offer.price, onMoment]);
+  }, [step, until, actions, offer.flat, offer.price, offer.wheel, onMoment]);
 
   let choices: SceneChoice[];
   if (step === "greet") {
@@ -95,7 +102,7 @@ export function PumpScene({
   } else if (step === "working") {
     choices = [];
   } else if (step === "done") {
-    choices = [{ label: "Thank you! 🚲", primary: true, onPick: onClose }];
+    choices = [{ label: offer.wheel ? "Thank you! 🛞" : "Thank you! 🚲", primary: true, onPick: onClose }];
   } else {
     choices = [{ label: "Bye", onPick: onClose }];
   }
@@ -107,7 +114,7 @@ export function PumpScene({
       sign={offer.place}
       them={{ name: offer.keeper, look: { ...keeperLook(offer.keeper), topColour: "#5B4636", extra: "cap" } }}
       you={you}
-      vehicle={{ kind: "bicycle", fixed: step === "done" }}
+      vehicle={{ kind: offer.wheel ?? "bicycle", fixed: step === "done" }}
       lines={lines}
       choices={choices}
       busy={busy}

@@ -433,7 +433,7 @@ export type Built = {
   /** Show or hide the chest in a room; open or shut a room's door. */
   setChest(room: string | null): void;
   setLocked(room: string, locked: boolean): void;
-  /** The hunt city (quarter3d): a building's roof lifts off as the hunter goes in (and its walls drop to a low cutaway). */
+  /** A building's roof lifts off as the hunter goes in (and its walls drop to a low cutaway). */
   setOpen?(room: string, open: boolean): void;
   /** The treasure building's five rooms (null: none showing), each shut or opened with what it held. */
   setInner?(room: string | null, inner: InnerRoomView[] | null): void;

@@ -3,10 +3,10 @@
 // ground no need to enter a house, the metal detector helps here"). A story key's city: the water tank (open air, the
 // right one: the key is buried there), a boiler house (a trap), a drivers' shrine (empty), a llama garden (open air,
 // empty) and a salt stall (empty); the hunter has a metal detector:
-//   1. 🧭 Explore the place: the open-air plots are marked 🌳, the buildings 🏠;
+//   1. 🧭 Explore the place;
 //   2. on the street by the water tank's way in: the detector says hot, from the street;
 //   3. on the street by the shrine: cold;
-//   4. into the shrine: 🔍 Search here: empty, nothing at all (no trap, no decoy);
+//   4. into the shrine (walking in is searching it): empty, nothing at all (no trap, no decoy);
 //   5. onto the water tank: no building, ⛏ Dig here: a buried chest (not five rooms); tapped, the Key Trial starts,
 //      60 seconds.
 // The hunt and the test player are deleted.   SHOTS=<folder> node scripts/tests/buried-treasure-browser-test.mjs
@@ -102,8 +102,8 @@ try {
   const opened = go && (await until(() => page.evaluate((sel) => !!document.querySelector(sel), SCENE), 15000));
   check("🧭 Explore the place: the city opens", !!opened);
   await wait(1500);
-  const names = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Buildings"] button')].map((b) => b.textContent?.trim()).join(" | "));
-  check("open-air plots marked 🌳, buildings 🏠", /🌳\s*The water tank/.test(names) && /🌳\s*The llama garden/.test(names) && /🏠\s*The drivers' shrine/.test(names), names);
+  const placeCount = await page.evaluate((sel) => Object.keys(JSON.parse(document.querySelector(sel)?.getAttribute("data-fronts") ?? "{}")).length, SCENE);
+  check("its five places, each with its way in", placeCount === 5, String(placeCount));
 
   // 2. On the street by the water tank: hot, from the street
   check("on the street by the water tank's way in", !!(await toStreetBy("tank")));
@@ -122,7 +122,7 @@ try {
   await tap({ tap: "room", id: "shrine" });
   await until(async () => /Inside The drivers' shrine/.test(await say()), 20000);
   await idle();
-  check("in the shrine (a building): 🔍 Search here", await until(() => press("Search here"), 10000));
+  check("in the shrine (a building): no Dig button (going in was the search)", !/Dig here/.test(await buttonText()), await buttonText());
   const empty = await until(async () => /nothing here\. It's empty/.test(await say()) && (await say()), 15000);
   check("…empty: just nothing", !!empty, empty ?? (await say()));
   const trapCard = await page.evaluate(() => !!document.querySelector('[aria-label^="A trap:"]'));

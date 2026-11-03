@@ -4,8 +4,9 @@
 // be shuffled"). A story key's city: a noodle shop (the right one), a fountain house (a trap) and a bookshop; the
 // hunter has a metal detector:
 //   1. 🧭 Explore the place: the city, its buildings and their names;
-//   2. into the fountain house: its roof lifts off; the detector says warm; out again;
-//   3. into the noodle shop: hot; 🔍 Search here: its five rooms;
+//   2. into the fountain house: going in springs its trap (the key's world, 3 Nov 2026); the detector says warm;
+//      dodged;
+//   3. into the noodle shop: hot; walked into, its five rooms;
 //   4. room by room: each door opens on its puzzle; solved, it opens on what it held (coins, the next chapter, a
 //      decoy, a trap: their penalty card), until the key: the city closes and the hunt card has Key 1.
 // The hunt and the test player are deleted.   SHOTS=<folder> node scripts/tests/hunt-city-browser-test.mjs
@@ -88,30 +89,30 @@ try {
   await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
   // 1. The city
   check("🧭 Explore the place: the city opens", await explore());
-  const names = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Buildings"] button')].map((b) => b.textContent?.trim()).join(" | "));
-  check("…its buildings, by name", /noodle shop/.test(names) && /fountain house/.test(names) && /bookshop/.test(names), names);
+  const fronts = await page.evaluate((sel) => Object.keys(JSON.parse(document.querySelector(sel)?.getAttribute("data-fronts") ?? "{}")).join(" | "), SCENE);
+  check("…its buildings, each with its way in", /noodles/.test(fronts) && /fountain/.test(fronts) && /books/.test(fronts), fronts);
   await page.evaluate(() => document.querySelector('button[aria-label="See the whole place"]')?.click());
   await wait(1500);
   await page.screenshot({ path: `${OUT}/city-1-streets.png` });
   await page.evaluate(() => document.querySelector('button[aria-label="Back to where you are"]')?.click());
 
-  // 2. Into the fountain house: the roof lifts, the detector says warm
+  // 2. Into the fountain house (a trap: going in springs it), the detector warm; dodged
   await tap({ tap: "room", id: "fountain" });
-  const inside = await until(async () => /Inside The fountain house/.test(await say()) && (await say()), 20000);
-  check("into the fountain house", !!inside, inside ?? (await say()));
+  const trapped = await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Dodge the trap"]')), 20000);
+  check("into the fountain house: its trap springs", !!trapped, await say());
   const warm = await until(async () => (await detector()) === "warm", 10000);
   check("…the detector: warm", !!warm, String(await detector()));
-  await wait(1200);
   await page.screenshot({ path: `${OUT}/city-2-roof-off.png` });
+  const dodgeAnswer = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data?.house_dodge?.answer;
+  await page.evaluate((k) => document.querySelectorAll('[aria-label="Dodge the trap"] .grid button')[Number(k) - 1]?.click(), dodgeAnswer);
+  check("…dodged", !!(await until(async () => /dodged it/.test(await say()), 10000)), await say());
 
-  // 3. The noodle shop: hot; searched, its five rooms
+  // 3. The noodle shop: hot; walked into, its five rooms
   await tap({ tap: "room", id: "noodles" });
   const hot = await until(async () => (await detector()) === "hot", 15000);
   check("into the noodle shop: the detector says hot", !!hot, String(await detector()));
-  await idle();
-  await until(() => press("Search here"), 15000);
   const rooms = await until(async () => /Five rooms/.test(await say()) && (await say()), 20000);
-  check("🔍 searched: its five rooms", !!rooms, rooms ?? (await say()));
+  check("🔍 walked in: its five rooms", !!rooms, rooms ?? (await say()));
   await wait(1200);
   await page.screenshot({ path: `${OUT}/city-3-rooms.png` });
 
@@ -120,6 +121,12 @@ try {
   let keyed = false;
   for (let n = 1; n <= 5 && !keyed; n++) {
     if (!(await inCity())) await explore();
+    // In the noodle shop (back in after a trap)
+    if ((await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-inside"), SCENE)) !== "noodles") {
+      await tap({ tap: "room", id: "noodles" });
+      await until(async () => (await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-inside"), SCENE)) === "noodles", 20000);
+      await idle();
+    }
     await tap({ tap: "inner", id: String(n) });
     const sheet = await until(() => page.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), n), 20000);
     if (!sheet) {

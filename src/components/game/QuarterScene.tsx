@@ -5,10 +5,10 @@ import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import type { AvatarLook } from "@/lib/avatar";
 import { animateAvatar, buildAvatar } from "@/game/models3d";
-import { outTo, roomAt, routeTo, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle, type InnerRoomView, type Plan } from "@/game/house3d";
+import type { HouseObjectView, HouseRoomView, HouseStyle, InnerRoomView } from "@/game/house3d";
+import { buildKeyWorld, type KeyScene, type KeyWorld, type Point } from "@/game/keyworld";
 import { PuzzleBoard } from "./puzzles/PuzzleTrial";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
-import { buildQuarter } from "@/game/quarter3d";
 import type { Penalty } from "./PenaltyCard";
 import { Joystick, useHandheld } from "./Joystick";
 
@@ -20,20 +20,22 @@ type QuarterView = {
   title: string;
   style: HouseStyle;
   layout?: string | null;
-  /** The plot the hunter stands on, and the one they dug. */
+  /** What the key's place looks like (its ground and landmark). */
+  scene?: KeyScene | null;
+  /** The place the hunter is in, and the one they last searched. */
   room: string | null;
   dug?: string | null;
   outUntil: string | null;
   rooms: HouseRoomView[];
   objects: HouseObjectView[];
   items: Item[];
-  /** The treasure building, found (searched): its five rooms, shut or opened with what they held. */
+  /** The treasure building, found: its five rooms, shut or opened with what they held. */
   inner?: InnerRoomView[] | null;
   at: { lng: number; lat: number };
 };
 /** A room of the treasure building being opened: its puzzle (from /api/house/room), and when its 60 seconds end. */
 type RoomPuzzle = { n: number; kind: string; puzzle: unknown; ends: number };
-const NEAR_M = 2.5; // the detector reads a plot from the street this close to its way in
+const NEAR_M = 3; // the detector reads a place from the street this close to its way in
 type Opened = {
   ok?: boolean;
   right?: boolean;
@@ -50,12 +52,12 @@ const HEAT: Record<string, { text: string; style: string }> = {
   warm: { text: "📡 Warm", style: "bg-[#F28C28] text-ink" },
   cold: { text: "📡 Cold", style: "bg-[#2F6FEB] text-white" },
 };
-type Point = { x: number; z: number };
 type Dug = Partial<QuarterView> & { locked?: boolean; text?: string; trap?: boolean; used?: { name: string } | null; penalty?: Penalty & { balance: number | null; energy: number | null }; until?: string; dodge?: { prompt: string; options: string[]; seconds: number } };
 
-const SPEED = 3.2; // metres a second, walking about
-const AVATAR = 0.8; // the hunter's size in the quarter
-const FOLLOW_M = 15; // on the street, about this many metres across the screen round the hunter
+const SPEED = 4; // metres a second, walking about
+const AVATAR = 0.8; // the hunter's size in the world
+// The camera, just behind and above the hunter (as mini-Loota's); higher inside a place, its roof off; or the whole town
+const EYE = { street: new THREE.Vector3(0, 11, 11.5), inside: new THREE.Vector3(0, 12.5, 8.5), wide: new THREE.Vector3(0, 62, 46) };
 const REFUSED: Record<string, string> = {
   away: "You've moved away from this place.",
   no_house: "There's nothing to search here.",
@@ -74,25 +76,15 @@ const OUTCOME_SAID: Record<string, string> = {
   trap: "a trap, sprung. Nothing more here.",
 };
 
-const within = (p: Point, r: { x: number; z: number; w: number; d: number }, pad = 0) => Math.abs(p.x - r.x) <= r.w / 2 + pad && Math.abs(p.z - r.z) <= r.d / 2 + pad;
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
-/** Where the hunter may stand: the street (and the way in), or a plot, crossing its hedge only at its gate. */
-function walkable(plan: Plan, from: Point, to: Point, locked: (i: number) => boolean) {
-  const onStreet = (p: Point) => plan.walks.some((w) => within(p, w, -0.3)) || within(p, plan.porch, 0.2);
-  const a = roomAt(plan, from), b = roomAt(plan, to);
-  if (b >= 0) {
-    if (a === b) return within(to, plan.rooms[b], -0.45);
-    return !locked(b) && dist(to, plan.rooms[b].door) < 1.3;
-  }
-  if (a >= 0) return dist(from, plan.rooms[a].door) < 1.3 && (onStreet(to) || dist(to, plan.rooms[a].door) < 1.3);
-  return onStreet(to);
-}
 
 /**
- * The key's quarter (owner, 1 Nov 2026: "we create our own open street, which is still inside the key location… where
- * user can walk freely on their own to figure where the treasure is actually buried"). The hunter walks the street and
- * the plots freely (tap where to go; arrow keys or WASD on a computer); stepping onto a plot is free; ⛏ Dig is the
- * choice: a trap's challenge, nothing, or the chest. Only the server knows which plot is which.
+ * The key's world (owner, 3 Nov 2026, after the old mini-Loota: "when you get to the location you are thrown into
+ * another world… we do not need the buttons for rooms, user can move freely using the movement we have designed").
+ * The hunter walks the town round the key's landmark (the joystick, arrow keys or WASD, or tap where to go), the
+ * camera following. Walking into one of the story's places is the choice: a wrong one springs its trap, an innocent
+ * one is empty, and the right one shows its five rooms, each opened by walking up to its door and solving its puzzle.
+ * Out in the open, ⛏ Dig. Only the server knows which place is which.
  */
 export function QuarterScene({
   huntId,
@@ -110,7 +102,7 @@ export function QuarterScene({
   onClose: () => void;
   /** The chest, dug up: open it (the map's usual search, which starts the Key Trial). */
   onOpenChest: () => void;
-  /** A trap: the penalty card shows; the quarter closes (`moveTo`: it sent the hunter back there). */
+  /** A trap: the penalty card shows; the place closes (`moveTo`: it sent the hunter back there). */
   onPenalty: (p: Penalty & { balance: number | null; energy: number | null; moveTo?: { lng: number; lat: number } | null }) => void;
   /** The server won't open it (the hunter isn't at the place): closed, with why, never a blank scene. */
   onRefused?: (text: string) => void;
@@ -124,10 +116,11 @@ export function QuarterScene({
   const [supabase] = useState(createClient);
   const host = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<QuarterView | null>(null);
-  const [say, setSay] = useState<string>("Walk the streets: tap a place (or its name below) to go there. When you think it's the one, search it, or dig if it's out in the open.");
-  const [standing, setStanding] = useState(-1); // the plot the hunter is on (-1: the street)
-  const [near, setNear] = useState(-1); // the plot the detector reads: the one stood on, or the nearest way in from the street
-  const [wide, setWide] = useState(false); // the whole quarter asked for
+  const [say, setSay] = useState<string>("Walk about the place (the joystick, the arrow keys, or tap where to go). Go into the place you think it is: a wrong one bites. Out in the open, dig.");
+  const [standing, setStanding] = useState(-1); // the place the hunter is in (-1: out in the town)
+  const [near, setNear] = useState(-1); // the place the detector reads: the one stood in, or the nearest way in
+  const [nearRoom, setNearRoom] = useState(0); // in the treasure building: the room whose door the hunter is at
+  const [wide, setWide] = useState(false); // the whole town asked for
   // The joystick on phones and tablets (Joystick.tsx): where the thumb is, read by the walking every frame.
   const joy = useRef({ x: 0, y: 0 });
   const handheld = useHandheld();
@@ -139,14 +132,22 @@ export function QuarterScene({
   const [gained, setGained] = useState<Item | null>(null);
   const [dodge, setDodge] = useState<{ room: number; prompt: string; options: string[]; seconds: number } | null>(null);
   const [roomPuzzle, setRoomPuzzle] = useState<RoomPuzzle | null>(null);
+  const roomPuzzleRef = useRef<RoomPuzzle | null>(null);
+  useEffect(() => {
+    roomPuzzleRef.current = roomPuzzle;
+  }, [roomPuzzle]);
   const [roomNote, setRoomNote] = useState<string | null>(null);
   const [roomShake, setRoomShake] = useState(0);
   const [roomLeft, setRoomLeft] = useState(0); // seconds left on the open room's puzzle
-  // The metal detector: how hot each building is (house_detect), once each visit; "none": no detector.
+  // The metal detector: how hot each place is (house_detect), and inside the treasure building each room
+  // (house_room_detect: only the key's room is hot); once each visit; "none": no detector.
   const [heat, setHeat] = useState<Record<string, string>>({});
   const heatAsked = useRef(new Set<string>());
+  const [roomHeat, setRoomHeat] = useState<Record<number, string>>({});
+  const roomHeatAsked = useRef(new Set<number>());
   const openRoomRef = useRef<(n: number) => Promise<void>>(async () => {});
-  const scene = useRef<{ built: Built; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, room: number) => void } | null>(null);
+  const enterRef = useRef<(i: number) => Promise<void>>(async () => {});
+  const scene = useRef<{ world: KeyWorld; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, i: number) => void } | null>(null);
   const viewRef = useRef<QuarterView | null>(null);
   useEffect(() => {
     viewRef.current = view;
@@ -156,7 +157,7 @@ export function QuarterScene({
     busyRef.current = busy;
   }, [busy]);
 
-  // The quarter from the server; then the 3D scene round it.
+  // The place from the server; then the world round it.
   useEffect(() => {
     let live = true;
     void supabase.rpc("house_view", { p_hunt: huntId }).then(({ data }) => {
@@ -181,7 +182,7 @@ export function QuarterScene({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [huntId]);
 
-  // Stepping onto a plot (or off it): the server notes it (and opens a gate with the thing it needs).
+  // Into a place (or out of it): the server notes it (and opens a door with the thing it needs).
   const stepRef = useRef<(i: number) => Promise<boolean>>(async () => true);
   useEffect(() => {
     stepRef.current = async (i: number) => {
@@ -199,10 +200,13 @@ export function QuarterScene({
       }
       setView((old) => (old ? { ...old, ...(r as QuarterView) } : old));
       if (i >= 0) {
-        if (r.used) scene.current?.built.setLocked(v.rooms[i].id, false);
         const open = v.rooms[i].outdoor === true;
-        if (r.used) setSay(`You use ${r.used.name}: the ${open ? "gate" : "door"} of ${v.rooms[i].name} opens.`);
-        else setSay(open ? `🌳 At ${v.rooms[i].name}, out in the open. Look around, or dig if you think it's buried here.` : `🏠 Inside ${v.rooms[i].name}. Look around, or search it if you think it's the one.`);
+        if (r.used) {
+          scene.current?.world.setLocked(i, false);
+          setSay(`You use ${r.used.name}: the ${open ? "gate" : "door"} of ${v.rooms[i].name} opens.`);
+        } else if (open) setSay(`🌳 At ${v.rooms[i].name}, out in the open. Look around, or dig if you think it's buried here.`);
+        else if (v.dug === v.rooms[i].id && !v.inner) setSay(`🏠 Inside ${v.rooms[i].name}. You've searched it: it's empty.`);
+        else setSay(`🏠 Inside ${v.rooms[i].name}…`);
       }
       return true;
     };
@@ -217,81 +221,54 @@ export function QuarterScene({
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(renderer.domElement);
+    const kw = buildKeyWorld(v.rooms, v.objects, v.scene, v.title);
     const world = new THREE.Scene();
-    world.background = new THREE.Color("#1B2230");
-    world.add(new THREE.HemisphereLight("#FFF4E0", "#3A4250", 2.0));
-    const sun = new THREE.DirectionalLight("#FFFFFF", 1.4);
-    sun.position.set(6, 12, 8);
+    const sky = new THREE.Color(kw.sky);
+    world.background = sky;
+    // The view is kept short (owner: "we just limit the viewing so it is not too big"): the town fades into the haze
+    const fog = new THREE.Fog(sky, 26, 64);
+    world.fog = fog;
+    world.add(new THREE.HemisphereLight("#FFF4E0", "#667755", 2.0));
+    const sun = new THREE.DirectionalLight("#FFFFFF", 1.3);
+    sun.position.set(20, 40, 10);
     world.add(sun);
-    const quarter = buildQuarter(v.rooms, v.objects, v.style, v.title, v.layout);
-    world.add(quarter.group);
-    const plan = quarter.plan;
-    const B = plan.bounds;
-    const centre = new THREE.Vector3(plan.centre.x, 0, plan.centre.z);
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 300);
-    // Looking in from the front-right, a little from above; framed in the screen left between the bars.
-    const camOff = new THREE.Vector3(Math.sin(Math.PI / 4), 1.15, Math.cos(Math.PI / 4)).normalize().multiplyScalar(40);
-    camera.position.copy(centre).add(camOff);
-    camera.lookAt(centre);
-    camera.updateMatrixWorld();
-    const boxAround = (x0: number, x1: number, z0: number, z1: number) => {
-      const out: THREE.Vector3[] = [];
-      for (const x of [x0, x1]) for (const y of [0, 3.8]) for (const z of [z0, z1]) out.push(new THREE.Vector3(x, y, z));
-      return out;
-    };
-    const screen = { w: 1, h: 1, top: 0, free: 1 };
-    const goal = { cx: 0, cy: 0, sc: 0 };
-    const cur = { cx: 0, cy: 0, sc: 0 };
-    /** Frame a box: its middle in the middle of the free screen, filling it. */
-    const frameOn = (corners: THREE.Vector3[], fill: number) => {
-      const xs: number[] = [], ys: number[] = [];
-      for (const c of corners) {
-        const p = c.clone().applyMatrix4(camera.matrixWorldInverse);
-        xs.push(p.x);
-        ys.push(p.y);
-      }
-      goal.sc = Math.max((Math.max(...xs) - Math.min(...xs)) / screen.w, (Math.max(...ys) - Math.min(...ys)) / screen.free) * fill;
-      goal.cx = (Math.min(...xs) + Math.max(...xs)) / 2;
-      goal.cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-      if (!cur.sc) Object.assign(cur, goal);
-    };
-    const project = () => {
-      const t = cur.cy + (screen.top + screen.free / 2) * cur.sc;
-      Object.assign(camera, { left: cur.cx - (screen.w / 2) * cur.sc, right: cur.cx + (screen.w / 2) * cur.sc, top: t, bottom: t - screen.h * cur.sc });
-      camera.updateProjectionMatrix();
-    };
+    world.add(kw.group);
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
     const fit = () => {
       const w = el.clientWidth, h = el.clientHeight;
       if (!w || !h) return;
       renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.fov = w < h ? 64 : 50; // a tall phone screen sees as much of the street across as a computer's
+      camera.updateProjectionMatrix();
       const root = el.parentElement;
-      const head = root?.querySelector<HTMLElement>("[data-house-head]")?.offsetHeight ?? 0;
-      const bottom = root?.querySelector<HTMLElement>("[data-house-foot]")?.offsetHeight ?? 0;
-      root?.style.setProperty("--house-head", `${head}px`);
-      root?.style.setProperty("--house-foot", `${bottom}px`);
-      const top = Math.round(head * 0.55);
-      Object.assign(screen, { w, h, top, free: Math.max(120, h - top - bottom) });
+      root?.style.setProperty("--house-head", `${root?.querySelector<HTMLElement>("[data-house-head]")?.offsetHeight ?? 0}px`);
+      root?.style.setProperty("--house-foot", `${root?.querySelector<HTMLElement>("[data-house-foot]")?.offsetHeight ?? 0}px`);
     };
     fit();
     const sizes = new ResizeObserver(() => fit());
     sizes.observe(el);
     for (const bar of el.parentElement?.querySelectorAll("[data-house-head], [data-house-foot]") ?? []) sizes.observe(bar);
 
-    // The hunter, at the way in (or on the plot they were on)
+    // The hunter, at the edge of the square (or in the place they were in)
     const av = buildAvatar(look);
     av.root.scale.setScalar(AVATAR);
-    av.root.position.set(plan.start.x, 0.1, plan.start.z);
-    av.root.rotation.y = Math.atan2(plan.entrance.x - plan.start.x, plan.entrance.z - plan.start.z);
+    av.root.position.set(kw.start.x, 0.1, kw.start.z);
+    av.root.rotation.y = Math.PI; // facing the square
     world.add(av.root);
-    // The street just outside each plot's way in (tests walk there to read the detector from the street)
-    el.parentElement?.setAttribute("data-fronts", JSON.stringify(Object.fromEntries(v.rooms.map((r, i) => [r.id, [plan.rooms[i].front.x, plan.rooms[i].front.z]]))));
+    // The street just outside each place's way in (tests walk there to read the detector from the street)
+    el.parentElement?.setAttribute("data-fronts", JSON.stringify(Object.fromEntries(kw.places.map((p) => [p.id, [p.front.x, p.front.z]]))));
+    let handled = -1; // the place whose going-in the game has dealt with
     if (v.room) {
       const i = v.rooms.findIndex((r) => r.id === v.room);
-      if (i >= 0) av.root.position.set(plan.rooms[i].inside.x, 0.1, plan.rooms[i].inside.z);
+      if (i >= 0) {
+        av.root.position.set(kw.places[i].inside.x, 0.1, kw.places[i].inside.z);
+        handled = i;
+      }
     }
-    if (v.dug && v.inner) quarter.setInner?.(v.dug, v.inner);
-    else if (v.dug) quarter.setChest(v.rooms.find((r) => r.id === v.dug && r.chest)?.id ?? null);
-    if (v.room) quarter.setOpen?.(v.room, true);
+    const dugAt = v.rooms.findIndex((r) => r.id === v.dug);
+    if (dugAt >= 0 && v.inner) kw.setInner(dugAt, v.inner);
+    else if (dugAt >= 0 && v.rooms[dugAt].chest) kw.setChest(dugAt);
     let path: Point[] = [];
     let arrive: (() => void) | null = null;
     let shakeUntil = 0;
@@ -302,7 +279,7 @@ export function QuarterScene({
         arrive = resolve;
       });
 
-    // Arrow keys / WASD: walk where the screen points (up is away from you), within the street and the plots.
+    // Arrow keys / WASD: up the screen is away from the camera.
     const keys = new Set<string>();
     const onKey = (e: KeyboardEvent) => {
       const k = { ArrowUp: "u", KeyW: "u", ArrowDown: "d", KeyS: "d", ArrowLeft: "l", KeyA: "l", ArrowRight: "r", KeyD: "r" }[e.code];
@@ -313,15 +290,14 @@ export function QuarterScene({
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
-    const ahead = new THREE.Vector3(-camOff.x, 0, -camOff.z).normalize(); // "up" on the screen, on the ground
-    const rightward = new THREE.Vector3(-ahead.z, 0, ahead.x);
 
     // Trap animations (owner, 31 Oct 2026: like the movies): each runs for a second or so; true when done.
     const fx: ((t: number) => boolean)[] = [];
     const soft = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
     const trap = (kind: string, i: number) => {
       const t0 = performance.now();
-      const room = plan.rooms[i];
+      const a = kw.places[i]?.area ?? { x0: -2, x1: 2, z0: -2, z1: 2 };
+      const room = { x: (a.x0 + a.x1) / 2, z: (a.z0 + a.z1) / 2, w: a.x1 - a.x0, d: a.z1 - a.z0 };
       const me = av.root.position.clone();
       const ease = (t: number) => Math.min(1, Math.max(0, (t - t0) / 1000));
       shakeUntil = t0 + 900;
@@ -365,7 +341,7 @@ export function QuarterScene({
       } else if (kind === "darts" || kind === "swarm") {
         const bits = Array.from({ length: 14 }, (_, j) => {
           const b = new THREE.Mesh(kind === "darts" ? new THREE.BoxGeometry(0.05, 0.05, 0.35) : new THREE.SphereGeometry(0.09, 6, 4), soft(kind === "darts" ? "#C8A45C" : "#1A1A1A", 1));
-          b.position.set(room.x + (j % 5 - 2) * 0.5, 1 + (j % 3) * 0.3, room.z - room.d / 2);
+          b.position.set(me.x + (j % 5 - 2) * 0.6, 1 + (j % 3) * 0.3, me.z - 3);
           b.userData.from = b.position.clone();
           world.add(b);
           return b;
@@ -390,7 +366,7 @@ export function QuarterScene({
         });
       } else if (kind === "boulder") {
         const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8, 1), new THREE.MeshLambertMaterial({ color: "#7E7A70" }));
-        rock.position.set(room.x, 0.9, room.z - room.d / 2 + 0.9);
+        rock.position.set(me.x, 0.9, me.z - 4);
         const from = rock.position.clone();
         world.add(rock);
         fx.push((t) => {
@@ -403,41 +379,48 @@ export function QuarterScene({
         // The Masquerade, a mirror, a storm, a snake: the light flickers
         fx.push((t) => {
           const k = ease(t);
-          world.background = new THREE.Color(Math.floor(k * 12) % 2 ? "#3A0A0A" : "#1B2230");
+          world.background = new THREE.Color(Math.floor(k * 12) % 2 ? "#3A0A0A" : kw.sky);
           return k >= 1;
         });
       }
     };
 
+    const eye = new THREE.Vector3().copy(av.root.position).add(EYE.street);
+    const aim = new THREE.Vector3().copy(av.root.position);
+    camera.position.copy(eye);
     let raf = 0;
     let last = performance.now();
-    let lastPlot = -2;
-    let lastNear = -2;
     let lastShown = 0;
+    let shownHere = -2;
+    let lastNear = -2;
+    let lastRoom = -1;
     let stepping = false;
+    const asked = new Set<number>(); // locked doors already tried on this approach
+    const armed = [true, true, true, true, true, true]; // room doors, ready to open as the hunter walks up
     const frame = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       for (let j = fx.length - 1; j >= 0; j--) if (fx[j](now)) fx.splice(j, 1);
-      quarter.tick?.(dt);
       let moved = 0;
       // Steering (the joystick or the keys): it takes over from a walk to a tapped spot.
       const stick = joy.current;
       const steering = keys.size > 0 || Math.hypot(stick.x, stick.y) > 0.15;
-      if (steering && path.length && !busyRef.current) {
+      const frozen = busyRef.current || !!roomPuzzleRef.current;
+      if (steering && path.length && !frozen) {
         path = [];
         const done = arrive;
         arrive = null;
         done?.();
       }
+      const me = av.root.position;
       const next = path[0];
-      if (next) {
-        const dx = next.x - av.root.position.x, dz = next.z - av.root.position.z;
+      if (next && !roomPuzzleRef.current) {
+        const dx = next.x - me.x, dz = next.z - me.z;
         const d = Math.hypot(dx, dz);
         const step = SPEED * dt;
         if (d <= step) {
-          av.root.position.x = next.x;
-          av.root.position.z = next.z;
+          me.x = next.x;
+          me.z = next.z;
           path.shift();
           moved = d;
           if (!path.length) {
@@ -446,86 +429,109 @@ export function QuarterScene({
             done?.();
           }
         } else {
-          av.root.position.x += (dx / d) * step;
-          av.root.position.z += (dz / d) * step;
+          me.x += (dx / d) * step;
+          me.z += (dz / d) * step;
           av.root.rotation.y = Math.atan2(dx, dz);
           moved = step;
         }
-      } else if (steering && !busyRef.current && !stepping) {
-        // Where the screen points (up is away from you): full speed from the keys, the joystick as far as it's pushed.
-        const dir = new THREE.Vector3();
-        let pace = 1;
+      } else if (steering && !frozen && !stepping) {
+        // Up the screen is away from the camera: full speed from the keys, the joystick as far as it's pushed.
+        let x = 0, z = 0, pace = 1;
         if (keys.size) {
-          if (keys.has("u")) dir.add(ahead);
-          if (keys.has("d")) dir.sub(ahead);
-          if (keys.has("r")) dir.add(rightward);
-          if (keys.has("l")) dir.sub(rightward);
+          if (keys.has("u")) z -= 1;
+          if (keys.has("d")) z += 1;
+          if (keys.has("r")) x += 1;
+          if (keys.has("l")) x -= 1;
         } else {
-          dir.addScaledVector(ahead, -stick.y).addScaledVector(rightward, stick.x);
+          x = stick.x;
+          z = stick.y;
           pace = Math.min(1, Math.hypot(stick.x, stick.y));
         }
-        if (dir.lengthSq() > 0) {
-          dir.normalize();
-          av.root.rotation.y = Math.atan2(dir.x, dir.z); // turn to face the way, even against a hedge
-          dir.multiplyScalar(SPEED * pace * dt);
-          const from = { x: av.root.position.x, z: av.root.position.z };
-          const locked = (i: number) => viewRef.current?.rooms[i]?.locked === true;
-          // Straight on, or sliding along a hedge or the kerb.
-          const tries = [{ x: from.x + dir.x, z: from.z + dir.z }, { x: from.x + dir.x, z: from.z }, { x: from.x, z: from.z + dir.z }];
-          const to = tries.find((t) => (t.x !== from.x || t.z !== from.z) && walkable(plan, from, t, locked));
+        const len = Math.hypot(x, z);
+        if (len > 0) {
+          av.root.rotation.y = Math.atan2(x, z); // turn to face the way, even against a wall
+          const sx = (x / len) * SPEED * pace * dt, sz = (z / len) * SPEED * pace * dt;
+          const from = { x: me.x, z: me.z };
+          // Straight on, or sliding along a wall
+          const to = [{ x: from.x + sx, z: from.z + sz }, { x: from.x + sx, z: from.z }, { x: from.x, z: from.z + sz }].find((t) => !kw.blocked(t));
           if (to) {
             moved = Math.hypot(to.x - from.x, to.z - from.z);
-            av.root.position.x = to.x;
-            av.root.position.z = to.z;
-          } else {
-            const into = roomAt(plan, tries[0]);
-            if (into >= 0 && locked(into) && dist(tries[0], plan.rooms[into].door) < 1.3) setSay(`🔒 ${viewRef.current?.rooms[into]?.name}: the door is locked. Tap it.`);
+            me.x = to.x;
+            me.z = to.z;
           }
         }
       }
       animateAvatar(av, { mode: "walk", phase: "idle", moving: moved > 0 ? 1 : 0, distance: moved / AVATAR }, dt, now / 1000);
 
-      // Onto a plot or off it: tell the server; the camera frames the plot, or follows the hunter on the street.
-      const at = { x: av.root.position.x, z: av.root.position.z };
+      const at = { x: me.x, z: me.z };
       if (now - lastShown > 250) {
         lastShown = now;
         el.parentElement?.setAttribute("data-at", `${at.x.toFixed(2)},${at.z.toFixed(2)}`); // where the hunter is (tests read it)
       }
-      const here = roomAt(plan, at);
-      if (here !== lastPlot) {
-        const was = lastPlot;
-        lastPlot = here;
-        // Through a door: its roof lifts off (and goes back on behind the hunter).
-        const ids = viewRef.current?.rooms ?? [];
-        if (was >= 0 && ids[was]) quarter.setOpen?.(ids[was].id, false);
-        if (here >= 0 && ids[here]) quarter.setOpen?.(ids[here].id, true);
+      const v = viewRef.current;
+      const here = kw.placeAt(at);
+      if (here !== shownHere) {
+        shownHere = here;
         setStanding(here);
         if (here >= 0 && wideRef.current) setWide(false);
-        // Walked (not routed): the server hears of it now. A routed walk tells it on the way (the tap does).
-        if (!path.length && was !== -2 && !busyRef.current) {
-          stepping = true;
-          void stepRef.current(here).finally(() => (stepping = false));
-        }
+      }
+      // Going in (or out): the server hears of it, and walking into a building is searching it (owner: "we would
+      // still have a trap if some enters the wrong house")
+      if (here !== handled && !busyRef.current && !stepping) {
+        handled = here;
+        stepping = true;
+        void enterRef.current(here).finally(() => (stepping = false));
+      }
+      // A locked door, walked up to: try it (with the thing it needs, if carried)
+      if (v && !stepping && !busyRef.current) {
+        kw.places.forEach((p, i) => {
+          const d = dist(at, p.front);
+          if (d > 3) asked.delete(i);
+          else if (d < 1.6 && v.rooms[i]?.locked && !asked.has(i)) {
+            asked.add(i);
+            stepping = true;
+            void stepRef.current(i).finally(() => (stepping = false));
+          }
+        });
+      }
+      // In the treasure building: walking up to a room's door opens its puzzle; the detector reads the room
+      let roomNow = 0;
+      if (v?.inner && here >= 0 && v.rooms[here]?.id === v.dug) {
+        const spots = kw.innerDoors(here);
+        spots.forEach((s, k) => {
+          const d = dist(at, s);
+          if (d < 1.8 && (!roomNow || d < dist(at, spots[roomNow - 1]))) roomNow = k + 1;
+          if (d > 1.2) armed[k + 1] = true;
+          else if (d < 0.5 && armed[k + 1] && !v.inner?.[k]?.open && !roomPuzzleRef.current && !busyRef.current) {
+            armed[k + 1] = false;
+            void openRoomRef.current(k + 1);
+          }
+        });
+        roomNow = kw.innerAt(at) || roomNow;
+      }
+      if (roomNow !== lastRoom) {
+        lastRoom = roomNow;
+        setNearRoom(roomNow);
       }
       // The detector, from the street too (owner, 3 Nov 2026: "the metal detector helps in locating where treasures are buried")
-      const nearNow = here >= 0 ? here : plan.rooms.findIndex((r) => dist(at, r.door) < NEAR_M);
+      const nearNow = here >= 0 ? here : kw.places.findIndex((p) => dist(at, p.front) < NEAR_M);
       if (nearNow !== lastNear) {
         lastNear = nearNow;
         setNear(nearNow);
       }
-      if (wideRef.current) frameOn(boxAround(B.minX - 1, B.maxX + 1, B.minZ - 1, B.maxZ + 1), 1.04);
-      else if (here >= 0) {
-        const r = plan.rooms[here];
-        frameOn(boxAround(r.x - r.w / 2 - 0.6, r.x + r.w / 2 + 0.6, r.z - r.d / 2 - 0.6, r.z + r.d / 2 + 0.6), 1.05);
-      } else frameOn(boxAround(at.x - FOLLOW_M / 2, at.x + FOLLOW_M / 2, at.z - FOLLOW_M / 2, at.z + FOLLOW_M / 2), 0.75);
-      const k = 1 - Math.exp(-4 * dt);
-      cur.cx += (goal.cx - cur.cx) * k;
-      cur.cy += (goal.cy - cur.cy) * k;
-      cur.sc += (goal.sc - cur.sc) * k;
-      project();
-      camera.position.copy(centre).add(camOff);
-      if (now < shakeUntil) camera.position.x += (Math.random() - 0.5) * 0.5;
-      camera.lookAt(centre);
+
+      // The camera: behind and above the hunter, gliding after them
+      const off = wideRef.current ? EYE.wide : here >= 0 ? EYE.inside : EYE.street;
+      const goal = wideRef.current ? new THREE.Vector3(0, 0, 0).add(off) : new THREE.Vector3(at.x, 0, at.z).add(off);
+      const look = wideRef.current ? new THREE.Vector3(0, 0, 2) : new THREE.Vector3(at.x, 0.8, at.z + 1.2);
+      const k = 1 - Math.exp(-5 * dt);
+      eye.lerp(goal, k);
+      aim.lerp(look, k);
+      fog.far += ((wideRef.current ? 400 : 64) - fog.far) * k;
+      camera.position.copy(eye);
+      if (now < shakeUntil) camera.position.x += (Math.random() - 0.5) * 0.4;
+      camera.lookAt(aim);
+      kw.tick(dt, at, { x: eye.x, z: eye.z });
       renderer.render(world, camera);
       raf = requestAnimationFrame(frame);
     };
@@ -536,7 +542,7 @@ export function QuarterScene({
     const tapAt = (e: PointerEvent) => {
       const r = renderer.domElement.getBoundingClientRect();
       ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
-      const hit = ray.intersectObjects(quarter.targets, true).find((h) => {
+      const hit = ray.intersectObjects(kw.targets, true).find((h) => {
         for (let o: THREE.Object3D | null = h.object; o; o = o.parent) if (!o.visible) return false;
         return true;
       });
@@ -553,7 +559,7 @@ export function QuarterScene({
     renderer.domElement.addEventListener("pointerup", onUp);
 
     scene.current = {
-      built: quarter,
+      world: kw,
       walkTo,
       at: () => ({ x: av.root.position.x, z: av.root.position.z }),
       shake: () => (shakeUntil = performance.now() + 700),
@@ -572,59 +578,48 @@ export function QuarterScene({
     };
   }, [built, look]);
 
-  /** Walk onto plot i (stopping at a shut gate); true once on it. */
-  const goOnto = async (i: number) => {
-    const s = scene.current;
-    const v = viewRef.current;
-    if (!s || !v) return false;
-    if (roomAt(s.built.plan, s.at()) === i) return true;
-    await s.walkTo(routeTo(s.built.plan, s.at(), i, false));
-    if (!(await stepRef.current(i))) return false;
-    await s.walkTo([s.built.plan.rooms[i].inside]);
-    return true;
-  };
-
-  // A tap in the quarter: walk there (the server hears where you stand).
+  // A tap: walk there (round the walls); into a place, a room's door, a thing to touch, or the chest.
   useEffect(() => {
     const onTap = async (e: Event) => {
-      const { tap, id, x, z } = (e as CustomEvent<{ tap: string; id: string; x?: number; z?: number }>).detail;
-      const v = viewRef.current;
+      const { tap, id, x, z } = (e as CustomEvent<{ tap: string; id?: string; x?: number; z?: number }>).detail;
       const s = scene.current;
-      if (!v || !s || busy) return;
-      const pl = s.built.plan;
-      if (tap === "out") {
-        setSay("That's the way out. Tap Leave when you're done here.");
-        await s.walkTo([...outTo(pl, s.at()), pl.entrance, pl.start]);
-        return void stepRef.current(-1);
-      }
-      if (tap === "hall") {
-        // Anywhere on the street: there (kept off the kerb)
-        const w = pl.walks.find((wk) => within({ x: x ?? 0, z: z ?? 0 }, wk)) ?? pl.walks[0];
-        const to = { x: Math.max(w.x - w.w / 2 + 0.4, Math.min(w.x + w.w / 2 - 0.4, x ?? w.x)), z: Math.max(w.z - w.d / 2 + 0.4, Math.min(w.z + w.d / 2 - 0.4, z ?? w.z)) };
-        const leaving = roomAt(pl, s.at()) >= 0;
-        await s.walkTo([...outTo(pl, s.at()), to]);
-        if (leaving) void stepRef.current(-1);
-        return;
-      }
+      const v = viewRef.current;
+      if (!s || !v || busyRef.current || dodge || roomPuzzleRef.current) return;
+      const kw = s.world;
       if (tap === "chest") {
         setSay("You kneel by the chest…");
         return onOpenChest();
       }
-      if (tap === "inner") return void openRoomRef.current(Number(id));
+      if (tap === "ground" || tap === "hall") {
+        if (x === undefined || z === undefined) return;
+        await s.walkTo(kw.route(s.at(), { x, z }));
+        return;
+      }
+      if (tap === "inner") {
+        const here = kw.placeAt(s.at());
+        if (here < 0) return;
+        const n = Number(id);
+        const spot = kw.innerDoors(here)[n - 1];
+        if (spot) await s.walkTo(kw.route(s.at(), spot));
+        if (!roomPuzzleRef.current) await openRoomRef.current(n);
+        return;
+      }
       const roomId = tap === "room" ? id : v.objects.find((o) => o.id === id)?.room;
       const i = v.rooms.findIndex((r) => r.id === roomId);
       if (i < 0) return;
-      setBusy(true);
-      try {
-        if (!(await goOnto(i))) return;
-        if (tap === "room" && x !== undefined && z !== undefined) {
-          // Tapped somewhere on the plot: there (inside its hedge)
-          const r = pl.rooms[i];
-          await s.walkTo([{ x: Math.max(r.x - r.w / 2 + 0.7, Math.min(r.x + r.w / 2 - 0.7, x)), z: Math.max(r.z - r.d / 2 + 0.7, Math.min(r.z + r.d / 2 - 0.7, z)) }]);
-        }
-        if (tap === "object") {
-          const r = pl.rooms[i];
-          await s.walkTo([{ x: (r.inside.x + r.x) / 2, z: (r.inside.z + r.z) / 2 }]);
+      const p = kw.places[i];
+      if (tap === "room") {
+        // A tap on a place: walk to it, and in (a locked one: up to its door)
+        if (kw.placeAt(s.at()) === i && x !== undefined && z !== undefined) return void (await s.walkTo(kw.route(s.at(), { x, z })));
+        await s.walkTo(kw.route(s.at(), v.rooms[i].locked ? p.front : p.inside));
+        return;
+      }
+      if (tap === "object" && id) {
+        const spot = kw.objectSpot(id);
+        if (spot) await s.walkTo(kw.route(s.at(), spot));
+        if (kw.placeAt(s.at()) !== i) return setSay("You can't reach that from here.");
+        setBusy(true);
+        try {
           const { data } = await supabase.rpc("house_touch", { p_hunt: huntId, p_object: id });
           const t = data as (Partial<QuarterView> & { text?: string; gained?: Item | null }) | null;
           if (!t?.ok) return setSay("You can't reach that from here.");
@@ -634,27 +629,36 @@ export function QuarterScene({
             setGained(t.gained);
             setTimeout(() => setGained(null), 2600);
           }
+        } finally {
+          setBusy(false);
         }
-      } finally {
-        setBusy(false);
       }
     };
     window.addEventListener("loota:house-tap", onTap);
     return () => window.removeEventListener("loota:house-tap", onTap);
-  }, [busy, huntId, onClose, onOpenChest, supabase]);
+  }, [dodge, huntId, onOpenChest, supabase]);
 
-  /** A room of the treasure building: walk into it, and its puzzle opens (or, opened already, what it held). */
+  /** Walked into a place: a building is searched as the hunter goes in; out in the open, they choose to dig. */
+  useEffect(() => {
+    enterRef.current = async (i: number) => {
+      if (!(await stepRef.current(i))) return;
+      const v = viewRef.current;
+      const r = i >= 0 ? v?.rooms[i] : null;
+      if (r && !r.outdoor && v?.dug !== r.id) await search(i);
+    };
+  });
+
+  /** A room of the treasure building, its door walked up to: its puzzle opens (or, opened already, what it held). */
+  const opening = useRef(false);
   async function openRoom(n: number) {
-    const s = scene.current;
     const v = viewRef.current;
-    if (!s || !v?.dug || !v.inner || busy) return;
+    if (!v?.dug || !v.inner || busyRef.current || opening.current || roomPuzzleRef.current) return;
     const cell = v.inner[n - 1];
     if (!cell) return;
+    if (cell.open) return setSay(`Room ${n}: ${OUTCOME_SAID[cell.outcome ?? ""] ?? "opened already."}`);
+    opening.current = true;
     setBusy(true);
     try {
-      const spot = s.built.innerSpots?.(v.dug)[n - 1];
-      if (spot) await s.walkTo([spot]);
-      if (cell.open) return setSay(`Room ${n}: ${OUTCOME_SAID[cell.outcome ?? ""] ?? "opened already."}`);
       const res = await fetch("/api/house/room", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: n }) });
       const r = (await res.json().catch(() => null)) as { ok?: boolean; reason?: string; kind?: string; puzzle?: unknown; open?: boolean; seconds?: number; secondsLeft?: number } | null;
       if (r?.reason === "jammed") return setSay(`⏳ Room ${n}'s lock is jammed: try again in ${Math.max(1, Math.ceil(r.seconds ?? 30))} s.`);
@@ -665,6 +669,7 @@ export function QuarterScene({
       setRoomPuzzle({ n, kind: r.kind, puzzle: r.puzzle, ends: Date.now() + left * 1000 });
       setSay(`🚪 Room ${n} is locked by a puzzle: solve it in 60 seconds to open the door.`);
     } finally {
+      opening.current = false;
       setBusy(false);
     }
   }
@@ -697,8 +702,8 @@ export function QuarterScene({
       setRoomPuzzle(null);
       const inner = (v.inner ?? []).map((c) => (c.n === rp.n ? { ...c, open: true, outcome: r.outcome ?? null } : c));
       setView((old) => (old ? { ...old, inner } : old));
-      s?.built.setInner?.(v.dug, inner);
       const here = v.rooms.findIndex((room) => room.id === v.dug);
+      s?.world.setInner(here, inner);
       if (r.outcome === "coins") {
         setSay(`💰 Room ${rp.n}: a pile of coins! +${r.coins ?? 25}.`);
         if (r.balance != null) onCoins?.(r.balance);
@@ -734,8 +739,8 @@ export function QuarterScene({
     return () => window.clearInterval(t);
   }, [roomPuzzle]);
 
-  // The detector: once at each building or open plot, how hot it is (only with one; the server never says which is
-  // right). It reads the plot stood on, or from the street the one whose way in is close.
+  // The detector: once at each place, how hot it is (only with one; the server never says which is right). It reads
+  // the place stood in, or from the street the one whose way in is close.
   useEffect(() => {
     const v = viewRef.current;
     const room = near >= 0 ? v?.rooms[near]?.id : null;
@@ -746,22 +751,32 @@ export function QuarterScene({
       setHeat((h) => ({ ...h, [room]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
     });
   }, [near, huntId, supabase]);
+  // …and in the treasure building, each room: only the key's room is hot (owner: "the metal detector should only
+  // detect the key not the next chapter or the coins")
+  useEffect(() => {
+    if (!nearRoom || roomHeatAsked.current.has(nearRoom)) return;
+    const n = nearRoom;
+    roomHeatAsked.current.add(n);
+    void supabase.rpc("house_room_detect", { p_hunt: huntId, p_room: n }).then(({ data }) => {
+      const d = data as { ok: boolean; reason?: string; heat?: string } | null;
+      if (!d?.ok && d?.reason === "not_inside") roomHeatAsked.current.delete(n);
+      setRoomHeat((h) => ({ ...h, [n]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
+    });
+  }, [nearRoom, huntId, supabase]);
 
-  /** 🔍 Search here (a building) or ⛏ Dig here (an open plot): the server decides (a trap's challenge, nothing, the
-   * treasure building's rooms, or a buried chest). */
-  async function dig() {
+  /** Searching a place (a building, as the hunter walks in; open ground, with ⛏ Dig here): the server decides (a
+   * trap's challenge, nothing, the treasure building's rooms, or a buried chest). */
+  async function search(i: number) {
     const s = scene.current;
     const v = viewRef.current;
-    if (!s || !v || busy) return;
-    const i = roomAt(s.built.plan, s.at());
-    if (i < 0) return;
+    if (!s || !v || i < 0) return;
     setBusy(true);
     try {
       const { data } = await supabase.rpc("house_enter", { p_hunt: huntId, p_room: v.rooms[i].id });
       const r = data as Dug | null;
       if (!r?.ok) {
         if (r?.reason === "out") setSay(`Catch your breath first: ${Math.max(1, Math.ceil((Date.parse(r.until ?? "") - Date.now()) / 1000))} s.`);
-        else setSay(REFUSED[r?.reason ?? ""] ?? "The ground won't give here.");
+        else setSay(REFUSED[r?.reason ?? ""] ?? "Nothing happens here.");
         return;
       }
       if (r.locked) return setSay(`🔒 ${v.rooms[i].name}: ${r.text}`);
@@ -781,15 +796,15 @@ export function QuarterScene({
       }
       const next = { ...v, ...(r as QuarterView) };
       setView(next);
-      const found = next.rooms.find((room) => room.chest);
-      if (found && next.inner) {
-        s.built.setChest(null);
-        s.built.setInner?.(found.id, next.inner);
-        setSay("🔍 This is it! Five rooms, each locked by a puzzle. One holds the key; some hold traps. Tap a room.");
+      const found = next.rooms.findIndex((room) => room.chest);
+      if (found >= 0 && next.inner) {
+        s.world.setChest(null);
+        s.world.setInner(found, next.inner);
+        setSay("🔍 This is it! Five rooms, each locked by a 60-second puzzle. One holds the key; some hold traps. Walk up to a door to try it.");
       } else {
-        s.built.setChest(found?.id ?? null);
-        if (found) setSay(found.outdoor ? "⛏ Your spade hits wood: a buried chest! Tap it to open it." : "🔍 Under the floorboards: a chest! Tap it to open it.");
-        else setSay(open ? `⛏ You dig at ${v.rooms[i].name}… only earth. It isn't here.` : `🔍 You search ${v.rooms[i].name}… nothing here. It's empty.`);
+        s.world.setChest(found >= 0 ? found : null);
+        if (found >= 0) setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: a buried chest! Tap it to open it." : "🔍 Under the floorboards: a chest! Tap it to open it.");
+        else setSay(open ? `⛏ You dig at ${v.rooms[i].name}… only earth. It isn't here.` : `🏠 Inside ${v.rooms[i].name}… nothing here. It's empty.`);
       }
     } finally {
       setBusy(false);
@@ -807,10 +822,10 @@ export function QuarterScene({
     try {
       const { data } = await supabase.rpc("house_dodge", { p_hunt: huntId, p_choice: choice });
       const r = data as { ok: boolean; dodged?: boolean; penalty?: Penalty & { balance: number | null; energy: number | null } } | null;
-      const name = viewRef.current?.rooms[d.room]?.name ?? "this plot";
+      const name = viewRef.current?.rooms[d.room]?.name ?? "this place";
       if (r?.dodged) {
         setSay(`💨 You dodged it! You jump clear of ${name}. It's a trap, though: not there.`);
-        if (s) await s.walkTo(outTo(s.built.plan, s.at()));
+        if (s) await s.walkTo(s.world.route(s.at(), s.world.places[d.room].front));
       } else if (r?.penalty) {
         const pen = r.penalty;
         s?.trap(pen.scene, d.room);
@@ -831,23 +846,30 @@ export function QuarterScene({
   }, [dodge]);
 
   const on = view && standing >= 0 ? view.rooms[standing] : null;
-  const canDig = !!on && !busy && !dodge && !roomPuzzle && view?.dug !== on.id;
+  const canDig = !!on?.outdoor && !busy && !dodge && !roomPuzzle && view?.dug !== on.id;
+  const inRooms = !!view?.inner && !!on && view.dug === on.id && nearRoom > 0;
   const read = view && near >= 0 ? view.rooms[near] : null;
-  const reading = read ? HEAT[heat[read.id] ?? ""] : null;
+  const reading = inRooms ? HEAT[roomHeat[nearRoom] ?? ""] : read ? HEAT[heat[read.id] ?? ""] : null;
+  const readingOf = inRooms ? `Room ${nearRoom}` : read && standing < 0 ? read.name : "";
   return (
-    <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy}>
-      {/* The quarter fills the screen; the bars float over it (it's framed in the space between them). */}
+    <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy} data-inside={on?.id ?? ""}>
+      {/* The world fills the screen; the bars float over it. */}
       <div ref={host} className="absolute inset-0 touch-none" data-house />
-      <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-[#1B2230] via-[#1B2230]/85 to-transparent pb-3" data-house-head>
+      <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-[#1B2230]/85 via-[#1B2230]/50 to-transparent pb-3" data-house-head>
         <div className="flex items-center gap-3 px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">Key {view?.key ?? ""}</p>
             <h2 className="truncate font-display text-xl font-extrabold">{view?.title ?? "The key's place"}</h2>
           </div>
           {reading && (
-            <span className={`max-w-[45%] truncate rounded-full px-2.5 py-1 text-xs font-extrabold ${reading.style}`} aria-label={`Metal detector: ${reading.text}`} data-detector={heat[read?.id ?? ""]} data-detector-at={read?.id}>
+            <span
+              className={`max-w-[45%] truncate rounded-full px-2.5 py-1 text-xs font-extrabold ${reading.style}`}
+              aria-label={`Metal detector: ${reading.text}`}
+              data-detector={inRooms ? roomHeat[nearRoom] : heat[read?.id ?? ""]}
+              data-detector-at={inRooms ? `room-${nearRoom}` : read?.id}
+            >
               {reading.text}
-              {read && standing < 0 ? ` · ${read.name}` : ""}
+              {readingOf ? ` · ${readingOf}` : ""}
             </span>
           )}
           <button
@@ -859,7 +881,7 @@ export function QuarterScene({
           >
             {wide ? "🔍" : "🗺️"}
           </button>
-          <button type="button" onClick={onClose} className="h-10 shrink-0 rounded-xl border-[1.5px] border-line px-3 text-sm font-bold">
+          <button type="button" onClick={onClose} className="h-10 shrink-0 rounded-xl border-[1.5px] border-line bg-[#1B2230]/70 px-3 text-sm font-bold">
             Leave
           </button>
         </div>
@@ -924,42 +946,28 @@ export function QuarterScene({
       {handheld && view && !roomPuzzle && (
         <Joystick
           className="absolute left-4 z-10"
-          style={{ bottom: "calc(var(--house-foot, 7rem) + 0.75rem)" }}
+          style={{ bottom: "calc(var(--house-foot, 5rem) + 0.75rem)" }}
           onMove={(x, y) => (joy.current = { x, y })}
           onEnd={() => (joy.current = { x: 0, y: 0 })}
         />
       )}
-      <div className="absolute inset-x-0 bottom-0 flex flex-col" data-house-foot>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col" data-house-foot>
         {canDig && (
           <button
             type="button"
-            onClick={() => void dig()}
-            className="mx-auto mb-3 flex h-14 items-center gap-2 rounded-2xl bg-gold px-6 font-display text-lg font-extrabold text-ink shadow-lg active:scale-95"
+            onClick={() => void search(standing)}
+            className="pointer-events-auto mx-auto mb-3 flex h-14 items-center gap-2 rounded-2xl bg-gold px-6 font-display text-lg font-extrabold text-ink shadow-lg active:scale-95"
           >
-            {on?.outdoor ? "⛏ Dig here" : "🔍 Search here"}
+            ⛏ Dig here
           </button>
         )}
-        <div className="bg-ink/90 backdrop-blur-sm">
-          {view && (
-            <div className="flex gap-2 overflow-x-auto border-t border-line px-3 py-2" aria-label="Buildings">
-              {view.rooms.map((r, i) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "room", id: r.id } }))}
-                  className={`h-11 shrink-0 rounded-xl px-3 text-sm font-bold disabled:opacity-60 ${standing === i ? "bg-gold text-ink" : "bg-ink-2 text-paper ring-1 ring-line"}`}
-                >
-                  {r.locked ? "🔒 " : view.dug === r.id ? (r.outdoor ? "⛏ " : "🔍 ") : r.outdoor ? "🌳 " : "🏠 "}
-                  {r.name}
-                </button>
-              ))}
-            </div>
-          )}
-          <p className="min-h-[3.5rem] px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1 text-base leading-relaxed" aria-live="polite" data-house-say>
-            {say}
-          </p>
-        </div>
+        <p
+          className="pointer-events-auto mx-3 mb-[max(0.75rem,env(safe-area-inset-bottom))] rounded-2xl bg-ink/85 px-4 py-2.5 text-sm leading-relaxed backdrop-blur-sm"
+          aria-live="polite"
+          data-house-say
+        >
+          {say}
+        </p>
       </div>
     </div>
   );

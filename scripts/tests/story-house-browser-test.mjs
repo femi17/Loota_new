@@ -65,10 +65,8 @@ try {
   // 3. The indigo room
   await until(() => page.evaluate(() => document.querySelector('[aria-label="The key\'s place"]')?.getAttribute("data-busy") === "false"), 20000);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "room", id: "indigo" } })));
-  await until(() => page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.includes("Search here"))), 20000);
-  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Search here"))?.click());
   const chest = await until(async () => /Five rooms/.test(await say()) && (await say()), 25000);
-  check("the indigo building (the story's \"at her indigo\"): searched, its five rooms", !!chest, chest ?? (await say()));
+  check("the indigo building (the story's \"at her indigo\"): walked into, its five rooms", !!chest, chest ?? (await say()));
   await wait(800);
   await page.screenshot({ path: `${OUT}/story-house-2-indigo.png` });
 

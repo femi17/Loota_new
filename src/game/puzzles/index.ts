@@ -22,18 +22,20 @@ export type AnyPuzzle = SentriesPuzzle | RoutePuzzle | AdirePuzzle | TornMapPuzz
 export function makePuzzle(kind: PuzzleKind, level: number, seed: number): { puzzle: AnyPuzzle; answer: unknown } {
   const l = Math.max(1, Math.min(3, Math.round(level || 1)));
   if (kind === "tornmap") throw new Error("A Torn Map needs its streets: makeTornMap with drawingAround");
-  if (kind === "sentries") return makeSentries(seed, [7, 8, 9][l - 1]);
-  // Half done at the first keys (owner, 1 Nov 2026), a little less later on.
-  if (kind === "sudoku") return makeSudoku(seed, [44, 40, 36][l - 1]);
-  if (kind === "threads") return makeThreads(seed, [5, 6, 7][l - 1], [4, 5, 6][l - 1]);
-  if (kind === "plots") return makePlots(seed, [5, 6, 7][l - 1], [6, 8, 9][l - 1]);
-  if (kind === "patchwork") return makePatchwork(seed, [4, 5, 6][l - 1]);
-  if (kind === "vowels") return makeVowels(seed, [3, 4, 5][l - 1]);
+  // Every puzzle fair in 60 seconds (owner, 3 Nov 2026: "each puzzle time should be 60"): small boards, with enough
+  // given that there's no guessing and the hand has time (scripts/tests/puzzle-sixty-check.mts checks each kind).
+  if (kind === "sentries") return makeSentries(seed, [6, 6, 7][l - 1]);
+  // 80% done (owner, 3 Nov 2026: "the suduko game should be 80% completed"): 65 of 81 given, at every key.
+  if (kind === "sudoku") return makeSudoku(seed, 65);
+  if (kind === "threads") return makeThreads(seed, [5, 5, 6][l - 1], [4, 5, 5][l - 1]);
+  if (kind === "plots") return makePlots(seed, [5, 5, 6][l - 1], [6, 7, 8][l - 1]);
+  if (kind === "patchwork") return makePatchwork(seed, [4, 4, 5][l - 1]);
+  if (kind === "vowels") return makeVowels(seed, [3, 3, 4][l - 1]);
   if (kind === "route") {
-    const [n, keep] = ([[6, 8], [7, 9], [7, 7]] as const)[l - 1];
+    const [n, keep] = ([[5, 8], [5, 7], [6, 9]] as const)[l - 1];
     return makeRoute(seed, n, keep);
   }
-  return makeAdire(seed, 6, [10, 8, 6][l - 1]);
+  return makeAdire(seed, 6, [10, 8, 6][l - 1], [20, 18, 16][l - 1]);
 }
 
 /**

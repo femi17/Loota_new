@@ -18,8 +18,9 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
   const { data: got } = await admin.rpc("house_room_get", { p_user: uid, p_hunt: body.hunt, p_room: room });
-  const p = got as { ok: boolean; reason?: string; kind?: string; puzzle?: unknown; solution?: unknown; open?: boolean } | null;
+  const p = got as { ok: boolean; reason?: string; kind?: string; puzzle?: unknown; solution?: unknown; open?: boolean; late?: boolean } | null;
   if (!p?.ok) return Response.json({ ok: false, reason: p?.reason ?? "no_puzzle" });
+  if (p.late) return Response.json({ ok: false, reason: "late" }); // past its 60 seconds: the lock has jammed
   if (!p.open && !(body.answer != null && checkPuzzle(p.kind as PuzzleKind, p.puzzle as AnyPuzzle, body.answer, p.solution))) {
     return Response.json({ ok: true, right: false });
   }

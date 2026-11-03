@@ -62,7 +62,7 @@ try {
     check(`key ${n}: the chest opens a puzzle trial`, r?.result === "trial" && r.trial.kind === "puzzle" && r.trial.puzzle === null, JSON.stringify(r?.trial ?? r).slice(0, 140));
     const kind = r.trial.puzzleKind;
     const p = await post("/api/trial/puzzle");
-    check(`…a ${kind} puzzle (level ${p.level}), its clock running, no answer sent`, !!p.puzzle && p.secondsLeft > 60 && !("solution" in p) && !JSON.stringify(p).includes("answer"), `${p.seconds} s`);
+    check(`…a ${kind} puzzle (level ${p.level}), its clock running, no answer sent`, !!p.puzzle && p.secondsLeft > 50 && p.secondsLeft <= 63 && !("solution" in p) && !JSON.stringify(p).includes("answer"), `${Math.round(p.secondsLeft)} s left (60 s a puzzle)`);
     if (kind === "tornmap") check("…the key's own streets, torn into pieces", p.puzzle.lines.length > 5 && p.puzzle.start.length === p.puzzle.n ** 2, `${p.puzzle.lines.length} streets, ${p.puzzle.names.map((x) => x.text).join(", ")}`);
     const again = await post("/api/trial/puzzle");
     check("…asked again (a reload): the same puzzle", JSON.stringify(again.puzzle) === JSON.stringify(p.puzzle));

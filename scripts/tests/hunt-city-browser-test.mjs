@@ -131,6 +131,23 @@ try {
       await page.evaluate(() => window.__lootaRoomSolve?.(["WRONG"]));
       const wrong = await until(async () => /Not quite/.test(await page.evaluate(() => document.body.innerText)), 10000);
       check("a wrong answer: the door stays shut", !!wrong);
+      // 60 seconds a puzzle (owner, 3 Nov 2026): the clock shows; past it, the answer is too late and the lock jams
+      const left = Number(await page.evaluate(() => document.querySelector("[data-room-left]")?.getAttribute("data-room-left")));
+      check("the room's clock: 60 seconds", left > 45 && left <= 60, `${left} s`);
+      const first = (await admin.from("house_room_puzzles").select("solution, tries").eq("user_id", id).eq("hunt_id", huntId).eq("room", 1).single()).data;
+      await admin.from("house_room_puzzles").update({ started_at: ago(70) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 1);
+      const ans1 = first.solution.map((col, row) => [row, col]); // room 1 is Sentries
+      await page.evaluate((a) => window.__lootaRoomSolve?.(a), ans1);
+      const late = await until(async () => /Too slow/.test(await say()) && !(await page.evaluate(() => !!document.querySelector("[data-room-puzzle]"))) && (await say()), 10000);
+      check("the right answer, after 60 s: too late, the sheet closes", !!late, late ?? (await say()));
+      await tap({ tap: "inner", id: "1" });
+      const jammed = await until(async () => /jammed/.test(await say()) && (await say()), 10000);
+      check("…the lock is jammed for a while", !!jammed, jammed ?? (await say()));
+      await admin.from("house_room_puzzles").update({ started_at: ago(100) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 1);
+      await tap({ tap: "inner", id: "1" });
+      const again = await until(() => page.evaluate(() => !!document.querySelector('[data-room-puzzle="1"]')), 15000);
+      const next = (await admin.from("house_room_puzzles").select("tries, solved_at").eq("user_id", id).eq("hunt_id", huntId).eq("room", 1).single()).data;
+      check("…after the jam: a new puzzle, a new try", !!again && next.tries === first.tries + 1 && !next.solved_at, `tries ${first.tries} → ${next.tries}`);
     }
     const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", n).single()).data;
     const answer = stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution;

@@ -7,9 +7,10 @@ import type { PuzzleKind } from "@/game/puzzles";
  */
 export const ROOM_KINDS: PuzzleKind[] = ["sentries", "route", "vowels", "threads", "sudoku"];
 
-/** A seed from the hunter, the hunt and the room (the same puzzle every time they ask). */
-export function roomSeed(uid: string, hunt: string, room: number) {
+/** A seed from the hunter, the hunt, the room and the try (the same puzzle every time they ask, a new one after the
+ * time runs out). */
+export function roomSeed(uid: string, hunt: string, room: number, attempt = 0) {
   let n = 2166136261;
-  for (const ch of `${uid}:${hunt}:${room}`) n = Math.imul(n ^ ch.charCodeAt(0), 16777619) >>> 0;
+  for (const ch of `${uid}:${hunt}:${room}${attempt ? `:${attempt}` : ""}`) n = Math.imul(n ^ ch.charCodeAt(0), 16777619) >>> 0;
   return n % 2147483646 || 1;
 }

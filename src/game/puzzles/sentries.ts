@@ -87,7 +87,7 @@ export function solveSentries(p: SentriesPuzzle, max = 2): SentriesAnswer[] {
   return found;
 }
 
-/** A puzzle with exactly one answer, `n` squares a side (7 to 9). */
+/** A puzzle with exactly one answer, `n` squares a side (6 or 7: small enough for 60 seconds). */
 export function makeSentries(seed: number, n: number): { puzzle: SentriesPuzzle; answer: SentriesAnswer } {
   const rng = seeded(seed);
   for (let tries = 0; tries < 5000; tries++) {

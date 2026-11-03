@@ -43,8 +43,10 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    lane or square the hunter walks freely (`style`, and `layout`: hall = a lane, gallery = a street, court = a square),
    5 plots at Key 1 growing to 7 at the last, each an OUTDOOR place named as such (its `kind`: kitchen = food stall,
    bedroom = cottage, library = book stall, cellar = well, parlour = café, bathroom = fountain, chapel = shrine,
-   storeroom = yard, study = garden); one right plot (where the key is buried) the key's own envelope points to, trap plots that echo the near misses the story warns about, some safe plots; things to find and
-   items only in some quarters (bible 3b).
+   storeroom = yard, study = garden); one right plot (where the key is) the key's own envelope points to, trap plots that echo the near misses the story warns about, and at least 2 EMPTY (safe) plots: just nothing (owner, 3 Nov 2026: "some houses might be empty, no decoy just nothing"); things to find and
+   items only in some quarters (bible 3b). Each plot is a building (searched: the right one holds five puzzle rooms) or
+   OPEN-AIR (`"outdoor": true`: a yard, a garden, a well, a square; dug: the right one holds a buried chest, "no need to
+   enter a house, the metal detector helps here"). Mix them: in some quarters the key is in a building, in others buried.
 3. **Decoys** (`decoys["<n>"]`): 3+ per key (the short format, owner, 1 Nov 2026), real places a search finds, each
    failing a named condition, at least radius + 200 m from the answer: the near miss next door the clue rules out (the
    studio beside the crossing), the famous wrong reading the wording invites, a rival's wrong guess. Each is a phrase in
@@ -52,8 +54,10 @@ reaches players), plus everything earlier stories used (never reuse it), and the
 4. **Chapters**: write each as `docs/stories/drafts/<date>-<id>/<n>.md` (plain prose, paragraphs separated by a blank
    line), in THE ENVELOPE FORMAT (bible 1, with the model "The Collector's Envelopes"): a frame of 40–90 words (who, why,
    "be quick: someone has a copy"), then each key's envelope, 40–90 words: ONE riddle for one place, its near misses ruled
-   out in a line ("Everyone goes to the building beside it. Don't. Stand on the stripes."), and a line on where in the
-   quarter to dig and what to leave alone; a two-line ending. One page a chapter (owner, 3 Nov 2026): the scroll shows the
+   out in a line ("Everyone goes to the building beside it. Don't. Stand on the stripes."), and THE HINT: a line on where in
+   the quarter the treasure is and what to leave alone, said as the place is: "search the noodle stall" for a building,
+   "dig where the water tank stands; your metal detector will sing" for buried treasure (owner, 3 Nov 2026: "It must be
+   part of the hint mentioned in each chapter"); a two-line ending. One page a chapter (owner, 3 Nov 2026): the scroll shows the
    frame and envelope 1 together, so keep those two under ~170 words. No subplot, no rival's crew, no codes or plants across
    chapters. Each clue rests on GENERAL KNOWLEDGE from any walk of life (music, sport, science, film, food, history,
    nature, landmarks), fair to a player anywhere in the world, never local knowledge; the trick is in the wording. The
@@ -70,7 +74,7 @@ Edit the JSON with small, careful edits (or a short node script) so it stays val
 
 Before importing, reread each envelope as a rival solver. Can a careful player with general knowledge name the exact
 place from that envelope alone (it should be one "aha", not a giveaway in the first words)? Does each near miss tempt
-someone who solved only half of it? Does the envelope say where to dig? Say what you found in your report.
+someone who solved only half of it? Does the envelope's hint say which plot (search it, or dig there), and that the detector helps? Say what you found in your report.
 
 ## 5. Check, then import
 

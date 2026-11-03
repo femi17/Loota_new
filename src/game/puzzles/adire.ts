@@ -73,7 +73,7 @@ export function solveAdire(p: AdirePuzzle, max = 2): AdireAnswer[] {
 }
 
 /** A puzzle with exactly one answer, `n` squares a side (6 or 8); `clues`: about how many givens and signs to leave. */
-export function makeAdire(seed: number, n = 6, clues = 10): { puzzle: AdirePuzzle; answer: AdireAnswer } {
+export function makeAdire(seed: number, n = 6, clues = 10, givenAtLeast = 0): { puzzle: AdirePuzzle; answer: AdireAnswer } {
   const rng = seeded(seed);
   for (let tries = 0; tries < 50; tries++) {
     const answer = fullCloth(n, rng);
@@ -111,6 +111,12 @@ export function makeAdire(seed: number, n = 6, clues = 10): { puzzle: AdirePuzzl
       const at = signs.indexOf(s);
       signs.splice(at, 1);
       if (solveAdire({ n, given, signs }, 2).length !== 1) signs.splice(at, 0, s);
+    }
+    // Quick enough for its time (owner, 3 Nov 2026: 60 seconds a puzzle): squares given back until enough are given
+    // (more given keeps the one answer, and leaves less to do).
+    for (const cell of rng.shuffle([...Array(n * n).keys()])) {
+      if (Object.keys(given).length >= givenAtLeast) break;
+      if (!(cell in given)) given[cell] = answer[cell];
     }
     return { puzzle: { n, given, signs }, answer };
   }

@@ -51,7 +51,7 @@ function turn(pic: string, q: number) {
 /** The puzzle: the map torn into n × n pieces (3 at level 1, then 4; turned at level 3), scattered from a seed. */
 export function makeTornMap(seed: number, level: number, drawing: MapDrawing): { puzzle: TornMapPuzzle; answer: TornMapAnswer } {
   const rng = seeded(seed);
-  const n = level <= 1 ? 3 : 4;
+  const n = 3; // nine pieces at every key: fair in 60 seconds (owner, 3 Nov 2026), turned at the hardest
   const rotate = level >= 3;
   const pics = pieceInk(drawing, n);
   // Scatter until no more than one piece is already where (and how) it belongs.

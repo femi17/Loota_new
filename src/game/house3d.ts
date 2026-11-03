@@ -8,7 +8,7 @@
  */
 import * as THREE from "three";
 
-export type HouseRoomView = { id: string; name: string; kind: string; locked: boolean; chest: boolean };
+export type HouseRoomView = { id: string; name: string; kind: string; locked: boolean; chest: boolean; outdoor?: boolean };
 /** How the house looks (owner, 31 Oct 2026: not every house the same): its ground, walls and floors. */
 export const HOUSE_STYLES = ["cottage", "manor", "stone", "fort", "cave", "keeper"] as const;
 export type HouseStyle = (typeof HOUSE_STYLES)[number];

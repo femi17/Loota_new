@@ -31,7 +31,7 @@ export async function POST() {
   if (!puzzle && t.kind === "tornmap") {
     // The streets around the key, torn up: wider out where there are too few streets to make a puzzle of.
     const { data: k } = await admin.from("hunt_keys").select("spot_lng, spot_lat").eq("hunt_id", t.hunt_id).eq("n", t.key_n).single();
-    const n = (t.level ?? 1) <= 1 ? 3 : 4;
+    const n = 3; // nine pieces at every key (makeTornMap)
     let half = (t.level ?? 1) <= 1 ? 170 : 220;
     let drawing = await drawingAround(k!.spot_lng, k!.spot_lat, half);
     for (let wider = 0; wider < 3 && inkedPieces(drawing, n) < n * n * 0.75; wider++) {

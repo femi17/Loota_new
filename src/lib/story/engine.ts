@@ -83,6 +83,7 @@ const House = z.object({
     name: z.string(),
     kind: z.enum(HOUSE_ROOM_KINDS),
     role: z.enum(["right", "trap", "safe"]),
+    outdoor: z.boolean().optional().describe("An open-air place (a yard, a garden, a well, a square): no building; dug, not searched. The right one outdoors holds a buried chest; the right building holds the five rooms"),
     needs: z.string().optional().describe("An item id that unlocks this room"),
     lockedText: z.string().optional(),
     objects: z.array(z.object({
@@ -169,6 +170,8 @@ export function houseProblems(h: HouseT) {
     if (o.room.role === "trap" && o.gives) out.push(`"${o.id}" is in a trap room: nobody can reach it`);
   }
   if (rights[0] && !open(rights[0])) out.push("the right room can't be opened");
+  // Most places are just empty (owner, 3 Nov 2026: "some houses might be empty, no decoy just nothing"): never all traps.
+  if (h.rooms.filter((r) => r.role === "safe").length < 2) out.push("fewer than 2 empty (safe) places");
   return out;
 }
 const Solved = z.object({ keys: z.array(z.object({ n: z.number(), place: z.string(), city: z.string(), country: z.string(), reasoning: z.string() })) });

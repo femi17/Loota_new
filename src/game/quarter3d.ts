@@ -204,7 +204,7 @@ export function buildQuarter(rooms: HouseRoomView[], objects: HouseObjectView[],
   const roofs = new Map<string, { roof: THREE.Object3D; walls: THREE.Object3D; open: boolean; lift: number; signs: THREE.Object3D[] }>();
   const frames = new Map<string, { frame: THREE.Group; lw: number; ld: number; x: number; z: number; facing: number }>();
   const FACADES = ["#E8D5B0", "#C9A0A0", "#A0B8C9", "#E0D4A0", "#B5A0C9", "#D9B99B", "#A8C9A0"];
-  const H = 3.0; // walls
+  const H0 = 3.0; // walls
   const T = 0.2;
   rooms.forEach((r, i) => {
     const p = plan.rooms[i];
@@ -225,6 +225,20 @@ export function buildQuarter(rooms: HouseRoomView[], objects: HouseObjectView[],
     const [lw, ld] = turned ? [p.d, p.w] : [p.w, p.d];
     frames.set(r.id, { frame, lw: lw - 0.3, ld: ld - 0.3, x: p.x, z: p.z, facing: p.facing });
     const bw = lw - 0.3, bd = ld - 0.3; // inside the plot's edge
+    const H = r.outdoor ? 0.4 : H0; // an open-air plot's sign floats low
+    if (r.outdoor) {
+      // An open-air plot (owner, 3 Nov 2026: "some treasure might be under the ground no need to enter a house, the
+      // metal detector helps here"): no building, a low hedge round it with a gap on the street side, the place's
+      // own feature at the back and a patch of bare earth in the middle, where something could be buried.
+      const hedge = (w: number, d: number, x: number, z: number) => frame.add(box(w, 0.8, d, "#3E7A3A", x, 0.4, z));
+      hedge(bw, 0.4, 0, -bd / 2 + 0.2);
+      hedge(0.4, bd, -bw / 2 + 0.2, 0);
+      hedge(0.4, bd, bw / 2 - 0.2, 0);
+      const gap = (bw - 1.8) / 2;
+      for (const sx of [-1, 1]) hedge(gap, 0.4, sx * (0.9 + gap / 2), bd / 2 - 0.2);
+      frame.add(box(1.8, 0.04, 1.4, "#6B4A2B", -1.0, 0.03, bd / 2 - 2.2, false));
+      for (const [x, z] of [[-1.5, bd / 2 - 1.8], [-0.4, bd / 2 - 2.6], [-1.2, bd / 2 - 2.7]]) frame.add(ball(0.12, "#5A4030", x, 0.08, z));
+    }
     // The walls, with windows, and a doorway on the street side (they drop low as the hunter goes in)
     const walls = new THREE.Group();
     const wall = (w: number, d: number, x: number, z: number, h = H, y = h / 2) => walls.add(box(w, h, d, facade, x, y, z));
@@ -242,7 +256,7 @@ export function buildQuarter(rooms: HouseRoomView[], objects: HouseObjectView[],
     pane(0.9, 0.9, 0.05, -bw / 4, 1.7, -bd / 2 - 0.01);
     pane(0.9, 0.9, 0.05, bw / 4, 1.7, -bd / 2 - 0.01);
     walls.add(box(1.9, 0.12, 0.7, accent, 0, 2.3, bd / 2 + 0.3)); // a little awning over the door
-    frame.add(walls);
+    if (!r.outdoor) frame.add(walls);
     // The roof: pitched or flat with a water tank (it lifts away as the hunter goes in)
     const top = new THREE.Group();
     if (i % 2 === 0) {
@@ -252,11 +266,11 @@ export function buildQuarter(rooms: HouseRoomView[], objects: HouseObjectView[],
     } else {
       top.add(box(bw + 0.3, 0.3, bd + 0.3, "#6B6F75", 0, H + 0.15, 0), cyl(0.5, 0.9, "#3B6EA5", bw / 4, H + 0.75, -bd / 4));
     }
-    frame.add(top);
+    if (!r.outdoor) frame.add(top);
     const entry = { roof: top, walls, open: false, lift: 0, signs: [] as THREE.Object3D[] };
-    roofs.set(r.id, entry);
-    // The door (shut while the building needs something to open)
-    const gate = tag(box(1.8, 2.2, 0.1, "#6B3E22", 0, 1.1, bd / 2 - 0.05), "room", r.id);
+    if (!r.outdoor) roofs.set(r.id, entry); // nothing to lift on an open-air plot
+    // The door (shut while the building needs something to open; a low wooden gate on an open-air plot)
+    const gate = tag(r.outdoor ? box(1.8, 0.9, 0.1, "#6B3E22", 0, 0.45, bd / 2 - 0.2) : box(1.8, 2.2, 0.1, "#6B3E22", 0, 1.1, bd / 2 - 0.05), "room", r.id);
     gate.visible = r.locked === true;
     frame.add(gate);
     gates.set(r.id, gate);

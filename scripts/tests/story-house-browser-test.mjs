@@ -65,26 +65,14 @@ try {
   // 3. The indigo room
   await until(() => page.evaluate(() => document.querySelector('[aria-label="The key\'s place"]')?.getAttribute("data-busy") === "false"), 20000);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "room", id: "indigo" } })));
-  await until(() => page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.includes("Dig here"))), 20000);
-  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Dig here"))?.click());
-  const chest = await until(async () => /chest/i.test(await say()) && (await say()), 25000);
-  check("the indigo room (the story's \"at her indigo\"): dug, the chest", !!chest, chest ?? (await say()));
+  await until(() => page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.includes("Search here"))), 20000);
+  await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Search here"))?.click());
+  const chest = await until(async () => /Five rooms/.test(await say()) && (await say()), 25000);
+  check("the indigo building (the story's \"at her indigo\"): searched, its five rooms", !!chest, chest ?? (await say()));
   await wait(800);
   await page.screenshot({ path: `${OUT}/story-house-2-indigo.png` });
 
-  // 4. Thrown
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "chest", id: "indigo" } })));
-  const trial = await until(async () => (await admin.from("trial_attempts").select("id").eq("hunt_id", huntId).eq("user_id", id).eq("status", "active").maybeSingle()).data, 20000);
-  check("the chest opens the Key Trial", !!trial);
-  await admin.from("trial_attempts").update({ deadline: new Date(Date.now() - 60e3).toISOString() }).eq("id", trial.id);
-  await page.evaluate(() => window.dispatchEvent(new Event("loota:hunt-changed")));
-  const thrown = await until(async () => {
-    const { data: pos } = await admin.from("player_positions").select("lng, lat").eq("user_id", id).single();
-    const far = Math.hypot((pos.lng - PLACE.lng) * 110574 * Math.cos((PLACE.lat * Math.PI) / 180), (pos.lat - PLACE.lat) * 110574) > 1000;
-    return far && !(await buttonText()).includes("Explore the place");
-  }, 30000);
-  check("the trial runs out: thrown away, and Explore the place is gone", !!thrown, (await buttonText()).slice(0, 200));
-  await page.screenshot({ path: `${OUT}/story-house-3-thrown.png` });
+  // (Thrown away from the place: thrown-away-browser-test.mjs. The rooms: hunt-city-browser-test.mjs.)
 } catch (e) {
   fails++;
   console.log("ERROR", e);

@@ -59,8 +59,8 @@ try {
     const right = k.house.rooms.find((r) => r.role === "right").id;
     await until(() => page.evaluate(() => document.querySelector('[aria-label="The key\'s place"]')?.getAttribute("data-busy") === "false"), 20000);
     await page.evaluate((rid) => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "room", id: rid } })), right);
-    await until(() => page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.includes("Dig here"))), 20000);
-    await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Dig here"))?.click());
+    await until(() => page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent?.includes("Search here"))), 20000);
+    await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Search here"))?.click());
     const chest = await until(() => page.evaluate(() => /chest/i.test(document.querySelector("[data-house-say]")?.textContent ?? "")), 30000);
     await wait(900);
     await page.screenshot({ path: `${OUT}/house-key${n}-right.png` });

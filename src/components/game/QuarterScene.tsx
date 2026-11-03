@@ -5,7 +5,9 @@ import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import type { AvatarLook } from "@/lib/avatar";
 import { animateAvatar, buildAvatar } from "@/game/models3d";
-import { outTo, roomAt, routeTo, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle, type Plan } from "@/game/house3d";
+import { outTo, roomAt, routeTo, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle, type InnerRoomView, type Plan } from "@/game/house3d";
+import { PuzzleBoard } from "./puzzles/PuzzleTrial";
+import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import { buildQuarter } from "@/game/quarter3d";
 import type { Penalty } from "./PenaltyCard";
 import { Joystick, useHandheld } from "./Joystick";
@@ -25,7 +27,27 @@ type QuarterView = {
   rooms: HouseRoomView[];
   objects: HouseObjectView[];
   items: Item[];
+  /** The treasure building, found (searched): its five rooms, shut or opened with what they held. */
+  inner?: InnerRoomView[] | null;
   at: { lng: number; lat: number };
+};
+/** A room of the treasure building being opened: its puzzle (from /api/house/room). */
+type RoomPuzzle = { n: number; kind: string; puzzle: unknown };
+type Opened = {
+  ok?: boolean;
+  right?: boolean;
+  reason?: string;
+  outcome?: InnerRoomView["outcome"];
+  coins?: number;
+  balance?: number;
+  chapter?: number;
+  award?: unknown;
+  penalty?: Penalty & { balance: number | null; energy: number | null; moveTo?: { lng: number; lat: number } | null };
+};
+const HEAT: Record<string, { text: string; style: string }> = {
+  hot: { text: "📡 Hot!", style: "bg-danger text-white" },
+  warm: { text: "📡 Warm", style: "bg-[#F28C28] text-ink" },
+  cold: { text: "📡 Cold", style: "bg-[#2F6FEB] text-white" },
 };
 type Point = { x: number; z: number };
 type Dug = Partial<QuarterView> & { locked?: boolean; text?: string; trap?: boolean; used?: { name: string } | null; penalty?: Penalty & { balance: number | null; energy: number | null }; until?: string; dodge?: { prompt: string; options: string[]; seconds: number } };
@@ -39,6 +61,15 @@ const REFUSED: Record<string, string> = {
   not_live: "The hunt isn't on right now.",
   not_hunting: "You're not in this hunt.",
   dodge: "Answer the challenge first!",
+};
+
+/** What a room held, said once it's open. */
+const OUTCOME_SAID: Record<string, string> = {
+  coins: "the coins are yours.",
+  chapter: "the page of the story is on your scroll.",
+  key: "the key.",
+  decoy: "a fake chest. Nothing more here.",
+  trap: "a trap, sprung. Nothing more here.",
 };
 
 const within = (p: Point, r: { x: number; z: number; w: number; d: number }, pad = 0) => Math.abs(p.x - r.x) <= r.w / 2 + pad && Math.abs(p.z - r.z) <= r.d / 2 + pad;
@@ -69,6 +100,8 @@ export function QuarterScene({
   onPenalty,
   onMoved,
   onRefused,
+  onCoins,
+  onKey,
 }: {
   huntId: string;
   look: AvatarLook;
@@ -79,13 +112,17 @@ export function QuarterScene({
   onPenalty: (p: Penalty & { balance: number | null; energy: number | null; moveTo?: { lng: number; lat: number } | null }) => void;
   /** The server won't open it (the hunter isn't at the place): closed, with why, never a blank scene. */
   onRefused?: (text: string) => void;
+  /** Coins found in a room: the new balance. */
+  onCoins?: (balance: number) => void;
+  /** The key found in a room (as a Key Trial won: the server's award). */
+  onKey?: (award: unknown) => void;
   /** The server stood the hunter at the place. */
   onMoved: (at: { lng: number; lat: number }) => void;
 }) {
   const [supabase] = useState(createClient);
   const host = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<QuarterView | null>(null);
-  const [say, setSay] = useState<string>("Walk about: tap the street or a plot (or its name below). When you think you know where the key is buried, stand on that plot and dig.");
+  const [say, setSay] = useState<string>("Walk the streets: tap a building (or its name below) to go in. When you think it's the one, search it.");
   const [standing, setStanding] = useState(-1); // the plot the hunter is on (-1: the street)
   const [wide, setWide] = useState(false); // the whole quarter asked for
   // The joystick on phones and tablets (Joystick.tsx): where the thumb is, read by the walking every frame.
@@ -98,6 +135,13 @@ export function QuarterScene({
   const [busy, setBusy] = useState(false);
   const [gained, setGained] = useState<Item | null>(null);
   const [dodge, setDodge] = useState<{ room: number; prompt: string; options: string[]; seconds: number } | null>(null);
+  const [roomPuzzle, setRoomPuzzle] = useState<RoomPuzzle | null>(null);
+  const [roomNote, setRoomNote] = useState<string | null>(null);
+  const [roomShake, setRoomShake] = useState(0);
+  // The metal detector: how hot each building is (house_detect), once each visit; "none": no detector.
+  const [heat, setHeat] = useState<Record<string, string>>({});
+  const heatAsked = useRef(new Set<string>());
+  const openRoomRef = useRef<(n: number) => Promise<void>>(async () => {});
   const scene = useRef<{ built: Built; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, room: number) => void } | null>(null);
   const viewRef = useRef<QuarterView | null>(null);
   useEffect(() => {
@@ -152,7 +196,7 @@ export function QuarterScene({
       setView((old) => (old ? { ...old, ...(r as QuarterView) } : old));
       if (i >= 0) {
         if (r.used) scene.current?.built.setLocked(v.rooms[i].id, false);
-        setSay(r.used ? `You use ${r.used.name}: the gate of ${v.rooms[i].name} opens.` : `📍 ${v.rooms[i].name}. Look around, or dig if you think it's here.`);
+        setSay(r.used ? `You use ${r.used.name}: the door of ${v.rooms[i].name} opens.` : `🏠 Inside ${v.rooms[i].name}. Look around, or search it if you think it's the one.`);
       }
       return true;
     };
@@ -237,7 +281,9 @@ export function QuarterScene({
       const i = v.rooms.findIndex((r) => r.id === v.room);
       if (i >= 0) av.root.position.set(plan.rooms[i].inside.x, 0.1, plan.rooms[i].inside.z);
     }
-    if (v.dug) quarter.setChest(v.rooms.find((r) => r.id === v.dug && r.chest)?.id ?? null);
+    if (v.dug && v.inner) quarter.setInner?.(v.dug, v.inner);
+    else if (v.dug) quarter.setChest(v.rooms.find((r) => r.id === v.dug && r.chest)?.id ?? null);
+    if (v.room) quarter.setOpen?.(v.room, true);
     let path: Point[] = [];
     let arrive: (() => void) | null = null;
     let shakeUntil = 0;
@@ -364,6 +410,7 @@ export function QuarterScene({
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       for (let j = fx.length - 1; j >= 0; j--) if (fx[j](now)) fx.splice(j, 1);
+      quarter.tick?.(dt);
       let moved = 0;
       // Steering (the joystick or the keys): it takes over from a walk to a tapped spot.
       const stick = joy.current;
@@ -423,7 +470,7 @@ export function QuarterScene({
             av.root.position.z = to.z;
           } else {
             const into = roomAt(plan, tries[0]);
-            if (into >= 0 && locked(into) && dist(tries[0], plan.rooms[into].door) < 1.3) setSay(`🔒 ${viewRef.current?.rooms[into]?.name}: the gate is shut. Tap it.`);
+            if (into >= 0 && locked(into) && dist(tries[0], plan.rooms[into].door) < 1.3) setSay(`🔒 ${viewRef.current?.rooms[into]?.name}: the door is locked. Tap it.`);
           }
         }
       }
@@ -439,6 +486,10 @@ export function QuarterScene({
       if (here !== lastPlot) {
         const was = lastPlot;
         lastPlot = here;
+        // Through a door: its roof lifts off (and goes back on behind the hunter).
+        const ids = viewRef.current?.rooms ?? [];
+        if (was >= 0 && ids[was]) quarter.setOpen?.(ids[was].id, false);
+        if (here >= 0 && ids[here]) quarter.setOpen?.(ids[here].id, true);
         setStanding(here);
         if (here >= 0 && wideRef.current) setWide(false);
         // Walked (not routed): the server hears of it now. A routed walk tells it on the way (the tap does).
@@ -544,6 +595,7 @@ export function QuarterScene({
         setSay("You kneel by the chest…");
         return onOpenChest();
       }
+      if (tap === "inner") return void openRoomRef.current(Number(id));
       const roomId = tap === "room" ? id : v.objects.find((o) => o.id === id)?.room;
       const i = v.rooms.findIndex((r) => r.id === roomId);
       if (i < 0) return;
@@ -576,7 +628,88 @@ export function QuarterScene({
     return () => window.removeEventListener("loota:house-tap", onTap);
   }, [busy, huntId, onClose, onOpenChest, supabase]);
 
-  /** ⛏ Dig here: the server decides (a trap's challenge, nothing, or the chest). */
+  /** A room of the treasure building: walk into it, and its puzzle opens (or, opened already, what it held). */
+  async function openRoom(n: number) {
+    const s = scene.current;
+    const v = viewRef.current;
+    if (!s || !v?.dug || !v.inner || busy) return;
+    const cell = v.inner[n - 1];
+    if (!cell) return;
+    setBusy(true);
+    try {
+      const spot = s.built.innerSpots?.(v.dug)[n - 1];
+      if (spot) await s.walkTo([spot]);
+      if (cell.open) return setSay(`Room ${n}: ${OUTCOME_SAID[cell.outcome ?? ""] ?? "opened already."}`);
+      const res = await fetch("/api/house/room", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: n }) });
+      const r = (await res.json().catch(() => null)) as { ok?: boolean; reason?: string; kind?: string; puzzle?: unknown; open?: boolean } | null;
+      if (!r?.ok || !r.kind) return setSay(REFUSED[r?.reason ?? ""] ?? "The door won't budge right now.");
+      setRoomNote(null);
+      setRoomPuzzle({ n, kind: r.kind, puzzle: r.puzzle });
+      setSay(`🚪 Room ${n} is locked by a puzzle: solve it to open the door.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    openRoomRef.current = openRoom;
+    // For the browser tests (development only): answer the open room's puzzle as its board would.
+    if (process.env.NODE_ENV !== "production") (window as unknown as { __lootaRoomSolve?: (a: unknown) => void }).__lootaRoomSolve = (ans) => void solveRoom(ans);
+  });
+
+  /** A room's puzzle, played to the end: the server checks it; right, the door opens on what it held. */
+  async function solveRoom(answer: unknown) {
+    const rp = roomPuzzle;
+    const s = scene.current;
+    const v = viewRef.current;
+    if (!rp || !v?.dug || busyRef.current) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/house/room/solve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: rp.n, answer }) });
+      const r = (await res.json().catch(() => null)) as Opened | null;
+      if (!r?.ok) return setRoomNote(REFUSED[r?.reason ?? ""] ?? "Something went wrong. Try again.");
+      if (!r.right) {
+        setRoomShake((k) => k + 1);
+        return setRoomNote("Not quite: the lock doesn't turn. Look again.");
+      }
+      setRoomPuzzle(null);
+      const inner = (v.inner ?? []).map((c) => (c.n === rp.n ? { ...c, open: true, outcome: r.outcome ?? null } : c));
+      setView((old) => (old ? { ...old, inner } : old));
+      s?.built.setInner?.(v.dug, inner);
+      const here = v.rooms.findIndex((room) => room.id === v.dug);
+      if (r.outcome === "coins") {
+        setSay(`💰 Room ${rp.n}: a pile of coins! +${r.coins ?? 25}.`);
+        if (r.balance != null) onCoins?.(r.balance);
+      } else if (r.outcome === "chapter") {
+        setSay(`📜 Room ${rp.n}: a page of the story! Chapter ${r.chapter ?? ""} is open on your scroll.`);
+        window.dispatchEvent(new Event("loota:story-open"));
+      } else if (r.outcome === "key") {
+        setSay(`🗝 Room ${rp.n}: the key!`);
+        window.setTimeout(() => onKey?.(r.award), 1500);
+      } else if (r.penalty) {
+        const pen = r.penalty;
+        setSay(r.outcome === "decoy" ? `💀 Room ${rp.n}: a chest… it's a fake!` : `⚠️ Room ${rp.n}: a trap!`);
+        if (here >= 0) s?.trap(pen.scene, here);
+        window.setTimeout(() => onPenalty(pen), 1300);
+      } else setSay(`Room ${rp.n}: ${OUTCOME_SAID[r.outcome ?? ""] ?? "empty."}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The detector: once at each building, how hot it is (only with one; the server never says which is right).
+  useEffect(() => {
+    const v = viewRef.current;
+    const room = standing >= 0 ? v?.rooms[standing]?.id : null;
+    if (!room || heatAsked.current.has(room)) return;
+    heatAsked.current.add(room);
+    void supabase.rpc("house_detect", { p_hunt: huntId, p_room: room }).then(({ data }) => {
+      const d = data as { ok: boolean; reason?: string; heat?: string } | null;
+      setHeat((h) => ({ ...h, [room]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
+    });
+  }, [standing, huntId, supabase]);
+
+  /** 🔍 Search here: the server decides (a trap's challenge, nothing, or the treasure building's rooms). */
   async function dig() {
     const s = scene.current;
     const v = viewRef.current;
@@ -609,8 +742,14 @@ export function QuarterScene({
       const next = { ...v, ...(r as QuarterView) };
       setView(next);
       const found = next.rooms.find((room) => room.chest);
-      s.built.setChest(found?.id ?? null);
-      setSay(found ? "⛏ Your spade strikes wood: a chest! Tap it to open it." : `⛏ You dig in ${v.rooms[i].name}… only earth. It isn't here.`);
+      if (found && next.inner) {
+        s.built.setChest(null);
+        s.built.setInner?.(found.id, next.inner);
+        setSay("🔍 This is it! Five rooms, each locked by a puzzle. One holds the key; some hold traps. Tap a room.");
+      } else {
+        s.built.setChest(found?.id ?? null);
+        setSay(found ? "🔍 Under the floorboards: a chest! Tap it to open it." : `🔍 You search ${v.rooms[i].name}… nothing here. It isn't this one.`);
+      }
     } finally {
       setBusy(false);
     }
@@ -651,7 +790,8 @@ export function QuarterScene({
   }, [dodge]);
 
   const on = view && standing >= 0 ? view.rooms[standing] : null;
-  const canDig = !!on && !busy && !dodge && view?.dug !== on.id;
+  const canDig = !!on && !busy && !dodge && !roomPuzzle && view?.dug !== on.id;
+  const reading = on ? HEAT[heat[on.id] ?? ""] : null;
   return (
     <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy}>
       {/* The quarter fills the screen; the bars float over it (it's framed in the space between them). */}
@@ -662,6 +802,11 @@ export function QuarterScene({
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">Key {view?.key ?? ""}</p>
             <h2 className="truncate font-display text-xl font-extrabold">{view?.title ?? "The key's place"}</h2>
           </div>
+          {reading && (
+            <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-extrabold ${reading.style}`} aria-label={`Metal detector: ${reading.text}`} data-detector={heat[on?.id ?? ""]}>
+              {reading.text}
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setWide((w) => !w)}
@@ -703,13 +848,34 @@ export function QuarterScene({
             </div>
           </div>
         )}
+        {roomPuzzle && (
+          <div className="pointer-events-auto flex max-h-[70dvh] flex-col gap-2 overflow-y-auto rounded-2xl bg-ink/95 p-3 shadow-xl ring-2 ring-gold" role="dialog" aria-label={`Room ${roomPuzzle.n}`} data-room-puzzle={roomPuzzle.n}>
+            <div className="flex items-center gap-2">
+              <p className="min-w-0 flex-1 text-xs font-extrabold uppercase tracking-[0.2em] text-gold">
+                Room {roomPuzzle.n} · {PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.name ?? "A puzzle"}
+              </p>
+              <button type="button" onClick={() => setRoomPuzzle(null)} className="h-8 rounded-lg border border-line px-2 text-xs font-bold" aria-label="Close the puzzle">
+                Later
+              </button>
+            </div>
+            <p className="text-xs text-paper/80">{PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.rule}</p>
+            <div key={roomShake} className={`mx-auto w-full max-w-[min(100%,24rem)] ${roomShake ? "loota-shake" : ""}`}>
+              <PuzzleBoard kind={roomPuzzle.kind} puzzle={roomPuzzle.puzzle} disabled={busy} onDone={(a) => void solveRoom(a)} />
+            </div>
+            {roomNote && (
+              <p role="status" className="rounded-lg bg-danger/20 px-2 py-1 text-center text-sm font-bold">
+                {roomNote}
+              </p>
+            )}
+          </div>
+        )}
         {gained && (
           <p className="rounded-2xl bg-gold px-4 py-3 text-center font-bold text-ink shadow-lg">
             {gained.icon} {gained.name}: into your bag
           </p>
         )}
       </div>
-      {handheld && view && (
+      {handheld && view && !roomPuzzle && (
         <Joystick
           className="absolute left-4 z-10"
           style={{ bottom: "calc(var(--house-foot, 7rem) + 0.75rem)" }}
@@ -724,12 +890,12 @@ export function QuarterScene({
             onClick={() => void dig()}
             className="mx-auto mb-3 flex h-14 items-center gap-2 rounded-2xl bg-gold px-6 font-display text-lg font-extrabold text-ink shadow-lg active:scale-95"
           >
-            ⛏ Dig here
+            🔍 Search here
           </button>
         )}
         <div className="bg-ink/90 backdrop-blur-sm">
           {view && (
-            <div className="flex gap-2 overflow-x-auto border-t border-line px-3 py-2" aria-label="Plots">
+            <div className="flex gap-2 overflow-x-auto border-t border-line px-3 py-2" aria-label="Buildings">
               {view.rooms.map((r, i) => (
                 <button
                   key={r.id}
@@ -738,7 +904,7 @@ export function QuarterScene({
                   onClick={() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "room", id: r.id } }))}
                   className={`h-11 shrink-0 rounded-xl px-3 text-sm font-bold disabled:opacity-60 ${standing === i ? "bg-gold text-ink" : "bg-ink-2 text-paper ring-1 ring-line"}`}
                 >
-                  {r.locked ? "🔒 " : view.dug === r.id ? "⛏ " : "📍 "}
+                  {r.locked ? "🔒 " : view.dug === r.id ? "🔍 " : "🏠 "}
                   {r.name}
                 </button>
               ))}

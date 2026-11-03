@@ -433,7 +433,17 @@ export type Built = {
   /** Show or hide the chest in a room; open or shut a room's door. */
   setChest(room: string | null): void;
   setLocked(room: string, locked: boolean): void;
+  /** The hunt city (quarter3d): a building's roof lifts off as the hunter goes in (and its walls drop to a low cutaway). */
+  setOpen?(room: string, open: boolean): void;
+  /** The treasure building's five rooms (null: none showing), each shut or opened with what it held. */
+  setInner?(room: string | null, inner: InnerRoomView[] | null): void;
+  /** Where to stand in each of a building's five rooms (world points, rooms 1 to 5). */
+  innerSpots?(room: string): Point[];
+  /** Each frame: roofs and walls moving to where they're going. */
+  tick?(dt: number): void;
 };
+/** A room of the treasure building: shut, or opened with what it held. */
+export type InnerRoomView = { n: number; open: boolean; outcome: "coins" | "chapter" | "key" | "decoy" | "trap" | null };
 
 /** A straight wall from a to b (along x or z), its height, with doorways cut where asked. */
 function wallRun(group: THREE.Group, a: Point, b: Point, height: number, color: string, trim: string, gaps: Point[], windows: boolean) {

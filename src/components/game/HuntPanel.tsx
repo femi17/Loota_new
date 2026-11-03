@@ -211,6 +211,9 @@ export function HuntPanel({
     // 🏆 on the map's right: the leaderboard, on the card.
     const showBoard = () => void boardRef.current();
     window.addEventListener("loota:board", showBoard);
+    // The key found in a room of the hunt city's treasure building: as a Key Trial won.
+    const roomKey = (e: Event) => settleRef.current((e as CustomEvent<AnswerResult | null>).detail);
+    window.addEventListener("loota:room-key", roomKey);
     // The map may be waiting to open a chest: after this render's effects, once searchRef holds the search.
     const ready = window.setTimeout(() => window.dispatchEvent(new Event("loota:hunt-ready")), 0);
     return () => {
@@ -220,6 +223,7 @@ export function HuntPanel({
       window.removeEventListener("loota:hunt-changed", changed);
       window.removeEventListener("loota:hunt-search", openChest);
       window.removeEventListener("loota:board", showBoard);
+      window.removeEventListener("loota:room-key", roomKey);
     };
   }, [actions, huntId]);
 
@@ -350,6 +354,11 @@ export function HuntPanel({
   const searchRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
     searchRef.current = search;
+  });
+  /** A key won somewhere else than a trial (a room of the hunt city): settled as a trial's verdict. */
+  const settleRef = useRef<(r: AnswerResult | null) => void>(() => {});
+  useEffect(() => {
+    settleRef.current = settle;
   });
   /** Open the card on its leaderboard (from 🏆 on the map's right). */
   const boardRef = useRef<() => Promise<void>>(async () => {});

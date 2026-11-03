@@ -9240,6 +9240,12 @@ export function GameMap({
                   if (p.moveTo) huntActions.current?.placeAt(p.moveTo.lng, p.moveTo.lat); // sent back: there, on the map too
                   setPenalty(p);
                 }}
+                onCoins={(balance) => setHud((h) => ({ ...h, coins: balance }))}
+                onKey={(award) => {
+                  // The key from a room of the treasure building: the city closes, and the hunt card has it as a Key Trial won.
+                  setHouseOpen(false);
+                  window.dispatchEvent(new CustomEvent("loota:room-key", { detail: award }));
+                }}
                 onRefused={(text) => {
                   // Not at the place any more (the server says so): closed, said, and the key check asked again.
                   setHouseOpen(false);

@@ -6,7 +6,8 @@
 //   2. walking onto plots is free; the bedroom's gate is shut; digging in the cellar springs a trap: the soft penalty
 //      card, thrown out;
 //   3. back in: digging in the kitchen, the trap dodged; the study's portrait gives the brass key;
-//   4. the bedroom's gate opens with it; digging there finds the chest; opening it starts the Key Trial;
+//   4. the bedroom's gate opens with it; searching it (the right one) shows its five rooms (the hunt city, 3 Nov 2026:
+//      hunt-city-browser-test plays them);
 //   5. a real tap in the quarter walks the hunter (the 3D picking works).
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/house-browser-test.mjs
 import { createRequire } from "node:module";
@@ -88,8 +89,8 @@ try {
   const digIn = async (room) => {
     await tap({ tap: "room", id: room });
     await idle();
-    const ok = await until(async () => (await (await button("Dig here")).jsonValue()) !== null, 15000);
-    if (ok) await (await button("Dig here")).click();
+    const ok = await until(async () => (await (await button("Search here")).jsonValue()) !== null, 15000);
+    if (ok) await (await button("Search here")).click();
     await wait(300);
     return !!ok;
   };
@@ -156,23 +157,15 @@ try {
   check("the study's portrait: the brass key, carried", !!found && carried.includes("A small brass key"), `${found} | ${carried}`);
   await page.screenshot({ path: `${OUT}/house-3-key.png` });
 
-  // 4. The bedroom's gate, the dig, the chest, the Key Trial
+  // 4. The bedroom's gate, the search, its five rooms
   await tap({ tap: "room", id: "bedroom" });
-  const opened = await until(async () => /gate of Bedroom opens/.test(await say()) && (await say()), 20000);
-  check("the bedroom's gate opens with the brass key", !!opened, opened ?? (await say()));
+  const opened = await until(async () => /(gate|door) of Bedroom opens/.test(await say()) && (await say()), 20000);
+  check("the bedroom's door opens with the brass key", !!opened, opened ?? (await say()));
   await digIn("bedroom");
-  const chest = await until(async () => /chest/i.test(await say()) && (await say()), 25000);
-  check("digging in the bedroom: the chest", !!chest, chest ?? (await say()));
+  const rooms = await until(async () => /Five rooms/.test(await say()) && (await say()), 25000);
+  check("searching the bedroom (the right one): its five rooms", !!rooms, rooms ?? (await say()));
   await wait(600);
-  await page.screenshot({ path: `${OUT}/house-4-chest.png` });
-  await tap({ tap: "chest", id: "bedroom" });
-  const trial = await until(async () => {
-    const { data: t } = await admin.from("trial_attempts").select("id, status").eq("hunt_id", huntId).eq("user_id", id).eq("status", "active").maybeSingle();
-    return t;
-  }, 20000);
-  check("the chest opens: the Key Trial starts", !!trial);
-  await wait(2000);
-  await page.screenshot({ path: `${OUT}/house-5-trial.png` });
+  await page.screenshot({ path: `${OUT}/house-4-rooms.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

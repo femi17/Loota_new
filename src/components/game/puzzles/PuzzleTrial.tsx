@@ -238,24 +238,8 @@ export function PuzzleTrial({
           )}
           {!view.puzzle ? (
             <div className="flex aspect-square w-full items-center justify-center rounded-xl bg-ink-2 text-sm text-muted">The chest creaks open…</div>
-          ) : view.puzzleKind === "sentries" ? (
-            <SentriesPlay p={view.puzzle as SentriesP} warn={warn} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
-          ) : view.puzzleKind === "route" ? (
-            <RoutePlay p={view.puzzle as RouteP} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
-          ) : view.puzzleKind === "tornmap" ? (
-            <TornMapPlay p={view.puzzle as TornMapPuzzle} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
-          ) : view.puzzleKind === "sudoku" ? (
-            <SudokuPlay p={view.puzzle as { given: number[] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
-          ) : view.puzzleKind === "threads" ? (
-            <ThreadsPlay p={view.puzzle as { n: number; ends: [number, number][] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
-          ) : view.puzzleKind === "plots" ? (
-            <PlotsPlay p={view.puzzle as { n: number; clues: Record<number, number> }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
-          ) : view.puzzleKind === "patchwork" ? (
-            <PatchworkPlay p={view.puzzle as { n: number; target: number[]; pieces: [number, number][][] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
-          ) : view.puzzleKind === "vowels" ? (
-            <VowelsPlay p={view.puzzle as { theme: string; words: { shown: string; clue: string; letters: number }[] }} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           ) : (
-            <AdirePlay p={view.puzzle as AdireP} warn={warn} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
+            <PuzzleBoard kind={view.puzzleKind} puzzle={view.puzzle} warn={warn} disabled={sending || solved || left === 0} onDone={send} onProgress={share} />
           )}
         </div>
         {note && (
@@ -272,8 +256,25 @@ export function PuzzleTrial({
   );
 }
 
-/** Sentries: tap to mark; complete (a sentry in every row) sends it. */
 type PlayProps = { disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
+
+/**
+ * A puzzle's board, of any kind (the Key Trial's, and a room's in the hunt city: owner, 3 Nov 2026): played to the
+ * end, it hands over the answer (onDone); onProgress says how far along it is. `warn`: point out a mistake as it's made.
+ */
+export function PuzzleBoard({ kind, puzzle, warn = true, disabled, onDone, onProgress = () => {} }: { kind: string; puzzle: unknown; warn?: boolean } & Omit<PlayProps, "onProgress"> & { onProgress?: PlayProps["onProgress"] }) {
+  if (kind === "sentries") return <SentriesPlay p={puzzle as SentriesP} warn={warn} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "route") return <RoutePlay p={puzzle as RouteP} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "tornmap") return <TornMapPlay p={puzzle as TornMapPuzzle} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "sudoku") return <SudokuPlay p={puzzle as { given: number[] }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "threads") return <ThreadsPlay p={puzzle as { n: number; ends: [number, number][] }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "plots") return <PlotsPlay p={puzzle as { n: number; clues: Record<number, number> }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "patchwork") return <PatchworkPlay p={puzzle as { n: number; target: number[]; pieces: [number, number][][] }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "vowels") return <VowelsPlay p={puzzle as { theme: string; words: { shown: string; clue: string; letters: number }[] }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  return <AdirePlay p={puzzle as AdireP} warn={warn} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+}
+
+/** Sentries: tap to mark; complete (a sentry in every row) sends it. */
 
 function SentriesPlay({ p, warn, disabled, onDone, onProgress }: PlayProps & { p: SentriesP; warn: boolean }) {
   const [marks, setMarks] = useState<number[]>(() => new Array(p.n * p.n).fill(0));

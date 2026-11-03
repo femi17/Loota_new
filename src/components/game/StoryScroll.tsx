@@ -49,10 +49,12 @@ export function useHuntStory(huntId: string | null) {
     ask();
     const timer = setInterval(ask, 60_000);
     window.addEventListener("loota:key-earned", ask);
+    window.addEventListener("loota:story-open", ask); // a page of the story found in the hunt city
     return () => {
       live = false;
       clearInterval(timer);
       window.removeEventListener("loota:key-earned", ask);
+      window.removeEventListener("loota:story-open", ask);
     };
   }, [huntId]);
   const story = huntId && loaded?.hunt === huntId ? loaded.story : null;

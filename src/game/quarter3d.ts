@@ -7,7 +7,9 @@
  * Units are metres; the camera looks in from +x, +z.
  */
 import * as THREE from "three";
-import { ball, box, cyl, floorMaterial, label, layoutOf, makeChest, makeObject, mat, planHouse, STYLE, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle, type PlanSize } from "./house3d";
+import { ball, box, cyl, floorMaterial, label, layoutOf, makeChest, makeObject, mat, planHouse, STYLE, type Built, type HouseObjectView, type HouseRoomView, type HouseStyle, type InnerRoomView, type PlanSize } from "./house3d";
+
+type Point = { x: number; z: number };
 
 /** Plots are bigger than rooms, and the street wider than a hall. */
 export const QUARTER_SIZE: PlanSize = { w: 7, d: 6.4, hall: 4.4, court: 9, step: 1.8 };
@@ -193,75 +195,228 @@ export function buildQuarter(rooms: HouseRoomView[], objects: HouseObjectView[],
   }
   group.add(box(along ? 0.4 : porch.w + 0.8, 0.35, along ? porch.d + 0.8 : 0.4, look.trim, porch.x, 3.1, porch.z));
 
+  // The hunt city (owner, 3 Nov 2026: "see an example of our hunt city… go in, we open the roof of the building"):
+  // each of the story's places is a building on its plot, its door where the plot's gate was. Going in, its roof
+  // lifts off and its walls drop to a low cutaway, so the hunter is seen inside; the treasure building, searched,
+  // shows five rooms, each shut until its puzzle is solved.
   const chests = new Map<string, THREE.Object3D>();
   const gates = new Map<string, THREE.Object3D>();
+  const roofs = new Map<string, { roof: THREE.Object3D; walls: THREE.Object3D; open: boolean; lift: number; signs: THREE.Object3D[] }>();
+  const frames = new Map<string, { frame: THREE.Group; lw: number; ld: number; x: number; z: number; facing: number }>();
+  const FACADES = ["#E8D5B0", "#C9A0A0", "#A0B8C9", "#E0D4A0", "#B5A0C9", "#D9B99B", "#A8C9A0"];
+  const H = 3.0; // walls
+  const T = 0.2;
   rooms.forEach((r, i) => {
     const p = plan.rooms[i];
     const kind = PLOT[r.kind] ? r.kind : "study";
     const info = PLOT[kind];
     const accent = accents[i % accents.length];
+    const facade = FACADES[(i + rooms.length) % FACADES.length];
     const ground = new THREE.Mesh(new THREE.BoxGeometry(p.w - 0.3, 0.14, p.d - 0.3), floorMaterial(info.ground, info.pattern, p.w, p.d));
     ground.position.set(p.x, 0.02, p.z);
     group.add(tag(ground, "room", r.id));
 
-    // The plot's own frame: facing its gate
+    // The building's own frame: facing its door (+z, the street side)
     const frame = new THREE.Group();
     frame.position.set(p.x, 0.09, p.z);
     frame.rotation.y = p.facing;
     group.add(frame);
     const turned = Math.abs(Math.sin(p.facing)) > 0.5;
     const [lw, ld] = turned ? [p.d, p.w] : [p.w, p.d];
-    // A low hedge round it, open at the gate
-    const hedge = style === "fort" || style === "stone" || style === "cave" ? look.back : "#3E7A3A";
-    const h = 0.5;
-    frame.add(box(lw - 0.3, h, 0.3, hedge, 0, h / 2, -ld / 2 + 0.15));
-    for (const sx of [-1, 1]) frame.add(box(0.3, h, ld - 0.3, hedge, sx * (lw / 2 - 0.15), h / 2, 0));
-    const seg = (lw - 0.3 - 1.8) / 2;
-    for (const sx of [-1, 1]) frame.add(box(seg, h, 0.3, hedge, sx * (0.9 + seg / 2), h / 2, ld / 2 - 0.15));
-    // The gate (shut while the plot needs something to open)
-    const gate = tag(box(1.8, 1.0, 0.1, "#6B3E22", 0, 0.5, ld / 2 - 0.15), "room", r.id);
+    frames.set(r.id, { frame, lw: lw - 0.3, ld: ld - 0.3, x: p.x, z: p.z, facing: p.facing });
+    const bw = lw - 0.3, bd = ld - 0.3; // inside the plot's edge
+    // The walls, with windows, and a doorway on the street side (they drop low as the hunter goes in)
+    const walls = new THREE.Group();
+    const wall = (w: number, d: number, x: number, z: number, h = H, y = h / 2) => walls.add(box(w, h, d, facade, x, y, z));
+    wall(bw, T, 0, -bd / 2 + T / 2);
+    wall(T, bd, -bw / 2 + T / 2, 0);
+    wall(T, bd, bw / 2 - T / 2, 0);
+    const seg = (bw - 1.8) / 2;
+    for (const sx of [-1, 1]) wall(seg, T, sx * (0.9 + seg / 2), bd / 2 - T / 2);
+    wall(1.8, T, 0, bd / 2 - T / 2, H - 2.2, 2.2 + (H - 2.2) / 2);
+    const pane = (w: number, h: number, d: number, x: number, y: number, z: number) => walls.add(box(w, h, d, "#2F4B63", x, y, z, false));
+    for (const sx of [-1, 1]) {
+      pane(0.9, 0.9, 0.05, sx * (0.9 + seg / 2), 1.7, bd / 2 + 0.01); // front, either side of the door
+      pane(0.05, 0.9, 0.9, sx * (bw / 2 + 0.01), 1.7, -bd / 6); // the sides
+    }
+    pane(0.9, 0.9, 0.05, -bw / 4, 1.7, -bd / 2 - 0.01);
+    pane(0.9, 0.9, 0.05, bw / 4, 1.7, -bd / 2 - 0.01);
+    walls.add(box(1.9, 0.12, 0.7, accent, 0, 2.3, bd / 2 + 0.3)); // a little awning over the door
+    frame.add(walls);
+    // The roof: pitched or flat with a water tank (it lifts away as the hunter goes in)
+    const top = new THREE.Group();
+    if (i % 2 === 0) {
+      top.add(box(bw + 0.3, 0.18, bd + 0.3, look.trim, 0, H + 0.09, 0));
+      const r2 = roof(bw, bd, accent, H + 0.1);
+      top.add(r2);
+    } else {
+      top.add(box(bw + 0.3, 0.3, bd + 0.3, "#6B6F75", 0, H + 0.15, 0), cyl(0.5, 0.9, "#3B6EA5", bw / 4, H + 0.75, -bd / 4));
+    }
+    frame.add(top);
+    const entry = { roof: top, walls, open: false, lift: 0, signs: [] as THREE.Object3D[] };
+    roofs.set(r.id, entry);
+    // The door (shut while the building needs something to open)
+    const gate = tag(box(1.8, 2.2, 0.1, "#6B3E22", 0, 1.1, bd / 2 - 0.05), "room", r.id);
     gate.visible = r.locked === true;
     frame.add(gate);
     gates.set(r.id, gate);
-    frame.add(feature(kind, lw, ld, accent));
+    // Inside: what the place is (a food stall's counter, shelves, a well…), kept to the back
+    if (kind !== "bedroom" && kind !== "study") {
+      const inside = feature(kind, bw - 0.4, bd - 0.4, accent);
+      inside.scale.setScalar(0.85);
+      inside.userData.furniture = true;
+      frame.add(inside);
+    }
     objects
       .filter((o) => o.room === r.id)
       .slice(0, 3)
       .forEach((o, j) => {
         const m = tag(makeObject(o.kind), "object", o.id);
-        m.position.set([-lw / 2 + 1.0, lw / 2 - 1.0, 0][j], 0, [0.2, 0.2, -0.6][j]);
+        m.position.set([-bw / 2 + 1.0, bw / 2 - 1.0, 0][j], 0, [0.2, 0.2, -0.6][j]);
         m.rotation.y = [Math.PI / 2, -Math.PI / 2, 0][j];
         frame.add(m);
       });
-    // The chest, dug up in the middle of the plot (with its mound)
+    // The chest (an old quarter's), in the middle of the floor
     const chest = tag(makeChest(), "chest", r.id);
-    chest.position.set(-1.0, 0, ld / 2 - 2.2);
-    chest.add(cyl(0.9, 0.18, "#6B4A2B", 0, 0.05, 0, 0.6));
-    chest.visible = r.chest === true;
+    chest.position.set(-1.0, 0, bd / 2 - 2.2);
+    chest.visible = false;
     frame.add(chest);
     chests.set(r.id, chest);
 
-    // Its sign and name, floating over it
+    // Its sign and name, floating over the roof
     const icon = sign(info.icon);
-    icon.position.set(p.x, 3.7, p.z);
+    icon.position.set(p.x, H + 2.6, p.z);
     group.add(icon);
     const name = label(r.name);
-    name.position.set(p.x, 2.8, p.z);
+    name.position.set(p.x, H + 1.7, p.z);
     group.add(name);
+    entry.signs.push(icon, name); // out of the way while the hunter is inside (the rooms' numbers show then)
   });
+
+  // ---- The treasure building's five rooms (built when it's found): three across the back, two either side of
+  // the way in; each with its number, a low wall round it, a door until it's opened, and what it held once it is.
+  const inner = new Map<string, { group: THREE.Group; cells: { centre: Point; door: THREE.Object3D; mark: THREE.Object3D; content: THREE.Group }[] }>();
+  const cellsOf = (bw: number, bd: number) => {
+    const m = 0.35;
+    const back0 = -bd / 2 + m, back1 = -0.25, front0 = 0.25, front1 = bd / 2 - m - 0.2;
+    const cw = (bw - 2 * m) / 3;
+    const out: { x0: number; x1: number; z0: number; z1: number; gap: "front" | "in" }[] = [];
+    for (let k = 0; k < 3; k++) out.push({ x0: -bw / 2 + m + k * cw, x1: -bw / 2 + m + (k + 1) * cw, z0: back0, z1: back1, gap: "front" });
+    out.push({ x0: -bw / 2 + m, x1: -1.0, z0: front0, z1: front1, gap: "in" });
+    out.push({ x0: 1.0, x1: bw / 2 - m, z0: front0, z1: front1, gap: "in" });
+    return out;
+  };
+  const toWorld = (f: { x: number; z: number; facing: number }, lx: number, lz: number): Point => ({
+    x: f.x + lx * Math.cos(f.facing) + lz * Math.sin(f.facing),
+    z: f.z - lx * Math.sin(f.facing) + lz * Math.cos(f.facing),
+  });
+  const content = (outcome: InnerRoomView["outcome"]) => {
+    const g = new THREE.Group();
+    if (outcome === "coins") {
+      for (let k = 0; k < 9; k++) g.add(cyl(0.16, 0.05, "#F4B41A", (k % 3) * 0.2 - 0.2, 0.05 + Math.floor(k / 3) * 0.06, ((k * 7) % 3) * 0.12 - 0.12));
+    } else if (outcome === "chapter") {
+      g.add(box(0.5, 0.5, 0.4, "#6B4A2B", 0, 0.25, 0));
+      const scroll = cyl(0.1, 0.7, "#F2E6C8", 0, 0.62, 0);
+      scroll.rotation.z = Math.PI / 2;
+      g.add(scroll, box(0.08, 0.2, 0.22, "#C23B3B", 0, 0.62, 0));
+    } else if (outcome === "key") {
+      g.add(makeChest());
+      g.add(box(0.08, 0.5, 0.08, "#F4B41A", 0, 1.2, 0), cyl(0.15, 0.06, "#F4B41A", 0, 1.5, 0));
+    } else if (outcome === "decoy") {
+      const fake = makeChest();
+      fake.traverse((c) => {
+        const m = (c as THREE.Mesh).material as THREE.MeshLambertMaterial | undefined;
+        if (m?.color) {
+          (c as THREE.Mesh).material = m.clone();
+          ((c as THREE.Mesh).material as THREE.MeshLambertMaterial).color.multiplyScalar(0.5).add(new THREE.Color("#5A0A0A"));
+        }
+      });
+      g.add(fake, ball(0.15, "#EDE6D6", 0, 0.95, 0));
+    } else if (outcome === "trap") {
+      g.add(cyl(0.6, 0.02, "#0A0A0A", 0, 0.03, 0));
+      for (const a of [0.3, 1.8, 3.6]) {
+        const plank = box(0.7, 0.05, 0.14, "#6B4A2B", Math.cos(a) * 0.55, 0.06, Math.sin(a) * 0.55);
+        plank.rotation.y = a;
+        g.add(plank);
+      }
+    }
+    return g;
+  };
+  const setInner = (room: string | null, list: InnerRoomView[] | null) => {
+    for (const [id, x] of inner) {
+      if (id !== room || !list) {
+        x.group.visible = false;
+      }
+    }
+    if (!room || !list) return;
+    const f = frames.get(room);
+    if (!f) return;
+    let made = inner.get(room);
+    if (!made) {
+      const g = new THREE.Group();
+      const cells = cellsOf(f.lw, f.ld).map((c, k) => {
+        const cx = (c.x0 + c.x1) / 2, cz = (c.z0 + c.z1) / 2, w = c.x1 - c.x0, d = c.z1 - c.z0;
+        const floor = tag(box(w - 0.1, 0.04, d - 0.1, k % 2 ? "#E6DCC6" : "#D8CDB4", cx, 0.1, cz, false), "inner", String(k + 1));
+        g.add(floor);
+        const low = 0.7;
+        // Its low walls, open on the side it's entered from
+        const side = c.gap === "front" ? "front" : cx < 0 ? "right" : "left";
+        if (side !== "front") g.add(box(w, low, 0.1, "#BFB3A2", cx, low / 2, c.z1));
+        g.add(box(w, low, 0.1, "#BFB3A2", cx, low / 2, c.z0));
+        if (side !== "left") g.add(box(0.1, low, d, "#BFB3A2", c.x0, low / 2, cz));
+        if (side !== "right") g.add(box(0.1, low, d, "#BFB3A2", c.x1, low / 2, cz));
+        // The door into it, until it's opened
+        const door = tag(
+          side === "front" ? box(Math.min(1.1, w - 0.3), 1.6, 0.08, "#7A4E2A", cx, 0.8, c.z1) : box(0.08, 1.6, Math.min(1.1, d - 0.3), "#7A4E2A", side === "left" ? c.x0 : c.x1, 0.8, cz),
+          "inner",
+          String(k + 1),
+        );
+        g.add(door);
+        const mark = label(`Room ${k + 1}`);
+        mark.position.set(cx, 2.0, cz);
+        g.add(mark);
+        const held = new THREE.Group();
+        held.position.set(cx, 0.1, cz);
+        g.add(held);
+        return { centre: { x: cx, z: cz }, door, mark, content: held };
+      });
+      f.frame.add(g);
+      made = { group: g, cells };
+      inner.set(room, made);
+    }
+    made.group.visible = true;
+    list.forEach((cell, k) => {
+      const c = made!.cells[k];
+      if (!c) return;
+      c.door.visible = !cell.open;
+      c.content.clear();
+      if (cell.open && cell.outcome) c.content.add(content(cell.outcome));
+    });
+    // The building's own furniture makes way for the rooms
+    for (const ch of f.frame.children) if (ch.userData.furniture) ch.visible = false;
+  };
 
   // The land's own look round the edges
   let seed = rooms.length * 13 + title.length;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   for (let k = 0; k < 18; k++) {
     const onX = k % 2 === 0;
-    const x = onX ? B.minX + rnd() * bw : k % 4 === 1 ? B.minX - 2.2 : B.maxX + 2.2;
-    const z = onX ? (k % 4 === 0 ? B.minZ - 2.2 : B.maxZ + 2.6) : B.minZ + rnd() * bd;
+    let x = onX ? B.minX + rnd() * bw : k % 4 === 1 ? B.minX - 2.2 : B.maxX + 2.2;
+    let z = onX ? (k % 4 === 0 ? B.minZ - 2.2 : B.maxZ + 2.6) : B.minZ + rnd() * bd;
     if (Math.hypot(x - plan.start.x, z - plan.start.z) < 3.5) continue;
     if (style === "cave" || style === "fort") {
       const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 + rnd() * 0.8, 0), mat(style === "cave" ? "#6A5E50" : "#B8A272"));
       rock.position.set(x, 0.35, z);
       group.add(rock);
+    } else if (k % 3 === 0) {
+      // The town beyond (owner, 3 Nov 2026: "our hunt city"): a block of flats or a shop, its windows lit
+      const hw = 2.2 + rnd() * 1.6, hh = 3 + rnd() * 6, hd = 2.2 + rnd() * 1.6;
+      // A little further out than the trees, clear of the story's own buildings
+      if (onX) z += Math.sign(z - plan.centre.z) * 2;
+      else x += Math.sign(x - plan.centre.x) * 2;
+      group.add(box(hw, hh, hd, ["#D9B99B", "#C9A0A0", "#A0B8C9", "#E0D4A0", "#B5A0C9"][k % 5], x, hh / 2, z));
+      group.add(box(hw + 0.2, 0.25, hd + 0.2, "#6B6F75", x, hh + 0.12, z));
+      for (let fy = 1.4; fy < hh - 0.6; fy += 1.6) for (const side of [-1, 1]) group.add(box(0.5, 0.6, 0.04, "#2F4B63", x + side * hw * 0.25, fy, z + hd / 2 + 0.02, false));
     } else {
       group.add(cyl(0.15, 1.4, "#6B4A2B", x, 0.7, z), ball(0.8 + rnd() * 0.4, k % 3 ? "#3E7A3A" : "#4E8E44", x, 1.8, z));
     }
@@ -293,6 +448,26 @@ export function buildQuarter(rooms: HouseRoomView[], objects: HouseObjectView[],
     setLocked(room, locked) {
       const g = gates.get(room);
       if (g) g.visible = locked;
+    },
+    setOpen(room, open) {
+      const r = roofs.get(room);
+      if (r) r.open = open;
+    },
+    setInner,
+    innerSpots(room) {
+      const f = frames.get(room);
+      return f ? cellsOf(f.lw, f.ld).map((c) => toWorld(f, (c.x0 + c.x1) / 2, (c.z0 + c.z1) / 2)) : [];
+    },
+    tick(dt) {
+      // A roof lifting away (or coming back down), and the walls dropping to a low cutaway with it.
+      for (const r of roofs.values()) {
+        r.lift += ((r.open ? 1 : 0) - r.lift) * Math.min(1, 4 * dt);
+        if (Math.abs(r.lift - (r.open ? 1 : 0)) < 0.001) r.lift = r.open ? 1 : 0;
+        r.roof.position.y = r.lift * 7;
+        r.roof.visible = r.lift < 0.95;
+        r.walls.scale.y = 1 - 0.75 * r.lift;
+        for (const sgn of r.signs) sgn.visible = r.lift < 0.5;
+      }
     },
   };
 }

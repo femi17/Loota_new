@@ -84,7 +84,7 @@ try {
   await shot("1-flat");
   check("a 🛞 Fix flat button beside it", await tapWhenThere("Fix flat", 10));
   let s = "";
-  for (let i = 0; i < 20 && !/change am for you/.test(s); i++) { await wait(500); s = await scene(); }
+  for (let i = 0; i < 20 && !/change am for you: 40 coins/.test(s); i++) { await wait(500); s = await scene(); }
   check("a roadside mechanic offers to change it: 40 coins", /change am for you: 40 coins/.test(s), s.slice(0, 200));
   check("…no jack: no do-it-yourself", !/Change it myself/.test(s));
   await shot("2-mechanic");

@@ -58,7 +58,7 @@ try {
 
   await page.evaluate(() => document.querySelector('[data-tool="travel"]')?.click());
   await wait(1000);
-  await page.evaluate(() => [...document.querySelectorAll('[aria-label="Vehicles"] li')].find((x) => x.querySelector("span")?.textContent === "Bicycle")?.querySelector("button")?.click());
+  await page.evaluate(() => [...document.querySelectorAll('[aria-label="Vehicles"] li')].find((x) => x.querySelector("p")?.textContent === "Bicycle")?.querySelectorAll("button").forEach((b) => b.textContent?.trim() === "Take it out" && b.click()));
   await wait(4000);
   const cycling = await buttons();
   check("on the bicycle with soft tyres: Pump", cycling.some((t) => /Pump/.test(t)) && !cycling.some((t) => /Refuel/.test(t)), cycling.join(" / "));

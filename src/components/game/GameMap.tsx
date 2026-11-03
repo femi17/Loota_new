@@ -1563,7 +1563,7 @@ export function GameMap({
         if (now < nextStrandGuide) return;
         nextStrandGuide = now + 3000;
         const s = strandedVehicle();
-        if (!s || trip || inWorld || ride || visit || now < strandGuideOff || traveller.mode !== "walk" || busy || !onRoad) return;
+        if (!s || trip || inWorld || ride || visit || now < strandGuideOff || busy || !onRoad) return;
         if (fuelInHand()) {
           if (metresTo(s) <= 25) return; // there: pour it in
           nextStrandGuide = now + 20000; // one try every 20 s if no road route is found
@@ -1723,10 +1723,17 @@ export function GameMap({
             traveller.mode = "walk"; // the server put you on foot
             await refreshVehicles();
             if (started?.reason === "coins") say(`Not enough coins to rent a ${vehicleName(kind)}.`, true);
-            else if (started?.reason === "flat")
-              say(`Your ${vehicleName(kind)} has a flat and stands at the roadside. Go to it and change the tyre (🛞 Fix flat): free with your jack, or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`, true);
-            else if (started?.reason === "stranded")
-              say(`Your ${vehicleName(kind)} is parked at the roadside with an empty tank. Bring it fuel in a jerry can from a petrol station (🧭 in Vehicles shows the way).`, true);
+            else if (started?.reason === "flat") {
+              const f = flatVehicle();
+              if (f && metresTo(f) <= 25) void act("flat"); // right beside it: change it now
+              else say(`Your ${vehicleName(kind)} has a flat and stands at the roadside. Go to it and change the tyre (🛞 Fix flat): free with your jack, or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`, true);
+            } else if (started?.reason === "stranded")
+              say(
+                fuelInHand()
+                  ? `Your ${vehicleName(kind)} is parked at the roadside with an empty tank. You have fuel with you: take it there and pour it in (🧭 in Vehicles shows the way).`
+                  : `Your ${vehicleName(kind)} is parked at the roadside with an empty tank. Bring it fuel in a jerry can from a petrol station (⛽ in Vehicles shows the way).`,
+                true,
+              );
             else if (started?.reason === "fuel")
               say(`Your ${vehicleName(kind)}'s tank is empty. Any petrol station fills it while it's in your pocket, or pour in a jerry can.`, true);
             else if (started?.reason === "far_pickup") say("Walk to the renter first: they're waiting at the bus stop.", true);
@@ -2084,6 +2091,7 @@ export function GameMap({
                   ? "empty"
                   : "ready",
             away: v.stranded_at ? Math.round(metresTo(v)) : null,
+            carrying: v.stranded_at && v.fuel <= 0 ? (keg && keg.fuel > 0 ? "can" : jerryRelicId ? "relic" : null) : null,
             papers: ADDONS[v.kind].map((a) => ({ ...a, have: hasPaper(v, a.id) })),
           })),
         ride: (kind, how, addons) => void chooseVehicle(kind, how, addons),
@@ -2091,7 +2099,21 @@ export function GameMap({
         findRepairShop: (kind) => void findRepairShop(kind, true),
         wayToParked: (kind) => {
           const v = owned.find((o) => o.kind === kind && o.stranded_at);
-          if (v) void planDirections({ lng: v.lng, lat: v.lat }, `your ${vehicleName(kind)}`);
+          if (!v) return;
+          const name = vehicleName(kind);
+          if (metresTo(v) <= 25) {
+            // Already beside it: see to it right here (owner, 3 Nov 2026: "The way to it. I clicked yet nothing happened").
+            computeActions();
+            if (isFlat(v)) void act("flat");
+            else if (v.fuel > 0) say(`Your ${name} is right here.`);
+            else if (keg && keg.fuel > 0) void act("pour_keg");
+            else if (jerryRelicId) void act("jerry_relic");
+            else adviseFuelWalk(name);
+            return;
+          }
+          // Dry, with no fuel to bring it: the petrol station first, not the vehicle.
+          if (!isFlat(v) && v.fuel <= 0 && !fuelInHand()) adviseFuelWalk(name);
+          else void planDirections({ lng: v.lng, lat: v.lat }, `your ${name}`);
         },
         enterShop: (job) => openShopScene(job),
         enterTicket: () => enterTicket(),
@@ -3733,6 +3755,24 @@ export function GameMap({
         const moved = spotsFrom ? geo.distanceM([spotsFrom.lng, spotsFrom.lat], [traveller.pos.lng, traveller.pos.lat]) : Infinity;
         if (moved > 25 || now - spotsAt > 30000) void refreshSpots();
       }
+      /**
+       * How near a place counts as being at it: the road's nearest point to it, plus a few metres. A place with its own
+       * driveway or side street is reached down that road, not from the main road it lies off (owner, 3 Nov 2026: "there
+       * is a road that actually leads to this location, so the user should go down the road"); one right on a main road
+       * is reached from the main road.
+       */
+      const SPOT_AT_M = 20;
+      const spotReach = new Map<number, { net: unknown; m: number }>();
+      function reachOf(sp: Spot) {
+        if (!network) return SPOT_HERE_M;
+        const known = spotReach.get(sp.id);
+        if (known?.net === network) return known.m;
+        const rp = roads.snapToNetwork(network, sp, 0, roads.cutOffEdges(network));
+        const road = rp ? roads.positionOf(network, rp) : null;
+        const m = road ? Math.min(SPOT_HERE_M, Math.max(SPOT_AT_M, geo.distanceM([road.lng, road.lat], [sp.lng, sp.lat]) + SPOT_AT_M)) : SPOT_HERE_M;
+        spotReach.set(sp.id, { net: network, m });
+        return m;
+      }
       /** The place of these kinds the hunter is at, if any. */
       function spotHere(kinds: Spot["kind"][]) {
         const at: [number, number] = [traveller.pos.lng, traveller.pos.lat];
@@ -3741,7 +3781,7 @@ export function GameMap({
         for (const sp of spots) {
           if (!kinds.includes(sp.kind)) continue;
           const m = geo.distanceM(at, [sp.lng, sp.lat]);
-          if (m < bestM) {
+          if (m < bestM && m <= reachOf(sp)) {
             bestM = m;
             best = sp;
           }
@@ -3962,9 +4002,10 @@ export function GameMap({
           const pocketed = (want: (v: VehicleRow) => boolean) => owned.find((v) => !v.in_use && !v.stranded_at && v.kind !== "bicycle" && want(v)) ?? null;
           const stranded = strandedVehicle();
           const atStranded = !!stranded && metresTo(stranded) <= 25;
-          // Beside a motorbike or car with a flat: change the tyre (a roadside mechanic, or your jack).
+          // Beside a motorbike or car with a flat: change the tyre (a roadside mechanic, or your jack). On foot or come
+          // back on the bicycle (owner, 3 Nov 2026: beside the car on the bicycle, there was no button).
           const flat = flatVehicle();
-          if (flat && metresTo(flat) <= 25 && traveller.mode === "walk") {
+          if (flat && metresTo(flat) <= 25) {
             list.push({ id: "flat", icon: "🛞", short: "Fix flat", label: `Change your ${vehicleName(flat.kind)}'s flat tyre` });
           }
           const eatSpot = spotHere(["eat"]);

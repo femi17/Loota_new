@@ -16,6 +16,8 @@ export type OwnedVehicle = {
   /** `flat`: a motorbike or car with a flat tyre, parked at the roadside until it's changed. */
   state: "ready" | "empty" | "broken" | "repairing" | "stranded" | "flat";
   away?: number | null;
+  /** Dry at the roadside: the fuel the player already carries for it (a jerry can with fuel in it, or the relic). */
+  carrying?: "can" | "relic" | null;
   papers: { id: AddonId; name: string; price: number; have: boolean }[];
 };
 export type Riding = { kind: VehicleKind; source: "owned" | "rented" } | null;
@@ -66,6 +68,14 @@ export function GearTiles({
 }
 
 const SPEED: Record<VehicleKind, string> = { bicycle: "16 km/h", motorbike: "35 km/h", car: "45 km/h" };
+
+/** Beside it (within 25 m): see to it now; dry with no fuel in hand: a petrol station first; otherwise the way to it. */
+function parkedButton(v: OwnedVehicle) {
+  const here = v.away != null && v.away <= 25;
+  if (v.state === "flat") return here ? "🛞 Fix the flat now" : "🧭 The way to it";
+  if (v.carrying) return here ? (v.carrying === "can" ? "🛢 Pour the jerry can in" : "⛽ Use the Jerry Can relic") : "🧭 The way to it";
+  return "⛽ The way to a petrol station";
+}
 
 /** Choose how to travel: take your own vehicle out of your pocket, rent one, or buy one. */
 export function VehiclePanel({
@@ -162,10 +172,12 @@ export function VehiclePanel({
               <p className="text-xs leading-relaxed text-paper/80">
                 {parked.state === "flat"
                   ? `🛞 Go to it and tap Fix flat: change it yourself with a jack (free), or a roadside mechanic does it for ${FLAT_FIX_PRICE} coins.`
-                  : `🛢 Fill a jerry can at a petrol station, carry it back and pour it in: it takes the tank to ${KEG_CAPACITY}%.`}
+                  : parked.carrying
+                    ? `🛢 You already carry fuel for it (${parked.carrying === "can" ? "your jerry can" : "a Jerry Can relic"}): no petrol station needed. Take it there and pour it in: the tank goes to ${KEG_CAPACITY}%.`
+                    : `🛢 Fill a jerry can at a petrol station, carry it back and pour it in: it takes the tank to ${KEG_CAPACITY}%.`}
               </p>
               <button type="button" disabled={busy} onClick={() => onWayTo(parked.kind)} className="h-11 rounded-xl bg-gold text-sm font-bold text-ink disabled:opacity-40">
-                🧭 The way to it
+                {parkedButton(parked)}
               </button>
             </div>
           )}
@@ -262,7 +274,7 @@ export function VehiclePanel({
                       {mine ? (
                         mine.state === "stranded" || mine.state === "flat" ? (
                           <button type="button" disabled={busy} onClick={() => onWayTo(kind)} className={primary}>
-                            🧭 The way to it
+                            {parkedButton(mine)}
                           </button>
                         ) : mine.state === "broken" ? (
                           <>

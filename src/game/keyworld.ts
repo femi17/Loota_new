@@ -14,7 +14,7 @@
  * Units are metres; +z is towards the camera. Every story place stands in its own frame (its door at local +z).
  */
 import * as THREE from "three";
-import { ball, box, cyl, floorMaterial, label, makeChest, makeObject, mat, type HouseObjectView, type HouseRoomView, type InnerRoomView } from "./house3d";
+import { ball, box, cyl, floorMaterial, makeChest, makeObject, mat, type HouseObjectView, type HouseRoomView, type InnerRoomView } from "./house3d";
 
 export type Point = { x: number; z: number };
 export type Rect = { x0: number; x1: number; z0: number; z1: number };
@@ -29,17 +29,18 @@ const BD = 10; // …and back from it
 const H = 3; // its walls
 export const BODY = 0.35; // the hunter, for bumping into things
 
-/** What stands on each kind of place (the story's room kinds), its sign and its floor. */
-const PLOT: Record<string, { icon: string; ground: string; pattern: "boards" | "tiles" | "flags" }> = {
-  kitchen: { icon: "🍲", ground: "#D9C7A0", pattern: "tiles" },
-  bedroom: { icon: "🏠", ground: "#C9B99A", pattern: "boards" },
-  library: { icon: "📚", ground: "#C9B99A", pattern: "boards" },
-  cellar: { icon: "🪣", ground: "#9C9488", pattern: "flags" },
-  parlour: { icon: "☕", ground: "#D6B48A", pattern: "boards" },
-  bathroom: { icon: "⛲", ground: "#C8D8DC", pattern: "tiles" },
-  chapel: { icon: "🕯️", ground: "#BFB3A2", pattern: "flags" },
-  storeroom: { icon: "📦", ground: "#A8957A", pattern: "boards" },
-  study: { icon: "📜", ground: "#8FB37A", pattern: "flags" },
+/** What each kind of place (the story's room kinds) has underfoot. No signs or names float over anything (owner,
+ * 3 Nov 2026: "remove all the labels, we do not need that"): the hunter goes by the place itself and the story. */
+const PLOT: Record<string, { ground: string; pattern: "boards" | "tiles" | "flags" }> = {
+  kitchen: { ground: "#D9C7A0", pattern: "tiles" },
+  bedroom: { ground: "#C9B99A", pattern: "boards" },
+  library: { ground: "#C9B99A", pattern: "boards" },
+  cellar: { ground: "#9C9488", pattern: "flags" },
+  parlour: { ground: "#D6B48A", pattern: "boards" },
+  bathroom: { ground: "#C8D8DC", pattern: "tiles" },
+  chapel: { ground: "#BFB3A2", pattern: "flags" },
+  storeroom: { ground: "#A8957A", pattern: "boards" },
+  study: { ground: "#8FB37A", pattern: "flags" },
 };
 
 const LOOK = {
@@ -49,40 +50,6 @@ const LOOK = {
 };
 
 // ---- Drawing helpers ----------------------------------------------------------------------------------------------
-
-/** A round floating sign with an icon (drawn once per icon). */
-const signs = new Map<string, THREE.CanvasTexture>();
-function sign(icon: string) {
-  let tex = signs.get(icon);
-  if (!tex) {
-    const c = document.createElement("canvas");
-    c.width = c.height = 128;
-    const g = c.getContext("2d")!;
-    g.fillStyle = "#FFFFFF";
-    g.beginPath();
-    g.arc(64, 60, 52, 0, Math.PI * 2);
-    g.fill();
-    g.strokeStyle = "rgba(20,24,34,0.25)";
-    g.lineWidth = 6;
-    g.stroke();
-    g.beginPath(); // the little point under the bubble
-    g.moveTo(52, 106);
-    g.lineTo(64, 124);
-    g.lineTo(76, 106);
-    g.fill();
-    g.font = "64px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.fillText(icon, 64, 64);
-    tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    signs.set(icon, tex);
-  }
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
-  s.scale.set(1.6, 1.6, 1);
-  s.renderOrder = 11;
-  return s;
-}
 
 /** A pitched roof over a box (w along x, d along z), its ridge along x. */
 function roof(w: number, d: number, color: string, y: number, rise = 1.2) {
@@ -420,13 +387,10 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     piece(e, { x0: x - hx, x1: x + hx, z0: z - hz, z1: z + hz });
   };
   if (pieces.has("station")) {
-    // A station along the north side of the square: glass front, a canopy, its sign
+    // A station along the north side of the square: glass front, a canopy
     const g = new THREE.Group();
     g.add(box(16, 4.4, 3.2, "#D8D2C6", 0, 2.2, -8.4), box(15, 1.5, 0.06, "#5E8FB0", 0, 2.3, -6.77, false), box(17, 0.22, 1.8, "#3B4048", 0, 3.3, -6.1, false));
     for (const x of [-7.5, -2.5, 2.5, 7.5]) g.add(cyl(0.1, 3.3, "#3B4048", x, 1.65, -5.4));
-    const s = sign("🚉");
-    s.position.set(0, 5.6, -8);
-    g.add(s);
     piece(g, { x0: -8, x1: 8, z0: -10, z1: -6.8 });
   }
   if (pieces.has("dog-statue")) {
@@ -493,16 +457,13 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     piece(g, { x0: -9, x1: 9, z0: -10, z1: -6.4 });
   }
   if (pieces.has("trolley-wall")) {
-    // A brick wall with a luggage trolley half-way into it, and its sign
+    // A brick wall with a luggage trolley half-way into it, and a plaque
     const g = new THREE.Group();
     g.add(box(4.4, 2.8, 0.45, "#8E3B2A", 5, 1.4, -1.5));
     g.add(box(1.0, 0.08, 0.7, "#3A3A3A", 5, 0.45, -0.95, false), box(0.9, 0.6, 0.6, "#6B4A2B", 5, 0.8, -1.0), box(0.7, 0.45, 0.5, "#8A2E2E", 5, 1.35, -1.05));
     g.add(box(0.06, 0.9, 0.06, "#3A3A3A", 4.55, 0.9, -0.55, false), box(0.06, 0.9, 0.06, "#3A3A3A", 5.45, 0.9, -0.55, false), box(1.0, 0.06, 0.06, "#3A3A3A", 5, 1.35, -0.55, false));
     for (const x of [4.6, 5.4]) g.add(cyl(0.14, 0.08, "#1D1D1D", x, 0.15, -0.65).rotateZ(Math.PI / 2));
-    const plate = label("9¾");
-    plate.scale.set(1.6, 0.4, 1);
-    plate.position.set(5, 3.1, -1.4);
-    g.add(plate);
+    g.add(box(0.9, 0.35, 0.04, "#1F2A44", 5, 2.3, -1.26, false));
     piece(g, { x0: 2.8, x1: 7.2, z0: -1.8, z1: -0.4 });
   }
   if (pieces.has("river")) {
@@ -551,7 +512,7 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
   const ring = lots();
   const first = Math.floor(rnd() * ring.length);
   const places: WorldPlace[] = [];
-  const views: { walls: THREE.Group; roof: THREE.Group; open: number; ghost: number; area: Rect; signs: THREE.Object3D[]; frame: THREE.Group; low: boolean }[] = [];
+  const views: { walls: THREE.Group; roof: THREE.Group; open: number; ghost: number; area: Rect; frame: THREE.Group; low: boolean }[] = [];
   const gates: (Solid & { mesh: THREE.Object3D })[] = [];
   const chests: THREE.Object3D[] = [];
   const furniture: { group: THREE.Group; solid: Solid }[] = [];
@@ -632,13 +593,7 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     chest.visible = false;
     frame.add(chest);
     chests.push(chest);
-    // Its sign and name over it
-    const icon = sign(info.icon);
-    icon.position.set(c.x, (outdoor ? 1 : H) + 3.1, c.z);
-    const name = label(r.name);
-    name.position.set(c.x, (outdoor ? 1 : H) + 2.0, c.z);
-    group.add(icon, name);
-    views.push({ walls, roof: top, open: 0, ghost: 0, area, signs: [icon, name], frame, low: outdoor });
+    views.push({ walls, roof: top, open: 0, ghost: 0, area, frame, low: outdoor });
   });
 
   // ---- The town: buildings wherever there's room, facing the nearest street
@@ -766,9 +721,6 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
       const [dx0, dx1, dz0, dz1] = cell.door === "back" ? [-0.8, 0.8, -1.8 - 0.08, -1.8 + 0.08] : cell.door === "left" ? [-1.28, -1.12, cell.dz - 0.6, cell.dz + 0.6] : [1.12, 1.28, cell.dz - 0.6, cell.dz + 0.6];
       const door = tag(box(dx1 - dx0 || 0.1, 1.9, dz1 - dz0 || 0.1, "#7A4E2A", (dx0 + dx1) / 2, 0.95, (dz0 + dz1) / 2), "inner", String(cell.n));
       g.add(door);
-      const mark = label(`Room ${cell.n}`);
-      mark.position.set(cx, 2.4, cz);
-      g.add(mark);
       const held = new THREE.Group();
       held.position.set(cx, 0.12, cz);
       g.add(held);
@@ -906,7 +858,6 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
         v.walls.scale.y = 1 - 0.72 * low;
         v.roof.position.y = v.open * 7;
         v.roof.visible = low < 0.6;
-        for (const s of v.signs) s.visible = v.open < 0.5;
       });
       for (const fl of fillers) {
         fl.ghost += ((hides(fl.area) ? 1 : 0) - fl.ghost) * k;

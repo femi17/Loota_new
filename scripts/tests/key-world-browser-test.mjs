@@ -88,6 +88,23 @@ try {
   });
   const inside = () => attr("data-inside");
 
+  // On a laptop first (its own page, closed before the phone joins: one device a player): the hunter in the middle of the screen; the mouse wheel zooms out
+  {
+    const lap = await browser.newPage();
+    await lap.setViewport({ width: 1366, height: 768, deviceScaleFactor: 1 });
+    await lap.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
+    await lap.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
+    await until(() => lap.evaluate(() => { const b = [...document.querySelectorAll("button")].find((x) => /Explore the place/.test(x.textContent ?? "")); b?.click(); return !!b; }), 60000);
+    await until(() => lap.evaluate((sel) => !!document.querySelector(sel), SCENE), 15000);
+    await wait(2500);
+    await lap.screenshot({ path: `${OUT}/world-2a-laptop.png` });
+    await lap.mouse.move(683, 384);
+    for (let k = 0; k < 6; k++) await lap.mouse.wheel({ deltaY: 120 });
+    await wait(1500);
+    await lap.screenshot({ path: `${OUT}/world-2a-laptop-out.png` });
+    await lap.close();
+  }
+  await wait(1500);
   await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
   // 1. The world
   const go = await until(() => press("Explore the place"), 60000);

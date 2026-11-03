@@ -58,6 +58,8 @@ const SPEED = 4; // metres a second, walking about
 const AVATAR = 0.8; // the hunter's size in the world
 // The camera, just behind and above the hunter (as mini-Loota's); higher inside a place, its roof off; or the whole town
 const EYE = { street: new THREE.Vector3(0, 11, 11.5), inside: new THREE.Vector3(0, 12.5, 8.5), wide: new THREE.Vector3(0, 62, 46) };
+// How far out (owner, 3 Nov 2026: "can they be zoomed out… Let it use the zoom"): the wheel or a pinch, within these
+const ZOOM = { phone: 1.8, laptop: 2.3, min: 0.7, max: 3 };
 const REFUSED: Record<string, string> = {
   away: "You've moved away from this place.",
   no_house: "There's nothing to search here.",
@@ -385,7 +387,8 @@ export function QuarterScene({
       }
     };
 
-    const eye = new THREE.Vector3().copy(av.root.position).add(EYE.street);
+    let zoom = el.clientWidth > el.clientHeight ? ZOOM.laptop : ZOOM.phone; // further out on a wide screen
+    const eye = new THREE.Vector3().copy(av.root.position).add(EYE.street.clone().multiplyScalar(zoom));
     const aim = new THREE.Vector3().copy(av.root.position);
     camera.position.copy(eye);
     let raf = 0;
@@ -520,14 +523,17 @@ export function QuarterScene({
         setNear(nearNow);
       }
 
-      // The camera: behind and above the hunter, gliding after them
-      const off = wideRef.current ? EYE.wide : here >= 0 ? EYE.inside : EYE.street;
+      // The camera: behind and above the hunter, gliding after them, the hunter in the middle of the screen (owner:
+      // "center of the laptop screen"), as far out as zoomed; the haze starts a little beyond the hunter
+      const off = wideRef.current ? EYE.wide : (here >= 0 ? EYE.inside : EYE.street).clone().multiplyScalar(zoom);
       const goal = wideRef.current ? new THREE.Vector3(0, 0, 0).add(off) : new THREE.Vector3(at.x, 0, at.z).add(off);
-      const look = wideRef.current ? new THREE.Vector3(0, 0, 2) : new THREE.Vector3(at.x, 0.8, at.z + 1.2);
+      const look = wideRef.current ? new THREE.Vector3(0, 0, 2) : new THREE.Vector3(at.x, 0.9, at.z);
       const k = 1 - Math.exp(-5 * dt);
       eye.lerp(goal, k);
       aim.lerp(look, k);
-      fog.far += ((wideRef.current ? 400 : 64) - fog.far) * k;
+      const away = off.length();
+      fog.near += ((wideRef.current ? 300 : away + 12) - fog.near) * k;
+      fog.far += ((wideRef.current ? 400 : away + 50) - fog.far) * k;
       camera.position.copy(eye);
       if (now < shakeUntil) camera.position.x += (Math.random() - 0.5) * 0.4;
       camera.lookAt(aim);
@@ -549,14 +555,42 @@ export function QuarterScene({
       const data = hit?.object.userData as { tap?: string; id?: string } | undefined;
       if (data?.tap) window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: data.tap, id: data.id, x: hit!.point.x, z: hit!.point.z } }));
     };
+    // A tap (a finger that hardly moved), or two fingers pinching to zoom
     let down: { x: number; y: number } | null = null;
-    const onDown = (e: PointerEvent) => (down = { x: e.clientX, y: e.clientY });
+    const fingers = new Map<number, { x: number; y: number }>();
+    let pinch: { d: number; zoom: number } | null = null;
+    const spread = () => {
+      const [a, b] = [...fingers.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    const onDown = (e: PointerEvent) => {
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (fingers.size === 2) {
+        pinch = { d: spread(), zoom };
+        down = null; // not a tap
+      } else down = { x: e.clientX, y: e.clientY };
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!fingers.has(e.pointerId)) return;
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && fingers.size === 2) zoom = Math.min(ZOOM.max, Math.max(ZOOM.min, (pinch.zoom * pinch.d) / Math.max(20, spread())));
+    };
     const onUp = (e: PointerEvent) => {
+      fingers.delete(e.pointerId);
+      if (fingers.size < 2) pinch = null;
       if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 12) tapAt(e);
       down = null;
     };
+    // The mouse wheel (or a trackpad's two fingers) on a computer
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      zoom = Math.min(ZOOM.max, Math.max(ZOOM.min, zoom * Math.exp(e.deltaY * 0.0012)));
+    };
     renderer.domElement.addEventListener("pointerdown", onDown);
+    renderer.domElement.addEventListener("pointermove", onMove);
     renderer.domElement.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("pointercancel", onUp);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
 
     scene.current = {
       world: kw,
@@ -571,7 +605,10 @@ export function QuarterScene({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
       renderer.domElement.removeEventListener("pointerdown", onDown);
+      renderer.domElement.removeEventListener("pointermove", onMove);
       renderer.domElement.removeEventListener("pointerup", onUp);
+      renderer.domElement.removeEventListener("pointercancel", onUp);
+      renderer.domElement.removeEventListener("wheel", onWheel);
       renderer.dispose();
       renderer.domElement.remove();
       scene.current = null;

@@ -40,7 +40,7 @@ export function MoveDemo() {
 }
 
 /** A live hunt the player hasn't joined (the tour's last card, and the invitation on the map). */
-export type OpenHunt = { id: string; title: string; keys: number; prize: string };
+export type OpenHunt = { id: string; title: string; keys: number; prize: string; players?: number };
 
 /**
  * The first time on the map (owner, 20 Oct 2026, a new player's first hour): a few cards: welcome and the coins, how
@@ -180,7 +180,7 @@ export function HuntInvite({ hunt, onDismiss }: { hunt: OpenHunt; onDismiss: () 
         <p className="text-xs font-bold uppercase tracking-wider text-gold">A hunt is live</p>
         <p className="truncate text-sm font-bold">{hunt.title}</p>
         <p className="text-xs text-muted">
-          {hunt.keys} keys · {hunt.prize}
+          {hunt.keys} keys{hunt.players ? ` · ${hunt.players} hunter${hunt.players === 1 ? "" : "s"}` : ""} · {hunt.prize}
         </p>
       </div>
       <form action={joinHunt}>

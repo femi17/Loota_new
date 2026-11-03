@@ -552,7 +552,8 @@ export function HuntPanel({
                 </svg>
               ))}
             </span>
-            <span className="truncate text-sm font-bold">
+            {/* "Key n of N": on a phone the key icons already say it, and the row also holds 👥, 🏆 and Search here */}
+            <span className={`truncate text-sm font-bold ${state.phase === "live" && !done ? "hidden sm:inline" : ""}`}>
               {state.phase === "upcoming"
                 ? `${state.title} · starts soon`
                 : state.phase === "paused" && !done
@@ -574,6 +575,17 @@ export function HuntPanel({
             >
               {searching ? "Searching…" : "Search here"}
             </button>
+          )}
+          {/* Everyone in the hunt (owner, 3 Nov 2026: "we should see a count of all the hunters who joined the hunt") */}
+          {feed && (
+            <span
+              className="shrink-0 text-xs font-extrabold text-paper/80"
+              title="Hunters in this hunt"
+              aria-label={`${feed.hunters} hunter${feed.hunters === 1 ? "" : "s"} in this hunt`}
+              data-hunters={feed.hunters}
+            >
+              👥 {feed.hunters}
+            </span>
           )}
           <button
             type="button"
@@ -602,7 +614,9 @@ export function HuntPanel({
         {/* 🏆: only the leaderboard (owner, 25 Oct 2026: "Clicking on the leaderboard. I am still getting the quiz question and all") */}
         {open && board && (
           <div className="flex flex-col gap-1 text-sm">
-            <p className="px-2 text-xs font-extrabold uppercase tracking-wider text-gold">Leaderboard</p>
+            <p className="px-2 text-xs font-extrabold uppercase tracking-wider text-gold">
+              Leaderboard{feed ? ` · ${feed.hunters} hunter${feed.hunters === 1 ? "" : "s"}` : ""}
+            </p>
             <ol className="flex flex-col gap-1" aria-label="The leaderboard">
               {board.length === 0 && <li className="px-2 text-muted">No hunters yet.</li>}
               {board.map((row) => (

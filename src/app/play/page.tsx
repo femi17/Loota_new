@@ -50,7 +50,7 @@ async function Play({ searchParams }: { searchParams: Promise<{ hunt?: string | 
       huntId={hunt?.id ?? null}
       huntHidden={hidden}
       huntAsked={asked}
-      openHunt={open ? { id: open.id, title: open.title, keys: open.keys, prize: open.prize } : null}
+      openHunt={open ? { id: open.id, title: open.title, keys: open.keys, prize: open.prize, players: open.players } : null}
       newcomer={newcomer}
       hasDetector={player.detector}
       huntClock={hunt ? { startsAt: hunt.startsAt, endsAt: hunt.endsAt, allDay: hunt.allDay } : open ? { startsAt: open.startsAt, endsAt: open.endsAt, allDay: open.allDay } : null}

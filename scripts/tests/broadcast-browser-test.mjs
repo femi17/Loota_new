@@ -103,15 +103,18 @@ try {
   // it moves in almost every tenth of a second, at an even pace, instead of leaping and waiting.
   const live = c.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
   await new Promise((resolve) => live.subscribe((status) => status === "SUBSCRIBED" && resolve()));
-  let lng = 3.3950;
+  // As the game sends it now: twice a second, stamped with the sender's clock.
+  const rideFrom = Date.now();
+  const kx = 111320 * Math.cos((6.502 * Math.PI) / 180);
+  const truth = (at) => 3.3950 + (50 * (at - rideFrom)) / 1000 / kx; // where the rider really is at a moment
   const ride = setInterval(() => {
-    lng += 50 / (111320 * Math.cos((6.502 * Math.PI) / 180));
-    void live.send({ type: "broadcast", event: "pos", payload: { id: b.id, lng, lat: 6.502, mode: "bicycle" } });
-  }, 1000);
+    const now = Date.now();
+    void live.send({ type: "broadcast", event: "pos", payload: { id: b.id, lng: truth(now), lat: 6.502, mode: "bicycle", t: now } });
+  }, 500);
   await wait(4000); // a few positions heard first
   const track = [];
   for (let i = 0; i < 50; i++) {
-    const p = await page.evaluate((id) => { const all = window.__broadcastShown?.(); return all?.[id] ? { ...all[id], t: all.drawnAt } : null; }, b.id);
+    const p = await page.evaluate((id) => { const all = window.__broadcastShown?.(); return all?.[id] ? { ...all[id], t: all.drawnAt, wall: Date.now() } : null; }, b.id);
     if (p) track.push(p);
     await wait(100);
   }
@@ -128,6 +131,11 @@ try {
   const fastest = speeds[speeds.length - 1] ?? 0;
   check("a riding hunter glides: moving in almost every tenth of a second", framed.length > 25 && moving >= 0.85, `${Math.round(moving * 100)}% of ${framed.length} frames`);
   check("…at an even pace, no leaps", median > 20 && fastest <= median * 2, `median ${median.toFixed(0)} m/s, fastest ${fastest.toFixed(0)} m/s (sent: 50 m/s)`);
+  // In step (owner, 3 Nov 2026: "Same exact spot, same movement speed"): where the broadcast draws them against where
+  // the rider really is at that moment (the same computer's clock).
+  const behindM = track.map((p) => (truth(p.wall) - p.lng) * kx).sort((x, y) => x - y);
+  const typical = behindM[Math.floor(behindM.length / 2)] ?? Infinity;
+  check("…in step with the rider: the same spot (within a few metres), the same speed", Math.abs(typical) < 12 && median > 42 && median < 58, `${typical.toFixed(1)} m behind, ${median.toFixed(0)} m/s`);
 
   // ---- On a plane (owner, 3 Nov 2026: "The broadcast is not following the users. Fenzy is on a plane to tokyo now.
   // Also, we should have a direction drawn for planes"): a hunter flying Lagos to London, a minute into a 5-minute
@@ -145,8 +153,10 @@ try {
   }
   const plane = flying?.[a.id];
   check("on a plane: drawn along the route, not at the airport", !!plane && plane.lat > 10 && plane.lat < 25, plane ? `lat ${plane.lat.toFixed(2)} (a fifth of the way: about 15.5)` : "not shown");
-  const tag = await page.evaluate(() => [...document.querySelectorAll(".loota-hunter-marker")].map((m) => m.innerText).find((x) => x.includes("✈️")) ?? "");
-  check("…as ✈️, with where they're going", /✈️/.test(tag) && /→ London Heathrow Airport/.test(tag), tag.replace(/s+/g, " "));
+  // (Followed, the 3D plane is drawn instead of the ✈️ on the marker.)
+  const tag = await page.evaluate(() => [...document.querySelectorAll(".loota-hunter-marker")].map((m) => m.innerText).find((x) => x.includes("→")) ?? "");
+  const followedNow = await page.evaluate(() => [...document.querySelectorAll("span")].some((x) => (x.textContent ?? "").startsWith("Following ")));
+  check("…as ✈️ (or the 3D plane when followed), with where they're going", (/✈️/.test(tag) || followedNow) && /→ London Heathrow Airport/.test(tag), tag.replace(/\s+/g, " "));
   check("…known as a trip", flying?.trips?.includes(a.id), JSON.stringify(flying?.trips));
   let took = "";
   for (let i = 0; i < 12 && !/took off from/.test(took); i++) { await wait(500); took = await body(); }
@@ -154,7 +164,7 @@ try {
   await page.evaluate((n) => [...document.querySelectorAll("button")].find((x) => x.textContent?.includes(n))?.click(), names[a.id]);
   await wait(6000);
   const zoom = await page.evaluate(() => window.__broadcastShown?.().zoom ?? null);
-  check("…following them: the camera pulls out over the route", zoom !== null && zoom < 6.5, `zoom ${zoom?.toFixed(1)}`);
+  check("…following them: the laptop's cruising zoom (about 10, the game's own)", zoom !== null && zoom > 9 && zoom < 11, `zoom ${zoom?.toFixed(1)}`);
   await page.screenshot({ path: `${OUT}/broadcast-5-plane.png` });
 
   // ---- On a bus (owner, 3 Nov 2026: "the bus on the broadcast is not like the bus in th users. The user in the user is

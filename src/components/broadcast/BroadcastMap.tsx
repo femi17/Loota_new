@@ -167,6 +167,28 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         tr.samples.push({ t: now, lng, lat });
         if (tr.samples.length > 10) tr.samples.shift();
       };
+      // Positions stamped by the hunter's own game (twice a second while moving): the last two give their exact speed
+      // and direction (by the sender's clock), so they're drawn where they are now, at that speed, and nudged gently
+      // when the next one lands. (Unstamped positions, like the saved ones, glide a moment behind as above.)
+      type Stamped = { st: number; at: number; lng: number; lat: number };
+      const stamped = new Map<string, { a: Stamped | null; b: Stamped }>();
+      const NET_MS = 100; // about how long a position takes to arrive
+      const stampedHeard = (id: string, lng: number, lat: number, st: number) => {
+        const known = stamped.get(id);
+        const b = { st, at: performance.now(), lng, lat };
+        if (known && st <= known.b.st) return; // out of order
+        const far = known && geo.distanceM([known.b.lng, known.b.lat], [lng, lat]) > JUMP_M;
+        stamped.set(id, { a: known && !far ? known.b : null, b });
+      };
+      const nowAt = (id: string, now: number) => {
+        const k = stamped.get(id);
+        if (!k || now - k.b.at > 3000) return null;
+        const { a, b } = k;
+        const ahead = Math.min(800, now - b.at + NET_MS);
+        const span = a ? b.st - a.st : 0;
+        if (!a || span < 100 || span > 3000) return { lng: b.lng, lat: b.lat, moving: false };
+        return { lng: b.lng + ((b.lng - a.lng) / span) * ahead, lat: b.lat + ((b.lat - a.lat) / span) * ahead, moving: a.lng !== b.lng || a.lat !== b.lat };
+      };
       const placeAt = (tr: Track, now: number, dtMs: number) => {
         const list = tr.samples;
         const want = delayFor(tr.gap);
@@ -203,12 +225,13 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       const channel = supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
       channel.on("broadcast", { event: "pos" }, ({ payload }) => {
-        const p = payload as { id: string; lng: number; lat: number; mode: Mode; sid?: string };
+        const p = payload as { id: string; lng: number; lat: number; mode: Mode; sid?: string; t?: number };
         if (typeof p.lng !== "number" || typeof p.lat !== "number") return;
         const now = latest?.hunters.find((h) => h.id === p.id)?.session;
         if (p.sid && now && p.sid !== now) return;
         live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
         heard(p.id, p.lng, p.lat);
+        if (typeof p.t === "number") stampedHeard(p.id, p.lng, p.lat, p.t);
       });
       channel.subscribe();
 
@@ -301,8 +324,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // ---- The followed hunter in 3D.
       let followPos: { lng: number; lat: number } | null = null;
       const layer = new ThreeMapLayer(() => followPos ?? { lng: map.getCenter().lng, lat: map.getCenter().lat }, 44);
-      let followed: { id: string; avatar: ReturnType<typeof models.buildAvatar> | null; entity: import("@/game/ThreeMapLayer").MapEntity } | null = null;
-      let orbit = 0;
+      let followed: {
+        id: string;
+        avatar: ReturnType<typeof models.buildAvatar> | null;
+        plane: ReturnType<typeof models.makePlane> | null;
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+      } | null = null;
       let lastView = "";
       let lastFit = 0;
       const markers = new Map<string, { marker: import("maplibre-gl").Marker; el: HTMLDivElement; label: string }>();
@@ -339,6 +366,22 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
             continue;
           }
+          const stampedNow = nowAt(h.id, t);
+          if (stampedNow) {
+            const cur = shown.get(h.id);
+            if (!cur || geo.distanceM([cur.lng, cur.lat], [stampedNow.lng, stampedNow.lat]) > 300) {
+              shown.set(h.id, { lng: stampedNow.lng, lat: stampedNow.lat, heading: cur?.heading ?? 0 });
+              continue;
+            }
+            const k = Math.min(1, 10 * dt);
+            const next = { lng: cur.lng + (stampedNow.lng - cur.lng) * k, lat: cur.lat + (stampedNow.lat - cur.lat) * k };
+            if (stampedNow.moving && geo.distanceM([cur.lng, cur.lat], [next.lng, next.lat]) > 0.05) {
+              cur.heading = geo.turnTowards(cur.heading, geo.headingOf([cur.lng, cur.lat], [next.lng, next.lat]), Math.min(1, 8 * dt));
+            }
+            cur.lng = next.lng;
+            cur.lat = next.lat;
+            continue;
+          }
           const tr = tracks.get(h.id);
           if (!tr?.samples.length) continue;
           const at = placeAt(tr, t, dt * 1000);
@@ -369,7 +412,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           }
           m.marker.setLngLat([p.lng, p.lat]);
           const r = tripOf(h.id);
-          const inThreeD = !!r && r.trip.mode !== "plane" && h.id === following; // the 3D vehicle is drawn instead
+          const inThreeD = !!r && h.id === following; // the 3D vehicle is drawn instead
           const icon = r && !inThreeD ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
           const label = r ? `${icon} ${h.name} → ${r.trip.to}` : `${h.name} · ${h.keysHeld}/${s.hunt.keys}`;
           if (m.label !== label) {
@@ -406,33 +449,19 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const h = s.hunters.find((x) => x.id === v.id);
           const p = h ? shown.get(h.id) : null;
           const r = h ? tripOf(h.id) : null;
-          const ride = r && r.trip.mode !== "plane" ? r.trip.mode : null;
-          if (h && p && r && !ride) {
-            // On a trip: the marker shows the vehicle; the camera pulls back, a plane to see its route.
-            followPos = null;
-            if (followed) {
-              layer.remove(followed.entity);
-              followed = null;
-            }
-            const plane = r.trip.mode === "plane";
-            const k = Math.min(1, 1.6 * dt);
-            const c = map.getCenter();
-            map.jumpTo({
-              center: [c.lng + (p.lng - c.lng) * Math.min(1, 3 * dt), c.lat + (p.lat - c.lat) * Math.min(1, 3 * dt)],
-              zoom: map.getZoom() + ((plane ? 4 : 14) - map.getZoom()) * k,
-              pitch: map.getPitch() + ((plane ? 15 : 50) - map.getPitch()) * k,
-              bearing: map.getBearing() * (1 - k),
-            });
-          } else if (h && p) {
+          const ride = r ? r.trip.mode : null;
+          if (h && p) {
             followPos = { lng: p.lng, lat: p.lat };
-            // Walking or riding their own: the hunter in 3D; on a bus, train or taxi: that vehicle, as the game draws it.
+            // As the hunter's own laptop shows them: walking or on their own bicycle, motorbike or car, the hunter in
+            // 3D; on a bus, train, taxi or plane, that vehicle as the game draws it.
             const key = ride ? `${h.id}:${ride}` : h.id;
             if (!followed || followed.id !== key) {
               if (followed) layer.remove(followed.entity);
               const avatar = ride ? null : models.buildAvatar(normalizeLook(h.look));
-              const object = ride === "taxi" ? models.makeTaxi() : ride === "train" ? models.makeTrainCar(true) : ride ? models.makeBus() : avatar!.root;
+              const plane = ride === "plane" ? models.makePlane() : null;
+              const object = plane ? plane.group : ride === "taxi" ? models.makeTaxi() : ride === "train" ? models.makeTrainCar(true) : ride ? models.makeBus() : avatar!.root;
               object.add(layer.billboard(models.makeNameplate(h.name, "#F4B41A")));
-              followed = { id: key, avatar, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading }) };
+              followed = { id: key, avatar, plane, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading, scaleBy: ride === "train" ? 0.8 : plane ? 0.45 : undefined }) };
             }
             const before = { lng: followed.entity.lng, lat: followed.entity.lat };
             followed.entity.lng = p.lng;
@@ -441,17 +470,28 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             const stepM = geo.distanceM([before.lng, before.lat], [p.lng, p.lat]);
             const mode = live.get(h.id)?.mode ?? h.mode ?? "walk";
             if (followed.avatar) models.animateAvatar(followed.avatar, { mode, phase: "idle", moving: stepM > 0.02 ? 1 : 0, distance: stepM / layer.enlargement() }, dt, t / 1000);
-            // Glide in close and circle slowly around them (done by hand each frame:
-            // re-centring would cancel the map's own animations).
-            if (viewKey !== lastView) orbit = map.getBearing();
-            orbit += dt * 6;
-            const k = Math.min(1, 2.2 * dt);
-            const c = map.getCenter();
+            // The laptop's zoom (GameMap's GAME_ZOOM and rideZoom): 17; a train or a long-distance bus 16; a plane pulls
+            // back to 10 at cruising height (40 km from either end) and comes in again to land, climbing as the game's does.
+            let zoom = ride === "train" || (ride === "bus" && (r?.cum[r.cum.length - 1] ?? 0) > 40_000) ? 16 : 17;
+            if (r && ride === "plane") {
+              const total = r.cum[r.cum.length - 1] ?? 0;
+              const along = tripAt(r, serverNow).f * total;
+              const edge = Math.min(along, total - along);
+              const climb = Math.min(1, edge / 40000);
+              zoom = 17 - 7 * climb * climb * (3 - 2 * climb);
+              const height = Math.min(1, edge / 20000);
+              if (followed.plane) followed.plane.body.position.y = 1.6 + 8 * height * height * (3 - 2 * height);
+              followed.entity.scaleBy = 0.45 + (1.4 - 0.45) * climb * climb * (3 - 2 * climb);
+            }
+            // Behind them, turning with them (the laptop's chase camera), tilted like the laptop: 60°.
+            const behind = geo.compassFromHeading(p.heading);
+            const turn = ((behind - map.getBearing()) % 360 + 540) % 360 - 180;
+            const k = Math.min(1, 2.5 * dt);
             map.jumpTo({
-              center: [c.lng + (p.lng - c.lng) * Math.min(1, 4 * dt), c.lat + (p.lat - c.lat) * Math.min(1, 4 * dt)],
-              zoom: map.getZoom() + ((ride === "train" ? 15.5 : 17.5) - map.getZoom()) * k,
+              center: [p.lng, p.lat],
+              zoom: viewKey !== lastView ? map.getZoom() + (zoom - map.getZoom()) * 0.08 : map.getZoom() + (zoom - map.getZoom()) * Math.min(1, 2 * dt),
               pitch: map.getPitch() + (60 - map.getPitch()) * k,
-              bearing: orbit,
+              bearing: map.getBearing() + turn * k,
             });
           }
         } else {

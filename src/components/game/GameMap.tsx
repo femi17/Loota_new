@@ -212,6 +212,8 @@ type HunterUpdate = {
   moving: boolean;
   /** The device it came from (OneDevice): the broadcast ignores a player's other ones. */
   sid?: string;
+  /** When it was sent, by the sender's clock (the broadcast measures speed between two). */
+  t?: number;
 };
 
 /** The Lamp's messenger (in purple, like the lamp's glow). */
@@ -843,7 +845,11 @@ export function GameMap({
       let roadless = 0; // since when no road has been near enough to stand on
       // For checking: whether the hunter's road is shut in (scripts/tests/airside-browser-test.mjs).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __lootaRoad: () => (network && onRoad ? { pocket: roads.cutOffEdges(network)[onRoad.edge], ...traveller.pos } : null) });
+        Object.assign(window, {
+          __lootaRoad: () => (network && onRoad ? { pocket: roads.cutOffEdges(network)[onRoad.edge], ...traveller.pos } : null),
+          // Where the hunter is on their own screen (scripts/tests/broadcast-sync-browser-test.mjs).
+          __lootaPos: () => ({ ...traveller.pos, v: traveller.v, mode: traveller.mode }),
+        });
       }
 
       /** The squares within reach of the hunter, loading any not yet asked for. */
@@ -2753,8 +2759,11 @@ export function GameMap({
       const MAX_SHOWN = 25;
       // Hunters in a hunt also announce on the hunt's own channel, which the live
       // show's broadcast screen listens to (a hunt covers a whole city: too many areas).
+      // Sent without joining it (httpSend): only the broadcast screen listens, so the hunters in a hunt don't all
+      // receive each other's positions.
       const huntChannel = huntId ? supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } }) : null;
-      huntChannel?.subscribe();
+      const toShow = (event: string, payload: object) => void huntChannel?.httpSend(event, payload).catch(() => {});
+      let lastShown = 0;
 
       function joinAreas(ax: number, ay: number) {
         const want = new Set<string>();
@@ -2821,8 +2830,13 @@ export function GameMap({
       function announce(now: number, aboard = false) {
         if (Date.now() < cloakedUntil) return;
         const moving = aboard || traveller.v > 0.5;
-        if (now - lastAnnounce < (moving ? 1000 : 8000)) return;
-        lastAnnounce = now;
+        // The hunters around: once a second while moving. The live show: twice a second, stamped with this device's
+        // clock, so it can draw the hunter where they are now, at their speed.
+        const toArea = !aboard && now - lastAnnounce >= (moving ? 1000 : 8000);
+        const toLive = !!huntChannel && now - lastShown >= (moving ? 500 : 8000);
+        if (!toArea && !toLive) return;
+        if (toArea) lastAnnounce = now;
+        if (toLive) lastShown = now;
         const { ax, ay } = liveArea(traveller.pos.lng, traveller.pos.lat);
         const key = `${ax}_${ay}`;
         if (key !== myArea) {
@@ -2839,13 +2853,11 @@ export function GameMap({
           mode: traveller.mode,
           moving,
           sid: device.current ?? undefined,
+          t: Date.now(),
         };
-        if (aboard) {
-          void huntChannel?.send({ type: "broadcast", event: "pos", payload: update });
-          return;
-        }
+        if (toLive) toShow("pos", update);
+        if (!toArea) return;
         void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: update });
-        void huntChannel?.send({ type: "broadcast", event: "pos", payload: update });
         if (Date.now() < mirroredUntil) {
           // Three copies a few hundred metres off, doing as the hunter does: nobody knows which is real.
           for (let i = 1; i <= 3; i++) {
@@ -2858,7 +2870,7 @@ export function GameMap({
               lat: update.lat + (metres * Math.cos(angle)) / 110574,
             };
             void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: copy });
-            void huntChannel?.send({ type: "broadcast", event: "pos", payload: copy });
+            toShow("pos", copy);
           }
         }
       }
@@ -7231,7 +7243,7 @@ export function GameMap({
         if (!wasCloaked && Date.now() < cloakedUntil) {
           // Vanish from everyone's map straight away.
           sayBye();
-          void huntChannel?.send({ type: "broadcast", event: "bye", payload: { id: playerId } });
+          toShow("bye", { id: playerId });
         }
         if (Date.now() < mirroredUntil) lastAnnounce = 0;
         showWonders();

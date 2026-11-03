@@ -97,6 +97,52 @@ try {
   check("a faint: rushed to hospital", all.includes(`${names[a.id]} fainted from exhaustion and was rushed to Test General Hospital by ambulance`));
   check("a Lamp prize", all.includes(`${names[b.id]} won the Lamp's prize at Tejuosho Market!`));
   if (lamp) await admin.from("detours").delete().eq("id", lamp.id);
+
+  // ---- Smooth movement (owner, 3 Nov 2026: "the movement on there leaps like a frog"): a hunter riding east, their
+  // position heard once a second like the game sends it (about 50 m apart at the game's speed), glides on the screen:
+  // it moves in almost every tenth of a second, at an even pace, instead of leaping and waiting.
+  const live = c.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
+  await new Promise((resolve) => live.subscribe((status) => status === "SUBSCRIBED" && resolve()));
+  let lng = 3.3950;
+  const ride = setInterval(() => {
+    lng += 50 / (111320 * Math.cos((6.502 * Math.PI) / 180));
+    void live.send({ type: "broadcast", event: "pos", payload: { id: b.id, lng, lat: 6.502, mode: "bicycle" } });
+  }, 1000);
+  await wait(4000); // a few positions heard first
+  const track = [];
+  for (let i = 0; i < 50; i++) {
+    const p = await page.evaluate((id) => { const all = window.__broadcastShown?.(); return all?.[id] ? { ...all[id], t: all.drawnAt } : null; }, b.id);
+    if (p) track.push(p);
+    await wait(100);
+  }
+  clearInterval(ride);
+  await c.removeChannel(live);
+  const steps = track.slice(1).map((p, i) => Math.hypot((p.lng - track[i].lng) * 111320 * Math.cos((6.502 * Math.PI) / 180), (p.lat - track[i].lat) * 110574));
+  const speedsInOrder = track.slice(1).map((p, i) => (p.t > track[i].t ? steps[i] / ((p.t - track[i].t) / 1000) : null)).filter((v) => v !== null);
+  if (process.env.SHOW_SPEEDS) console.log(speedsInOrder.map((v) => Math.round(v)).join(" "));
+  const speeds = [...speedsInOrder].sort((x, y) => x - y);
+  const moving = steps.filter((m) => m > 0.5).length / Math.max(1, steps.length);
+  const median = speeds[Math.floor(speeds.length / 2)] ?? 0;
+  const fastest = speeds[speeds.length - 1] ?? 0;
+  check("a riding hunter glides: moving in almost every tenth of a second", steps.length > 30 && moving >= 0.85, `${Math.round(moving * 100)}% of ${steps.length} samples`);
+  check("…at an even pace, no leaps", median > 20 && fastest <= median * 2, `median ${median.toFixed(0)} m/s, fastest ${fastest.toFixed(0)} m/s (sent: 50 m/s)`);
+
+  // A phone-size screen: the map stays open
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await wait(9000);
+  await page.screenshot({ path: `${OUT}/broadcast-4-phone.png` });
+  const covered = await page.evaluate(() => {
+    // How much of the screen the panels take (the map is the rest).
+    let area = 0;
+    for (const el of document.querySelectorAll(".absolute")) {
+      if (el.querySelector("canvas") || el.closest(".maplibregl-map")) continue;
+      const r = el.getBoundingClientRect();
+      area += r.width * r.height;
+    }
+    return area / (window.innerWidth * window.innerHeight);
+  });
+  check("on a phone, the panels leave most of the map open", covered < 0.3, `${Math.round(covered * 100)}% covered`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

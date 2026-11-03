@@ -29,9 +29,10 @@ reaches players), plus everything earlier stories used (never reuse it), and the
 
 ## 3. Write, in this order, into the draft
 
-1. **The plan** (`skeleton`): title, logline, villain, heroes, world rules, chapters (a short cold open = 0, about one
-   chapter per key, a short ending; one hero, one continuous day; chapter k holds key k and opens when key k − 1 is
-   found, so never put a key's clue in a later chapter), and each key: question, answer (ONE exact place, e.g. the
+1. **The plan** (`skeleton`): title, logline, villain (a rival with a copy is enough), heroes, world rules, chapters
+   (THE ENVELOPE FORMAT, owner, 1 and 3 Nov 2026: a short frame = 0, then one envelope per key, a two-line ending; chapter
+   k is envelope k, opens when key k − 1 is found, and holds everything key k needs and nothing for another key), and
+   each key: question, answer (ONE exact place, e.g. the
    lighthouse not the fort, the gun not the hill; `searchName` that OpenStreetMap finds; `radius` 120 m, up to 300 for a
    canal or island fortress; aliases only if they land inside it), lockId,
    channelId, the conditions only the answer meets. Spread the keys around the world. Fiction woven into real places.
@@ -42,19 +43,21 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    lane or square the hunter walks freely (`style`, and `layout`: hall = a lane, gallery = a street, court = a square),
    5 plots at Key 1 growing to 7 at the last, each an OUTDOOR place named as such (its `kind`: kitchen = food stall,
    bedroom = cottage, library = book stall, cellar = well, parlour = café, bathroom = fountain, chapel = shrine,
-   storeroom = yard, study = garden); one right plot (where the key is buried) the story points to in a chapter the
-   hunter has by then, trap plots that echo the near misses the story warns about, some safe plots; things to find and
+   storeroom = yard, study = garden); one right plot (where the key is buried) the key's own envelope points to, trap plots that echo the near misses the story warns about, some safe plots; things to find and
    items only in some quarters (bible 3b).
 3. **Decoys** (`decoys["<n>"]`): 3+ per key (the short format, owner, 1 Nov 2026), real places a search finds, each
    failing a named condition, at least radius + 200 m from the answer: the near miss next door the clue rules out (the
    studio beside the crossing), the famous wrong reading the wording invites, a rival's wrong guess. Each is a phrase in
    the story, never a list, and each is a TRAP on the map (stopping there springs one).
 4. **Chapters**: write each as `docs/stories/drafts/<date>-<id>/<n>.md` (plain prose, paragraphs separated by a blank
-   line). SHORT (owner, 1 Nov 2026): an opening of 80–150 words, then 60–120 words per key, a two-line ending, about 600 words
-   for 7 keys. Each clue rests on GENERAL KNOWLEDGE from any walk of life (music, sport, science, film, food, history, nature,
-   landmarks), fair to a player anywhere in the world, never local knowledge; the trick is in the wording. The real fight is
-   at the place (the house and its puzzle). One "aha" per key, planted earlier in a funny or emotional moment. Never name a
-   key place or its aliases. Every chapter ends on a turn.
+   line), in THE ENVELOPE FORMAT (bible 1, with the model "The Collector's Envelopes"): a frame of 40–90 words (who, why,
+   "be quick: someone has a copy"), then each key's envelope, 40–90 words: ONE riddle for one place, its near misses ruled
+   out in a line ("Everyone goes to the building beside it. Don't. Stand on the stripes."), and a line on where in the
+   quarter to dig and what to leave alone; a two-line ending. One page a chapter (owner, 3 Nov 2026): the scroll shows the
+   frame and envelope 1 together, so keep those two under ~170 words. No subplot, no rival's crew, no codes or plants across
+   chapters. Each clue rests on GENERAL KNOWLEDGE from any walk of life (music, sport, science, film, food, history,
+   nature, landmarks), fair to a player anywhere in the world, never local knowledge; the trick is in the wording. The
+   real fight is at the place (the quarter and its puzzle). Never name a key place or its aliases.
 5. **Production** (`production`): the trailer pack: an art style, the characters' fixed looks, **3 picture prompts**
    (ChatGPT makes 3 a day; each complete on its own, 16:9, no text, never a key place recognisably), `trailer.voiceOver`
    (a ~45-second narration for ElevenLabs: ONE narrator, third person, inviting players to help the hero win the prize;
@@ -65,9 +68,9 @@ Edit the JSON with small, careful edits (or a short node script) so it stays val
 
 ## 4. Attack it yourself
 
-Before importing, reread the chapters as a rival solver with no live pieces. For each key: could you name the exact
-place from the text alone? If yes, hide it deeper (move the deciding fact into the live piece, add decoys that fit the
-loud clues). Could a careful player name it with the live piece? If not, add a plant. Say what you found in your report.
+Before importing, reread each envelope as a rival solver. Can a careful player with general knowledge name the exact
+place from that envelope alone (it should be one "aha", not a giveaway in the first words)? Does each near miss tempt
+someone who solved only half of it? Does the envelope say where to dig? Say what you found in your report.
 
 ## 5. Check, then import
 

@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HuntStoryView } from "@/game/hunt";
 
 /** The scroll remembers the chapter each hunter was reading, per hunt (a convenience: fine if storage is off). */
-const chapterKey = (hunt: string) => `loota_story_chapter_${hunt}`;
+const chapterKey = (hunt: string) => `loota_story_page_${hunt}`;
 const seenKey = (hunt: string) => `loota_story_seen_${hunt}`;
 const recall = (key: string) => {
   try {
@@ -78,6 +78,18 @@ export function ScrollIcon() {
   );
 }
 
+type Chapter = HuntStoryView["chapters"][number];
+/**
+ * The pages: one a chapter, with the opening on the same page as Chapter 1, its first clue (owner, 3 Nov 2026: "each
+ * chapter should just be 1 page, no next. If next, that means you go to chapter 2").
+ */
+type Page = Chapter & { opening: string[] };
+function pagesOf(chapters: Chapter[]): Page[] {
+  const opening = chapters.find((c) => c.n === 0);
+  if (!opening || !chapters.some((c) => c.n === 1)) return chapters.map((c) => ({ ...c, opening: [] }));
+  return chapters.filter((c) => c.n !== 0).map((c) => ({ ...c, opening: c.n === 1 ? opening.paragraphs : [] }));
+}
+
 const chapterName = (c: { n: number }, all: { n: number }[]) =>
   c.n === 0 ? "Prologue" : all.length > 2 && c.n === all[all.length - 1].n ? "The end" : `Chapter ${c.n}`;
 
@@ -93,13 +105,16 @@ const noCopy = (e: { preventDefault: () => void }) => e.preventDefault();
  * dug out of it.
  */
 export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string; story: HuntStoryView; onClose: () => void; reload: () => void }) {
-  const chapters = story.chapters;
+  const chapters = pagesOf(story.chapters);
   const [at, setAt] = useState(() => {
     const saved = Number(recall(chapterKey(huntId)));
     return Number.isInteger(saved) && saved >= 0 && saved < chapters.length ? saved : 0;
   });
   const page = useRef<HTMLDivElement>(null);
   const started = chapters.length > 0;
+  // One page a chapter: the text steps down in size until the chapter fits the screen (never below 13 px; a long
+  // one still scrolls then).
+  const [fontPx, setFontPx] = useState(17);
 
   // Opened: ask for the newest chapters straight away.
   useEffect(() => {
@@ -112,13 +127,26 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
   }, [onClose]);
 
   const go = (i: number) => {
+    setFontPx(17);
     setAt(i);
     remember(chapterKey(huntId), String(i));
     page.current?.scrollTo({ top: 0 });
   };
 
   const c = chapters[Math.min(at, chapters.length - 1)];
-  const locked = !!c && c.paragraphs.length === 0;
+  const size = c ? c.opening.join(" ").length + c.paragraphs.join(" ").length : 0;
+  useLayoutEffect(() => {
+    const el = page.current;
+    if (el && fontPx > 13 && el.scrollHeight > el.clientHeight + 1) setFontPx((p) => p - 1);
+  }, [fontPx, at, size]);
+  useEffect(() => {
+    const onResize = () => setFontPx(17);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const locked = !!c && c.paragraphs.length === 0 && c.opening.length === 0;
+  const prev = at > 0 ? chapters[at - 1] : null;
+  const next = at < chapters.length - 1 ? chapters[at + 1] : null;
 
   return (
     <div
@@ -135,10 +163,10 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
         {/* The scroll's top rod */}
         <div className="relative z-10 mx-auto h-4 w-full shrink-0 rounded-full bg-[linear-gradient(#8A5A2B,#5A3615)] shadow-[0_3px_6px_rgba(0,0,0,0.45)] sm:w-[104%]" aria-hidden="true" />
         <div className="-my-2 flex min-h-0 flex-1 flex-col bg-[radial-gradient(ellipse_at_50%_20%,#F7EBCF_0%,#EBD6A8_70%,#DDC290_100%)] text-[#3B2A16] shadow-[inset_0_0_40px_rgba(120,80,30,0.35)]">
-          <div className="flex items-start gap-3 border-b border-[#3B2A16]/15 px-5 pb-3 pt-5">
+          <div className="flex items-start gap-3 border-b border-[#3B2A16]/15 px-5 pb-2 pt-4 sm:pb-3 sm:pt-5">
             <div className="min-w-0 flex-1">
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#7A4E1F]">The story</p>
-              <h2 className="font-display text-2xl font-extrabold leading-tight">{story.title}</h2>
+              <h2 className="font-display text-xl font-extrabold leading-tight sm:text-2xl">{story.title}</h2>
             </div>
             <button
               type="button"
@@ -170,7 +198,7 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
             </label>
           )}
 
-          <div ref={page} className="min-h-0 flex-1 overflow-y-auto px-5 py-5 font-serif text-[1.05rem] leading-relaxed sm:px-8">
+          <div ref={page} className="min-h-0 flex-1 overflow-y-auto px-5 py-4 font-serif leading-relaxed sm:px-8 sm:py-5" style={{ fontSize: `${fontPx}px` }}>
             {!started || !c ? (
               <div className="flex flex-col gap-3">
                 <p className="italic">{story.logline}</p>
@@ -189,12 +217,19 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
                 </p>
               </div>
             ) : (
-              <article className="flex flex-col gap-4" data-chapter={c.n}>
+              <article className="flex flex-col gap-[0.8em]" data-chapter={c.n}>
                 <header>
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#7A4E1F]">{chapterName(c, chapters)}</p>
-                  <h3 className="font-display text-xl font-extrabold leading-snug">{c.title}</h3>
+                  <h3 className="font-display text-[1.25em] font-extrabold leading-snug">{c.title}</h3>
                   {c.setting && <p className="mt-1 text-sm italic text-[#5C4426]">{c.setting}</p>}
                 </header>
+                {c.opening.length > 0 && (
+                  <div className="flex flex-col gap-[0.8em] border-b border-[#3B2A16]/15 pb-[0.8em] italic">
+                    {c.opening.map((text, i) => (
+                      <p key={i}>{text}</p>
+                    ))}
+                  </div>
+                )}
                 {c.paragraphs.map((text, i) => (
                   <p key={i}>{text}</p>
                 ))}
@@ -202,24 +237,24 @@ export function StoryScroll({ huntId, story, onClose, reload }: { huntId: string
             )}
           </div>
 
-          {started && (
-            <div className="flex gap-2 border-t border-[#3B2A16]/15 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-              <button
-                type="button"
-                disabled={at === 0}
-                onClick={() => go(at - 1)}
-                className="h-11 flex-1 rounded-xl border-[1.5px] border-[#3B2A16]/40 font-bold disabled:opacity-40"
-              >
-                ‹ Previous
-              </button>
-              <button
-                type="button"
-                disabled={at >= chapters.length - 1}
-                onClick={() => go(at + 1)}
-                className="h-11 flex-1 rounded-xl bg-[#3B2A16] font-bold text-[#F7EBCF] disabled:opacity-40"
-              >
-                Next ›
-              </button>
+          {/* To the chapter before, and to the next one only once it's open (a locked one is just named). */}
+          {started && (prev || next) && (
+            <div className="flex items-center gap-2 border-t border-[#3B2A16]/15 px-5 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              {prev && (
+                <button type="button" onClick={() => go(at - 1)} className="h-11 flex-1 rounded-xl border-[1.5px] border-[#3B2A16]/40 font-bold">
+                  ‹ {chapterName(prev, chapters)}
+                </button>
+              )}
+              {next &&
+                (next.paragraphs.length > 0 ? (
+                  <button type="button" onClick={() => go(at + 1)} className="h-11 flex-1 rounded-xl bg-[#3B2A16] font-bold text-[#F7EBCF]">
+                    {chapterName(next, chapters)} ›
+                  </button>
+                ) : (
+                  <p className="flex-1 text-center text-sm text-[#7A4E1F]" data-next-locked="true">
+                    🔒 {chapterName(next, chapters)} opens when you find Key {next.withKey}
+                  </p>
+                ))}
             </div>
           )}
         </div>

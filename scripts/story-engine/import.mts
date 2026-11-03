@@ -53,7 +53,12 @@ for (const k of work.skeleton.keys) {
 for (const c of work.skeleton.chapters) {
   const words = work.chapters?.[c.n]?.text?.split(/\s+/).filter(Boolean).length ?? 0;
   if (!words) problems.push(`chapter ${c.n} ("${c.title}") isn't written`);
-  else if (words > 180) warnings.push(`chapter ${c.n} is long (${words} words): 80–150 for the opening, 60–120 a key (owner, 1 Nov 2026: short and straight)`);
+  else if (words > 100) warnings.push(`chapter ${c.n} is long (${words} words): 40–90 for the frame and for each envelope (the envelope format, owner, 1 and 3 Nov 2026)`);
+}
+{
+  // The scroll shows the frame and envelope 1 on one page (owner, 3 Nov 2026: "each chapter should just be 1 page").
+  const firstPage = [0, 1].reduce((n, k) => n + (work.chapters?.[k]?.text?.split(/\s+/).filter(Boolean).length ?? 0), 0);
+  if (firstPage > 170) warnings.push(`the frame and envelope 1 come to ${firstPage} words: keep the first page under ~170 so it fits one phone screen`);
 }
 shape("the pictures and voices (production)", STORY_SHAPES.Production, work.production);
 if ((work.production?.pictures.length ?? 0) > 3) warnings.push(`${work.production!.pictures.length} picture prompts: the trailer needs 3 (ChatGPT makes 3 a day)`);

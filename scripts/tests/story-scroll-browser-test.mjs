@@ -6,9 +6,10 @@
 //      open even if a key is stolen; text only; none of the answers;
 //      not signed in: refused; a hunt not started yet: no chapters, only when it opens; an unpublished hunt: none;
 //   2. the lobby shows the hunt's trailer, with the trailer's first picture as its cover;
-//   3. on the map (a phone), the scroll's button glows until read; it opens the story (title, the prologue), Next turns
-//      the chapter, a locked chapter says when it opens, the text can't be copied or long-pressed, ✕ and Escape close
-//      it, and it reopens at the chapter being read;
+//   3. on the map (a phone), the scroll's button glows until read; it opens the story: the title, and the opening and
+//      chapter 1 on ONE page (owner, 3 Nov 2026: "each chapter should just be 1 page, no next. If next, that means you
+//      go to chapter 2"); no Next while chapter 2 is locked (it says which key opens it), "Chapter 2 ›" once it opens;
+//      the text can't be copied or long-pressed, ✕ and Escape close it, and it reopens at the chapter being read;
 //   4. the owner's card in the admin has the trailer's voice-over script (Copy) and the trailer with its Upload button.
 // The hunts, files and test players are deleted.   SHOTS=<folder> node scripts/tests/story-scroll-browser-test.mjs
 import { createRequire } from "node:module";
@@ -160,32 +161,33 @@ try {
     const d = document.querySelector('[role="dialog"][aria-label="The story"]');
     return d ? { text: d.innerText, img: d.querySelector("article img")?.getAttribute("src") ?? null, chapter: d.querySelector("article")?.getAttribute("data-chapter") } : null;
   });
-  check("tapped: the scroll opens on the story's title and the prologue", !!first && first.text.includes("The Test of the Northern Light") && first.text.includes("PROLOGUE") && first.text.includes("The keeper wrote by the lamp") && first.chapter === "0", first?.text.slice(0, 160));
+  check("tapped: the scroll opens on the title, with the opening and chapter 1 on one page", !!first && first.text.includes("The Test of the Northern Light") && first.text.includes("The keeper wrote by the lamp") && /CHAPTER 1/.test(first.text) && first.text.includes("The second bell rang at seven") && first.chapter === "1", first?.text.slice(0, 200));
   check("…text only", first?.img === null);
   check("…and nothing of the answers", SECRETS.every((x) => !first?.text.includes(x)));
   await page.screenshot({ path: `${OUT}/story-scroll-3-prologue.png` });
-  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => /Next/.test(b.textContent ?? ""))?.click());
-  await wait(400);
-  const second = await page.evaluate(() => document.querySelector('[role="dialog"] article')?.innerText ?? "");
-  check("Next: chapter 1", /CHAPTER 1/.test(second) && second.includes("The second bell rang at seven"), second.slice(0, 120));
+  const nextButton = () => page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].map((b) => b.textContent?.trim() ?? "").find((t) => /›/.test(t)) ?? null);
+  const lockedNote = await page.evaluate(() => document.querySelector('[role="dialog"] [data-next-locked]')?.textContent ?? "");
+  check("…no Next while chapter 2 is locked: it says which key opens it", !(await nextButton()) && /Chapter 2 opens when you find Key 1/.test(lockedNote), `${await nextButton()} · ${lockedNote}`);
   const guard = await page.evaluate(() => {
     const art = document.querySelector('[role="dialog"] article');
     const fire = (type) => { const e = new Event(type, { bubbles: true, cancelable: true }); art.dispatchEvent(e); return e.defaultPrevented; };
     return { copy: fire("copy"), menu: fire("contextmenu"), select: getComputedStyle(art).userSelect };
   });
   check("the text can't be copied, long-pressed or selected", guard.copy && guard.menu && guard.select === "none", JSON.stringify(guard));
-  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => /Next/.test(b.textContent ?? ""))?.click());
-  await wait(400);
-  const lockedNow = await page.evaluate(() => ({ text: document.querySelector('[role="dialog"] [data-locked]')?.innerText ?? "", option: [...document.querySelectorAll('[role="dialog"] option')].map((o) => o.textContent).join(" | ") }));
-  check("Next again: the locked chapter says which key opens it", /when you find Key 1/.test(lockedNow.text) && /🔒 find Key 1/.test(lockedNow.option) && !lockedNow.text.includes("light went out"), lockedNow.text.replace(/\s+/g, " ").slice(0, 120));
+  const options = await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] option')].map((o) => o.textContent).join(" | "));
+  check("…the chapter list shows it locked too", /🔒 find Key 1/.test(options), options);
   // Key 1 found: the game says so (loota:key-earned) and the chapter opens on the open scroll
   await admin.from("hunt_players").update({ keys_held: 1 }).eq("hunt_id", live).eq("user_id", hunter.id);
   await page.evaluate(() => window.dispatchEvent(new Event("loota:key-earned")));
-  let unlocked = "";
-  for (let i = 0; i < 20 && !unlocked.includes("light went out"); i++) {
+  let next = null;
+  for (let i = 0; i < 20 && !next; i++) {
     await wait(500);
-    unlocked = await page.evaluate(() => document.querySelector('[role="dialog"] article')?.innerText ?? "");
+    next = await nextButton();
   }
+  check("Key 1 found: 'Chapter 2 ›' appears", next === "Chapter 2 ›", next);
+  await page.evaluate(() => [...document.querySelectorAll('[role="dialog"] button')].find((b) => /›/.test(b.textContent ?? ""))?.click());
+  await wait(400);
+  const unlocked = await page.evaluate(() => document.querySelector('[role="dialog"] article')?.innerText ?? "");
   check("Key 1 found: the next chapter opens on the scroll", unlocked.includes("light went out"), unlocked.replace(/\s+/g, " ").slice(0, 100));
   await admin.from("hunt_players").update({ keys_held: 0 }).eq("hunt_id", live).eq("user_id", hunter.id);
   const stolen = await page.evaluate(async (h) => (await (await fetch("/api/hunt/story?hunt=" + h)).json()).chapters[2].paragraphs.length, live);

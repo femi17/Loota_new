@@ -27,8 +27,17 @@ export function transitSpeed(mode: TransitMode) {
   return (TRANSIT[mode].kmh / 3.6) * TIME_SCALE;
 }
 
-/** The same for a trip of `metres`: a long-distance bus does 60 km/h on the highway. */
+/**
+ * A flight's time in the air (owner, 3 Nov 2026: "shorten the international flight time… to wait could be a long time
+ * for users"): 2 minutes plus 40 seconds per 1,000 km, at most 12 minutes. Matches flight_s() in the database.
+ */
+export function flightS(metres: number) {
+  return Math.min(720, 120 + (Math.max(0, metres) / 1_000_000) * 40);
+}
+
+/** The same for a trip of `metres`: a long-distance bus does 60 km/h on the highway; a flight takes flightS. */
 export function transitSpeedFor(mode: TransitMode, metres: number) {
+  if (mode === "plane") return Math.max(metres, 1) / flightS(metres);
   return mode === "bus" && metres > BUS_RANGE_M ? (60 / 3.6) * TIME_SCALE : transitSpeed(mode);
 }
 
@@ -36,7 +45,7 @@ export function transitWaitS(mode: TransitMode, fastPass: boolean) {
   if (mode === "bus") return fastPass ? 0 : 35;
   if (mode === "train") return fastPass ? 0 : 50;
   if (mode === "taxi") return 0;
-  return fastPass ? 150 : 450;
+  return fastPass ? 60 : 180; // check-in and boarding
 }
 
 export function transitFare(mode: TransitMode, metres: number) {

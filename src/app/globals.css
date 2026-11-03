@@ -101,6 +101,11 @@ body {
 .loota-hunter-marker[data-kind="trial"] .dot { background: #9b5de5; }
 .loota-hunter-marker[data-kind="finished"] .dot { background: #1e9e62; }
 .loota-hunter-marker[data-followed="true"] .dot { width: 18px; height: 18px; }
+/* On a trip (broadcast): the vehicle instead of the dot, turned the way it's going. */
+.loota-hunter-marker[data-kind="trip"] .dot {
+  width: auto; height: auto; border: 0; background: none; box-shadow: none;
+  font-size: 22px; line-height: 1; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
 .loota-hunter-marker .name {
   margin-top: 2px; padding: 0 6px; border-radius: 6px; background: rgba(14, 19, 32, 0.85);
   color: #fff; font: 700 11px/1.4 system-ui, sans-serif; white-space: nowrap;

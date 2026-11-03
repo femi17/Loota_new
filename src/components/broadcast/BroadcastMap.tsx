@@ -6,6 +6,7 @@ import { LootaLogo } from "@/components/Logo";
 import { normalizeLook } from "@/lib/avatar";
 import { ordinal } from "@/game/hunt";
 import type { Mode } from "@/game/movement";
+import { alongPath, cumulativeOf } from "@/game/transit";
 
 type Hunter = {
   id: string;
@@ -22,11 +23,15 @@ type Hunter = {
 };
 type Dome = { id: string; lng: number; lat: number; radiusM: number; endsAt: string; key: number; raisedBy: string | null; needed: number; attackers: number };
 type ShowEvent = { at: string; kind: string; who: string | null; whoId: string | null; text: string };
+/** A hunter's bus, train, taxi or plane under way: where it goes and when (its path thinned by the server). */
+type Trip = { userId: string; mode: string; from: string; to: string; departsAt: string; arrivesAt: string; path: [number, number][] };
 type State = {
   hunt: { id: string; title: string; prize: string; winners: number; startsAt: string; endsAt: string; phase: string; keys: number };
   hunters: Hunter[];
   domes: Dome[];
   events: ShowEvent[];
+  trips?: Trip[];
+  now?: string;
 };
 /** What the camera shows: the whole field, or one hunter up close. */
 type View = { kind: "field" } | { kind: "follow"; id: string };
@@ -39,6 +44,19 @@ const JUMP_M = 1500;
 const BANNER_MS = 7000;
 
 const eventKey = (e: ShowEvent) => `${e.at}|${e.text}`;
+const TRIP_ICON: Record<string, string> = { plane: "✈️", train: "🚆", bus: "🚌", taxi: "🚕" };
+/** A route as drawn: longitudes kept continuous across the date line (a flight over the Pacific doesn't streak back). */
+function unwrap(path: [number, number][]): [number, number][] {
+  const out: [number, number][] = [];
+  for (const [lng, lat] of path) {
+    const prev = out[out.length - 1];
+    let l = lng;
+    if (prev) while (l - prev[0] > 180) l -= 360;
+    if (prev) while (prev[0] - l > 180) l += 360;
+    out.push([l, lat]);
+  }
+  return out;
+}
 const ago = (iso: string, now: number) => {
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
@@ -159,8 +177,21 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         return list[list.length - 1];
       };
       // For the browser tests (in development only): where each hunter is drawn now.
-      if (process.env.NODE_ENV !== "production") (window as unknown as { __broadcastShown?: () => object }).__broadcastShown = () => ({ ...Object.fromEntries(shown), drawnAt: drawnAt });
+      if (process.env.NODE_ENV !== "production") (window as unknown as { __broadcastShown?: () => object }).__broadcastShown = () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], zoom: map.getZoom() });
       let drawnAt = 0; // the last frame's time
+      // Trips under way, by hunter: the route (continuous) and its length along the way, measured once.
+      let skew = 0; // the server's clock minus this one
+      const routes = new Map<string, { key: string; trip: Trip; path: [number, number][]; cum: number[] }>();
+      const tripOf = (id: string) => routes.get(id) ?? null;
+      /** Where a trip is now, by the clock: at the start before it leaves, along the route, at the end once there. */
+      const tripAt = (r: { trip: Trip; path: [number, number][]; cum: number[] }, now: number) => {
+        const dep = Date.parse(r.trip.departsAt), arr = Date.parse(r.trip.arrivesAt);
+        const f = now <= dep ? 0 : now >= arr ? 1 : (now - dep) / Math.max(1, arr - dep);
+        const total = r.cum[r.cum.length - 1] ?? 0;
+        const { pos, segment } = alongPath(r.path, r.cum, f * total);
+        const a = r.path[Math.max(0, segment - 1)], b = r.path[Math.min(r.path.length - 1, Math.max(1, segment))];
+        return { lng: pos[0], lat: pos[1], heading: a && b && (a[0] !== b[0] || a[1] !== b[1]) ? geo.headingOf(a, b) : 0, f, flying: f > 0 && f < 1 };
+      };
       const freshLive = (id: string) => {
         const l = live.get(id);
         return !!l && Date.now() - l.at < LIVE_FRESH_MS;
@@ -170,7 +201,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const p = payload as { id: string; lng: number; lat: number; mode: Mode };
         if (typeof p.lng !== "number" || typeof p.lat !== "number") return;
         live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
-        heard(p.id, p.lng, p.lat);
+        if (!routes.has(p.id)) heard(p.id, p.lng, p.lat);
       });
       channel.subscribe();
 
@@ -187,8 +218,22 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         }
         latest = data as State;
         setState(latest);
-        // Saved spots, for hunters not heard live just now.
-        for (const h of latest.hunters) if (h.lng != null && h.lat != null && !freshLive(h.id)) heard(h.id, h.lng, h.lat);
+        if (latest.now) skew = Date.parse(latest.now) - Date.now();
+        // Trips under way: placed along their route by the clock (a trip saves no positions).
+        const going = new Set<string>();
+        for (const trip of latest.trips ?? []) {
+          if (!Array.isArray(trip.path) || trip.path.length < 2) continue;
+          going.add(trip.userId);
+          const key = `${trip.departsAt}|${trip.arrivesAt}|${trip.path.length}`;
+          if (routes.get(trip.userId)?.key !== key) {
+            const path = unwrap(trip.path);
+            routes.set(trip.userId, { key, trip, path, cum: cumulativeOf(path) });
+          }
+          tracks.delete(trip.userId); // after it, they start afresh from where it ends
+        }
+        for (const id of [...routes.keys()]) if (!going.has(id)) routes.delete(id);
+        // Saved spots, for hunters not heard live just now (and not on a trip: their saved spot is where it began).
+        for (const h of latest.hunters) if (h.lng != null && h.lat != null && !freshLive(h.id) && !going.has(h.id)) heard(h.id, h.lng, h.lat);
         const fresh = latest.events.filter((e) => !seen.has(eventKey(e)));
         fresh.forEach((e) => seen.add(eventKey(e)));
         if (first) {
@@ -238,6 +283,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       let lastFit = 0;
       const markers = new Map<string, { marker: import("maplibre-gl").Marker; el: HTMLDivElement; label: string }>();
       let lastDomeKey = "";
+      let lastRoutes = 0;
       let frame = 0;
       let last = performance.now();
 
@@ -258,8 +304,15 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (!s) return;
 
         drawnAt = t;
-        // Every hunter where they were a moment ago, between the positions heard.
+        // Every hunter where they were a moment ago, between the positions heard; on a trip, where the trip is.
+        const serverNow = Date.now() + skew;
         for (const h of s.hunters) {
+          const r = tripOf(h.id);
+          if (r) {
+            const at = tripAt(r, serverNow);
+            shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
+            continue;
+          }
           const tr = tracks.get(h.id);
           if (!tr?.samples.length) continue;
           const at = placeAt(tr, t, dt * 1000);
@@ -289,12 +342,18 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             markers.set(h.id, m);
           }
           m.marker.setLngLat([p.lng, p.lat]);
-          const label = `${h.name} · ${h.keysHeld}/${s.hunt.keys}`;
+          const r = tripOf(h.id);
+          const icon = r ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
+          const label = r ? `${icon} ${h.name} → ${r.trip.to}` : `${h.name} · ${h.keysHeld}/${s.hunt.keys}`;
           if (m.label !== label) {
             m.label = label;
             m.el.querySelector(".name")!.textContent = label;
           }
-          m.el.dataset.kind = h.place ? "finished" : h.inTrial ? "trial" : h.id === leaderId ? "leader" : "hunter";
+          m.el.dataset.kind = r ? "trip" : h.place ? "finished" : h.inTrial ? "trial" : h.id === leaderId ? "leader" : "hunter";
+          // On a trip: the vehicle instead of the dot, turned the way it's going (✈️ is drawn pointing north-east).
+          const dot = m.el.querySelector<HTMLElement>(".dot")!;
+          if (dot.textContent !== icon) dot.textContent = icon;
+          dot.style.transform = r ? `rotate(${geo.compassFromHeading(p.heading) - map.getBearing() - (r.trip.mode === "plane" ? 45 : 0)}deg)` : "";
           m.el.dataset.followed = String(h.id === following);
         }
         for (const [id, m] of markers) {
@@ -302,6 +361,25 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             m.marker.remove();
             markers.delete(id);
           }
+        }
+        // The routes: the way ahead dashed, the part already travelled solid (re-sent a few times a second).
+        if (t - lastRoutes > 300) {
+          lastRoutes = t;
+          const ahead: GeoJSON.Feature[] = [];
+          const behind: GeoJSON.Feature[] = [];
+          for (const [id, r] of routes) {
+            const at = tripAt(r, serverNow);
+            const total = r.cum[r.cum.length - 1] ?? 0;
+            const split = r.cum.findIndex((c) => c >= at.f * total);
+            const cut = split < 0 ? r.path.length : Math.max(1, split);
+            const done: [number, number][] = [...r.path.slice(0, cut), [at.lng, at.lat]];
+            const todo: [number, number][] = [[at.lng, at.lat], ...r.path.slice(cut)];
+            const props = { id, mode: r.trip.mode };
+            if (done.length > 1) behind.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: done } });
+            if (todo.length > 1) ahead.push({ type: "Feature", properties: props, geometry: { type: "LineString", coordinates: todo } });
+          }
+          (map.getSource("b-route-ahead") as import("maplibre-gl").GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: ahead });
+          (map.getSource("b-route-behind") as import("maplibre-gl").GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: behind });
         }
         // Domes change rarely: only re-send them when they do.
         const domeKey = s.domes.map((d) => d.id).join(",");
@@ -319,7 +397,24 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (v.kind === "follow") {
           const h = s.hunters.find((x) => x.id === v.id);
           const p = h ? shown.get(h.id) : null;
-          if (h && p) {
+          const r = h ? tripOf(h.id) : null;
+          if (h && p && r) {
+            // On a trip: the marker shows the vehicle; the camera pulls back, a plane to see its route.
+            followPos = null;
+            if (followed) {
+              layer.remove(followed.entity);
+              followed = null;
+            }
+            const plane = r.trip.mode === "plane";
+            const k = Math.min(1, 1.6 * dt);
+            const c = map.getCenter();
+            map.jumpTo({
+              center: [c.lng + (p.lng - c.lng) * Math.min(1, 3 * dt), c.lat + (p.lat - c.lat) * Math.min(1, 3 * dt)],
+              zoom: map.getZoom() + ((plane ? 4 : 14) - map.getZoom()) * k,
+              pitch: map.getPitch() + ((plane ? 15 : 50) - map.getPitch()) * k,
+              bearing: map.getBearing() * (1 - k),
+            });
+          } else if (h && p) {
             followPos = { lng: p.lng, lat: p.lat };
             if (!followed || followed.id !== h.id) {
               if (followed) layer.remove(followed.entity);
@@ -358,6 +453,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             lastFit = t;
             const points = s.hunters.map((h) => shown.get(h.id)).filter((p): p is { lng: number; lat: number; heading: number } => !!p);
             for (const d of s.domes) points.push({ lng: d.lng, lat: d.lat, heading: 0 });
+            // Where each trip is going, too.
+            for (const r of routes.values()) {
+              const end = r.path[r.path.length - 1];
+              points.push({ lng: end[0], lat: end[1], heading: 0 });
+            }
             if (points.length) {
               const bounds = new LngLatBounds();
               points.forEach((p) => bounds.extend([p.lng, p.lat]));
@@ -374,6 +474,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         map.addSource("b-domes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         map.addLayer({ id: "b-domes-fill", type: "fill", source: "b-domes", paint: { "fill-color": "#9B5DE5", "fill-opacity": 0.22 } });
         map.addLayer({ id: "b-domes-edge", type: "line", source: "b-domes", paint: { "line-color": "#C89BFF", "line-width": 3 } });
+        // Trips' routes: gold for a plane, blue on the ground; the way ahead dashed.
+        const routeColour: import("maplibre-gl").ExpressionSpecification = ["match", ["get", "mode"], "plane", "#F4B41A", "#3D8BFF"];
+        map.addSource("b-route-ahead", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        map.addSource("b-route-behind", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        map.addLayer({ id: "b-route-ahead", type: "line", source: "b-route-ahead", layout: { "line-cap": "round" }, paint: { "line-color": routeColour, "line-width": 3, "line-opacity": 0.8, "line-dasharray": [1.5, 1.5] } });
+        map.addLayer({ id: "b-route-behind", type: "line", source: "b-route-behind", layout: { "line-cap": "round" }, paint: { "line-color": routeColour, "line-width": 4 } });
         map.addLayer(layer);
         frame = requestAnimationFrame(loop);
       });

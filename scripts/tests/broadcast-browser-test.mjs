@@ -127,6 +127,34 @@ try {
   check("a riding hunter glides: moving in almost every tenth of a second", steps.length > 30 && moving >= 0.85, `${Math.round(moving * 100)}% of ${steps.length} samples`);
   check("…at an even pace, no leaps", median > 20 && fastest <= median * 2, `median ${median.toFixed(0)} m/s, fastest ${fastest.toFixed(0)} m/s (sent: 50 m/s)`);
 
+  // ---- On a plane (owner, 3 Nov 2026: "The broadcast is not following the users. Fenzy is on a plane to tokyo now.
+  // Also, we should have a direction drawn for planes"): a hunter flying Lagos to London, a minute into a 5-minute
+  // flight, is drawn along the route (not at the airport), as ✈️ with where they're going; the route is drawn; the
+  // ticker says they took off; following them pulls the camera out over the route.
+  const from = [3.3211, 6.5791], to = [-0.4543, 51.47];
+  const path = Array.from({ length: 21 }, (_, i) => [from[0] + ((to[0] - from[0]) * i) / 20, from[1] + ((to[1] - from[1]) * i) / 20]);
+  const { error: tripErr } = await admin.from("transit_trips").insert({ user_id: a.id, mode: "plane", from_name: "Murtala Mohammed International Airport", to_name: "London Heathrow Airport",
+    to_lng: to[0], to_lat: to[1], path, path_m: 5000000, fare: 100, booked_at: ago(120), departs_at: ago(60), arrives_at: new Date(Date.now() + 240e3).toISOString() });
+  if (tripErr) throw new Error(`trip: ${tripErr.message}`);
+  let flying = null;
+  for (let i = 0; i < 20 && !flying?.trips?.includes(a.id); i++) {
+    await wait(500);
+    flying = await page.evaluate(() => window.__broadcastShown?.() ?? null);
+  }
+  const plane = flying?.[a.id];
+  check("on a plane: drawn along the route, not at the airport", !!plane && plane.lat > 10 && plane.lat < 25, plane ? `lat ${plane.lat.toFixed(2)} (a fifth of the way: about 15.5)` : "not shown");
+  const tag = await page.evaluate(() => [...document.querySelectorAll(".loota-hunter-marker")].map((m) => m.innerText).find((x) => x.includes("✈️")) ?? "");
+  check("…as ✈️, with where they're going", /✈️/.test(tag) && /→ London Heathrow Airport/.test(tag), tag.replace(/s+/g, " "));
+  check("…the route drawn", flying?.trips?.includes(a.id), JSON.stringify(flying?.trips));
+  let took = "";
+  for (let i = 0; i < 12 && !/took off from/.test(took); i++) { await wait(500); took = await body(); }
+  check("…the ticker: took off", took.includes(`✈️ ${names[a.id]} took off from Murtala Mohammed International Airport for London Heathrow Airport`));
+  await page.evaluate((n) => [...document.querySelectorAll("button")].find((x) => x.textContent?.includes(n))?.click(), names[a.id]);
+  await wait(6000);
+  const zoom = await page.evaluate(() => window.__broadcastShown?.().zoom ?? null);
+  check("…following them: the camera pulls out over the route", zoom !== null && zoom < 6.5, `zoom ${zoom?.toFixed(1)}`);
+  await page.screenshot({ path: `${OUT}/broadcast-5-plane.png` });
+
   // A phone-size screen: the map stays open
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await page.reload({ waitUntil: "domcontentloaded" });

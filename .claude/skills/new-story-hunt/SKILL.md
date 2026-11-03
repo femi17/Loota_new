@@ -73,7 +73,9 @@ Edit the JSON with small, careful edits (or a short node script) so it stays val
 ## 4. Attack it yourself
 
 Before importing, reread each envelope as a rival solver. Can a careful player with general knowledge name the exact
-place from that envelope alone (it should be one "aha", not a giveaway in the first words)? Does each near miss tempt
+place from that envelope alone (it should be one "aha", not a giveaway in the first words)? Does the last detail say what the spot IS (a statue, the stripes, the lighthouse), so a
+player who reaches the neighbourhood (Shibuya station) knows to walk on to it (the bronze dog), and does the envelope
+pin the city or country? Does each near miss tempt
 someone who solved only half of it? Does the envelope's hint say which plot (search it, or dig there), and that the detector helps? Say what you found in your report.
 
 ## 5. Check, then import

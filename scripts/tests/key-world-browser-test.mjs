@@ -61,7 +61,8 @@ try {
   browser = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true, protocolTimeout: 300000,
     args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] });
   const page = await browser.newPage();
-  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  // Light to draw (the 5-second dodge needs a quick page)
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   const problems = [];
   page.on("pageerror", (e) => problems.push(e.message));
   await page.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
@@ -168,7 +169,7 @@ try {
 
   // 3. Walking into the fountain house (a trap): its challenge; dodged
   await tap({ tap: "room", id: "fountain" });
-  const trap = await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Dodge the trap"]')), 25000);
+  const trap = await page.waitForSelector('[aria-label="Dodge the trap"]', { timeout: 25000 }).then(() => true, () => false);
   check("walking into a wrong house: its trap springs", !!trap, await say());
   await page.screenshot({ path: `${OUT}/world-3-trap.png` });
   if (trap) {

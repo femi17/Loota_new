@@ -63,7 +63,7 @@ const AVATAR = 0.8; // the hunter's size in the world
 // place, its roof off; or the whole town from above
 const EYE = { street: { back: 7.5, up: 4.6 }, inside: { back: 6, up: 6.5 }, wide: new THREE.Vector3(0, 88, 64) };
 // How far out: the wheel or a pinch, within these
-const ZOOM = { phone: 1, laptop: 1.1, min: 0.55, max: 2.6 };
+const ZOOM = { phone: 1.6, laptop: 1.8, min: 0.55, max: 3 }; // owner, 4 Nov 2026: "too zoomed in"
 const TURN = 2.6; // radians a second, turning with the keys or the joystick
 const REFUSED: Record<string, string> = {
   away: "You've moved away from this place.",

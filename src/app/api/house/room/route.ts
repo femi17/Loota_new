@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { makePuzzle } from "@/game/puzzles";
-import { ROOM_KINDS, roomSeed } from "@/lib/house-rooms";
+import { roomKind, roomSeed } from "@/lib/house-rooms";
 
 /**
  * POST /api/house/room { hunt, room }: the signed-in hunter's puzzle for a room of the treasure building (they must be
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   const room = Number(body?.room);
   if (!body?.hunt || !Number.isInteger(room) || room < 1 || room > 5) return Response.json({ ok: false, reason: "no_room" }, { status: 400 });
 
-  const kind = ROOM_KINDS[room - 1];
+  const kind = roomKind(uid, body.hunt, room);
   const admin = createAdminClient();
   const { data: at } = await admin.rpc("house_room_try", { p_user: uid, p_hunt: body.hunt, p_room: room });
   const step = at as { ok: boolean; reason?: string; try?: number; open?: boolean; outcome?: string; seconds?: number } | null;

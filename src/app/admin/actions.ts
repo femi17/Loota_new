@@ -25,7 +25,7 @@ const whole = (form: FormData, name: string) => Number.parseInt(text(form, name)
 /** A date and time typed in Lagos time (the datetime-local field has no time zone). */
 const lagosTime = (value: string) => new Date(`${value}:00+01:00`);
 const UUID = /^[0-9a-f-]{36}$/i;
-const TRIAL_KINDS = ["puzzle", "sentries", "route", "adire", "tornmap", "quiz"];
+const TRIAL_KINDS = ["puzzle", "route", "adire", "tornmap", "grammar", "algebra", "countries", "flags", "brands", "quiz"]; // no Sentries (owner, 4 Nov 2026)
 
 /** "6.4541, 3.3958" (as Google Maps copies it: latitude first) → { lng, lat }. */
 function coordinates(value: string) {

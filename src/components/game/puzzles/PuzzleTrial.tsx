@@ -14,6 +14,7 @@ import { ThreadsPlay } from "./ThreadsPlay";
 import { PlotsPlay } from "./PlotsPlay";
 import { PatchworkPlay } from "./PatchworkPlay";
 import { VowelsPlay } from "./VowelsPlay";
+import { AlgebraPlay, ChoicePlay, CountriesPlay } from "./QuickPlay";
 import { checkTornMap, type TornMapPuzzle } from "@/game/puzzles/tornmap";
 import { cue } from "@/game/sound";
 
@@ -270,6 +271,9 @@ export function PuzzleBoard({ kind, puzzle, warn = true, disabled, onDone, onPro
   if (kind === "threads") return <ThreadsPlay p={puzzle as { n: number; ends: [number, number][] }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
   if (kind === "plots") return <PlotsPlay p={puzzle as { n: number; clues: Record<number, number> }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
   if (kind === "patchwork") return <PatchworkPlay p={puzzle as { n: number; target: number[]; pieces: [number, number][][] }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "grammar" || kind === "flags" || kind === "brands") return <ChoicePlay items={(puzzle as { items: { sentence?: string; image?: string; clue?: string; options: string[] }[] }).items} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "algebra") return <AlgebraPlay items={(puzzle as { items: { equation: string }[] }).items} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
+  if (kind === "countries") return <CountriesPlay p={puzzle as { letter: string; count: number }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
   if (kind === "vowels") return <VowelsPlay p={puzzle as { theme: string; words: { shown: string; clue: string; letters: number }[] }} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
   return <AdirePlay p={puzzle as AdireP} warn={warn} disabled={disabled} onDone={onDone} onProgress={onProgress} />;
 }

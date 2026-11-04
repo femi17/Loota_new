@@ -1,5 +1,5 @@
 /** The Key Trial puzzles' names and rules, for the phone (the puzzles themselves are made on the server). */
-export type PuzzleKind = "sentries" | "route" | "adire" | "tornmap" | "sudoku" | "threads" | "plots" | "patchwork" | "vowels";
+export type PuzzleKind = "sentries" | "route" | "adire" | "tornmap" | "sudoku" | "threads" | "plots" | "patchwork" | "vowels" | "grammar" | "algebra" | "countries" | "flags" | "brands";
 
 export const PUZZLE_NAMES: Record<PuzzleKind, { name: string; rule: string }> = {
   sentries: {
@@ -29,6 +29,26 @@ export const PUZZLE_NAMES: Record<PuzzleKind, { name: string; rule: string }> = 
   patchwork: {
     name: "Patchwork",
     rule: "Fill the outline with every patch: no gaps, no overlaps. Pick a patch, turn it if you need to, then tap where its marked square goes.",
+  },
+  grammar: {
+    name: "Grammar",
+    rule: "Each sentence has a gap. Pick the word that fills it correctly.",
+  },
+  algebra: {
+    name: "Algebra",
+    rule: "Find x in each equation (a whole number), and type it in.",
+  },
+  countries: {
+    name: "Name the countries",
+    rule: "Type countries that start with the letter. Any will do, as long as each is a real country and none twice.",
+  },
+  flags: {
+    name: "Guess the flag",
+    rule: "Whose flag is it? Pick the country for each one.",
+  },
+  brands: {
+    name: "Guess the logo",
+    rule: "Whose logo is it? Pick the brand for each one.",
   },
   vowels: {
     name: "Lost Vowels",

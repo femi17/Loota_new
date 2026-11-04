@@ -117,7 +117,7 @@ export type HuntState = {
   /** On a relay's trail: the last chest held a clue, not the key (owner, 24 Oct 2026). */
   trail?: boolean;
   /** The next key's trial: a quiz (in `category`), one puzzle, or "puzzle" (one at random). */
-  trialKind?: "quiz" | "sentries" | "route" | "adire" | "tornmap" | "puzzle" | null;
+  trialKind?: "quiz" | "sentries" | "route" | "adire" | "tornmap" | "grammar" | "algebra" | "countries" | "flags" | "brands" | "puzzle" | null;
   category: TrialCategory | null;
   /** The Final Approach clue, once the player has reached the key's area. */
   clue: string | null;

@@ -12,7 +12,8 @@
 import { checkPuzzle, makePuzzle, type PuzzleKind } from "../../src/game/puzzles/index.ts";
 
 const SEEDS = Number(process.argv[2] ?? 40);
-const KINDS: Exclude<PuzzleKind, "tornmap">[] = ["sentries", "route", "adire", "sudoku", "threads", "plots", "patchwork", "vowels"];
+// Every kind the game picks now (owner, 4 Nov 2026: no more Sentries; the quick ones in)
+const KINDS: Exclude<PuzzleKind, "tornmap">[] = ["route", "adire", "sudoku", "threads", "plots", "patchwork", "vowels", "grammar", "algebra", "countries", "flags", "brands"];
 let fails = 0;
 const check = (label: string, ok: boolean, extra = "") => {
   if (!ok) fails++;
@@ -30,11 +31,14 @@ function inputs(kind: string, puzzle: unknown, answer: unknown): number {
   if (kind === "plots") return Object.keys((p.clues as object) ?? {}).length * 2;
   if (kind === "patchwork") return ((p.pieces as unknown[]) ?? []).length * 2;
   if (kind === "vowels") return (answer as string[]).reduce((n, w) => n + w.length, 0);
+  if (kind === "grammar" || kind === "flags" || kind === "brands") return (answer as number[]).length + 1; // a tap each, and Check
+  if (kind === "algebra") return (answer as number[]).reduce((n, x) => n + String(x).length, 0) + 1;
+  if (kind === "countries") return (answer as string[]).reduce((n, w) => n + w.length, 0) + 1;
   return 0;
 }
 
 /** Seconds the hand needs for that many inputs (no thinking): see the top. */
-const HAND: Record<string, number> = { sentries: 0.6, route: 0.3, adire: 0.6, sudoku: 1.2, threads: 0.3, plots: 0.6, patchwork: 0.6, vowels: 0.35 };
+const HAND: Record<string, number> = { sentries: 0.6, route: 0.3, adire: 0.6, sudoku: 1.2, threads: 0.3, plots: 0.6, patchwork: 0.6, vowels: 0.35, grammar: 0.6, flags: 0.6, brands: 0.6, algebra: 0.6, countries: 0.35 };
 const HAND_MAX = 30;
 
 /** Sudoku by plain deduction: fill any square with only one possible number, again and again; stuck = guessing. */

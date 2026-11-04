@@ -269,8 +269,13 @@ export type KeyWorld = {
   /** The treasure building's rooms: where to stand at each door (in the hall), and which room the hunter is in. */
   innerDoors(i: number): Point[];
   innerAt(p: Point): number;
-  /** Each frame: the hunter's place opens (its roof lifts), and buildings between the camera and the hunter drop away. */
-  tick(dt: number, me: Point, eye: Point): void;
+  /** The treasure building's rooms dark (no torch) or lit. */
+  setDark(dark: boolean): void;
+  /** Night (1) to day (0): the street lamps glow. */
+  setNight(night: number): void;
+  /** Each frame: the hunter's place opens (its roof lifts), and a building that really hides the hunter from the camera
+   * turns see-through (owner, 3 Nov 2026: "Why are building going down when I move close to them"). */
+  tick(dt: number, me: Point, eye: { x: number; y: number; z: number }): void;
 };
 
 const along = (f: number, lx: number, lz: number): Point => ({ x: lx * Math.cos(f) + lz * Math.sin(f), z: -lx * Math.sin(f) + lz * Math.cos(f) });
@@ -284,21 +289,54 @@ const rectIn = (c: Point, f: number, lx0: number, lx1: number, lz0: number, lz1:
 };
 const overlaps = (a: Rect, b: Rect, pad = 0) => a.x0 < b.x1 + pad && a.x1 > b.x0 - pad && a.z0 < b.z1 + pad && a.z1 > b.z0 - pad;
 const inside = (p: Point, r: Rect, pad = 0) => p.x > r.x0 - pad && p.x < r.x1 + pad && p.z > r.z0 - pad && p.z < r.z1 + pad;
-/** Whether the line a–b crosses a rectangle (the slab test). */
-function crosses(a: Point, b: Point, r: Rect) {
+/** Where along a–b (0 to 1) the line first enters a rectangle, or −1 if it misses (the slab test). */
+function entry(a: Point, b: Point, r: Rect) {
   let t0 = 0, t1 = 1;
   for (const [p, d, lo, hi] of [[a.x, b.x - a.x, r.x0, r.x1], [a.z, b.z - a.z, r.z0, r.z1]] as const) {
     if (Math.abs(d) < 1e-9) {
-      if (p < lo || p > hi) return false;
+      if (p < lo || p > hi) return -1;
       continue;
     }
     let u = (lo - p) / d, v = (hi - p) / d;
     if (u > v) [u, v] = [v, u];
     t0 = Math.max(t0, u);
     t1 = Math.min(t1, v);
-    if (t0 > t1) return false;
+    if (t0 > t1) return -1;
   }
-  return true;
+  return t0;
+}
+/** A short number from a string (the same every time). */
+function hash(text: string) {
+  let h = 2166136261;
+  for (let k = 0; k < text.length; k++) h = Math.imul(h ^ text.charCodeAt(k), 16777619);
+  return h >>> 0;
+}
+/** Its materials made its own, so it can turn see-through without touching anything else. */
+function fadeable(o: THREE.Object3D) {
+  const out: THREE.Material[] = [];
+  o.traverse((c) => {
+    const m = c as THREE.Mesh;
+    if (!m.material) return;
+    const list = Array.isArray(m.material) ? m.material : [m.material];
+    const copies = list.map((x) => {
+      const y = x.clone();
+      out.push(y);
+      return y;
+    });
+    m.material = Array.isArray(m.material) ? copies : copies[0];
+  });
+  return out;
+}
+function setFade(mats: THREE.Material[], alpha: number) {
+  const see = alpha < 0.99;
+  for (const m of mats) {
+    if (m.transparent !== see) {
+      m.transparent = see;
+      m.depthWrite = !see;
+      m.needsUpdate = true;
+    }
+    m.opacity = alpha;
+  }
 }
 
 /** The ring's lots, clockwise from the north-west: where the story's places stand (centre, door facing). */
@@ -312,7 +350,8 @@ function lots(): { c: Point; f: number }[] {
   ];
 }
 
-export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[], scene: KeyScene | null | undefined, title = ""): KeyWorld {
+/** `seat`: the hunter's own arrangement of the story's places on the lots (their player id and key). */
+export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[], scene: KeyScene | null | undefined, title = "", seat = ""): KeyWorld {
   const ground = scene?.ground && LOOK[scene.ground] ? scene.ground : "city";
   const look = LOOK[ground];
   const pieces = new Set(scene?.pieces ?? []);
@@ -330,6 +369,7 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     solids.push(s);
     return s;
   };
+  const bulb = new THREE.MeshLambertMaterial({ color: "#F4E2B0" }); // the street lamps (they glow at night)
   let seed = 7 + title.length * 31 + rooms.length;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 
@@ -353,7 +393,9 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
       for (const [x, z] of [[t, -RING + 0.3], [t, RING - 0.3], [-RING + 0.3, t], [RING - 0.3, t]]) {
         if (Math.abs(x) < SPOKE + 0.5 && Math.abs(z) > RING - 1) continue;
         if (Math.abs(z) < SPOKE + 0.5 && Math.abs(x) > RING - 1) continue;
-        group.add(cyl(0.07, 3.2, "#3A3F45", x, 1.6, z), ball(0.22, "#F4E2B0", x, 3.25, z));
+        const lamp = ball(0.22, "#F4E2B0", x, 3.25, z);
+        lamp.material = bulb;
+        group.add(cyl(0.07, 3.2, "#3A3F45", x, 1.6, z), lamp);
       }
     }
   }
@@ -510,9 +552,12 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
 
   // ---- The story's places, on the ring's lots (clockwise, starting where the title says, so no two keys match)
   const ring = lots();
-  const first = Math.floor(rnd() * ring.length);
+  // Each hunter's own arrangement of the places on the lots (owner, 3 Nov 2026: "how do we handle users who are around
+  // and they saw a user dig a place and got the treasure"): following someone leads into a different place. The town
+  // itself (every lot's footprint, the streets) is the same for all.
+  const order = ring.map((_, k) => k).sort((a, b) => hash(`${seat}:${title}:${a}`) - hash(`${seat}:${title}:${b}`));
   const places: WorldPlace[] = [];
-  const views: { walls: THREE.Group; roof: THREE.Group; open: number; ghost: number; area: Rect; frame: THREE.Group; low: boolean }[] = [];
+  const views: { walls: THREE.Group; roof: THREE.Group; open: number; ghost: number; area: Rect; frame: THREE.Group; low: boolean; mats: THREE.Material[] }[] = [];
   const gates: (Solid & { mesh: THREE.Object3D })[] = [];
   const chests: THREE.Object3D[] = [];
   const furniture: { group: THREE.Group; solid: Solid }[] = [];
@@ -520,7 +565,7 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
   const FACADES = ["#E8D5B0", "#C9A0A0", "#A0B8C9", "#E0D4A0", "#B5A0C9", "#D9B99B", "#A8C9A0"];
   const accents = ["#C0392B", "#2F6FEB", "#E5484D", "#1E9E62", "#F4B41A", "#9B5DE5", "#F28C28"];
   rooms.forEach((r, i) => {
-    const lot = ring[(first + i) % ring.length];
+    const lot = ring[order[i]];
     const f = lot.f, c = lot.c;
     const kind = PLOT[r.kind] ? r.kind : "study";
     const info = PLOT[kind];
@@ -593,11 +638,11 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     chest.visible = false;
     frame.add(chest);
     chests.push(chest);
-    views.push({ walls, roof: top, open: 0, ghost: 0, area, frame, low: outdoor });
+    views.push({ walls, roof: top, open: 0, ghost: 0, area, frame, low: outdoor, mats: outdoor ? [] : [...fadeable(walls), ...fadeable(top)] });
   });
 
   // ---- The town: buildings wherever there's room, facing the nearest street
-  const fillers: { group: THREE.Group; area: Rect; ghost: number }[] = [];
+  const fillers: { group: THREE.Group; area: Rect; ghost: number; h: number; mats: THREE.Material[] }[] = [];
   const towns = ["#D9B99B", "#C9A0A0", "#A0B8C9", "#E0D4A0", "#B5A0C9", "#E8D5B0"];
   const tryBuild = (x: number, z: number, w: number, d: number) => {
     const area = { x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 };
@@ -616,8 +661,9 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     const turned = Math.abs(Math.sin(f)) > 0.5;
     const [lw, ld] = turned ? [d, w] : [w, d];
     const colour = towns[Math.floor(rnd() * towns.length)];
+    let h = 3;
     if (ground === "city") {
-      const h = 4 + Math.floor(rnd() * 4) * 3;
+      h = 4 + Math.floor(rnd() * 4) * 3;
       const fx = Math.max(1, Math.round(ld / 2)), fz = Math.max(1, Math.round(lw / 2)), fy = Math.max(1, Math.round(h / 2.5));
       const top = mat("#6B6F75");
       const m = new THREE.Mesh(new THREE.BoxGeometry(lw, h, ld), [facade(colour, fx, fy), facade(colour, fx, fy), top, top, facade(colour, fz, fy), facade(colour, fz, fy)]);
@@ -631,23 +677,34 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
       } else g.add(box(lw + 0.3, 0.4, ld + 0.3, "#555A60", 0, h + 0.2, 0, false), cyl(0.7, 1.2, "#3B6EA5", lw / 4, h + 1, -ld / 4));
     } else if (ground === "salt") {
       // Low whitewashed adobe, flat roofs
-      const h = 2.4 + rnd();
+      h = 2.4 + rnd();
       g.add(box(lw, h, ld, rnd() > 0.5 ? "#F1E9DA" : "#E3D3B8", 0, h / 2, 0), box(lw + 0.2, 0.25, ld + 0.2, "#CDBB9A", 0, h + 0.12, 0, false), box(1.0, 1.8, 0.1, "#5A3A20", 0, 0.9, ld / 2 + 0.03, false));
     } else {
       // Wooden sheds with pitched roofs
-      const h = 2.6 + rnd();
+      h = 2.6 + rnd();
       g.add(box(lw, h, ld, rnd() > 0.5 ? "#9C6B44" : "#B08156", 0, h / 2, 0), roof(lw, ld, "#5A3A20", h, 1.0), box(1.0, 1.8, 0.1, "#3A2414", 0, 0.9, ld / 2 + 0.03, false));
     }
     group.add(g);
     solid(area);
-    fillers.push({ group: g, area, ghost: 0 });
+    fillers.push({ group: g, area, ghost: 0, h: h + 1.8, mats: fadeable(g) });
     return true;
   };
-  // The ring's empty lots first (a story with fewer places than lots), then all round
+  // The ring's empty lots (a story with fewer places than lots): shut shops of the very same size as a place, so every
+  // hunter's town has the same walls whichever places stand where
   for (let k = rooms.length; k < ring.length; k++) {
-    const lot = ring[(first + k) % ring.length];
-    const turned = Math.abs(Math.sin(lot.f)) > 0.5;
-    tryBuild(lot.c.x, lot.c.z, turned ? BD - 1 : BW - 1, turned ? BW - 1 : BD - 1);
+    const { c, f } = ring[order[k]];
+    const area = rectIn(c, f, -BW / 2, BW / 2, -BD / 2, BD / 2);
+    const g = new THREE.Group();
+    g.position.set(c.x, 0, c.z);
+    g.rotation.y = f;
+    g.add(box(BW, H, BD, towns[k % towns.length], 0, H / 2, 0), box(BW + 0.3, 0.35, BD + 0.3, "#6B6F75", 0, H + 0.17, 0, false));
+    g.add(box(2.0, 2.3, 0.1, "#8A8F96", 0, 1.15, BD / 2 + 0.05, false)); // its shutter, down
+    for (let y = 0.3; y < 2.3; y += 0.3) g.add(box(2.0, 0.03, 0.12, "#6B7077", 0, y, BD / 2 + 0.06, false));
+    for (const sx of [-3, 3]) g.add(box(1.2, 1.0, 0.05, "#2F4B63", sx, 1.7, BD / 2 + 0.03, false));
+    group.add(g);
+    taken.push(area);
+    solid(area);
+    fillers.push({ group: g, area, ghost: 0, h: H + 0.4, mats: fadeable(g) });
   }
   const sparse = ground !== "city";
   for (let x = -REACH + 3; x <= REACH - 3; x += 8.5) {
@@ -688,6 +745,10 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
   // ---- The treasure building's five rooms (built when it's found): a hall from the door, two rooms either side of it
   // and one across the back, each shut by a door until its puzzle is solved.
   const inner = new Map<number, Inner>();
+  // The treasure building's rooms are dark until a torch lights them (owner, 3 Nov 2026)
+  let dark = true;
+  const shadeMat = new THREE.MeshBasicMaterial({ color: "#05070C", transparent: true, opacity: 0.66, depthWrite: false });
+  const shades: THREE.Object3D[] = [];
   const CELLS = [
     { n: 1, x0: -BW / 2 + 0.22, x1: -1.2, z0: 1.5, z1: BD / 2 - 0.22, door: "left", dz: 3.15 },
     { n: 2, x0: -BW / 2 + 0.22, x1: -1.2, z0: -1.8, z1: 1.5, door: "left", dz: -0.15 },
@@ -724,6 +785,11 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
       const held = new THREE.Group();
       held.position.set(cx, 0.12, cz);
       g.add(held);
+      const shade = new THREE.Mesh(new THREE.BoxGeometry(cell.x1 - cell.x0 - 0.12, 2.0, cell.z1 - cell.z0 - 0.12), shadeMat);
+      shade.position.set(cx, 1.05, cz);
+      shade.visible = dark;
+      g.add(shade);
+      shades.push(shade);
       const spot = cell.door === "back" ? { x: 0, z: -1.3 } : { x: cell.door === "left" ? -0.74 : 0.74, z: cell.dz }; // right up at the door
       return {
         n: cell.n,
@@ -846,22 +912,33 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
       for (const x of inner.values()) if (x.group.visible) for (const r of x.rooms) if (inside(p, r.area)) return r.n;
       return 0;
     },
+    setDark(on) {
+      dark = on;
+      for (const sh of shades) sh.visible = on;
+    },
+    setNight(n) {
+      bulb.emissive.setRGB(0.95 * n, 0.82 * n, 0.45 * n);
+    },
     tick(dt, me, eye) {
       const k = Math.min(1, 5 * dt);
       const here = placeAt(me);
-      // A building between the camera and the hunter: it drops away (like a doll's house), so the hunter is never hidden
-      const hides = (a: Rect) => crosses(me, eye, { x0: a.x0 - 0.4, x1: a.x1 + 0.4, z0: a.z0 - 0.4, z1: a.z1 + 0.4 });
+      // A building hides the hunter only where the line from the camera down to them passes through it below its
+      // roof: then it turns see-through (it no longer sinks), and back as the hunter walks on
+      const hides = (a: Rect, h: number) => {
+        const t = entry(me, eye, { x0: a.x0 - 0.3, x1: a.x1 + 0.3, z0: a.z0 - 0.3, z1: a.z1 + 0.3 });
+        return t >= 0 && 1.6 + (eye.y - 1.6) * t < h;
+      };
       views.forEach((v, j) => {
         v.open += ((j === here ? 1 : 0) - v.open) * k;
-        v.ghost += ((j !== here && !v.low && hides(v.area) ? 1 : 0) - v.ghost) * k;
-        const low = Math.max(v.open, v.ghost);
-        v.walls.scale.y = 1 - 0.72 * low;
+        v.ghost += ((j !== here && !v.low && hides(v.area, H + 1.4) ? 1 : 0) - v.ghost) * k;
+        v.walls.scale.y = 1 - 0.72 * v.open; // inside: the roof off, the walls low
         v.roof.position.y = v.open * 7;
-        v.roof.visible = low < 0.6;
+        v.roof.visible = v.open < 0.6;
+        setFade(v.mats, 1 - 0.75 * v.ghost);
       });
       for (const fl of fillers) {
-        fl.ghost += ((hides(fl.area) ? 1 : 0) - fl.ghost) * k;
-        fl.group.scale.y = 1 - 0.88 * fl.ghost;
+        fl.ghost += ((hides(fl.area, fl.h) ? 1 : 0) - fl.ghost) * k;
+        setFade(fl.mats, 1 - 0.78 * fl.ghost);
       }
     },
   };

@@ -7,6 +7,8 @@ import type { AvatarLook } from "@/lib/avatar";
 import { animateAvatar, buildAvatar } from "@/game/models3d";
 import type { HouseObjectView, HouseRoomView, HouseStyle, InnerRoomView } from "@/game/house3d";
 import { buildKeyWorld, type KeyScene, type KeyWorld, type Point } from "@/game/keyworld";
+import { daylight, sunAt } from "@/game/sun";
+import { RELIC_ICON, RELICS, type RelicId } from "@/game/items";
 import { PuzzleBoard } from "./puzzles/PuzzleTrial";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import type { Penalty } from "./PenaltyCard";
@@ -52,7 +54,7 @@ const HEAT: Record<string, { text: string; style: string }> = {
   warm: { text: "📡 Warm", style: "bg-[#F28C28] text-ink" },
   cold: { text: "📡 Cold", style: "bg-[#2F6FEB] text-white" },
 };
-type Dug = Partial<QuarterView> & { locked?: boolean; text?: string; trap?: boolean; used?: { name: string } | null; penalty?: Penalty & { balance: number | null; energy: number | null }; until?: string; dodge?: { prompt: string; options: string[]; seconds: number } };
+type Dug = Partial<QuarterView> & { seconds?: number; locked?: boolean; text?: string; trap?: boolean; used?: { name: string } | null; penalty?: Penalty & { balance: number | null; energy: number | null }; until?: string; dodge?: { prompt: string; options: string[]; seconds: number } };
 
 const SPEED = 4; // metres a second, walking about
 const AVATAR = 0.8; // the hunter's size in the world
@@ -80,6 +82,18 @@ const OUTCOME_SAID: Record<string, string> = {
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
 
+/** The tools of the key's world (owner, 3 Nov 2026: "torch light, metal detector, digger"), bought once and kept. */
+type Tool = "detector" | "spade" | "torch";
+const TOOLS: { id: Tool; icon: string; name: string; price: number; does: string }[] = [
+  { id: "detector", icon: "📡", name: "Metal detector", price: 300, does: "Hot at the place the key is: from the street, and at its room's door." },
+  { id: "spade", icon: "⛏", name: "Spade", price: 80, does: "Digs at once. By hand, digging takes a minute." },
+  { id: "torch", icon: "🔦", name: "Torch", price: 60, does: "Lights the treasure house's dark rooms (and the night)." },
+];
+type Me = { coins: number; detector: boolean; spade: boolean; torch: boolean };
+const OTHERS_SHOWN = 10; // other hunters drawn at once (owner: "let limit it to 10, so we dont overcrowd the screen")
+/** Another hunter at the place, as last heard: where, which way, whether out of sight in a place. */
+type Other = { x: number; z: number; r: number; in: boolean; seen: number };
+
 /**
  * The key's world (owner, 3 Nov 2026, after the old mini-Loota: "when you get to the location you are thrown into
  * another world… we do not need the buttons for rooms, user can move freely using the movement we have designed").
@@ -98,6 +112,8 @@ export function QuarterScene({
   onRefused,
   onCoins,
   onKey,
+  onScroll,
+  onBought,
 }: {
   huntId: string;
   look: AvatarLook;
@@ -114,6 +130,10 @@ export function QuarterScene({
   onKey?: (award: unknown) => void;
   /** The server stood the hunter at the place. */
   onMoved: (at: { lng: number; lat: number }) => void;
+  /** Open the story's scroll over the world (a story hunt). */
+  onScroll?: () => void;
+  /** A tool bought here (the map's own record of it: the detector beeps there too). */
+  onBought?: (tool: Tool) => void;
 }) {
   const [supabase] = useState(createClient);
   const host = useRef<HTMLDivElement>(null);
@@ -147,6 +167,32 @@ export function QuarterScene({
   const heatAsked = useRef(new Set<string>());
   const [roomHeat, setRoomHeat] = useState<Record<number, string>>({});
   const roomHeatAsked = useRef(new Set<number>());
+  // Who the hunter is (their own arrangement of the places, and the others at the place), what they have
+  const [uid, setUid] = useState<string | null>(null);
+  const uidRef = useRef("");
+  const [me, setMe] = useState<Me | null>(null);
+  const torchRef = useRef(false);
+  useEffect(() => {
+    torchRef.current = !!me?.torch;
+    scene.current?.world.setDark(!me?.torch);
+  }, [me?.torch]);
+  const [bagOpen, setBagOpen] = useState(false);
+  const [bagNote, setBagNote] = useState<string | null>(null);
+  const [buying, setBuying] = useState<Tool | null>(null);
+  const [carried, setCarried] = useState<{ relics: { id: string; relic: RelicId; charges: number }[]; wonders: { id: string; wonder: string }[] } | null>(null);
+  // Other hunters at the place: everyone here counted, the nearest few drawn
+  const [othersHere, setOthersHere] = useState(0);
+  const othersRef = useRef(new Map<string, Other>());
+  const looksRef = useRef(new Map<string, AvatarLook>());
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  // Digging by hand: a minute on the spot (a spade digs at once)
+  const [digging, setDigging] = useState<{ i: number; ends: number } | null>(null);
+  const diggingRef = useRef(digging);
+  useEffect(() => {
+    diggingRef.current = digging;
+  }, [digging]);
+  const [digLeft, setDigLeft] = useState(0);
+  const [heard, setHeard] = useState(0); // bumped to ask the detector again (one just bought)
   const openRoomRef = useRef<(n: number) => Promise<void>>(async () => {});
   const enterRef = useRef<(i: number) => Promise<void>>(async () => {});
   const scene = useRef<{ world: KeyWorld; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, i: number) => void } | null>(null);
@@ -162,6 +208,15 @@ export function QuarterScene({
   // The place from the server; then the world round it.
   useEffect(() => {
     let live = true;
+    void supabase.auth.getSession().then(async ({ data: s }) => {
+      // Who this is (their own arrangement of the places depends on it): from the session, or asked of the server
+      const id = s.session?.user.id ?? (await supabase.auth.getUser()).data.user?.id ?? "";
+      if (!live) return;
+      uidRef.current = id;
+      setUid(id);
+      const { data: p } = await supabase.from("profiles").select("coins, detector, spade, torch").eq("id", id).maybeSingle();
+      if (live && p) setMe({ coins: Number(p.coins ?? 0), detector: !!p.detector, spade: !!p.spade, torch: !!p.torch });
+    });
     void supabase.rpc("house_view", { p_hunt: huntId }).then(({ data }) => {
       if (!live) return;
       const v = data as QuarterView | null;
@@ -183,6 +238,111 @@ export function QuarterScene({
     // Once per visit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [huntId]);
+
+  // The other hunters at this key's place (owner, 3 Nov 2026: "see the number users who are around, let limit it to
+  // 10"): everyone here is counted (presence, with their look); where each one walks comes a few times a second.
+  const worldKey = view?.key;
+  useEffect(() => {
+    if (!uid || worldKey == null) return;
+    const others = othersRef.current, looks = looksRef.current;
+    const ch = supabase.channel(`keyworld:${huntId}:${worldKey}`, { config: { presence: { key: uid }, broadcast: { self: false } } });
+    ch.on("presence", { event: "sync" }, () => {
+      const state = ch.presenceState() as Record<string, { look?: AvatarLook }[]>;
+      const ids = Object.keys(state).filter((k) => k !== uid);
+      for (const k of ids) {
+        const lk = state[k]?.[0]?.look;
+        if (lk) looks.set(k, lk);
+      }
+      for (const k of [...others.keys()]) if (!ids.includes(k)) others.delete(k);
+      setOthersHere(ids.length);
+    });
+    ch.on("broadcast", { event: "pos" }, ({ payload }) => {
+      const p = payload as { u?: string; x: number; z: number; r: number; in: boolean };
+      if (p?.u && p.u !== uid) others.set(p.u, { x: p.x, z: p.z, r: p.r, in: !!p.in, seen: Date.now() });
+    });
+    ch.subscribe((status) => {
+      if (status !== "SUBSCRIBED") {
+        if (channelRef.current === ch) channelRef.current = null; // dropped: stop sending until it's back
+        return;
+      }
+      void ch.track({ look });
+      channelRef.current = ch;
+    });
+    return () => {
+      channelRef.current = null;
+      others.clear();
+      void supabase.removeChannel(ch);
+    };
+  }, [uid, worldKey, huntId, supabase, look]);
+
+  /** Buy a tool here (owner, 3 Nov 2026: "user should be able to buy thing"). */
+  async function buy(tool: Tool) {
+    const t = TOOLS.find((x) => x.id === tool)!;
+    setBuying(tool);
+    setBagNote(null);
+    try {
+      const { data } = await supabase.rpc("buy_tool", { p_tool: tool });
+      const r = data as { ok: boolean; reason?: string; balance?: number; price?: number } | null;
+      if (r?.ok) {
+        setMe((m) => (m ? { ...m, [tool]: true, coins: r.balance != null ? Number(r.balance) : m.coins } : m));
+        if (r.balance != null) onCoins?.(Number(r.balance));
+        onBought?.(tool);
+        if (tool === "detector") {
+          // Ask again, now with one
+          heatAsked.current.clear();
+          roomHeatAsked.current.clear();
+          setHeard((h) => h + 1);
+        }
+        setBagNote(`${t.icon} ${t.name}: yours to keep.`);
+      } else if (r?.reason === "coins") setBagNote(`Not enough coins: the ${t.name.toLowerCase()} costs ${r.price ?? t.price}.`);
+      else if (r?.reason === "owned") setBagNote(`You already have a ${t.name.toLowerCase()}.`);
+      else setBagNote("Couldn't buy it right now. Try again.");
+    } finally {
+      setBuying(null);
+    }
+  }
+  async function openBag() {
+    setBagOpen(true);
+    setBagNote(null);
+    const [{ data: relics }, { data: wonders }] = await Promise.all([
+      supabase.from("player_relics").select("id, relic, charges, expires_at").gt("charges", 0),
+      supabase.from("player_wonders").select("id, wonder, expires_at").is("used_at", null),
+    ]);
+    const live = (x: { expires_at: string }) => Date.parse(x.expires_at) > Date.now();
+    setCarried({
+      relics: ((relics ?? []) as { id: string; relic: RelicId; charges: number; expires_at: string }[]).filter(live),
+      wonders: ((wonders ?? []) as { id: string; wonder: string; expires_at: string }[]).filter(live),
+    });
+  }
+
+  /** ⛏ Dig here: with a spade at once; by hand a minute on the spot (owner: "1 min digging"; the server counts it). */
+  async function startDig(i: number) {
+    const v = viewRef.current;
+    if (!v || i < 0 || busyRef.current || diggingRef.current) return;
+    setBusy(true);
+    const { data } = await supabase.rpc("house_dig_start", { p_hunt: huntId, p_room: v.rooms[i].id });
+    setBusy(false);
+    const r = data as { ok: boolean; reason?: string; seconds?: number } | null;
+    if (!r?.ok) return setSay(REFUSED[r?.reason ?? ""] ?? "The ground won't give here.");
+    if (!r.seconds) return void search(i);
+    setDigLeft(r.seconds);
+    setDigging({ i, ends: Date.now() + r.seconds * 1000 });
+    setSay(`⛏ Digging by hand at ${v.rooms[i].name}: a minute on the spot. (A spade digs at once.)`);
+  }
+  useEffect(() => {
+    if (!digging) return;
+    const t = window.setInterval(() => {
+      const left = Math.max(0, Math.ceil((digging.ends - Date.now()) / 1000));
+      setDigLeft(left);
+      if (left > 0) return;
+      window.clearInterval(t);
+      setDigging(null);
+      void search(digging.i);
+    }, 250);
+    return () => window.clearInterval(t);
+    // The timer belongs to this dig.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [digging]);
 
   // Into a place (or out of it): the server notes it (and opens a door with the thing it needs).
   const stepRef = useRef<(i: number) => Promise<boolean>>(async () => true);
@@ -214,7 +374,7 @@ export function QuarterScene({
     };
   });
 
-  const built = !!view;
+  const built = !!view && uid !== null;
   useEffect(() => {
     const v = viewRef.current;
     const el = host.current;
@@ -223,18 +383,43 @@ export function QuarterScene({
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(renderer.domElement);
-    const kw = buildKeyWorld(v.rooms, v.objects, v.scene, v.title);
+    const kw = buildKeyWorld(v.rooms, v.objects, v.scene, v.title, `${uidRef.current}:${v.key}`);
+    kw.setDark(!torchRef.current);
     const world = new THREE.Scene();
     const sky = new THREE.Color(kw.sky);
     world.background = sky;
     // The view is kept short (owner: "we just limit the viewing so it is not too big"): the town fades into the haze
-    const fog = new THREE.Fog(sky, 26, 64);
+    const fog = new THREE.Fog(sky.clone(), 26, 64);
     world.fog = fog;
-    world.add(new THREE.HemisphereLight("#FFF4E0", "#667755", 2.0));
+    const hemi = new THREE.HemisphereLight("#FFF4E0", "#667755", 2.0);
+    world.add(hemi);
     const sun = new THREE.DirectionalLight("#FFFFFF", 1.3);
     sun.position.set(20, 40, 10);
     world.add(sun);
     world.add(kw.group);
+    // The time of day at the key's place (owner, 3 Nov 2026: "the day time we got there should be the time that is in
+    // the key world"): where the sun really is there now; at night the lamps glow and a little light goes with the hunter
+    const glow = new THREE.PointLight("#FFE2A8", 0, 10, 1.5);
+    world.add(glow);
+    const daySky = new THREE.Color(kw.sky), nightSky = new THREE.Color("#0B1330"), duskSky = new THREE.Color("#E8955A");
+    let night = 0;
+    const tellTime = () => {
+      const { elevation, azimuth } = sunAt(v.at.lat, v.at.lng);
+      const day = daylight(elevation);
+      night = 1 - day;
+      const dusk = Math.max(0, 1 - Math.abs(elevation - 1) / 7) * 0.45; // a warm sky as the sun sits on the horizon
+      sky.copy(nightSky).lerp(daySky, day).lerp(duskSky, dusk * day);
+      fog.color.copy(sky);
+      hemi.intensity = 0.35 + 1.65 * day;
+      sun.intensity = 1.3 * day;
+      sun.color.set(dusk > 0.1 ? "#FFC890" : "#FFFFFF");
+      const el2 = Math.max(8, elevation) * (Math.PI / 180), az = azimuth * (Math.PI / 180);
+      sun.position.set(Math.sin(az) * Math.cos(el2) * 50, Math.sin(el2) * 50, -Math.cos(az) * Math.cos(el2) * 50);
+      kw.setNight(night);
+      el.parentElement?.setAttribute("data-daylight", day.toFixed(2)); // tests read it
+    };
+    tellTime();
+    const clock = window.setInterval(tellTime, 30_000);
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
     const fit = () => {
       const w = el.clientWidth, h = el.clientHeight;
@@ -295,6 +480,7 @@ export function QuarterScene({
 
     // Trap animations (owner, 31 Oct 2026: like the movies): each runs for a second or so; true when done.
     const fx: ((t: number) => boolean)[] = [];
+    const flicker = new THREE.Color("#3A0A0A");
     const soft = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
     const trap = (kind: string, i: number) => {
       const t0 = performance.now();
@@ -381,7 +567,7 @@ export function QuarterScene({
         // The Masquerade, a mirror, a storm, a snake: the light flickers
         fx.push((t) => {
           const k = ease(t);
-          world.background = new THREE.Color(Math.floor(k * 12) % 2 ? "#3A0A0A" : kw.sky);
+          world.background = Math.floor(k * 12) % 2 && k < 1 ? flicker : sky;
           return k >= 1;
         });
       }
@@ -400,15 +586,19 @@ export function QuarterScene({
     let stepping = false;
     const asked = new Set<number>(); // locked doors already tried on this approach
     const armed = [true, true, true, true, true, true]; // room doors, ready to open as the hunter walks up
+    const ghosts = new Map<string, ReturnType<typeof buildAvatar>>(); // the other hunters drawn
+    let lastSent = 0;
+    let lastCount = 0;
+    let sent = { x: 0, z: 0, in: false };
     const frame = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
+      const dt = Math.min(0.1, (now - last) / 1000); // a slow phone still walks at full speed (a step stays thinner than a wall)
       last = now;
       for (let j = fx.length - 1; j >= 0; j--) if (fx[j](now)) fx.splice(j, 1);
       let moved = 0;
       // Steering (the joystick or the keys): it takes over from a walk to a tapped spot.
       const stick = joy.current;
       const steering = keys.size > 0 || Math.hypot(stick.x, stick.y) > 0.15;
-      const frozen = busyRef.current || !!roomPuzzleRef.current;
+      const frozen = busyRef.current || !!roomPuzzleRef.current || !!diggingRef.current; // digging: on the spot
       if (steering && path.length && !frozen) {
         path = [];
         const done = arrive;
@@ -523,6 +713,53 @@ export function QuarterScene({
         setNear(nearNow);
       }
 
+      // Where the hunter is, for the others here (a few times a second while walking; out of sight inside a place)
+      const ch = channelRef.current;
+      const inPlace = here >= 0;
+      // Only over the open connection (never one web request each, should it drop)
+      if (ch && ch.state === "joined" && now - lastSent > 250 && (now - lastSent > 2000 || dist(at, sent) > 0.05 || inPlace !== sent.in)) {
+        lastSent = now;
+        sent = { x: at.x, z: at.z, in: inPlace };
+        void ch.send({ type: "broadcast", event: "pos", payload: { u: uidRef.current, x: +at.x.toFixed(2), z: +at.z.toFixed(2), r: +av.root.rotation.y.toFixed(2), in: inPlace } });
+      }
+      // The others: the nearest few, walking where they are. Nobody is seen inside a place or digging, and nobody sees
+      // what anyone finds (owner: "how do we handle users who are around and they saw a user dig a place and got the
+      // treasure"); each hunter's places stand on lots of their own too.
+      const shown = [...othersRef.current.entries()]
+        .filter(([u, o]) => !o.in && now - o.seen < 8000 && looksRef.current.has(u))
+        .sort((a, b) => dist(a[1], at) - dist(b[1], at))
+        .slice(0, OTHERS_SHOWN);
+      const keep = new Set(shown.map(([u]) => u));
+      for (const [u, g] of ghosts) if (!keep.has(u)) g.root.visible = false;
+      for (const [u, o] of shown) {
+        let g = ghosts.get(u);
+        if (!g) {
+          g = buildAvatar(looksRef.current.get(u)!);
+          g.root.scale.setScalar(AVATAR);
+          g.root.position.set(o.x, 0.1, o.z);
+          world.add(g.root);
+          ghosts.set(u, g);
+        }
+        const p = g.root.position;
+        if (!g.root.visible || dist(p, o) > 8) p.set(o.x, 0.1, o.z); // back in sight: where they are now
+        const was = { x: p.x, z: p.z };
+        const kk = 1 - Math.exp(-8 * dt);
+        p.x += (o.x - p.x) * kk;
+        p.z += (o.z - p.z) * kk;
+        g.root.rotation.y = o.r;
+        g.root.visible = true;
+        const step = dist(p, was);
+        animateAvatar(g, { mode: "walk", phase: "idle", moving: step > 0.002 ? 1 : 0, distance: step / AVATAR }, dt, now / 1000);
+      }
+      if (now - lastCount > 500) {
+        lastCount = now;
+        el.parentElement?.setAttribute("data-others-shown", String(keep.size)); // tests read it
+      }
+      // A little light goes with the hunter at night (more with a torch)
+      glow.position.set(at.x, 2.6, at.z);
+      glow.intensity = night * (torchRef.current ? 3.2 : 1.6);
+      glow.distance = torchRef.current ? 15 : 9;
+
       // The camera: behind and above the hunter, gliding after them, the hunter in the middle of the screen (owner:
       // "center of the laptop screen"), as far out as zoomed; the haze starts a little beyond the hunter
       const off = wideRef.current ? EYE.wide : (here >= 0 ? EYE.inside : EYE.street).clone().multiplyScalar(zoom);
@@ -537,7 +774,7 @@ export function QuarterScene({
       camera.position.copy(eye);
       if (now < shakeUntil) camera.position.x += (Math.random() - 0.5) * 0.4;
       camera.lookAt(aim);
-      kw.tick(dt, at, { x: eye.x, z: eye.z });
+      kw.tick(dt, at, { x: eye.x, y: eye.y, z: eye.z });
       renderer.render(world, camera);
       raf = requestAnimationFrame(frame);
     };
@@ -601,6 +838,7 @@ export function QuarterScene({
     };
     return () => {
       cancelAnimationFrame(raf);
+      window.clearInterval(clock);
       sizes.disconnect();
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
@@ -621,7 +859,7 @@ export function QuarterScene({
       const { tap, id, x, z } = (e as CustomEvent<{ tap: string; id?: string; x?: number; z?: number }>).detail;
       const s = scene.current;
       const v = viewRef.current;
-      if (!s || !v || busyRef.current || dodge || roomPuzzleRef.current) return;
+      if (!s || !v || busyRef.current || dodge || roomPuzzleRef.current || diggingRef.current) return;
       const kw = s.world;
       if (tap === "chest") {
         setSay("You kneel by the chest…");
@@ -743,7 +981,10 @@ export function QuarterScene({
       s?.world.setInner(here, inner);
       if (r.outcome === "coins") {
         setSay(`💰 Room ${rp.n}: a pile of coins! +${r.coins ?? 25}.`);
-        if (r.balance != null) onCoins?.(r.balance);
+        if (r.balance != null) {
+          onCoins?.(r.balance);
+          setMe((m) => (m ? { ...m, coins: Number(r.balance) } : m));
+        }
       } else if (r.outcome === "chapter") {
         setSay(`📜 Room ${rp.n}: a page of the story! Chapter ${r.chapter ?? ""} is open on your scroll.`);
         window.dispatchEvent(new Event("loota:story-open"));
@@ -787,7 +1028,7 @@ export function QuarterScene({
       const d = data as { ok: boolean; reason?: string; heat?: string } | null;
       setHeat((h) => ({ ...h, [room]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
     });
-  }, [near, huntId, supabase]);
+  }, [near, huntId, supabase, heard]);
   // …and in the treasure building, each room: only the key's room is hot (owner: "the metal detector should only
   // detect the key not the next chapter or the coins")
   useEffect(() => {
@@ -796,10 +1037,15 @@ export function QuarterScene({
     roomHeatAsked.current.add(n);
     void supabase.rpc("house_room_detect", { p_hunt: huntId, p_room: n }).then(({ data }) => {
       const d = data as { ok: boolean; reason?: string; heat?: string } | null;
-      if (!d?.ok && d?.reason === "not_inside") roomHeatAsked.current.delete(n);
-      setRoomHeat((h) => ({ ...h, [n]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
+      if (!d?.ok && d?.reason !== "no_detector") {
+        // Asked a moment before the server had the hunter inside: ask again in a moment
+        roomHeatAsked.current.delete(n);
+        window.setTimeout(() => setHeard((h) => h + 1), 800);
+        return;
+      }
+      setRoomHeat((h) => ({ ...h, [n]: d?.ok && d.heat ? d.heat : "none" }));
     });
-  }, [nearRoom, huntId, supabase]);
+  }, [nearRoom, huntId, supabase, heard]);
 
   /** Searching a place (a building, as the hunter walks in; open ground, with ⛏ Dig here): the server decides (a
    * trap's challenge, nothing, the treasure building's rooms, or a buried chest). */
@@ -812,6 +1058,12 @@ export function QuarterScene({
       const { data } = await supabase.rpc("house_enter", { p_hunt: huntId, p_room: v.rooms[i].id });
       const r = data as Dug | null;
       if (!r?.ok) {
+        if (r?.reason === "digging") {
+          // Not dug long enough yet (by hand): carry on digging
+          setDigLeft(r.seconds ?? 60);
+          setDigging({ i, ends: Date.now() + (r.seconds ?? 60) * 1000 });
+          return;
+        }
         if (r?.reason === "out") setSay(`Catch your breath first: ${Math.max(1, Math.ceil((Date.parse(r.until ?? "") - Date.now()) / 1000))} s.`);
         else setSay(REFUSED[r?.reason ?? ""] ?? "Nothing happens here.");
         return;
@@ -883,13 +1135,13 @@ export function QuarterScene({
   }, [dodge]);
 
   const on = view && standing >= 0 ? view.rooms[standing] : null;
-  const canDig = !!on?.outdoor && !busy && !dodge && !roomPuzzle && view?.dug !== on.id;
+  const canDig = !!on?.outdoor && !busy && !dodge && !roomPuzzle && !digging && view?.dug !== on.id;
   const inRooms = !!view?.inner && !!on && view.dug === on.id && nearRoom > 0;
   const read = view && near >= 0 ? view.rooms[near] : null;
   const reading = inRooms ? HEAT[roomHeat[nearRoom] ?? ""] : read ? HEAT[heat[read.id] ?? ""] : null;
   const readingOf = inRooms ? `Room ${nearRoom}` : read && standing < 0 ? read.name : "";
   return (
-    <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy} data-inside={on?.id ?? ""}>
+    <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy} data-inside={on?.id ?? ""} data-me={uid ?? ""}>
       {/* The world fills the screen; the bars float over it. */}
       <div ref={host} className="absolute inset-0 touch-none" data-house />
       <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-[#1B2230]/85 via-[#1B2230]/50 to-transparent pb-3" data-house-head>
@@ -922,16 +1174,30 @@ export function QuarterScene({
             Leave
           </button>
         </div>
-        {view && view.items.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto px-4 pb-2" aria-label="What you carry">
-            {view.items.map((it) => (
-              <span key={it.id} className="flex shrink-0 items-center gap-1 rounded-full bg-ink-2 px-3 py-1 text-xs font-bold ring-1 ring-line">
-                <span aria-hidden="true">{it.icon}</span>
-                {it.name}
-              </span>
-            ))}
-          </div>
-        )}
+        {/* Coins, the hunters here, the story, the bag (owner, 3 Nov 2026: "show all the inventory and coin… they should
+            be able to reference the scroll, see the number users who are around") */}
+        <div className="flex items-center gap-2 overflow-x-auto px-4 pb-2">
+          <span className="flex h-9 shrink-0 items-center gap-1 rounded-full bg-[#1B2230]/75 px-3 text-sm font-extrabold ring-1 ring-line" aria-label="Your coins" data-coins={me?.coins ?? ""}>
+            🪙 {me ? me.coins.toLocaleString() : "…"}
+          </span>
+          <span className="flex h-9 shrink-0 items-center gap-1 rounded-full bg-[#1B2230]/75 px-3 text-sm font-extrabold ring-1 ring-line" aria-label={`${othersHere} other hunters here`} data-others={othersHere}>
+            👥 {othersHere}
+          </span>
+          {onScroll && (
+            <button type="button" onClick={onScroll} aria-label="The story" className="flex h-9 shrink-0 items-center gap-1 rounded-full bg-[#1B2230]/75 px-3 text-sm font-extrabold ring-1 ring-line">
+              📜 Story
+            </button>
+          )}
+          <button type="button" onClick={() => void openBag()} aria-label="Your bag" className="flex h-9 shrink-0 items-center gap-1 rounded-full bg-[#1B2230]/75 px-3 text-sm font-extrabold ring-1 ring-line">
+            🎒 Bag
+          </button>
+          {view?.items.map((it) => (
+            <span key={it.id} className="flex h-9 shrink-0 items-center gap-1 rounded-full bg-ink-2 px-3 text-xs font-bold ring-1 ring-line" aria-label={`Carrying ${it.name}`}>
+              <span aria-hidden="true">{it.icon}</span>
+              {it.name}
+            </span>
+          ))}
+        </div>
       </div>
       <div className="pointer-events-none absolute inset-x-3 top-[calc(var(--house-head,5rem)+0.25rem)] flex flex-col gap-3">
         {dodge && (
@@ -964,14 +1230,96 @@ export function QuarterScene({
               </button>
             </div>
             <p className="text-xs text-paper/80">{PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.rule}</p>
-            <div key={roomShake} className={`mx-auto w-full max-w-[min(100%,24rem)] ${roomShake ? "loota-shake" : ""}`}>
+            {/* The rooms are dark: without a torch the board is dim (owner, 3 Nov 2026: a torch "lights dark rooms") */}
+            <div key={roomShake} className={`mx-auto w-full max-w-[min(100%,24rem)] ${roomShake ? "loota-shake" : ""} ${me?.torch ? "" : "brightness-[0.45] contrast-[0.8]"}`} data-dark={me?.torch ? "false" : "true"}>
               <PuzzleBoard kind={roomPuzzle.kind} puzzle={roomPuzzle.puzzle} disabled={busy} onDone={(a) => void solveRoom(a)} />
             </div>
+            {!me?.torch && (
+              <div className="flex items-center gap-2 rounded-lg bg-ink-2 px-2 py-1.5 text-xs">
+                <span className="min-w-0 flex-1">🔦 It&apos;s dark in here. A torch lights the room.</span>
+                <button type="button" disabled={!!buying} onClick={() => void buy("torch")} className="h-8 shrink-0 rounded-lg bg-gold px-2 font-bold text-ink disabled:opacity-60">
+                  Buy · 60
+                </button>
+              </div>
+            )}
             {roomNote && (
               <p role="status" className="rounded-lg bg-danger/20 px-2 py-1 text-center text-sm font-bold">
                 {roomNote}
               </p>
             )}
+          </div>
+        )}
+        {digging && (
+          <div className="pointer-events-auto flex flex-col gap-2 rounded-2xl bg-ink/95 p-3 shadow-xl ring-2 ring-gold" role="status" aria-label="Digging" data-digging={digLeft}>
+            <div className="flex items-center gap-2">
+              <p className="min-w-0 flex-1 font-display text-lg font-extrabold">⛏ Digging by hand… {digLeft}s</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setDigging(null);
+                  setSay("You stop digging.");
+                }}
+                className="h-8 rounded-lg border border-line px-2 text-xs font-bold"
+              >
+                Stop
+              </button>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-line" aria-hidden="true">
+              <div className="h-full bg-gold transition-[width] duration-300" style={{ width: `${Math.round(((60 - digLeft) / 60) * 100)}%` }} />
+            </div>
+            {!me?.spade && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1">A spade digs at once.</span>
+                <button type="button" disabled={!!buying} onClick={() => void buy("spade")} className="h-8 shrink-0 rounded-lg bg-gold px-2 font-bold text-ink disabled:opacity-60">
+                  Buy a spade · 80
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {bagOpen && (
+          <div className="pointer-events-auto flex max-h-[calc(100dvh-var(--house-head,8rem)-var(--house-foot,5rem)-1.5rem)] flex-col gap-3 overflow-y-auto rounded-2xl bg-ink/95 p-4 shadow-xl ring-1 ring-line" role="dialog" aria-label="Your bag">
+            <div className="flex items-center gap-2">
+              <p className="min-w-0 flex-1 font-display text-lg font-extrabold">🎒 Your bag</p>
+              <span className="text-sm font-extrabold text-gold">🪙 {me ? me.coins.toLocaleString() : "…"}</span>
+              <button type="button" onClick={() => setBagOpen(false)} className="h-8 rounded-lg border border-line px-2 text-xs font-bold" aria-label="Close the bag">
+                Close
+              </button>
+            </div>
+            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gold">Tools for this place</p>
+            {TOOLS.map((t) => {
+              const owned = !!me?.[t.id];
+              return (
+                <div key={t.id} className="flex items-center gap-3 rounded-xl bg-ink-2 px-3 py-2 ring-1 ring-line" data-tool={t.id} data-owned={owned}>
+                  <span className="text-2xl" aria-hidden="true">{t.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold">{t.name}</p>
+                    <p className="text-xs text-paper/70">{t.does}</p>
+                  </div>
+                  {owned ? (
+                    <span className="shrink-0 rounded-full bg-paper/10 px-2 py-1 text-xs font-bold">Yours ✓</span>
+                  ) : (
+                    <button type="button" disabled={!!buying} onClick={() => void buy(t.id)} className="h-9 shrink-0 rounded-lg bg-gold px-3 text-sm font-bold text-ink disabled:opacity-60">
+                      {buying === t.id ? "…" : `Buy · ${t.price}`}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {bagNote && (
+              <p role="status" className="rounded-lg bg-paper/10 px-2 py-1 text-center text-sm font-bold">
+                {bagNote}
+              </p>
+            )}
+            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gold">Found here</p>
+            <p className="text-sm">{view?.items.length ? view.items.map((it) => `${it.icon} ${it.name}`).join(" · ") : "Nothing from this place yet."}</p>
+            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gold">Relics and Wonders</p>
+            <p className="text-sm">
+              {carried === null
+                ? "…"
+                : [...carried.relics.map((r) => `${RELIC_ICON[r.relic] ?? "✨"} ${RELICS[r.relic]?.name ?? r.relic}${r.charges > 1 ? ` ×${r.charges}` : ""}`), ...carried.wonders.map((w) => `🪔 ${w.wonder.replace(/_/g, " ")}`)].join(" · ") || "None yet."}
+            </p>
+            <p className="text-xs text-paper/70">Relics and Wonders are used out on the map. Your vehicles wait outside: here, you walk.</p>
           </div>
         )}
         {gained && (
@@ -980,7 +1328,7 @@ export function QuarterScene({
           </p>
         )}
       </div>
-      {handheld && view && !roomPuzzle && (
+      {handheld && view && !roomPuzzle && !bagOpen && (
         <Joystick
           className="absolute left-4 z-10"
           style={{ bottom: "calc(var(--house-foot, 5rem) + 0.75rem)" }}
@@ -992,7 +1340,7 @@ export function QuarterScene({
         {canDig && (
           <button
             type="button"
-            onClick={() => void search(standing)}
+            onClick={() => void startDig(standing)}
             className="pointer-events-auto mx-auto mb-3 flex h-14 items-center gap-2 rounded-2xl bg-gold px-6 font-display text-lg font-extrabold text-ink shadow-lg active:scale-95"
           >
             ⛏ Dig here

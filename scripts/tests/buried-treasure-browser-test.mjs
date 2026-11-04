@@ -37,7 +37,7 @@ try {
   const email = `buried-${Date.now()}@example.com`, password = `T3st-${Math.random().toString(36).slice(2)}!`;
   const { data } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   id = data.user.id;
-  await admin.from("profiles").update({ home_lng: 3.3787, home_lat: 6.5186, home_set_at: new Date().toISOString(), coins: 500, detector: true }).eq("id", id);
+  await admin.from("profiles").update({ home_lng: 3.3787, home_lat: 6.5186, home_set_at: new Date().toISOString(), coins: 500, detector: true, spade: true }).eq("id", id); // a spade: dug at once (by hand: key-world-tools-browser-test)
   await admin.from("player_positions").upsert({ user_id: id, lng: PLACE.lng, lat: PLACE.lat, mode: "walk", energy: 100, updated_at: ago(30) });
   const { data: hunt, error } = await admin.from("hunts")
     .insert({ title: "Buried treasure browser test (automated)", prize: "none", winners: 1, starts_at: ago(3600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true })

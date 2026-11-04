@@ -143,7 +143,7 @@ try {
   await wait(3500); // a breather after a dodge
   await tap({ tap: "object", id: "portrait" });
   const found = await until(async () => /Taped to the back/.test(await say()) && (await say()), 20000);
-  const carried = await page.evaluate(() => document.querySelector('[aria-label="What you carry"]')?.textContent ?? "");
+  const carried = await page.evaluate(() => [...document.querySelectorAll('[aria-label^="Carrying "]')].map((c) => c.textContent).join(" "));
   check("the study's portrait: the brass key, carried", !!found && carried.includes("A small brass key"), `${found} | ${carried}`);
   await page.screenshot({ path: `${OUT}/house-3-key.png` });
 

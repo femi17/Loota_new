@@ -4,7 +4,7 @@
 // be shuffled"). A story key's city: a noodle shop (the right one), a fountain house (a trap) and a bookshop; the
 // hunter has a metal detector:
 //   1. 🧭 Explore the place: the city, its buildings and their names;
-//   2. into the fountain house: going in springs its trap (the key's world, 3 Nov 2026); the detector says warm;
+//   2. into the fountain house: going in springs its trap (the key's world, 3 Nov 2026); the detector says cold;
 //      dodged;
 //   3. into the noodle shop: hot; walked into, its five rooms;
 //   4. room by room: each door opens on its puzzle; solved, it opens on what it held (coins, the next chapter, a
@@ -96,12 +96,12 @@ try {
   await page.screenshot({ path: `${OUT}/city-1-streets.png` });
   await page.evaluate(() => document.querySelector('button[aria-label="Back to where you are"]')?.click());
 
-  // 2. Into the fountain house (a trap: going in springs it), the detector warm; dodged
+  // 2. Into the fountain house (a trap: going in springs it), the detector cold (it finds only the key); dodged
   await tap({ tap: "room", id: "fountain" });
   const trapped = await until(() => page.evaluate(() => !!document.querySelector('[aria-label="Dodge the trap"]')), 20000);
   check("into the fountain house: its trap springs", !!trapped, await say());
-  const warm = await until(async () => (await detector()) === "warm", 10000);
-  check("…the detector: warm", !!warm, String(await detector()));
+  const cold = await until(async () => (await detector()) === "cold", 10000);
+  check("…the detector: cold", !!cold, String(await detector()));
   await page.screenshot({ path: `${OUT}/city-2-roof-off.png` });
   const dodgeAnswer = (await admin.from("hunt_players").select("house_dodge").eq("hunt_id", huntId).eq("user_id", id).single()).data?.house_dodge?.answer;
   await page.evaluate((k) => document.querySelectorAll('[aria-label="Dodge the trap"] .grid button')[Number(k) - 1]?.click(), dodgeAnswer);

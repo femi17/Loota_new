@@ -186,6 +186,8 @@ try {
   await tap({ tap: "inner", id: String(keyRoom) });
   const sheet = await until(() => page.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), keyRoom), 15000);
   check("at the key's room door: its puzzle opens", !!sheet);
+  const dark = await page.evaluate(() => document.querySelector("[data-room-puzzle] [data-dark]")?.getAttribute("data-dark"));
+  check("…dark in there without a torch (the board dimmed)", dark === "true", String(dark));
   const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", keyRoom).single()).data;
   const answer = stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution;
   await page.evaluate((a) => window.__lootaRoomSolve?.(a), answer);

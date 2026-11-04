@@ -2862,7 +2862,10 @@ export function GameMap({
         };
         if (toLive) toShow("pos", update);
         if (!toArea) return;
-        void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: update });
+        // Only over the open connection: a channel still joining would send each update as a web request of its own
+        const area = areaChannels.get(key);
+        if (area?.state !== "joined") return;
+        void area.send({ type: "broadcast", event: "pos", payload: update });
         if (Date.now() < mirroredUntil) {
           // Three copies a few hundred metres off, doing as the hunter does: nobody knows which is real.
           for (let i = 1; i <= 3; i++) {
@@ -2874,7 +2877,7 @@ export function GameMap({
               lng: update.lng + (metres * Math.sin(angle)) / (111320 * Math.cos((update.lat * Math.PI) / 180)),
               lat: update.lat + (metres * Math.cos(angle)) / 110574,
             };
-            void areaChannels.get(key)?.send({ type: "broadcast", event: "pos", payload: copy });
+            void area.send({ type: "broadcast", event: "pos", payload: copy });
             toShow("pos", copy);
           }
         }
@@ -9253,6 +9256,13 @@ export function GameMap({
                   actions.current?.recheckKey();
                 }}
                 onMoved={(at) => huntActions.current?.placeAt(at.lng, at.lat)}
+                onScroll={huntStory.story ? () => setStoryOpen(true) : undefined}
+                onBought={(tool) => {
+                  // A detector bought in the key's world beeps on the map too
+                  if (tool !== "detector") return;
+                  setDetector(true);
+                  detectorRef.current = true;
+                }}
               />
             )}
             {storyOpen && huntId && huntStory.story && !inside && <StoryScroll huntId={huntId} story={huntStory.story} reload={huntStory.reload} onClose={() => {

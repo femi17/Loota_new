@@ -2,7 +2,7 @@
 // building, and they complete the puzzle… room 1, coins, room 2, the next chapter, room 3, the key, room 4, decoy
 // trap, another room trap. But all these will be shuffled"). A story key whose city has a right building, a trap and
 // an empty one; the hunter at the place:
-//   - the detector: none, no reading; with one, the right building hot, its neighbour warm, the far one cold;
+//   - the detector: none, no reading; with one, the right building hot, every other cold (it finds only the key);
 //   - the rooms: none before the right building is searched; searched, five shut rooms;
 //   - a room's puzzle from /api/house/room (no answer sent); a wrong answer: shut still; the right one: it opens,
 //     and what it held happens (coins, the next chapter on the scroll, the key, a decoy's or a trap's penalty);
@@ -62,7 +62,7 @@ try {
   await admin.from("profiles").update({ detector: true }).eq("id", id);
   const heats = {};
   for (const room of ["noodles", "fountain", "books"]) heats[room] = (await rpc("house_detect", { p_hunt: huntId, p_room: room }))?.heat;
-  check("with a detector: the right building hot, the next warm, the far one cold", heats.noodles === "hot" && heats.fountain === "warm" && heats.books === "cold", JSON.stringify(heats));
+  check("with a detector: the right building hot, every other cold", heats.noodles === "hot" && heats.fountain === "cold" && heats.books === "cold", JSON.stringify(heats));
 
   // ---- No rooms until the right building is searched
   let v = await rpc("house_view", { p_hunt: huntId });

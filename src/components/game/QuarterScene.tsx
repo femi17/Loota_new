@@ -58,10 +58,13 @@ type Dug = Partial<QuarterView> & { seconds?: number; locked?: boolean; text?: s
 
 const SPEED = 4; // metres a second, walking about
 const AVATAR = 0.8; // the hunter's size in the world
-// The camera, just behind and above the hunter (as mini-Loota's); higher inside a place, its roof off; or the whole town
-const EYE = { street: new THREE.Vector3(0, 11, 11.5), inside: new THREE.Vector3(0, 12.5, 8.5), wide: new THREE.Vector3(0, 88, 64) };
-// How far out (owner, 3 Nov 2026: "can they be zoomed out… Let it use the zoom"): the wheel or a pinch, within these
-const ZOOM = { phone: 1.8, laptop: 2.3, min: 0.7, max: 3 };
+// The camera, as the map's (owner, 4 Nov 2026: "it is showing from afar, it shows rotate like the map camera"): behind
+// the hunter and a little above, turning as they turn ("back": metres behind, "up": metres above); higher inside a
+// place, its roof off; or the whole town from above
+const EYE = { street: { back: 7.5, up: 4.6 }, inside: { back: 6, up: 6.5 }, wide: new THREE.Vector3(0, 88, 64) };
+// How far out: the wheel or a pinch, within these
+const ZOOM = { phone: 1, laptop: 1.1, min: 0.55, max: 2.6 };
+const TURN = 2.6; // radians a second, turning with the keys or the joystick
 const REFUSED: Record<string, string> = {
   away: "You've moved away from this place.",
   no_house: "There's nothing to search here.",
@@ -572,8 +575,12 @@ export function QuarterScene({
       }
     };
 
-    let zoom = el.clientWidth > el.clientHeight ? ZOOM.laptop : ZOOM.phone; // further out on a wide screen
-    const eye = new THREE.Vector3().copy(av.root.position).add(EYE.street.clone().multiplyScalar(zoom));
+    let zoom = el.clientWidth > el.clientHeight ? ZOOM.laptop : ZOOM.phone;
+    // The camera's own turn: it swings round behind the hunter as they turn; a drag looks round (as on the map)
+    let yaw = av.root.rotation.y;
+    let lookAround = 0;
+    const behind = (r: number, back: number, up: number, at: { x: number; z: number }) => new THREE.Vector3(at.x - Math.sin(r) * back, up, at.z - Math.cos(r) * back);
+    const eye = behind(yaw, EYE.street.back * zoom, EYE.street.up * zoom, av.root.position);
     const aim = new THREE.Vector3().copy(av.root.position);
     camera.position.copy(eye);
     let raf = 0;
@@ -626,22 +633,21 @@ export function QuarterScene({
           moved = step;
         }
       } else if (steering && !frozen && !stepping) {
-        // Up the screen is away from the camera: full speed from the keys, the joystick as far as it's pushed.
-        let x = 0, z = 0, pace = 1;
+        // As on the map: forward and back walk the way the hunter faces, left and right turn them (the keys at full
+        // speed; the joystick as far as it's pushed)
+        let ahead = 0, turn = 0;
         if (keys.size) {
-          if (keys.has("u")) z -= 1;
-          if (keys.has("d")) z += 1;
-          if (keys.has("r")) x += 1;
-          if (keys.has("l")) x -= 1;
+          ahead = (keys.has("u") ? 1 : 0) - (keys.has("d") ? 1 : 0);
+          turn = (keys.has("l") ? 1 : 0) - (keys.has("r") ? 1 : 0);
         } else {
-          x = stick.x;
-          z = stick.y;
-          pace = Math.min(1, Math.hypot(stick.x, stick.y));
+          ahead = Math.abs(stick.y) > 0.15 ? -stick.y : 0;
+          turn = Math.abs(stick.x) > 0.15 ? -stick.x : 0;
         }
-        const len = Math.hypot(x, z);
-        if (len > 0) {
-          av.root.rotation.y = Math.atan2(x, z); // turn to face the way, even against a wall
-          const sx = (x / len) * SPEED * pace * dt, sz = (z / len) * SPEED * pace * dt;
+        av.root.rotation.y += turn * TURN * dt;
+        if (ahead) {
+          const r = av.root.rotation.y;
+          const step = Math.max(-0.6, Math.min(1, ahead)) * SPEED * dt; // backwards a little slower
+          const sx = Math.sin(r) * step, sz = Math.cos(r) * step;
           const from = { x: me.x, z: me.z };
           // Straight on, or sliding along a wall
           const to = [{ x: from.x + sx, z: from.z + sz }, { x: from.x + sx, z: from.z }, { x: from.x, z: from.z + sz }].find((t) => !kw.blocked(t));
@@ -653,11 +659,13 @@ export function QuarterScene({
         }
       }
       animateAvatar(av, { mode: "walk", phase: "idle", moving: moved > 0 ? 1 : 0, distance: moved / AVATAR }, dt, now / 1000);
+      if (moved > 0) lookAround *= Math.exp(-1.2 * dt); // walking on, the view swings back behind the hunter
 
       const at = { x: me.x, z: me.z };
       if (now - lastShown > 250) {
         lastShown = now;
         el.parentElement?.setAttribute("data-at", `${at.x.toFixed(2)},${at.z.toFixed(2)}`); // where the hunter is (tests read it)
+        el.parentElement?.setAttribute("data-heading", av.root.rotation.y.toFixed(2)); // which way they face (tests read it)
       }
       const v = viewRef.current;
       const here = kw.placeAt(at);
@@ -759,15 +767,18 @@ export function QuarterScene({
       glow.intensity = night * (torchRef.current ? 3.2 : 1.6);
       glow.distance = torchRef.current ? 15 : 9;
 
-      // The camera: behind and above the hunter, gliding after them, the hunter in the middle of the screen (owner:
-      // "center of the laptop screen"), as far out as zoomed; the haze starts a little beyond the hunter
-      const off = wideRef.current ? EYE.wide : (here >= 0 ? EYE.inside : EYE.street).clone().multiplyScalar(zoom);
-      const goal = wideRef.current ? new THREE.Vector3(0, 0, 0).add(off) : new THREE.Vector3(at.x, 0, at.z).add(off);
-      const look = wideRef.current ? new THREE.Vector3(0, 0, 2) : new THREE.Vector3(at.x, 0.9, at.z);
+      // The camera: behind the hunter and a little above, swinging round as they turn (as the map's), the hunter in the
+      // middle of the screen, as far out as zoomed; the haze starts a little beyond the hunter
       const k = 1 - Math.exp(-5 * dt);
+      let d = av.root.rotation.y + lookAround - yaw;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      yaw += d * Math.min(1, 4 * dt);
+      const place = here >= 0 || kw.homeAt(at) >= 0 ? EYE.inside : EYE.street;
+      const goal = wideRef.current ? EYE.wide.clone() : behind(yaw, place.back * zoom, place.up * zoom, at);
+      const look = wideRef.current ? new THREE.Vector3(0, 0, 2) : new THREE.Vector3(at.x + Math.sin(yaw) * 1.5, 1.2, at.z + Math.cos(yaw) * 1.5);
       eye.lerp(goal, k);
       aim.lerp(look, k);
-      const away = off.length();
+      const away = wideRef.current ? 100 : Math.hypot(place.back, place.up) * zoom;
       fog.near += ((wideRef.current ? 300 : away + 12) - fog.near) * k;
       fog.far += ((wideRef.current ? 400 : away + 50) - fog.far) * k;
       camera.position.copy(eye);
@@ -808,6 +819,8 @@ export function QuarterScene({
     };
     const onMove = (e: PointerEvent) => {
       if (!fingers.has(e.pointerId)) return;
+      const was = fingers.get(e.pointerId)!;
+      if (fingers.size === 1 && down && Math.hypot(e.clientX - down.x, e.clientY - down.y) >= 12) lookAround -= ((e.clientX - was.x) / Math.max(1, el.clientWidth)) * Math.PI * 1.4;
       fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pinch && fingers.size === 2) zoom = Math.min(ZOOM.max, Math.max(ZOOM.min, (pinch.zoom * pinch.d) / Math.max(20, spread())));
     };

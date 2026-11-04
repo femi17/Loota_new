@@ -95,6 +95,13 @@ try {
     const lap = await browser.newPage();
     await lap.setViewport({ width: 1366, height: 768, deviceScaleFactor: 1 });
     await lap.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
+    await lap.evaluateOnNewDocument((h, uid) => {
+      try {
+        localStorage.setItem(`loota:riddle-seen:${h}`, "1");
+        localStorage.setItem(`loota:welcome:${uid}`, "1");
+        localStorage.setItem(`loota:story:${h}:start`, "1");
+      } catch {}
+    }, huntId, id);
     await lap.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
     await until(() => lap.evaluate(() => { const b = [...document.querySelectorAll("button")].find((x) => /Explore the place/.test(x.textContent ?? "")); b?.click(); return !!b; }), 60000);
     await until(() => lap.evaluate((sel) => !!document.querySelector(sel), SCENE), 15000);
@@ -118,6 +125,7 @@ try {
   await page.screenshot({ path: `${OUT}/world-1-arrive.png` });
 
   // 2. Walking: the arrow keys move the hunter; a wall stops them
+  await until(async () => (await attr("data-at")) != null && !(await page.$('[aria-label="Open on more than one device"]')), 15000);
   const [x0, z0] = await where();
   await page.keyboard.down("ArrowUp");
   await wait(1500);
@@ -138,11 +146,23 @@ try {
   const spot = { x: fx + sideways[0], z: fz + sideways[1] };
   await tap({ tap: "ground", ...spot });
   await until(async () => { const [x, z] = await where(); return Math.hypot(x - spot.x, z - spot.z) < 0.5; }, 20000);
+  // Turn to face the building (left and right turn, as on the map), then walk at it
+  const into = Math.abs(fx) > Math.abs(fz) ? [Math.sign(fx), 0] : [0, Math.sign(fz)];
+  const want = Math.atan2(into[0], into[1]);
+  for (let k = 0; k < 60; k++) {
+    const heading = Number(await attr("data-heading"));
+    const off = Math.atan2(Math.sin(want - heading), Math.cos(want - heading));
+    if (Math.abs(off) < 0.15) break;
+    const key = off > 0 ? "ArrowLeft" : "ArrowRight";
+    await page.keyboard.down(key);
+    await wait(Math.min(250, Math.max(40, (Math.abs(off) / 2.6) * 1000 * 0.6)));
+    await page.keyboard.up(key);
+    await wait(300);
+  }
   const before = await where();
-  const dir = Math.abs(fx) > Math.abs(fz) ? (fx > 0 ? "ArrowRight" : "ArrowLeft") : fz > 0 ? "ArrowDown" : "ArrowUp";
-  await page.keyboard.down(dir);
+  await page.keyboard.down("ArrowUp");
   await wait(1500);
-  await page.keyboard.up(dir);
+  await page.keyboard.up("ArrowUp");
   const after = await where();
   check("a wall stops the hunter (only the door lets them in)", Math.hypot(after[0] - before[0], after[1] - before[1]) < 1.2 && !(await inside()), `${before.map((v) => v.toFixed(1))} → ${after.map((v) => v.toFixed(1))}`);
 

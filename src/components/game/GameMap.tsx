@@ -553,6 +553,13 @@ export function GameMap({
   const [penalty, setPenalty] = useState<Penalty | null>(null);
   // Inside a story key's house (owner, 31 Oct 2026: "an open house, like sims").
   const [houseOpen, setHouseOpen] = useState(false);
+  // While the key's world is open the map stands still: its keys are the world's (owner, 4 Nov 2026: "my viehicle
+  // move away from the key location")
+  const houseOpenRef = useRef(false);
+  useEffect(() => {
+    houseOpenRef.current = houseOpen;
+    if (houseOpen) controls.current = { go: false, sprint: false };
+  }, [houseOpen]);
   const huntStory = useHuntStory(huntId);
   const radio = useRadio();
   const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
@@ -7579,7 +7586,7 @@ export function GameMap({
           }
         }
         // The metal detector (if bought) beeps once it's warm, faster and higher as the key gets closer.
-        if (detectorRef.current && heat && heat.level > 0.3 && !frozen && !inWorld && now >= stuckUntil && now - lastBeat > 1500 - 1350 * heat.level) { // not in a trial or a scene
+        if (detectorRef.current && heat && heat.level > 0.3 && !frozen && !inWorld && !houseOpenRef.current && now >= stuckUntil && now - lastBeat > 1500 - 1350 * heat.level) { // not in a trial, a scene or the key's world (it beeps there itself)
           lastBeat = now;
           cue("beep", heat.level);
         }
@@ -8100,7 +8107,7 @@ export function GameMap({
         }
 
         // The player moves only while holding a key or the screen.
-        const canMove = !frozen && !huntHold && !sceneHold && !inWorld && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
+        const canMove = !frozen && !huntHold && !sceneHold && !inWorld && !houseOpenRef.current && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
         const { distance, events } = movement.step(traveller, { go: c.go || touchGo || cruiseOn, sprint: c.sprint }, dt, t, canMove);
         cruiseTick(dt, canMove);
         for (const event of events) {
@@ -8375,7 +8382,7 @@ export function GameMap({
       const typing = (e: KeyboardEvent) =>
         e.target instanceof HTMLElement && (e.target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName));
       const keyDown = (e: KeyboardEvent) => {
-        if (typing(e)) return;
+        if (typing(e) || houseOpenRef.current) return; // in the key's world, the keys walk the hunter there
         if (holdKeys[e.code]) {
           e.preventDefault();
           // ↓ turns round and goes back; if turning round isn't allowed, it doesn't move you forward either.

@@ -134,6 +134,11 @@ try {
   await wait(300);
   const [x1, z1] = await where();
   check("the arrow keys walk the hunter (up the screen)", z1 < z0 - 3 && Math.abs(x1 - x0) < 0.5, `${z0.toFixed(1)} → ${z1.toFixed(1)}`);
+  // …and only there: the map underneath stands still (owner, 4 Nov 2026: "my viehicle move away from the key location")
+  await wait(2500);
+  const onMap = (await admin.from("player_positions").select("lng, lat").eq("user_id", id).single()).data;
+  const drift = Math.hypot((onMap.lng - PLACE.lng) * 111320 * Math.cos((PLACE.lat * Math.PI) / 180), (onMap.lat - PLACE.lat) * 110574);
+  check("…the map underneath doesn't move (still at the key)", drift < 60, `${Math.round(drift)} m from the key`);
   await page.screenshot({ path: `${OUT}/world-2-square.png` });
   await page.evaluate(() => document.querySelector('button[aria-label="See the whole place"]')?.click());
   await wait(2500);
@@ -212,6 +217,11 @@ try {
   // In the hunter's hand, its head glowing hot (owner, 4 Nov 2026: "is the metal detector not suppose to be in his hand")
   const wand = await until(async () => ((await attr("data-wand")) === "hot" ? "hot" : null), 5000);
   check("…held in the hunter's hand, its head glowing hot", wand === "hot", String(await attr("data-wand")));
+  // …and beeping, fast, right at the key's place (owner, 4 Nov 2026: "The metal should beep if a tresure in near")
+  const beeps0 = await page.evaluate(() => (window.__lootaCues ?? []).filter((c) => c === "beep").length);
+  await wait(2000);
+  const beeps = (await page.evaluate(() => (window.__lootaCues ?? []).filter((c) => c === "beep").length)) - beeps0;
+  check("…beeping fast at the key's place", beeps >= 6, `${beeps} beeps in 2 s, ${await attr("data-beep")} m away`);
   await wait(1200);
   await page.screenshot({ path: `${OUT}/world-5-key-chest.png` });
   const keyRoom = 1;

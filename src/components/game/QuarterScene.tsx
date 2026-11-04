@@ -8,6 +8,7 @@ import { animateAvatar, buildAvatar } from "@/game/models3d";
 import type { HouseObjectView, HouseRoomView, HouseStyle, InnerRoomView } from "@/game/house3d";
 import { buildKeyWorld, type KeyScene, type KeyWorld, type Point } from "@/game/keyworld";
 import { daylight, sunAt } from "@/game/sun";
+import { cue } from "@/game/sound";
 import { RELIC_ICON, RELICS, type RelicId } from "@/game/items";
 import { PuzzleBoard } from "./puzzles/PuzzleTrial";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
@@ -38,6 +39,7 @@ type QuarterView = {
 /** A room of the treasure building being opened: its puzzle (from /api/house/room), and when its 60 seconds end. */
 type RoomPuzzle = { n: number; kind: string; puzzle: unknown; ends: number };
 const NEAR_M = 6; // the detector reads a place from the street this close to its way in (swept round, it reaches)
+const BEEP_M = 20; // it beeps within this of the key's place, faster the closer
 type Opened = {
   ok?: boolean;
   right?: boolean;
@@ -66,7 +68,7 @@ const EYE = { street: { back: 7.5, up: 4.6 }, inside: { back: 6, up: 6.5 }, wide
 const ZOOM = { phone: 1.6, laptop: 1.8, min: 0.55, max: 3 }; // owner, 4 Nov 2026: "too zoomed in"
 const TURN = 2.6; // radians a second, turning with the keys or the joystick
 const REFUSED: Record<string, string> = {
-  away: "You've moved away from this place.",
+  away: "On the map you're no longer at the key's place, so it won't open. Leave, and go back to it.",
   no_house: "There's nothing to search here.",
   not_live: "The hunt isn't on right now.",
   not_hunting: "You're not in this hunt.",
@@ -175,6 +177,7 @@ export function QuarterScene({
   const torchRef = useRef(false);
   const detectorRef = useRef(false); // the detector, in the hunter's hand when they have one
   const wandHeatRef = useRef(""); // what it reads now (its head glows with it)
+  const hotRef = useRef(-1); // the place it found hot (the key's), once read
   useEffect(() => {
     detectorRef.current = !!me?.detector;
   }, [me?.detector]);
@@ -615,6 +618,7 @@ export function QuarterScene({
     const armed = [true, true, true, true, true, true]; // room doors, ready to open as the hunter walks up
     const ghosts = new Map<string, ReturnType<typeof buildAvatar>>(); // the other hunters drawn
     let lastSent = 0;
+    let lastBeep = 0;
     let lastCount = 0;
     let sent = { x: 0, z: 0, in: false };
     const frame = (now: number) => {
@@ -689,8 +693,21 @@ export function QuarterScene({
         av.armR.rotation.z = 0;
         wand.rotation.y = Math.sin(now / 1000 * (moved > 0 ? 3 : 1.6)) * 0.45;
         const hot = wandHeatRef.current === "hot", cold = wandHeatRef.current === "cold";
-        const pulse = hot ? 0.55 + 0.45 * Math.sin(now / 90) : cold ? 0.35 : 0;
-        head.emissive.set(hot ? "#FF2A2A" : cold ? "#2F6FEB" : "#000000").multiplyScalar(pulse);
+        // Near the key's place: a beep, faster and higher the closer (every 0.18 s at its door, 1.4 s at 20 m)
+        const k = hotRef.current;
+        const area = k >= 0 ? kw.places[k]?.area : null;
+        const away = area ? Math.hypot(Math.max(area.x0 - me.x, 0, me.x - area.x1), Math.max(area.z0 - me.z, 0, me.z - area.z1)) : Infinity;
+        if (away < BEEP_M) {
+          const close = 1 - away / BEEP_M;
+          if (now - lastBeep > 180 + (1 - close) * 1220) {
+            lastBeep = now;
+            cue("beep", close);
+          }
+        }
+        const flash = away < BEEP_M ? Math.max(0, 1 - (now - lastBeep) / 160) : 0;
+        const pulse = hot ? 0.55 + 0.45 * Math.sin(now / 90) : flash > 0 ? flash : cold ? 0.35 : 0;
+        head.emissive.set(hot || flash > 0 ? "#FF2A2A" : cold ? "#2F6FEB" : "#000000").multiplyScalar(pulse);
+        if (away < BEEP_M) el.parentElement?.setAttribute("data-beep", String(Math.round(away))); // tests read it
       }
       el.parentElement?.setAttribute("data-wand", wand.visible ? wandHeatRef.current || "on" : "off"); // tests read it
 
@@ -1081,6 +1098,21 @@ export function QuarterScene({
       setHeat((h) => ({ ...h, [room]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
     });
   }, [near, huntId, supabase, heard]);
+  // …and with a detector, every place as the hunter arrives: it beeps as they near the hot one (owner, 4 Nov 2026)
+  useEffect(() => {
+    const v = viewRef.current;
+    if (!me?.detector || !v) return;
+    for (const r of v.rooms) {
+      if (heatAsked.current.has(r.id)) continue;
+      heatAsked.current.add(r.id);
+      void supabase.rpc("house_detect", { p_hunt: huntId, p_room: r.id }).then(({ data }) => {
+        const d = data as { ok: boolean; heat?: string } | null;
+        if (d?.ok && d.heat) setHeat((h) => ({ ...h, [r.id]: d.heat! }));
+        else heatAsked.current.delete(r.id); // ask again later (not at the place yet)
+      });
+    }
+  }, [me?.detector, view?.key, huntId, supabase, heard]);
+
   /** Searching a place (a building, as the hunter walks in; open ground, with ⛏ Dig here): the server decides (a
    * trap's challenge, nothing, the treasure building's rooms, or a buried chest). */
   async function search(i: number) {
@@ -1170,6 +1202,10 @@ export function QuarterScene({
   const read = view && near >= 0 ? view.rooms[near] : null;
   const reading = read ? HEAT[heat[read.id] ?? ""] : null;
   const wandHeat = read ? heat[read.id] ?? "" : "";
+  const hotAt = view ? view.rooms.findIndex((r) => heat[r.id] === "hot") : -1;
+  useEffect(() => {
+    hotRef.current = hotAt;
+  }, [hotAt]);
   useEffect(() => {
     wandHeatRef.current = wandHeat; // the detector's head glows with it
   }, [wandHeat]);

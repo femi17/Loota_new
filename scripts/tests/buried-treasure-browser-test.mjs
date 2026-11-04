@@ -7,8 +7,8 @@
 //   2. on the street by the water tank's way in: the detector says hot, from the street;
 //   3. on the street by the shrine: cold;
 //   4. into the shrine (walking in is searching it): empty, nothing at all (no trap, no decoy);
-//   5. onto the water tank: no building, ⛏ Dig here: a buried chest (not five rooms); tapped, the Key Trial starts,
-//      60 seconds.
+//   5. onto the water tank: no building, ⛏ Dig here: the key's chest comes up; walked up to, its 60-second puzzle
+//      opens right there (4 Nov 2026: no longer the map's Key Trial); solved, the key.
 // The hunt and the test player are deleted.   SHOTS=<folder> node scripts/tests/buried-treasure-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -128,7 +128,7 @@ try {
   const trapCard = await page.evaluate(() => !!document.querySelector('[aria-label^="A trap:"]'));
   check("…no trap, no decoy", !trapCard);
 
-  // 5. The water tank: open air, dig: a buried chest; the Key Trial, 60 seconds
+  // 5. The water tank: open air, dig: the key's chest; its puzzle, 60 seconds; the key
   await tap({ tap: "room", id: "tank" });
   const there = await until(async () => /At The water tank, out in the open/.test(await say()) && (await say()), 20000);
   check("onto the water tank: out in the open", !!there, there ?? (await say()));
@@ -136,19 +136,22 @@ try {
   const dig = await until(async () => /Dig here/.test(await buttonText()), 10000);
   check("on the water tank (open air): ⛏ Dig here, not Search", !!dig && !/Search here/.test(await buttonText()), await buttonText());
   await press("Dig here");
-  const chest = await until(async () => /buried chest/.test(await say()) && (await say()), 15000);
-  check("dug: a buried chest (no five rooms)", !!chest && !/Five rooms/.test(chest), chest ?? (await say()));
+  const chest = await until(async () => /key's chest/.test(await say()) && (await say()), 15000);
+  check("dug: the key's chest comes up", !!chest, chest ?? (await say()));
   await wait(1200);
   await page.screenshot({ path: `${OUT}/buried-2-chest.png` });
-  await tap({ tap: "chest", id: "tank" });
-  const trial = await until(async () => (await admin.from("trial_attempts").select("id").eq("hunt_id", huntId).eq("user_id", id).eq("status", "active").maybeSingle()).data, 20000);
-  check("the chest opens the Key Trial", !!trial);
-  // Its clock starts when its puzzle shows
-  const timed = await until(async () => (await admin.from("trial_attempts").select("deadline").eq("id", trial?.id).maybeSingle()).data?.deadline, 20000);
-  const left = timed ? (Date.parse(timed) - Date.now()) / 1000 : null;
-  check("…60 seconds for its puzzle", left !== null && left > 40 && left <= 66, left === null ? "no deadline" : `${Math.round(left)} s left`);
-  await wait(1500);
+  await tap({ tap: "inner", id: "1" });
+  const sheet = await until(() => page.evaluate(() => !!document.querySelector('[data-room-puzzle="1"]')), 20000);
+  check("walked up to the chest: its puzzle opens, here in the world", !!sheet && !!(await page.$(SCENE)));
+  const left = Number(await page.evaluate(() => document.querySelector("[data-room-left]")?.getAttribute("data-room-left")));
+  check("…60 seconds for its puzzle", left > 45 && left <= 60, `${left} s`);
+  await wait(800);
   await page.screenshot({ path: `${OUT}/buried-3-trial.png` });
+  const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", 1).single()).data;
+  await page.evaluate((a) => window.__lootaRoomSolve?.(a), stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution);
+  const card = await until(() => page.evaluate(() => /Key 1 earned/.test(document.body.innerText)), 20000);
+  const held = (await admin.from("hunt_players").select("keys_held").eq("hunt_id", huntId).eq("user_id", id).single()).data.keys_held;
+  check("solved: the key (Key 1 held)", !!card && held === 1, `card ${!!card}, keys_held ${held}`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

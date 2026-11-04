@@ -6,8 +6,8 @@
 //   2. the bedroom's door is shut; walking into the cellar springs its trap (the key's world, 3 Nov 2026: going in
 //      is searching): the soft penalty card, thrown out;
 //   3. back in: walking into the kitchen, the trap dodged; the study's portrait gives the brass key;
-//   4. the bedroom's door opens with it; walked into (the right one), its five rooms (key-world-browser-test plays
-//      them);
+//   4. the bedroom's door opens with it; walked into (the right one), the key's chest (key-world-browser-test opens
+//      it);
 //   5. a real tap in the world walks the hunter (the 3D picking works).
 // The hunt and test player are deleted.   SHOTS=<folder> node scripts/tests/house-browser-test.mjs
 import { createRequire } from "node:module";
@@ -147,13 +147,13 @@ try {
   check("the study's portrait: the brass key, carried", !!found && carried.includes("A small brass key"), `${found} | ${carried}`);
   await page.screenshot({ path: `${OUT}/house-3-key.png` });
 
-  // 4. The bedroom's door, walked up to with the brass key; in: its five rooms
+  // 4. The bedroom's door, walked up to with the brass key; in: the key's chest
   await tap({ tap: "room", id: "bedroom" });
   const opened = await until(async () => /(gate|door) of Bedroom opens/.test(await say()) && (await say()), 20000);
   check("the bedroom's door opens with the brass key", !!opened, opened ?? (await say()));
   await walkIn("bedroom");
-  const rooms = await until(async () => /Five rooms/.test(await say()) && (await say()), 25000);
-  check("walking into the bedroom (the right one): its five rooms", !!rooms, rooms ?? (await say()));
+  const rooms = await until(async () => /key's chest/.test(await say()) && (await say()), 25000);
+  check("walking into the bedroom (the right one): the key's chest", !!rooms, rooms ?? (await say()));
   await wait(600);
   await page.screenshot({ path: `${OUT}/house-4-rooms.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));

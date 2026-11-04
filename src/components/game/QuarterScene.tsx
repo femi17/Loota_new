@@ -59,7 +59,7 @@ type Dug = Partial<QuarterView> & { seconds?: number; locked?: boolean; text?: s
 const SPEED = 4; // metres a second, walking about
 const AVATAR = 0.8; // the hunter's size in the world
 // The camera, just behind and above the hunter (as mini-Loota's); higher inside a place, its roof off; or the whole town
-const EYE = { street: new THREE.Vector3(0, 11, 11.5), inside: new THREE.Vector3(0, 12.5, 8.5), wide: new THREE.Vector3(0, 62, 46) };
+const EYE = { street: new THREE.Vector3(0, 11, 11.5), inside: new THREE.Vector3(0, 12.5, 8.5), wide: new THREE.Vector3(0, 88, 64) };
 // How far out (owner, 3 Nov 2026: "can they be zoomed out… Let it use the zoom"): the wheel or a pinch, within these
 const ZOOM = { phone: 1.8, laptop: 2.3, min: 0.7, max: 3 };
 const REFUSED: Record<string, string> = {
@@ -81,6 +81,8 @@ const OUTCOME_SAID: Record<string, string> = {
 };
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
+/** What a locked find is called: the key's chest (room 1, at the right place), or a box in a house (rooms 2 to 5). */
+const boxName = (n: number) => (n === 1 ? "The key's chest" : "The box");
 
 /** The tools of the key's world (owner, 3 Nov 2026: "torch light, metal detector, digger"), bought once and kept. */
 type Tool = "detector" | "spade" | "torch";
@@ -106,7 +108,6 @@ export function QuarterScene({
   huntId,
   look,
   onClose,
-  onOpenChest,
   onPenalty,
   onMoved,
   onRefused,
@@ -118,8 +119,8 @@ export function QuarterScene({
   huntId: string;
   look: AvatarLook;
   onClose: () => void;
-  /** The chest, dug up: open it (the map's usual search, which starts the Key Trial). */
-  onOpenChest: () => void;
+  /** (No longer used: the key's chest is opened here, by its puzzle.) */
+  onOpenChest?: () => void;
   /** A trap: the penalty card shows; the place closes (`moveTo`: it sent the hunter back there). */
   onPenalty: (p: Penalty & { balance: number | null; energy: number | null; moveTo?: { lng: number; lat: number } | null }) => void;
   /** The server won't open it (the hunter isn't at the place): closed, with why, never a blank scene. */
@@ -141,7 +142,6 @@ export function QuarterScene({
   const [say, setSay] = useState<string>("Walk about the place (the joystick, the arrow keys, or tap where to go). Go into the place you think it is: a wrong one bites. Out in the open, dig.");
   const [standing, setStanding] = useState(-1); // the place the hunter is in (-1: out in the town)
   const [near, setNear] = useState(-1); // the place the detector reads: the one stood in, or the nearest way in
-  const [nearRoom, setNearRoom] = useState(0); // in the treasure building: the room whose door the hunter is at
   const [wide, setWide] = useState(false); // the whole town asked for
   // The joystick on phones and tablets (Joystick.tsx): where the thumb is, read by the walking every frame.
   const joy = useRef({ x: 0, y: 0 });
@@ -165,8 +165,6 @@ export function QuarterScene({
   // (house_room_detect: only the key's room is hot); once each visit; "none": no detector.
   const [heat, setHeat] = useState<Record<string, string>>({});
   const heatAsked = useRef(new Set<string>());
-  const [roomHeat, setRoomHeat] = useState<Record<number, string>>({});
-  const roomHeatAsked = useRef(new Set<number>());
   // Who the hunter is (their own arrangement of the places, and the others at the place), what they have
   const [uid, setUid] = useState<string | null>(null);
   const uidRef = useRef("");
@@ -290,7 +288,6 @@ export function QuarterScene({
         if (tool === "detector") {
           // Ask again, now with one
           heatAsked.current.clear();
-          roomHeatAsked.current.clear();
           setHeard((h) => h + 1);
         }
         setBagNote(`${t.icon} ${t.name}: yours to keep.`);
@@ -453,9 +450,11 @@ export function QuarterScene({
         handled = i;
       }
     }
+    // The key's chest, if the right place is found already; every box, shut or opened
     const dugAt = v.rooms.findIndex((r) => r.id === v.dug);
-    if (dugAt >= 0 && v.inner) kw.setInner(dugAt, v.inner);
-    else if (dugAt >= 0 && v.rooms[dugAt].chest) kw.setChest(dugAt);
+    if (dugAt >= 0 && v.rooms[dugAt].chest) kw.setKey(dugAt);
+    kw.setBoxes(v.inner ?? null);
+    let lastHome = -1;
     let path: Point[] = [];
     let arrive: (() => void) | null = null;
     let shakeUntil = 0;
@@ -582,7 +581,6 @@ export function QuarterScene({
     let lastShown = 0;
     let shownHere = -2;
     let lastNear = -2;
-    let lastRoom = -1;
     let stepping = false;
     const asked = new Set<number>(); // locked doors already tried on this approach
     const armed = [true, true, true, true, true, true]; // room doors, ready to open as the hunter walks up
@@ -687,24 +685,25 @@ export function QuarterScene({
           }
         });
       }
-      // In the treasure building: walking up to a room's door opens its puzzle; the detector reads the room
-      let roomNow = 0;
-      if (v?.inner && here >= 0 && v.rooms[here]?.id === v.dug) {
-        const spots = kw.innerDoors(here);
-        spots.forEach((s, k) => {
-          const d = dist(at, s);
-          if (d < 1.8 && (!roomNow || d < dist(at, spots[roomNow - 1]))) roomNow = k + 1;
-          if (d > 1.2) armed[k + 1] = true;
-          else if (d < 0.5 && armed[k + 1] && !v.inner?.[k]?.open && !roomPuzzleRef.current && !busyRef.current) {
-            armed[k + 1] = false;
-            void openRoomRef.current(k + 1);
-          }
-        });
-        roomNow = kw.innerAt(at) || roomNow;
+      // A locked box in a house (or the key's chest), walked up to: its puzzle opens (owner, 4 Nov 2026: "do not keep
+      // all the item in one house")
+      const spots = kw.boxSpots();
+      if (now - lastShown < 1) el.parentElement?.setAttribute("data-boxes", JSON.stringify(spots)); // tests read it
+      for (const [key, spot] of Object.entries(spots)) {
+        const n = Number(key);
+        const d = dist(at, spot);
+        if (d > 1.6) armed[n] = true;
+        else if (d < 0.7 && armed[n] && !v?.inner?.[n - 1]?.open && !roomPuzzleRef.current && !busyRef.current) {
+          armed[n] = false;
+          void openRoomRef.current(n);
+        }
       }
-      if (roomNow !== lastRoom) {
-        lastRoom = roomNow;
-        setNearRoom(roomNow);
+      // Into a small house: what's there (a box, or nothing at all)
+      const home = kw.homeAt(at);
+      if (home !== lastHome) {
+        lastHome = home;
+        if (home >= 0) setSay(kw.homeBox(home) ? "📦 Inside a house: a locked box at the back. Walk up to it to try its lock." : "🏚 Inside a house: nothing here.");
+        el.parentElement?.setAttribute("data-home", String(home)); // tests read it
       }
       // The detector, from the street too (owner, 3 Nov 2026: "the metal detector helps in locating where treasures are buried")
       const nearNow = here >= 0 ? here : kw.places.findIndex((p) => dist(at, p.front) < NEAR_M);
@@ -715,7 +714,7 @@ export function QuarterScene({
 
       // Where the hunter is, for the others here (a few times a second while walking; out of sight inside a place)
       const ch = channelRef.current;
-      const inPlace = here >= 0;
+      const inPlace = here >= 0 || home >= 0; // out of sight inside any house
       // Only over the open connection (never one web request each, should it drop)
       if (ch && ch.state === "joined" && now - lastSent > 250 && (now - lastSent > 2000 || dist(at, sent) > 0.05 || inPlace !== sent.in)) {
         lastSent = now;
@@ -861,21 +860,18 @@ export function QuarterScene({
       const v = viewRef.current;
       if (!s || !v || busyRef.current || dodge || roomPuzzleRef.current || diggingRef.current) return;
       const kw = s.world;
-      if (tap === "chest") {
-        setSay("You kneel by the chest…");
-        return onOpenChest();
-      }
+      if (tap === "chest") return void openRoomRef.current(1);
       if (tap === "ground" || tap === "hall") {
         if (x === undefined || z === undefined) return;
         await s.walkTo(kw.route(s.at(), { x, z }));
         return;
       }
       if (tap === "inner") {
-        const here = kw.placeAt(s.at());
-        if (here < 0) return;
+        // A box (or the key's chest): walk up to it, and its lock
         const n = Number(id);
-        const spot = kw.innerDoors(here)[n - 1];
-        if (spot) await s.walkTo(kw.route(s.at(), spot));
+        const spot = kw.boxSpots()[n];
+        if (!spot) return;
+        await s.walkTo(kw.route(s.at(), spot));
         if (!roomPuzzleRef.current) await openRoomRef.current(n);
         return;
       }
@@ -911,7 +907,7 @@ export function QuarterScene({
     };
     window.addEventListener("loota:house-tap", onTap);
     return () => window.removeEventListener("loota:house-tap", onTap);
-  }, [dodge, huntId, onOpenChest, supabase]);
+  }, [dodge, huntId, supabase]);
 
   /** Walked into a place: a building is searched as the hunter goes in; out in the open, they choose to dig. */
   useEffect(() => {
@@ -927,22 +923,22 @@ export function QuarterScene({
   const opening = useRef(false);
   async function openRoom(n: number) {
     const v = viewRef.current;
-    if (!v?.dug || !v.inner || busyRef.current || opening.current || roomPuzzleRef.current) return;
+    if (!v?.inner || busyRef.current || opening.current || roomPuzzleRef.current) return;
     const cell = v.inner[n - 1];
     if (!cell) return;
-    if (cell.open) return setSay(`Room ${n}: ${OUTCOME_SAID[cell.outcome ?? ""] ?? "opened already."}`);
+    if (cell.open) return setSay(`${boxName(n)}: ${OUTCOME_SAID[cell.outcome ?? ""] ?? "opened already."}`);
     opening.current = true;
     setBusy(true);
     try {
       const res = await fetch("/api/house/room", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: n }) });
       const r = (await res.json().catch(() => null)) as { ok?: boolean; reason?: string; kind?: string; puzzle?: unknown; open?: boolean; seconds?: number; secondsLeft?: number } | null;
-      if (r?.reason === "jammed") return setSay(`⏳ Room ${n}'s lock is jammed: try again in ${Math.max(1, Math.ceil(r.seconds ?? 30))} s.`);
+      if (r?.reason === "jammed") return setSay(`⏳ ${boxName(n)}'s lock is jammed: try again in ${Math.max(1, Math.ceil(r.seconds ?? 30))} s.`);
       if (!r?.ok || !r.kind) return setSay(REFUSED[r?.reason ?? ""] ?? "The door won't budge right now.");
       setRoomNote(null);
       const left = Math.max(1, Math.min(60, r.secondsLeft ?? 60));
       setRoomLeft(left);
       setRoomPuzzle({ n, kind: r.kind, puzzle: r.puzzle, ends: Date.now() + left * 1000 });
-      setSay(`🚪 Room ${n} is locked by a puzzle: solve it in 60 seconds to open the door.`);
+      setSay(`🔒 ${boxName(n)} is locked by a puzzle: solve it in 60 seconds to open it.`);
     } finally {
       opening.current = false;
       setBusy(false);
@@ -960,14 +956,14 @@ export function QuarterScene({
     const rp = roomPuzzle;
     const s = scene.current;
     const v = viewRef.current;
-    if (!rp || !v?.dug || busyRef.current) return;
+    if (!rp || !v || busyRef.current) return;
     setBusy(true);
     try {
       const res = await fetch("/api/house/room/solve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: rp.n, answer }) });
       const r = (await res.json().catch(() => null)) as Opened | null;
       if (r?.reason === "late") {
         setRoomPuzzle(null);
-        return setSay(`⏳ Too slow: Room ${rp.n}'s lock jams for 30 s. Then it has a new puzzle.`);
+        return setSay(`⏳ Too slow: ${boxName(rp.n)}'s lock jams for 30 s. Then it has a new puzzle.`);
       }
       if (!r?.ok) return setRoomNote(REFUSED[r?.reason ?? ""] ?? "Something went wrong. Try again.");
       if (!r.right) {
@@ -978,25 +974,25 @@ export function QuarterScene({
       const inner = (v.inner ?? []).map((c) => (c.n === rp.n ? { ...c, open: true, outcome: r.outcome ?? null } : c));
       setView((old) => (old ? { ...old, inner } : old));
       const here = v.rooms.findIndex((room) => room.id === v.dug);
-      s?.world.setInner(here, inner);
+      s?.world.setBoxes(inner);
       if (r.outcome === "coins") {
-        setSay(`💰 Room ${rp.n}: a pile of coins! +${r.coins ?? 25}.`);
+        setSay(`💰 ${boxName(rp.n)}: a pile of coins! +${r.coins ?? 25}.`);
         if (r.balance != null) {
           onCoins?.(r.balance);
           setMe((m) => (m ? { ...m, coins: Number(r.balance) } : m));
         }
       } else if (r.outcome === "chapter") {
-        setSay(`📜 Room ${rp.n}: a page of the story! Chapter ${r.chapter ?? ""} is open on your scroll.`);
+        setSay(`📜 ${boxName(rp.n)}: a page of the story! Chapter ${r.chapter ?? ""} is open on your scroll.`);
         window.dispatchEvent(new Event("loota:story-open"));
       } else if (r.outcome === "key") {
-        setSay(`🗝 Room ${rp.n}: the key!`);
+        setSay(`🗝 ${boxName(rp.n)}: the key!`);
         window.setTimeout(() => onKey?.(r.award), 1500);
       } else if (r.penalty) {
         const pen = r.penalty;
-        setSay(r.outcome === "decoy" ? `💀 Room ${rp.n}: a chest… it's a fake!` : `⚠️ Room ${rp.n}: a trap!`);
+        setSay(r.outcome === "decoy" ? `💀 ${boxName(rp.n)}: a chest… it's a fake!` : `⚠️ ${boxName(rp.n)}: a trap!`);
         if (here >= 0) s?.trap(pen.scene, here);
         window.setTimeout(() => onPenalty(pen), 1300);
-      } else setSay(`Room ${rp.n}: ${OUTCOME_SAID[r.outcome ?? ""] ?? "empty."}`);
+      } else setSay(`${boxName(rp.n)}: ${OUTCOME_SAID[r.outcome ?? ""] ?? "empty."}`);
     } finally {
       setBusy(false);
     }
@@ -1012,7 +1008,7 @@ export function QuarterScene({
       if (left > 0) return;
       window.clearInterval(t);
       setRoomPuzzle((p) => (p?.n === n ? null : p));
-      setSay(`⏳ Too slow: Room ${n}'s lock jams for 30 s. Then it has a new puzzle.`);
+      setSay(`⏳ Too slow: ${boxName(n)}'s lock jams for 30 s. Then it has a new puzzle.`);
     }, 250);
     return () => window.clearInterval(t);
   }, [roomPuzzle]);
@@ -1029,24 +1025,6 @@ export function QuarterScene({
       setHeat((h) => ({ ...h, [room]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
     });
   }, [near, huntId, supabase, heard]);
-  // …and in the treasure building, each room: only the key's room is hot (owner: "the metal detector should only
-  // detect the key not the next chapter or the coins")
-  useEffect(() => {
-    if (!nearRoom || roomHeatAsked.current.has(nearRoom)) return;
-    const n = nearRoom;
-    roomHeatAsked.current.add(n);
-    void supabase.rpc("house_room_detect", { p_hunt: huntId, p_room: n }).then(({ data }) => {
-      const d = data as { ok: boolean; reason?: string; heat?: string } | null;
-      if (!d?.ok && d?.reason !== "no_detector") {
-        // Asked a moment before the server had the hunter inside: ask again in a moment
-        roomHeatAsked.current.delete(n);
-        window.setTimeout(() => setHeard((h) => h + 1), 800);
-        return;
-      }
-      setRoomHeat((h) => ({ ...h, [n]: d?.ok && d.heat ? d.heat : "none" }));
-    });
-  }, [nearRoom, huntId, supabase, heard]);
-
   /** Searching a place (a building, as the hunter walks in; open ground, with ⛏ Dig here): the server decides (a
    * trap's challenge, nothing, the treasure building's rooms, or a buried chest). */
   async function search(i: number) {
@@ -1072,29 +1050,26 @@ export function QuarterScene({
       const open = v.rooms[i].outdoor === true;
       if (r.trap && r.dodge) {
         s.shake();
-        setSay(open ? `Your spade hits something that clicks…` : `Something clicks under your foot…`);
+        setSay(open ? `⚠️ Your spade hits something that clicks… a trap! The key isn't here.` : `⚠️ Something clicks under your foot… a trap! The key isn't here.`);
         setDodge({ room: i, ...r.dodge });
         return;
       }
       if (r.trap && r.penalty) {
         const pen = r.penalty;
         s.trap(pen.scene, i);
-        setSay("…");
-        setTimeout(() => onPenalty(pen), 1300);
+        setSay(`⚠️ ${v.rooms[i].name} was a trap: the key isn't here. Your chapter's hint says where to look.`);
+        setTimeout(() => onPenalty(pen), 1800);
         return;
       }
       const next = { ...v, ...(r as QuarterView) };
       setView(next);
       const found = next.rooms.findIndex((room) => room.chest);
-      if (found >= 0 && next.inner) {
-        s.world.setChest(null);
-        s.world.setInner(found, next.inner);
-        setSay("🔍 This is it! Five rooms, each locked by a 60-second puzzle. One holds the key; some hold traps. Walk up to a door to try it.");
-      } else {
-        s.world.setChest(found >= 0 ? found : null);
-        if (found >= 0) setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: a buried chest! Tap it to open it." : "🔍 Under the floorboards: a chest! Tap it to open it.");
-        else setSay(open ? `⛏ You dig at ${v.rooms[i].name}… only earth. It isn't here.` : `🏠 Inside ${v.rooms[i].name}… nothing here. It's empty.`);
-      }
+      if (found >= 0) {
+        // The right place: the key's chest, locked by a puzzle (room 1)
+        s.world.setKey(found);
+        s.world.setBoxes(next.inner ?? null);
+        setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: the key's chest! Walk up to it: its lock is a 60-second puzzle." : "🔍 This is it! The key's chest is here, locked by a 60-second puzzle. Walk up to it.");
+      } else setSay(open ? `⛏ You dig at ${v.rooms[i].name}… only earth. It isn't here.` : `🏠 Inside ${v.rooms[i].name}… nothing here. It's empty.`);
     } finally {
       setBusy(false);
     }
@@ -1136,10 +1111,9 @@ export function QuarterScene({
 
   const on = view && standing >= 0 ? view.rooms[standing] : null;
   const canDig = !!on?.outdoor && !busy && !dodge && !roomPuzzle && !digging && view?.dug !== on.id;
-  const inRooms = !!view?.inner && !!on && view.dug === on.id && nearRoom > 0;
   const read = view && near >= 0 ? view.rooms[near] : null;
-  const reading = inRooms ? HEAT[roomHeat[nearRoom] ?? ""] : read ? HEAT[heat[read.id] ?? ""] : null;
-  const readingOf = inRooms ? `Room ${nearRoom}` : read && standing < 0 ? read.name : "";
+  const reading = read ? HEAT[heat[read.id] ?? ""] : null;
+  const readingOf = read && standing < 0 ? read.name : "";
   return (
     <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy} data-inside={on?.id ?? ""} data-me={uid ?? ""}>
       {/* The world fills the screen; the bars float over it. */}
@@ -1154,8 +1128,8 @@ export function QuarterScene({
             <span
               className={`max-w-[45%] truncate rounded-full px-2.5 py-1 text-xs font-extrabold ${reading.style}`}
               aria-label={`Metal detector: ${reading.text}`}
-              data-detector={inRooms ? roomHeat[nearRoom] : heat[read?.id ?? ""]}
-              data-detector-at={inRooms ? `room-${nearRoom}` : read?.id}
+              data-detector={heat[read?.id ?? ""]}
+              data-detector-at={read?.id}
             >
               {reading.text}
               {readingOf ? ` · ${readingOf}` : ""}
@@ -1217,10 +1191,10 @@ export function QuarterScene({
           </div>
         )}
         {roomPuzzle && (
-          <div className="pointer-events-auto flex max-h-[70dvh] flex-col gap-2 overflow-y-auto rounded-2xl bg-ink/95 p-3 shadow-xl ring-2 ring-gold" role="dialog" aria-label={`Room ${roomPuzzle.n}`} data-room-puzzle={roomPuzzle.n}>
+          <div className="pointer-events-auto flex max-h-[70dvh] flex-col gap-2 overflow-y-auto rounded-2xl bg-ink/95 p-3 shadow-xl ring-2 ring-gold" role="dialog" aria-label={boxName(roomPuzzle.n)} data-room-puzzle={roomPuzzle.n}>
             <div className="flex items-center gap-2">
               <p className="min-w-0 flex-1 text-xs font-extrabold uppercase tracking-[0.2em] text-gold">
-                Room {roomPuzzle.n} · {PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.name ?? "A puzzle"}
+                {boxName(roomPuzzle.n)} · {PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.name ?? "A puzzle"}
               </p>
               <span className={`rounded-full px-2 py-0.5 font-mono text-sm font-extrabold tabular-nums ${roomLeft <= 10 ? "bg-danger text-white" : "bg-ink-2 text-gold"}`} aria-label={`${roomLeft} seconds left`} data-room-left={roomLeft}>
                 ⏱ {roomLeft}s

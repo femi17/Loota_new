@@ -7,7 +7,9 @@
 //   2. walking (the arrow keys): the hunter moves, and a wall stops them;
 //   3. into the wishing fountain (a trap) just by walking in: its challenge, dodged;
 //   4. into the comic book stall: empty, nothing at all;
-//   5. into the noodle stall (the right one): its five rooms; at each room's door the detector says hot only at the
+//   5. the finds spread over the town (owner, 4 Nov 2026: "do not keep all the item in one house… Let all the small
+//      house be able to enter"): four locked boxes in four small houses, walked into; into the noodle stall (the right
+//      one): the key's chest;
 //      key's room;
 //   6. walking up to the key's room door: its puzzle opens; solved: the key.
 // The hunt and the test player are deleted.   SHOTS=<folder> node scripts/tests/key-world-browser-test.mjs
@@ -161,31 +163,37 @@ try {
   const empty = await until(async () => /It's empty/.test(await say()) && (await say()), 25000);
   check("walking into an innocent house: empty, just nothing", !!empty, empty ?? (await say()));
 
-  // 5. The noodle stall: five rooms; the detector hot only at the key's room
-  await tap({ tap: "room", id: "noodles" });
-  const rooms = await until(async () => /Five rooms/.test(await say()) && (await say()), 25000);
-  check("walking into the right house: its five rooms", !!rooms, rooms ?? (await say()));
-  await wait(1500);
-  await page.screenshot({ path: `${OUT}/world-4-rooms.png` });
-  const order = (await admin.rpc("house_inner_order", { p_user: id, p_hunt: huntId, p_key: 1 })).data;
-  const keyRoom = order.indexOf("key") + 1;
-  const readings = {};
-  for (let n = 1; n <= 5; n++) {
-    // To each door, in the hall (the walk opens the room's puzzle: closed again for the reading)
+  // 5. The boxes: each in a small house of its own, walked into; its lock opens as the hunter walks up
+  const boxes = JSON.parse((await attr("data-boxes")) ?? "{}");
+  check("four locked boxes in the town", ["2", "3", "4", "5"].every((n) => boxes[n]) && !boxes["1"], Object.keys(boxes).join(","));
+  const houses = [];
+  for (const n of [2, 3, 4, 5]) {
     await tap({ tap: "inner", id: String(n) });
-    await until(() => page.evaluate(() => !!document.querySelector("[data-room-puzzle]")), 15000);
-    const r = await until(async () => { const d = await detector(); return d?.at === `room-${n}` && d.heat ? d.heat : null; }, 10000);
-    readings[n] = r;
-    if (n === keyRoom) await page.screenshot({ path: `${OUT}/world-5-room-puzzle.png` });
+    const open = await until(() => page.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), n), 30000);
+    houses.push(open ? await attr("data-home") : null);
+    if (n === 2) {
+      await wait(800);
+      await page.screenshot({ path: `${OUT}/world-4-house-box.png` });
+    }
     await page.evaluate(() => document.querySelector('[aria-label="Close the puzzle"]')?.click());
     await wait(300);
   }
-  check("the detector at each room: hot only at the key's", Object.entries(readings).every(([n, h]) => (Number(n) === keyRoom ? h === "hot" : h === "cold")), `key in room ${keyRoom}: ${JSON.stringify(readings)}`);
+  check("…each in a small house of its own, walked into (its lock opens at the box)", houses.every((h) => h !== null && Number(h) >= 0) && new Set(houses).size === 4, houses.join(", "));
+  const said = await say();
+  check("…and the house says so", /locked box|The box is locked/.test(said), said);
 
-  // 6. Walking up to the key's door: its puzzle; solved, the key
-  await tap({ tap: "inner", id: String(keyRoom) });
+  // 6. The noodle stall: the key's chest; walked up to, its puzzle; solved, the key
+  await tap({ tap: "room", id: "noodles" });
+  const rooms = await until(async () => /key's chest/.test(await say()) && (await say()), 25000);
+  check("walking into the right house: the key's chest, locked", !!rooms, rooms ?? (await say()));
+  const hot = await until(async () => ((await detector())?.heat === "hot" ? await detector() : null), 10000);
+  check("…the detector: hot here, the key's place", !!hot && hot.at === "noodles", JSON.stringify(await detector()));
+  await wait(1200);
+  await page.screenshot({ path: `${OUT}/world-5-key-chest.png` });
+  const keyRoom = 1;
+  await tap({ tap: "inner", id: "1" });
   const sheet = await until(() => page.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), keyRoom), 15000);
-  check("at the key's room door: its puzzle opens", !!sheet);
+  check("at the key's chest: its puzzle opens", !!sheet);
   const dark = await page.evaluate(() => document.querySelector("[data-room-puzzle] [data-dark]")?.getAttribute("data-dark"));
   check("…dark in there without a torch (the board dimmed)", dark === "true", String(dark));
   const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", keyRoom).single()).data;

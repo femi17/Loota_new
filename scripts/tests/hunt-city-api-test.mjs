@@ -66,13 +66,13 @@ try {
 
   // ---- No rooms until the right building is searched
   let v = await rpc("house_view", { p_hunt: huntId });
-  check("the city opens; no rooms yet", v?.ok && !v.inner, JSON.stringify({ ok: v?.ok, inner: v?.inner }));
+  check("the city opens; its boxes all shut (the key's chest and the four in the houses)", v?.ok && Array.isArray(v.inner) && v.inner.length === 5 && v.inner.every((x) => !x.open), JSON.stringify({ ok: v?.ok, inner: v?.inner }));
   r = await api("/api/house/room", { hunt: huntId, room: 1 });
   check("…a room's puzzle before finding the building: refused", r?.ok === false && r.reason === "not_inside", JSON.stringify(r));
   r = await rpc("house_enter", { p_hunt: huntId, p_room: "books" });
-  check("searching the empty building: nothing, no rooms", r?.ok && !r.trap && !r.inner, JSON.stringify({ ok: r?.ok, trap: r?.trap, inner: r?.inner }));
+  check("searching the empty building: nothing (no chest)", r?.ok && !r.trap && !(r.rooms ?? []).some((x) => x.chest), JSON.stringify({ ok: r?.ok, trap: r?.trap, chest: (r?.rooms ?? []).filter((x) => x.chest) }));
   r = await rpc("house_enter", { p_hunt: huntId, p_room: "noodles" });
-  check("searching the right building: five shut rooms", r?.ok && Array.isArray(r.inner) && r.inner.length === 5 && r.inner.every((x) => !x.open), JSON.stringify(r?.inner));
+  check("searching the right building: the key's chest, and five shut boxes", r?.ok && (r.rooms ?? []).some((x) => x.chest) && Array.isArray(r.inner) && r.inner.length === 5 && r.inner.every((x) => !x.open), JSON.stringify(r?.inner));
 
   // ---- The rooms
   const outcomes = [];

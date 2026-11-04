@@ -44,7 +44,7 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    5 plots at Key 1 growing to 7 at the last, each an OUTDOOR place named as such (its `kind`: kitchen = food stall,
    bedroom = cottage, library = book stall, cellar = well, parlour = café, bathroom = fountain, chapel = shrine,
    storeroom = yard, study = garden); one right plot (where the key is) the key's own envelope points to, trap plots that echo the near misses the story warns about, and at least 2 EMPTY (safe) plots: just nothing (owner, 3 Nov 2026: "some houses might be empty, no decoy just nothing"); things to find and
-   items only in some quarters (bible 3b). Each plot is a building (searched: the right one holds five puzzle rooms) or
+   items only in some quarters (bible 3b). Each plot is a building (walked into: the right one holds the key's chest, a 60-second puzzle; the coins, next chapter, fake chest and trap are boxes in the town's own small houses, not story places) or
    OPEN-AIR (`"outdoor": true`: a yard, a garden, a well, a square; dug: the right one holds a buried chest, "no need to
    enter a house, the metal detector helps here"). Mix them: in some quarters the key is in a building, in others buried. Walking into a
    building searches it (a trap building springs as the hunter goes in). Give each quarter a `scene` so the key's

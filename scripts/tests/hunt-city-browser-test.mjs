@@ -6,7 +6,7 @@
 //   1. 🧭 Explore the place: the city, its buildings and their names;
 //   2. into the fountain house: going in springs its trap (the key's world, 3 Nov 2026); the detector says cold;
 //      dodged;
-//   3. into the noodle shop: hot; walked into, its five rooms;
+//   3. into the noodle shop: hot; walked into, the key's chest;
 //   4. room by room: each door opens on its puzzle; solved, it opens on what it held (coins, the next chapter, a
 //      decoy, a trap: their penalty card), until the key: the city closes and the hunt card has Key 1.
 // The hunt and the test player are deleted.   SHOTS=<folder> node scripts/tests/hunt-city-browser-test.mjs
@@ -111,64 +111,61 @@ try {
   await tap({ tap: "room", id: "noodles" });
   const hot = await until(async () => (await detector()) === "hot", 15000);
   check("into the noodle shop: the detector says hot", !!hot, String(await detector()));
-  const rooms = await until(async () => /Five rooms/.test(await say()) && (await say()), 20000);
-  check("🔍 walked in: its five rooms", !!rooms, rooms ?? (await say()));
+  const rooms = await until(async () => /key's chest/.test(await say()) && (await say()), 20000);
+  check("🔍 walked in: the key's chest, locked", !!rooms, rooms ?? (await say()));
   await wait(1200);
   await page.screenshot({ path: `${OUT}/city-3-rooms.png` });
 
-  // 4. Room by room, until the key
+  // 4. The boxes in the town's houses (the coins, the next chapter, a fake chest, a trap: each in a house of its own),
+  //    then the key's chest in the noodle shop
   const seen = [];
+  const housesSeen = [];
+  const answerOf = (stored) => (stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution);
   let keyed = false;
-  for (let n = 1; n <= 5 && !keyed; n++) {
+  for (const n of [2, 3, 4, 5, 1]) {
     if (!(await inCity())) await explore();
-    // In the noodle shop (back in after a trap)
-    if ((await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-inside"), SCENE)) !== "noodles") {
-      await tap({ tap: "room", id: "noodles" });
-      await until(async () => (await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-inside"), SCENE)) === "noodles", 20000);
-      await idle();
-    }
     await tap({ tap: "inner", id: String(n) });
-    const sheet = await until(() => page.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), n), 20000);
+    const sheet = await until(() => page.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), n), 30000);
     if (!sheet) {
-      check(`room ${n}: its puzzle`, false, await say());
+      check(`box ${n}: its puzzle`, false, await say());
       continue;
     }
-    if (n === 1) {
+    if (n !== 1) housesSeen.push(await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-home"), SCENE));
+    if (n === 2) {
       await page.screenshot({ path: `${OUT}/city-4-room-puzzle.png` });
       await page.evaluate(() => window.__lootaRoomSolve?.(["WRONG"]));
       const wrong = await until(async () => /Not quite/.test(await page.evaluate(() => document.body.innerText)), 10000);
-      check("a wrong answer: the door stays shut", !!wrong);
+      check("a wrong answer: the box stays shut", !!wrong);
       // 60 seconds a puzzle (owner, 3 Nov 2026): the clock shows; past it, the answer is too late and the lock jams
       const left = Number(await page.evaluate(() => document.querySelector("[data-room-left]")?.getAttribute("data-room-left")));
-      check("the room's clock: 60 seconds", left > 45 && left <= 60, `${left} s`);
-      const first = (await admin.from("house_room_puzzles").select("solution, tries").eq("user_id", id).eq("hunt_id", huntId).eq("room", 1).single()).data;
-      await admin.from("house_room_puzzles").update({ started_at: ago(70) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 1);
-      const ans1 = first.solution.map((col, row) => [row, col]); // room 1 is Sentries
-      await page.evaluate((a) => window.__lootaRoomSolve?.(a), ans1);
+      check("the box's clock: 60 seconds", left > 45 && left <= 60, `${left} s`);
+      const first = (await admin.from("house_room_puzzles").select("kind, solution, tries").eq("user_id", id).eq("hunt_id", huntId).eq("room", 2).single()).data;
+      await admin.from("house_room_puzzles").update({ started_at: ago(70) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 2);
+      await page.evaluate((a) => window.__lootaRoomSolve?.(a), answerOf(first));
       const late = await until(async () => /Too slow/.test(await say()) && !(await page.evaluate(() => !!document.querySelector("[data-room-puzzle]"))) && (await say()), 10000);
       check("the right answer, after 60 s: too late, the sheet closes", !!late, late ?? (await say()));
-      await tap({ tap: "inner", id: "1" });
+      await tap({ tap: "inner", id: "2" });
       const jammed = await until(async () => /jammed/.test(await say()) && (await say()), 10000);
       check("…the lock is jammed for a while", !!jammed, jammed ?? (await say()));
-      await admin.from("house_room_puzzles").update({ started_at: ago(100) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 1);
-      await tap({ tap: "inner", id: "1" });
-      const again = await until(() => page.evaluate(() => !!document.querySelector('[data-room-puzzle="1"]')), 15000);
-      const next = (await admin.from("house_room_puzzles").select("tries, solved_at").eq("user_id", id).eq("hunt_id", huntId).eq("room", 1).single()).data;
+      await admin.from("house_room_puzzles").update({ started_at: ago(100) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 2);
+      await tap({ tap: "inner", id: "2" });
+      const again = await until(() => page.evaluate(() => !!document.querySelector('[data-room-puzzle="2"]')), 15000);
+      const next = (await admin.from("house_room_puzzles").select("tries, solved_at").eq("user_id", id).eq("hunt_id", huntId).eq("room", 2).single()).data;
       check("…after the jam: a new puzzle, a new try", !!again && next.tries === first.tries + 1 && !next.solved_at, `tries ${first.tries} → ${next.tries}`);
     }
     const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", n).single()).data;
-    const answer = stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution;
-    await page.evaluate((a) => window.__lootaRoomSolve?.(a), answer);
-    const said = await until(async () => { const t = await say(); return new RegExp(`Room ${n}:`).test(t) ? t : null; }, 15000);
+    await page.evaluate((a) => window.__lootaRoomSolve?.(a), answerOf(stored));
+    const said = await until(async () => { const t = await say(); return (n === 1 ? /The key's chest: / : /The box: /).test(t) ? t : null; }, 15000);
     const outcome = (await admin.from("house_room_puzzles").select("outcome").eq("user_id", id).eq("hunt_id", huntId).eq("room", n).single()).data?.outcome;
     seen.push(outcome);
-    check(`room ${n} (${stored.kind}) solved: ${outcome}`, !!said && !!outcome, said ?? "");
+    check(`${n === 1 ? "the key's chest" : `box ${n}`} (${stored.kind}) solved: ${outcome}`, !!said && !!outcome, said ?? "");
     if (outcome === "decoy" || outcome === "trap") {
       const card = await until(() => page.evaluate(() => !!document.querySelector('[aria-label^="A trap:"]')), 10000);
       check(`…its penalty card`, !!card);
       await page.screenshot({ path: `${OUT}/city-5-${outcome}.png` });
       await press("Get up");
       await admin.from("player_positions").update({ lng: PLACE.lng, lat: PLACE.lat, updated_at: ago(30) }).eq("user_id", id); // back at the place (a test shortcut)
+      await admin.from("hunt_players").update({ house_out_until: null }).eq("hunt_id", huntId).eq("user_id", id);
       await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
     }
     if (outcome === "key") {
@@ -181,7 +178,8 @@ try {
       await page.screenshot({ path: `${OUT}/city-6-key.png` });
     }
   }
-  check("rooms until the key, each different", keyed && new Set(seen).size === seen.length, seen.join(", "));
+  check("the four boxes: four different houses", housesSeen.length === 4 && new Set(housesSeen).size === 4 && housesSeen.every((h) => Number(h) >= 0), housesSeen.join(", "));
+  check("the coins, the chapter, a fake chest and a trap in the houses, the key in its chest", keyed && seen[4] === "key" && new Set(seen.slice(0, 4)).size === 4 && !seen.slice(0, 4).includes("key"), seen.join(", "));
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

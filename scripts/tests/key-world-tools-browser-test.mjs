@@ -9,7 +9,7 @@
 //   3. Kofi joins: Ama sees 👥 1 and him walking; Kofi's places stand on lots of his own (copying leads elsewhere);
 //      Kofi goes into a place: out of Ama's sight;
 //   4. Ama digs at the water tank by hand: a minute on the spot (the server won't dig it sooner); she stops, buys a
-//      spade (80) and digs again: at once, the buried chest.
+//      spade (80) and digs again: at once, the key's chest.
 // The hunt and the test players are deleted.   SHOTS=<folder> node scripts/tests/key-world-tools-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -153,8 +153,8 @@ try {
   check("…a spade bought there (80 coins)", !!spade && !!paid, await data(ama.page, "data-coins"));
   await press(ama.page, "^Stop$");
   await until(() => press(ama.page, "Dig here"), 10000);
-  const chest = await until(async () => /buried chest/.test(await say(ama.page)) && (await say(ama.page)), 10000);
-  check("with the spade: dug at once, the buried chest", !!chest, chest ?? (await say(ama.page)));
+  const chest = await until(async () => /key's chest/.test(await say(ama.page)) && (await say(ama.page)), 10000);
+  check("with the spade: dug at once, the key's chest", !!chest, chest ?? (await say(ama.page)));
   await ama.page.screenshot({ path: `${OUT}/tools-4-chest.png` });
   check("no page errors", ama.problems.length + kofi.problems.length === 0, [...ama.problems, ...kofi.problems].join(" / "));
 } catch (e) {

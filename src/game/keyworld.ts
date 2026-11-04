@@ -21,7 +21,7 @@ export type Rect = { x0: number; x1: number; z0: number; z1: number };
 /** What the key's place looks like (the story's house.scene). */
 export type KeyScene = { ground?: "city" | "salt" | "desert"; pieces?: string[] };
 
-export const REACH = 37; // the world's edge, each way from the middle
+export const REACH = 44; // the world's edge, each way from the middle (the big houses wall it in from 37.5 m)
 const RING = 15; // the square and the street round it, out to here
 const SPOKE = 2.5; // half a street's width, from the ring out to the edge
 const BW = 11; // a story place: along the street…
@@ -244,8 +244,10 @@ export type WorldPlace = {
   front: Point;
   inside: Point;
 };
-/** The treasure building's five rooms, built once it's found. */
-type Inner = { group: THREE.Group; rooms: { n: number; centre: Point; spot: Point; area: Rect; door: THREE.Object3D; solid: Solid; content: THREE.Group }[]; walls: Solid[] };
+/** A small house of the town, walked into by its door (its roof lifts off inside). */
+type Home = { centre: Point; facing: number; area: Rect; front: Point; inside: Point; frame: THREE.Group; walls: THREE.Group; roof: THREE.Group; shade: THREE.Object3D; open: number; ghost: number; mats: THREE.Material[]; ld: number };
+/** A locked box (rooms 2 to 5, in small houses) or the key's chest (room 1, at the right place). */
+type Box = { n: number; spot: Point; group: THREE.Group; lock: THREE.Object3D; content: THREE.Group; home: number };
 
 export type KeyWorld = {
   group: THREE.Group;
@@ -263,13 +265,16 @@ export type KeyWorld = {
   /** Where to stand to touch a thing. */
   objectSpot(id: string): Point | null;
   setLocked(i: number, locked: boolean): void;
-  setChest(i: number | null): void;
-  /** The treasure building's five rooms (null: none showing), each shut or opened with what it held. */
-  setInner(i: number | null, list: InnerRoomView[] | null): void;
-  /** The treasure building's rooms: where to stand at each door (in the hall), and which room the hunter is in. */
-  innerDoors(i: number): Point[];
-  innerAt(p: Point): number;
-  /** The treasure building's rooms dark (no torch) or lit. */
+  /** The key's chest (room 1) at the right place, once it's found (null: not found). */
+  setKey(i: number | null): void;
+  /** Each box shut, or opened with what it held. */
+  setBoxes(list: InnerRoomView[] | null): void;
+  /** Where to stand to open each box that's showing (by room number). */
+  boxSpots(): Record<number, Point>;
+  /** The small house the hunter is in (its index), or −1; and the box in it (its room number), or 0. */
+  homeAt(p: Point): number;
+  homeBox(i: number): number;
+  /** The small houses dark inside (no torch) or lit. */
   setDark(dark: boolean): void;
   /** Night (1) to day (0): the street lamps glow. */
   setNight(night: number): void;
@@ -309,6 +314,12 @@ function entry(a: Point, b: Point, r: Rect) {
 function hash(text: string) {
   let h = 2166136261;
   for (let k = 0; k < text.length; k++) h = Math.imul(h ^ text.charCodeAt(k), 16777619);
+  // Stirred well at the end, so strings that differ only in their last character land far apart
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
   return h >>> 0;
 }
 /** Its materials made its own, so it can turn see-through without touching anything else. */
@@ -510,7 +521,7 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
   }
   if (pieces.has("river")) {
     // A river along the far south, a stone quay wall, and the booksellers' green boxes on it
-    group.add(flat(REACH * 2 + 60, 14, "#4F8FB8", 0, REACH - 2, 0.04));
+    group.add(flat(REACH * 2 + 60, 9, "#4F8FB8", 0, 33.8, 0.04)); // between the quay and the big houses
     const wall = new THREE.Group();
     wall.add(box(REACH * 2 + 4, 0.9, 0.6, "#BFB3A2", 0, 0.45, 29.6, false));
     for (let x = -REACH + 2; x < REACH; x += 3.6) if (Math.abs(x) > SPOKE + 1) wall.add(box(1.6, 0.6, 0.6, "#2F5A3A", x, 1.2, 29.6, false), box(1.7, 0.08, 0.7, "#24472E", x, 1.53, 29.6, false));
@@ -559,7 +570,6 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
   const places: WorldPlace[] = [];
   const views: { walls: THREE.Group; roof: THREE.Group; open: number; ghost: number; area: Rect; frame: THREE.Group; low: boolean; mats: THREE.Material[] }[] = [];
   const gates: (Solid & { mesh: THREE.Object3D })[] = [];
-  const chests: THREE.Object3D[] = [];
   const furniture: { group: THREE.Group; solid: Solid }[] = [];
   const objectSpots = new Map<string, Point>();
   const FACADES = ["#E8D5B0", "#C9A0A0", "#A0B8C9", "#E0D4A0", "#B5A0C9", "#D9B99B", "#A8C9A0"];
@@ -632,62 +642,23 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
         frame.add(m);
         objectSpots.set(o.id, at(c, f, lx + (j === 0 ? 1.2 : j === 1 ? -1.2 : 0), lz + (j === 2 ? -1.2 : 0)));
       });
-    // The chest (buried, in the open)
-    const chest = tag(makeChest(), "chest", r.id);
-    chest.position.set(-2.6, 0.1, 1.6);
-    chest.visible = false;
-    frame.add(chest);
-    chests.push(chest);
     views.push({ walls, roof: top, open: 0, ghost: 0, area, frame, low: outdoor, mats: outdoor ? [] : [...fadeable(walls), ...fadeable(top)] });
   });
 
-  // ---- The town: buildings wherever there's room, facing the nearest street
+  // ---- The town (owner, 4 Nov 2026: "let all the big houses form the parameter fence while the small houses stay in
+  // the front, sides and all. Let all the small house be able to enter, so we can see inside"): big blocks wall the
+  // town in all round its edge; small houses fill the streets inside, each with a door to walk in by.
   const fillers: { group: THREE.Group; area: Rect; ghost: number; h: number; mats: THREE.Material[] }[] = [];
   const towns = ["#D9B99B", "#C9A0A0", "#A0B8C9", "#E0D4A0", "#B5A0C9", "#E8D5B0"];
-  const tryBuild = (x: number, z: number, w: number, d: number) => {
-    const area = { x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 };
-    if (Math.abs(x) + w / 2 > REACH + 6 || Math.abs(z) + d / 2 > REACH + 6) return false;
-    if (taken.some((t) => overlaps(area, t, 1.2))) return false;
-    taken.push(area);
-    // Facing the nearest street: the square, or a street out to the edge
+  const sparse = ground !== "city";
+  const WALL = REACH - 6.5; // where the big houses begin, all round
+  /** Which way a building at x, z faces: its door to the nearest street (the square's, or one out to the edge). */
+  const facingAt = (x: number, z: number) => {
     const toSquare = Math.max(Math.abs(x), Math.abs(z)) - RING;
     const toSpoke = Math.min(Math.abs(x), Math.abs(z));
-    const f = toSpoke < toSquare
+    return toSpoke < toSquare
       ? Math.abs(x) < Math.abs(z) ? (x > 0 ? -Math.PI / 2 : Math.PI / 2) : z > 0 ? Math.PI : 0
       : Math.abs(x) > Math.abs(z) ? (x > 0 ? -Math.PI / 2 : Math.PI / 2) : z > 0 ? Math.PI : 0;
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    g.rotation.y = f;
-    const turned = Math.abs(Math.sin(f)) > 0.5;
-    const [lw, ld] = turned ? [d, w] : [w, d];
-    const colour = towns[Math.floor(rnd() * towns.length)];
-    let h = 3;
-    if (ground === "city") {
-      h = 4 + Math.floor(rnd() * 4) * 3;
-      const fx = Math.max(1, Math.round(ld / 2)), fz = Math.max(1, Math.round(lw / 2)), fy = Math.max(1, Math.round(h / 2.5));
-      const top = mat("#6B6F75");
-      const m = new THREE.Mesh(new THREE.BoxGeometry(lw, h, ld), [facade(colour, fx, fy), facade(colour, fx, fy), top, top, facade(colour, fz, fy), facade(colour, fz, fy)]);
-      m.position.y = h / 2;
-      g.add(m, box(1.1, 1.9, 0.12, "#4A2F1B", 0, 0.95, ld / 2 + 0.05, false), box(1.9, 0.12, 0.7, accents[Math.floor(rnd() * accents.length)], 0, 2.1, ld / 2 + 0.35, false));
-      if (h < 6) {
-        const cone = new THREE.Mesh(new THREE.ConeGeometry(Math.hypot(lw, ld) / 2 + 0.3, 1.8, 4), mat("#B5543A"));
-        cone.position.y = h + 0.9;
-        cone.rotation.y = Math.PI / 4;
-        g.add(cone);
-      } else g.add(box(lw + 0.3, 0.4, ld + 0.3, "#555A60", 0, h + 0.2, 0, false), cyl(0.7, 1.2, "#3B6EA5", lw / 4, h + 1, -ld / 4));
-    } else if (ground === "salt") {
-      // Low whitewashed adobe, flat roofs
-      h = 2.4 + rnd();
-      g.add(box(lw, h, ld, rnd() > 0.5 ? "#F1E9DA" : "#E3D3B8", 0, h / 2, 0), box(lw + 0.2, 0.25, ld + 0.2, "#CDBB9A", 0, h + 0.12, 0, false), box(1.0, 1.8, 0.1, "#5A3A20", 0, 0.9, ld / 2 + 0.03, false));
-    } else {
-      // Wooden sheds with pitched roofs
-      h = 2.6 + rnd();
-      g.add(box(lw, h, ld, rnd() > 0.5 ? "#9C6B44" : "#B08156", 0, h / 2, 0), roof(lw, ld, "#5A3A20", h, 1.0), box(1.0, 1.8, 0.1, "#3A2414", 0, 0.9, ld / 2 + 0.03, false));
-    }
-    group.add(g);
-    solid(area);
-    fillers.push({ group: g, area, ghost: 0, h: h + 1.8, mats: fadeable(g) });
-    return true;
   };
   // The ring's empty lots (a story with fewer places than lots): shut shops of the very same size as a place, so every
   // hunter's town has the same walls whichever places stand where
@@ -706,104 +677,150 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     solid(area);
     fillers.push({ group: g, area, ghost: 0, h: H + 0.4, mats: fadeable(g) });
   }
-  const sparse = ground !== "city";
-  for (let x = -REACH + 3; x <= REACH - 3; x += 8.5) {
-    for (let z = -REACH + 3; z <= REACH - 3; z += 8.5) {
-      if (sparse && rnd() < 0.45) continue;
-      const w = 5.5 + rnd() * 2, d = 5.5 + rnd() * 2;
-      if (!tryBuild(x + (rnd() - 0.5) * 1.5, z + (rnd() - 0.5) * 1.5, w, d) && !sparse && rnd() < 0.5) {
-        // No room for a building: a tree
-        const p = { x: x + (rnd() - 0.5) * 3, z: z + (rnd() - 0.5) * 3 };
-        const r = { x0: p.x - 0.5, x1: p.x + 0.5, z0: p.z - 0.5, z1: p.z + 0.5 };
-        if (!taken.some((t) => overlaps(r, t, 0.6))) {
-          taken.push(r);
-          solid(r);
-          group.add(cyl(0.18, 1.6, "#6B4A2B", p.x, 0.8, p.z), ball(1.0 + rnd() * 0.4, rnd() > 0.5 ? "#3E7A3A" : "#4E8E44", p.x, 2.1, p.z));
+  // The wall of big houses: tall blocks back to back all round the edge (the streets end at them)
+  const bigHouse = (x: number, z: number, w: number, d: number, f: number) => {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = f;
+    const turned = Math.abs(Math.sin(f)) > 0.5;
+    const [lw, ld] = turned ? [d, w] : [w, d];
+    const colour = towns[Math.floor(rnd() * towns.length)];
+    const h = ground === "city" ? 9 + Math.floor(rnd() * 5) * 3 : 5 + rnd() * 2;
+    if (ground === "city") {
+      const fx = Math.max(1, Math.round(ld / 2)), fz = Math.max(1, Math.round(lw / 2)), fy = Math.max(1, Math.round(h / 2.5));
+      const top = mat("#6B6F75");
+      const m = new THREE.Mesh(new THREE.BoxGeometry(lw, h, ld), [facade(colour, fx, fy), facade(colour, fx, fy), top, top, facade(colour, fz, fy), facade(colour, fz, fy)]);
+      m.position.y = h / 2;
+      g.add(m, box(lw + 0.3, 0.4, ld + 0.3, "#555A60", 0, h + 0.2, 0, false), cyl(0.7, 1.2, "#3B6EA5", lw / 4, h + 1, -ld / 4));
+    } else {
+      g.add(box(lw, h, ld, ground === "salt" ? (rnd() > 0.5 ? "#E9DFCB" : "#D8C6A6") : rnd() > 0.5 ? "#8A5C3A" : "#A3734C", 0, h / 2, 0, false), box(lw + 0.3, 0.3, ld + 0.3, ground === "salt" ? "#C9B693" : "#5A3A20", 0, h + 0.15, 0, false));
+      for (let y = 1.6; y < h - 0.6; y += 2) for (const sx of [-lw / 4, lw / 4]) g.add(box(0.8, 0.8, 0.05, "#2F3A44", sx, y, ld / 2 + 0.02, false));
+    }
+    group.add(g);
+    const area = { x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 };
+    taken.push(area);
+    solid(area);
+    fillers.push({ group: g, area, ghost: 0, h: h + 1.5, mats: fadeable(g) });
+  };
+  const SEG = 8, DEEP = 6;
+  for (let t = -REACH; t < REACH; t += SEG) {
+    const mid = t + SEG / 2;
+    bigHouse(mid, -(REACH - DEEP / 2), SEG - 0.4, DEEP, 0); // the north side, facing in
+    bigHouse(mid, REACH - DEEP / 2, SEG - 0.4, DEEP, Math.PI); // the south side
+  }
+  for (let t = -WALL; t < WALL - 0.1; t += SEG) {
+    const mid = Math.min(t + SEG / 2, WALL - SEG / 2);
+    bigHouse(-(REACH - DEEP / 2), mid, DEEP, SEG - 0.4, Math.PI / 2); // the west side
+    bigHouse(REACH - DEEP / 2, mid, DEEP, SEG - 0.4, -Math.PI / 2); // the east side
+  }
+  // The small houses, each walked into by its door
+  const homes: Home[] = [];
+  const darkMat = new THREE.MeshBasicMaterial({ color: "#05070C", transparent: true, opacity: 0.62, depthWrite: false });
+  let dark = true;
+  const tryHome = (x: number, z: number, w: number, d: number) => {
+    const area = { x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 };
+    if (Math.max(Math.abs(area.x0), Math.abs(area.x1), Math.abs(area.z0), Math.abs(area.z1)) > WALL - 1.6) return false;
+    if (taken.some((t) => overlaps(area, t, 2.0))) return false; // an alley between houses
+    taken.push(area);
+    const f = facingAt(x, z);
+    const turned = Math.abs(Math.sin(f)) > 0.5;
+    const [lw, ld] = turned ? [d, w] : [w, d];
+    const c = { x, z };
+    const frame = new THREE.Group();
+    frame.position.set(x, 0, z);
+    frame.rotation.y = f;
+    group.add(frame);
+    const colour = ground === "city" ? towns[Math.floor(rnd() * towns.length)] : ground === "salt" ? (rnd() > 0.5 ? "#F1E9DA" : "#E3D3B8") : rnd() > 0.5 ? "#9C6B44" : "#B08156";
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(lw, 0.08, ld), floorMaterial("#C9B99A", "boards", lw, ld));
+    floor.position.y = 0.04;
+    frame.add(tag(floor, "ground", "home"));
+    const walls = new THREE.Group();
+    const T = 0.18, HH = 2.7, DOOR = 0.85;
+    const wall = (lx0: number, lx1: number, lz0: number, lz1: number) => {
+      walls.add(box(lx1 - lx0, HH, lz1 - lz0, colour, (lx0 + lx1) / 2, HH / 2, (lz0 + lz1) / 2));
+      solid(rectIn(c, f, lx0, lx1, lz0, lz1));
+    };
+    wall(-lw / 2, lw / 2, -ld / 2, -ld / 2 + T);
+    wall(-lw / 2, -lw / 2 + T, -ld / 2, ld / 2);
+    wall(lw / 2 - T, lw / 2, -ld / 2, ld / 2);
+    wall(-lw / 2, -DOOR, ld / 2 - T, ld / 2);
+    wall(DOOR, lw / 2, ld / 2 - T, ld / 2);
+    walls.add(box(DOOR * 2, HH - 2.1, T, colour, 0, 2.1 + (HH - 2.1) / 2, ld / 2 - T / 2)); // over the door
+    for (const sx of [-1, 1]) walls.add(box(0.8, 0.8, 0.05, "#2F4B63", sx * (lw / 4 + 0.4), 1.6, ld / 2 + 0.01, false));
+    walls.add(box(DOOR * 2 + 0.2, 0.1, 0.6, accents[Math.floor(rnd() * accents.length)], 0, 2.2, ld / 2 + 0.3, false));
+    frame.add(walls);
+    const top = new THREE.Group();
+    if (ground === "salt") top.add(box(lw + 0.25, 0.25, ld + 0.25, "#CDBB9A", 0, HH + 0.12, 0, false));
+    else top.add(box(lw + 0.25, 0.15, ld + 0.25, "#6B4A2B", 0, HH + 0.07, 0, false), roof(lw, ld, ground === "city" ? "#B5543A" : "#5A3A20", HH + 0.1, 1.0));
+    frame.add(top);
+    // Inside: a table and a shelf (in the corners, clear of the box at the back)
+    frame.add(box(1.0, 0.75, 0.6, "#7A5230", -lw / 2 + 0.8, 0.38, 0.2), box(0.5, 1.6, 0.35, "#5C3B22", lw / 2 - 0.45, 0.8, -ld / 2 + 0.6));
+    solid(rectIn(c, f, -lw / 2 + 0.25, -lw / 2 + 1.35, -0.15, 0.55));
+    solid(rectIn(c, f, lw / 2 - 0.75, lw / 2 - 0.15, -ld / 2 + 0.3, -ld / 2 + 0.85));
+    // Dark inside, until a torch lights it
+    const shade = new THREE.Mesh(new THREE.BoxGeometry(lw - 0.4, 2.3, ld - 0.4), darkMat);
+    shade.position.y = 1.2;
+    shade.visible = false;
+    frame.add(shade);
+    homes.push({ centre: c, facing: f, area, front: at(c, f, 0, ld / 2 + 0.9), inside: at(c, f, 0, ld / 2 - 1.2), frame, walls, roof: top, shade, open: 0, ghost: 0, mats: [...fadeable(walls), ...fadeable(top)], ld });
+    return true;
+  };
+  const homeAt = (p: Point) => homes.findIndex((hm) => inside(p, hm.area, -0.25));
+  for (let pass = 0; pass < 2 && homes.length < 6; pass++) {
+    for (let x = -WALL + 4.7; x <= WALL - 4.7; x += 8.2) {
+      for (let z = -WALL + 4.7; z <= WALL - 4.7; z += 8.2) {
+        if (pass === 0 && sparse && rnd() < 0.3) continue;
+        const w = 5 + rnd() * 1.2, d = 5 + rnd() * 1.2;
+        if (!tryHome(x + (rnd() - 0.5) * (pass ? 3 : 0.8), z + (rnd() - 0.5) * (pass ? 3 : 0.8), w, d) && !sparse && rnd() < 0.4) {
+          // No room for a house: a tree
+          const p = { x: x + (rnd() - 0.5) * 3, z: z + (rnd() - 0.5) * 3 };
+          const r = { x0: p.x - 0.5, x1: p.x + 0.5, z0: p.z - 0.5, z1: p.z + 0.5 };
+          if (Math.max(Math.abs(p.x), Math.abs(p.z)) < WALL - 1 && !taken.some((t) => overlaps(r, t, 0.6))) {
+            taken.push(r);
+            solid(r);
+            group.add(cyl(0.18, 1.6, "#6B4A2B", p.x, 0.8, p.z), ball(1.0 + rnd() * 0.4, rnd() > 0.5 ? "#3E7A3A" : "#4E8E44", p.x, 2.1, p.z));
+          }
         }
       }
     }
   }
-  // Out past the edge: tall blocks in the city, far hills elsewhere (the fog softens them)
+  // Out past the wall: far blocks in the city, far hills elsewhere (the fog softens them)
   for (let k = 0; k < 36; k++) {
     const a = (k / 36) * Math.PI * 2;
-    const rr = REACH + 12 + rnd() * 6;
+    const rr = REACH + 14 + rnd() * 6;
     const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
-    if (ground === "city") group.add(box(7 + rnd() * 4, 10 + rnd() * 16, 7 + rnd() * 4, towns[k % towns.length], x, 8, z, false));
+    if (ground === "city") group.add(box(7 + rnd() * 4, 14 + rnd() * 16, 7 + rnd() * 4, towns[k % towns.length], x, 10, z, false));
     else {
-      const hill = new THREE.Mesh(new THREE.ConeGeometry(6 + rnd() * 6, 4 + rnd() * 6, 6), mat(ground === "salt" ? "#B9AFA2" : "#B07A4E"));
-      hill.position.set(x * 1.3, 2, z * 1.3);
+      const hill = new THREE.Mesh(new THREE.ConeGeometry(6 + rnd() * 6, 6 + rnd() * 6, 6), mat(ground === "salt" ? "#B9AFA2" : "#B07A4E"));
+      hill.position.set(x * 1.3, 3, z * 1.3);
       group.add(hill);
     }
   }
-  if (sparse) {
-    // A low fence round the edge
-    for (const s of [-1, 1]) {
-      group.add(box(REACH * 2, 0.6, 0.12, "#8A6A48", 0, 0.3, s * (REACH + 0.4), false), box(0.12, 0.6, REACH * 2, "#8A6A48", s * (REACH + 0.4), 0.3, 0, false));
-    }
-  }
 
-  // ---- The treasure building's five rooms (built when it's found): a hall from the door, two rooms either side of it
-  // and one across the back, each shut by a door until its puzzle is solved.
-  const inner = new Map<number, Inner>();
-  // The treasure building's rooms are dark until a torch lights them (owner, 3 Nov 2026)
-  let dark = true;
-  const shadeMat = new THREE.MeshBasicMaterial({ color: "#05070C", transparent: true, opacity: 0.66, depthWrite: false });
-  const shades: THREE.Object3D[] = [];
-  const CELLS = [
-    { n: 1, x0: -BW / 2 + 0.22, x1: -1.2, z0: 1.5, z1: BD / 2 - 0.22, door: "left", dz: 3.15 },
-    { n: 2, x0: -BW / 2 + 0.22, x1: -1.2, z0: -1.8, z1: 1.5, door: "left", dz: -0.15 },
-    { n: 3, x0: -BW / 2 + 0.22, x1: BW / 2 - 0.22, z0: -BD / 2 + 0.22, z1: -1.8, door: "back", dz: 0 },
-    { n: 4, x0: 1.2, x1: BW / 2 - 0.22, z0: -1.8, z1: 1.5, door: "right", dz: -0.15 },
-    { n: 5, x0: 1.2, x1: BW / 2 - 0.22, z0: 1.5, z1: BD / 2 - 0.22, door: "right", dz: 3.15 },
-  ] as const;
-  const buildInner = (i: number): Inner => {
-    const p = places[i];
-    const c = p.centre, f = p.facing;
+  // ---- The finds (owner, 4 Nov 2026: "do not keep all the item in one house"): the key's chest at the right place
+  // (room 1, made when it's found), and four locked boxes in small houses of the hunter's own (rooms 2 to 5: the
+  // coins, the next chapter, a fake chest and a trap, in an order of their own on the server)
+  const boxes = new Map<number, Box>();
+  const makeBox = (n: number, frame: THREE.Group, lx: number, lz: number, spot: Point, home: number, chest: boolean) => {
     const g = new THREE.Group();
-    const walls: Solid[] = [];
-    const LOW = 1.1, T = 0.16;
-    const part = (lx0: number, lx1: number, lz0: number, lz1: number) => {
-      g.add(box(lx1 - lx0, LOW, lz1 - lz0, "#BFB3A2", (lx0 + lx1) / 2, LOW / 2, (lz0 + lz1) / 2));
-      walls.push(solid(rectIn(c, f, lx0, lx1, lz0, lz1)));
-    };
-    // The hall's sides (doorways into rooms 1, 2, 4, 5), the wall between front and back rooms, the back room's wall
-    for (const s of [-1, 1]) {
-      const x0 = s * 1.2 - T / 2, x1 = s * 1.2 + T / 2;
-      part(x0, x1, -1.8, -0.75);
-      part(x0, x1, 0.45, 2.55);
-      part(x0, x1, 3.75, BD / 2 - 0.22);
-      part(s < 0 ? -BW / 2 + 0.22 : 1.2, s < 0 ? -1.2 : BW / 2 - 0.22, 1.5 - T / 2, 1.5 + T / 2);
-    }
-    part(-BW / 2 + 0.22, -0.8, -1.8 - T / 2, -1.8 + T / 2);
-    part(0.8, BW / 2 - 0.22, -1.8 - T / 2, -1.8 + T / 2);
-    const cells = CELLS.map((cell, k) => {
-      const cx = (cell.x0 + cell.x1) / 2, cz = (cell.z0 + cell.z1) / 2;
-      g.add(tag(box(cell.x1 - cell.x0 - 0.1, 0.04, cell.z1 - cell.z0 - 0.1, k % 2 ? "#E6DCC6" : "#D8CDB4", cx, 0.12, cz, false), "inner", String(cell.n)));
-      const [dx0, dx1, dz0, dz1] = cell.door === "back" ? [-0.8, 0.8, -1.8 - 0.08, -1.8 + 0.08] : cell.door === "left" ? [-1.28, -1.12, cell.dz - 0.6, cell.dz + 0.6] : [1.12, 1.28, cell.dz - 0.6, cell.dz + 0.6];
-      const door = tag(box(dx1 - dx0 || 0.1, 1.9, dz1 - dz0 || 0.1, "#7A4E2A", (dx0 + dx1) / 2, 0.95, (dz0 + dz1) / 2), "inner", String(cell.n));
-      g.add(door);
-      const held = new THREE.Group();
-      held.position.set(cx, 0.12, cz);
-      g.add(held);
-      const shade = new THREE.Mesh(new THREE.BoxGeometry(cell.x1 - cell.x0 - 0.12, 2.0, cell.z1 - cell.z0 - 0.12), shadeMat);
-      shade.position.set(cx, 1.05, cz);
-      shade.visible = dark;
-      g.add(shade);
-      shades.push(shade);
-      const spot = cell.door === "back" ? { x: 0, z: -1.3 } : { x: cell.door === "left" ? -0.74 : 0.74, z: cell.dz }; // right up at the door
-      return {
-        n: cell.n,
-        centre: at(c, f, cx, cz),
-        spot: at(c, f, spot.x, spot.z),
-        area: rectIn(c, f, cell.x0, cell.x1, cell.z0, cell.z1),
-        door,
-        solid: solid(rectIn(c, f, dx0, dx1, dz0, dz1)),
-        content: held,
-      };
-    });
-    views[i].frame.add(g);
-    return { group: g, rooms: cells, walls };
+    g.position.set(lx, 0.08, lz);
+    if (chest) g.add(makeChest());
+    else g.add(box(0.9, 0.6, 0.6, "#3B3F46", 0, 0.3, 0), box(0.94, 0.08, 0.64, "#C8A45C", 0, 0.45, 0, false), box(0.94, 0.08, 0.64, "#C8A45C", 0, 0.15, 0, false));
+    const lock = box(0.18, 0.22, 0.06, "#C8A45C", 0, chest ? 0.42 : 0.32, chest ? 0.4 : 0.33, false);
+    g.add(lock);
+    const held = new THREE.Group();
+    held.position.y = chest ? 0.7 : 0.62;
+    g.add(held);
+    frame.add(tag(g, "inner", String(n)));
+    boxes.set(n, { n, spot, group: g, lock, content: held, home });
   };
+  const homeOrder = homes.map((_, k) => k).sort((a, b) => hash(`${seat}:box:${a}`) - hash(`${seat}:box:${b}`));
+  for (let n = 2; n <= 5; n++) {
+    const k = homeOrder[n - 2];
+    const hm = homes[k];
+    if (!hm) continue;
+    makeBox(n, hm.frame, 0, -hm.ld / 2 + 0.75, at(hm.centre, hm.facing, 0, -hm.ld / 2 + 1.75), k, false);
+  }
 
   const blocked = (p: Point, r = BODY) => Math.abs(p.x) > REACH - r || Math.abs(p.z) > REACH - r || solids.some((s) => s.on && inside(p, s.r, r));
   const placeAt = (p: Point) => places.findIndex((pl) => inside(p, pl.area, -0.3));
@@ -821,38 +838,95 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     }
     return p;
   };
-  // Corners to steer round: round the square, along the streets, and through every place's door
-  const ways: Point[] = [];
-  for (const s of [-1, 1]) for (const t of [-1, 1]) ways.push({ x: s * (RING - 1.5), z: t * (RING - 1.5) }, { x: s * 6, z: t * 6 });
-  for (const s of [-1, 1]) {
-    ways.push({ x: 0, z: s * (RING - 1.5) }, { x: s * (RING - 1.5), z: 0 });
-    for (const d of [20, 27, 34]) ways.push({ x: 0, z: s * d }, { x: s * d, z: 0 });
-  }
-  for (const p of places) ways.push(p.front, p.inside);
-  const route = (from: Point, to0: Point) => {
-    const to = freeNear(to0);
-    if (clear(from, to)) return [to];
-    const nodes = [from, to, ...ways.filter((w) => !blocked(w))];
-    const n = nodes.length;
-    const best = new Array<number>(n).fill(Infinity), prev = new Array<number>(n).fill(-1), done = new Array<boolean>(n).fill(false);
-    best[0] = 0;
-    for (;;) {
-      let u = -1;
-      for (let k = 0; k < n; k++) if (!done[k] && best[k] < Infinity && (u < 0 || best[k] < best[u])) u = k;
-      if (u < 0 || u === 1) break;
-      done[u] = true;
-      for (let v = 0; v < n; v++) {
-        if (done[v] || v === u) continue;
-        const d = Math.hypot(nodes[v].x - nodes[u].x, nodes[v].z - nodes[u].z);
-        if (best[u] + d < best[v] && clear(nodes[u], nodes[v])) {
-          best[v] = best[u] + d;
-          prev[v] = u;
+  // The way round the walls: A* over half-metre squares of the town (it finds the alleys between the small houses),
+  // then straightened (each turn kept only where the straight line would hit something). Squares are worked out as
+  // they're reached, so a short walk looks at few of them.
+  const CELL = 0.5, SIDE = Math.ceil((REACH * 2) / CELL);
+  const cellOf = (p: Point) => [Math.floor((p.x + REACH) / CELL), Math.floor((p.z + REACH) / CELL)] as const;
+  const centreOf = (cx: number, cz: number): Point => ({ x: -REACH + (cx + 0.5) * CELL, z: -REACH + (cz + 0.5) * CELL });
+  const route = (start: Point, to0: Point) => {
+    const goal = freeNear(to0);
+    if (clear(start, goal)) return [goal];
+    const free = new Map<number, boolean>();
+    const open = (cx: number, cz: number) => {
+      if (cx < 0 || cz < 0 || cx >= SIDE || cz >= SIDE) return false;
+      const id = cz * SIDE + cx;
+      let ok = free.get(id);
+      if (ok === undefined) free.set(id, (ok = !blocked(centreOf(cx, cz), BODY * 0.9)));
+      return ok;
+    };
+    const [sx, sz] = cellOf(start), [gx, gz] = cellOf(goal);
+    const key = (cx: number, cz: number) => cz * SIDE + cx;
+    const g = new Map<number, number>([[key(sx, sz), 0]]);
+    const prev = new Map<number, number>();
+    // A small binary heap of [score, cell]
+    const heap: [number, number][] = [];
+    const push = (item: [number, number]) => {
+      heap.push(item);
+      for (let k = heap.length - 1; k > 0; ) {
+        const up = (k - 1) >> 1;
+        if (heap[up][0] <= heap[k][0]) break;
+        [heap[up], heap[k]] = [heap[k], heap[up]];
+        k = up;
+      }
+    };
+    const pop = () => {
+      const top = heap[0], last = heap.pop()!;
+      if (heap.length) {
+        heap[0] = last;
+        for (let k = 0; ; ) {
+          const l = 2 * k + 1, r = l + 1;
+          let m = k;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === k) break;
+          [heap[m], heap[k]] = [heap[k], heap[m]];
+          k = m;
+        }
+      }
+      return top;
+    };
+    const h = (cx: number, cz: number) => {
+      const dx = Math.abs(cx - gx), dz = Math.abs(cz - gz);
+      return dx + dz + (Math.SQRT2 - 2) * Math.min(dx, dz);
+    };
+    push([h(sx, sz), key(sx, sz)]);
+    let found = false;
+    for (let steps = 0; heap.length && steps < 60000; steps++) {
+      const [, cur] = pop();
+      const cx = cur % SIDE, cz = Math.floor(cur / SIDE);
+      if (cx === gx && cz === gz) {
+        found = true;
+        break;
+      }
+      const base = g.get(cur)!;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+        const nx = cx + dx, nz = cz + dz;
+        if (!open(nx, nz)) continue;
+        if (dx && dz && (!open(cx + dx, cz) || !open(cx, cz + dz))) continue; // no cutting a corner
+        const cost = base + (dx && dz ? Math.SQRT2 : 1);
+        const nk = key(nx, nz);
+        if (cost < (g.get(nk) ?? Infinity)) {
+          g.set(nk, cost);
+          prev.set(nk, cur);
+          push([cost + h(nx, nz), nk]);
         }
       }
     }
-    if (prev[1] < 0) return [to];
+    if (!found) return [goal];
+    const cells: Point[] = [];
+    for (let k: number | undefined = key(gx, gz); k !== undefined && k !== key(sx, sz); k = prev.get(k)) cells.unshift(centreOf(k % SIDE, Math.floor(k / SIDE)));
+    cells.push(goal);
+    // Straightened: from each point, on to the farthest one in plain sight
     const out: Point[] = [];
-    for (let k = 1; k > 0; k = prev[k]) out.unshift(nodes[k]);
+    let at = start;
+    for (let k = 0; k < cells.length; ) {
+      let far = k;
+      while (far + 1 < cells.length && clear(at, cells[far + 1])) far++;
+      out.push(cells[far]);
+      at = cells[far];
+      k = far + 1;
+    }
     return out;
   };
 
@@ -872,49 +946,37 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
       g.on = locked;
       g.mesh.visible = locked;
     },
-    setChest(i) {
-      chests.forEach((c, k) => (c.visible = k === i));
-    },
-    setInner(i, list) {
-      for (const [k, x] of inner) if (k !== i || !list) {
-        x.group.visible = false;
-        for (const w of x.walls) w.on = false;
-        for (const r of x.rooms) r.solid.on = false;
-        if (furniture[k]) {
-          furniture[k].group.visible = true;
-          furniture[k].solid.on = true;
-        }
+    setKey(i) {
+      const old = boxes.get(1);
+      if (old) {
+        old.group.removeFromParent();
+        boxes.delete(1);
       }
-      if (i === null || !list || !places[i]) return;
-      let made = inner.get(i);
-      if (!made) inner.set(i, (made = buildInner(i)));
-      made.group.visible = true;
-      for (const w of made.walls) w.on = true;
-      // The place's own things make way for the rooms
-      furniture[i].group.visible = false;
-      furniture[i].solid.on = false;
-      list.forEach((cell) => {
-        const r = made!.rooms[cell.n - 1];
-        if (!r) return;
-        r.door.visible = !cell.open;
-        r.solid.on = !cell.open;
-        r.content.clear();
-        if (cell.open && cell.outcome) r.content.add(content(cell.outcome));
-      });
+      const p = i === null ? null : places[i];
+      if (!p) return;
+      // In a building, in the middle of its floor; in the open, in the dug earth
+      const [lx, lz] = p.outdoor ? [-2.6, 1.6] : [0, -0.4];
+      makeBox(1, views[i!].frame, lx, lz, at(p.centre, p.facing, lx, lz + 1.15), -1, true);
     },
-    innerDoors(i) {
-      const made = inner.get(i);
-      if (made?.group.visible) return made.rooms.map((r) => r.spot);
-      const p = places[i];
-      return p ? CELLS.map((cell) => at(p.centre, p.facing, cell.door === "back" ? 0 : cell.door === "left" ? -0.74 : 0.74, cell.door === "back" ? -1.3 : cell.dz)) : [];
+    setBoxes(list) {
+      for (const cell of list ?? []) {
+        const b = boxes.get(cell.n);
+        if (!b) continue;
+        b.lock.visible = !cell.open;
+        b.content.clear();
+        if (cell.open && cell.outcome) b.content.add(content(cell.outcome));
+      }
     },
-    innerAt(p) {
-      for (const x of inner.values()) if (x.group.visible) for (const r of x.rooms) if (inside(p, r.area)) return r.n;
+    boxSpots() {
+      return Object.fromEntries([...boxes.values()].map((b) => [b.n, b.spot]));
+    },
+    homeAt,
+    homeBox(i) {
+      for (const b of boxes.values()) if (b.home === i && b.home >= 0) return b.n;
       return 0;
     },
     setDark(on) {
       dark = on;
-      for (const sh of shades) sh.visible = on;
     },
     setNight(n) {
       bulb.emissive.setRGB(0.95 * n, 0.82 * n, 0.45 * n);
@@ -940,6 +1002,17 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
         fl.ghost += ((hides(fl.area, fl.h) ? 1 : 0) - fl.ghost) * k;
         setFade(fl.mats, 1 - 0.78 * fl.ghost);
       }
+      // The small houses: the one the hunter is in opens (roof off, walls low, dark inside without a torch)
+      const home = homeAt(me);
+      homes.forEach((hm, j) => {
+        hm.open += ((j === home ? 1 : 0) - hm.open) * k;
+        hm.ghost += ((j !== home && hides(hm.area, 3.9) ? 1 : 0) - hm.ghost) * k;
+        hm.walls.scale.y = 1 - 0.7 * hm.open;
+        hm.roof.position.y = hm.open * 6;
+        hm.roof.visible = hm.open < 0.6;
+        hm.shade.visible = dark && hm.open > 0.5;
+        setFade(hm.mats, 1 - 0.75 * hm.ghost);
+      });
     },
   };
 }

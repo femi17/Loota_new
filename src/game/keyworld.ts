@@ -100,6 +100,38 @@ function flat(w: number, d: number, color: string | THREE.Material, x: number, z
   return m;
 }
 
+/** Each kind of story place: its sign's picture, and whether it's open at the front (a stall, a café, a yard: you see
+ * its goods from the street) or a house with a door. */
+const SHOP: Record<string, { icon: string; open: boolean }> = {
+  kitchen: { icon: "🍲", open: true }, library: { icon: "📚", open: true }, parlour: { icon: "☕", open: true },
+  storeroom: { icon: "📦", open: true }, chapel: { icon: "🕯️", open: true }, bathroom: { icon: "⛲", open: true },
+  bedroom: { icon: "🏠", open: false }, study: { icon: "📜", open: false }, cellar: { icon: "🪣", open: false },
+};
+const OPEN = 3.6; // half an open front's width
+
+/** A painted shop sign: the place's picture and its name on a board (drawn once per sign). */
+function shopSign(icon: string, name: string, accent: string) {
+  const c = document.createElement("canvas");
+  c.width = 512;
+  c.height = 112;
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#3A2A1C";
+  g.fillRect(0, 0, 512, 112);
+  g.strokeStyle = accent;
+  g.lineWidth = 8;
+  g.strokeRect(6, 6, 500, 100);
+  g.font = "60px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
+  g.textAlign = "left";
+  g.textBaseline = "middle";
+  g.fillText(icon, 22, 58);
+  g.fillStyle = "#F4E9D2";
+  g.font = "700 40px Georgia, 'Times New Roman', serif";
+  g.fillText(name.replace(/^The /, ""), 104, 60, 390);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(4.4, 0.96), new THREE.MeshLambertMaterial({ map: tex }));
+}
+
 /** What stands in a story place, in its own frame (its door at +z, the back at −z): kept to the back. */
 function feature(kind: string, w: number, d: number, accent: string) {
   const g = new THREE.Group();
@@ -604,28 +636,41 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     wall(-BW / 2, BW / 2, -BD / 2, -BD / 2 + T);
     wall(-BW / 2, -BW / 2 + T, -BD / 2, BD / 2);
     wall(BW / 2 - T, BW / 2, -BD / 2, BD / 2);
-    wall(-BW / 2, -0.9, BD / 2 - T, BD / 2);
-    wall(0.9, BW / 2, BD / 2 - T, BD / 2);
+    // A stall, a café, a yard: open at the front, its goods in view from the street; a house: a door and windows
+    const shop = SHOP[kind] ?? SHOP.study;
+    const gap = !outdoor && shop.open ? OPEN : 0.9;
+    wall(-BW / 2, -gap, BD / 2 - T, BD / 2);
+    wall(gap, BW / 2, BD / 2 - T, BD / 2);
     if (!outdoor) {
-      walls.add(box(1.8, H - 2.3, T, colour, 0, 2.3 + (H - 2.3) / 2, BD / 2 - T / 2)); // over the door
+      walls.add(box(gap * 2, H - 2.3, T, colour, 0, 2.3 + (H - 2.3) / 2, BD / 2 - T / 2)); // over the door (or the front)
       for (const sx of [-1, 1]) {
-        walls.add(box(1.2, 1.0, 0.05, "#2F4B63", sx * 3, 1.7, BD / 2 + 0.01, false)); // windows, front
+        if (!shop.open) walls.add(box(1.2, 1.0, 0.05, "#2F4B63", sx * 3, 1.7, BD / 2 + 0.01, false)); // windows, front
         walls.add(box(0.05, 1.0, 1.2, "#2F4B63", sx * (BW / 2 + 0.01), 1.7, 0, false)); // the sides
       }
-      walls.add(box(2.0, 0.12, 0.8, accent, 0, 2.45, BD / 2 + 0.35, false)); // an awning over the door
+      walls.add(box(gap * 2 + 0.4, 0.12, shop.open ? 1.4 : 0.8, accent, 0, 2.3, BD / 2 + (shop.open ? 0.65 : 0.35), false)); // its awning
+      if (shop.open) for (let k = 0; k < 8; k++) walls.add(box((gap * 2 + 0.4) / 8, 0.25, 0.04, k % 2 ? "#F4F1EA" : accent, -gap - 0.2 + ((k + 0.5) * (gap * 2 + 0.4)) / 8, 2.18, BD / 2 + 1.35, false)); // a striped edge
+      // Its sign, painted on the front over the awning
+      const board = shopSign(shop.icon, r.name, accent);
+      board.position.set(0, 2.7, BD / 2 + 0.02);
+      walls.add(board);
       if (i % 2 === 0) top.add(box(BW + 0.3, 0.2, BD + 0.3, "#6B4A2B", 0, H + 0.1, 0, false), roof(BW, BD, accent, H + 0.2));
       else top.add(box(BW + 0.3, 0.35, BD + 0.3, "#6B6F75", 0, H + 0.17, 0, false), cyl(0.6, 1.0, "#3B6EA5", BW / 4, H + 0.85, -BD / 4));
     } else {
-      // Open air: a patch of bare earth where something could be buried
+      // Open air: a patch of bare earth where something could be buried, and a painted board on a post at the gate
       frame.add(box(2.4, 0.04, 1.8, "#6B4A2B", -2.6, 0.12, 1.6, false));
+      const board = shopSign(shop.icon, r.name, accent);
+      board.scale.setScalar(0.55);
+      board.position.set(2.6, 1.55, BD / 2 + 0.25);
+      frame.add(board, box(0.1, 1.3, 0.1, "#5A3A20", 2.6, 0.65, BD / 2 + 0.2, false));
       for (const [x, z] of [[-3.3, 2.1], [-2.0, 1.0], [-2.9, 1.1]]) frame.add(ball(0.13, "#5A4030", x, 0.14, z));
     }
     frame.add(tag(walls, "room", r.id), tag(top, "room", r.id));
     // Its door (or gate), shut while it needs something to open
-    const gm = tag(outdoor ? box(1.8, 0.9, 0.12, "#6B3E22", 0, 0.45, BD / 2 - 0.2) : box(1.8, 2.3, 0.12, "#6B3E22", 0, 1.15, BD / 2 - 0.1), "room", r.id);
+    // (an open front, locked: its shutter down)
+    const gm = tag(outdoor ? box(1.8, 0.9, 0.12, "#6B3E22", 0, 0.45, BD / 2 - 0.2) : gap > 1 ? box(gap * 2, 2.3, 0.1, "#8A8F96", 0, 1.15, BD / 2 - 0.1) : box(1.8, 2.3, 0.12, "#6B3E22", 0, 1.15, BD / 2 - 0.1), "room", r.id);
     gm.visible = r.locked === true;
     frame.add(gm);
-    gates.push({ ...solid(rectIn(c, f, -0.9, 0.9, BD / 2 - 0.3, BD / 2), r.locked === true), mesh: gm });
+    gates.push({ ...solid(rectIn(c, f, -gap, gap, BD / 2 - 0.3, BD / 2), r.locked === true), mesh: gm });
     // What the place is, at its back
     const things = feature(kind, BW - 1, BD - 1, accent);
     frame.add(things);

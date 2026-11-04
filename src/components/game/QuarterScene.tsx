@@ -37,7 +37,7 @@ type QuarterView = {
 };
 /** A room of the treasure building being opened: its puzzle (from /api/house/room), and when its 60 seconds end. */
 type RoomPuzzle = { n: number; kind: string; puzzle: unknown; ends: number };
-const NEAR_M = 3; // the detector reads a place from the street this close to its way in
+const NEAR_M = 6; // the detector reads a place from the street this close to its way in (swept round, it reaches)
 type Opened = {
   ok?: boolean;
   right?: boolean;
@@ -173,6 +173,11 @@ export function QuarterScene({
   const uidRef = useRef("");
   const [me, setMe] = useState<Me | null>(null);
   const torchRef = useRef(false);
+  const detectorRef = useRef(false); // the detector, in the hunter's hand when they have one
+  const wandHeatRef = useRef(""); // what it reads now (its head glows with it)
+  useEffect(() => {
+    detectorRef.current = !!me?.detector;
+  }, [me?.detector]);
   useEffect(() => {
     torchRef.current = !!me?.torch;
     scene.current?.world.setDark(!me?.torch);
@@ -443,6 +448,23 @@ export function QuarterScene({
     av.root.position.set(kw.start.x, 0.1, kw.start.z);
     av.root.rotation.y = Math.PI; // facing the square
     world.add(av.root);
+    // The metal detector, held out in the right hand: a handle, a pole down to a round head just off the ground
+    const wand = new THREE.Group();
+    const head = new THREE.MeshLambertMaterial({ color: "#2B2F36", emissive: new THREE.Color("#000000") });
+    {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.55, 8), new THREE.MeshLambertMaterial({ color: "#9AA3AD" }));
+      pole.position.set(0, -0.55, 0.62);
+      pole.rotation.x = 0.95; // leaning forward and down
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 0.1), new THREE.MeshLambertMaterial({ color: "#1F2328" }));
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.05, 20), head);
+      disc.position.set(0, -1.13, 1.24);
+      const box3 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.1, 0.2), new THREE.MeshLambertMaterial({ color: "#F4B41A" }));
+      box3.position.set(0, -0.2, 0.25);
+      wand.add(pole, grip, disc, box3);
+    }
+    wand.position.set(0.42, 1.25, 0.25); // at the right hand, in the hunter's own frame
+    wand.visible = false;
+    av.root.add(wand);
     // The street just outside each place's way in (tests walk there to read the detector from the street)
     el.parentElement?.setAttribute("data-fronts", JSON.stringify(Object.fromEntries(kw.places.map((p) => [p.id, [p.front.x, p.front.z]]))));
     let handled = -1; // the place whose going-in the game has dealt with
@@ -660,6 +682,17 @@ export function QuarterScene({
       }
       animateAvatar(av, { mode: "walk", phase: "idle", moving: moved > 0 ? 1 : 0, distance: moved / AVATAR }, dt, now / 1000);
       if (moved > 0) lookAround *= Math.exp(-1.2 * dt); // walking on, the view swings back behind the hunter
+      // The detector: held out in front, swept side to side; its head glows red near the key's place, blue elsewhere
+      wand.visible = detectorRef.current;
+      if (wand.visible) {
+        av.armR.rotation.x = -0.75;
+        av.armR.rotation.z = 0;
+        wand.rotation.y = Math.sin(now / 1000 * (moved > 0 ? 3 : 1.6)) * 0.45;
+        const hot = wandHeatRef.current === "hot", cold = wandHeatRef.current === "cold";
+        const pulse = hot ? 0.55 + 0.45 * Math.sin(now / 90) : cold ? 0.35 : 0;
+        head.emissive.set(hot ? "#FF2A2A" : cold ? "#2F6FEB" : "#000000").multiplyScalar(pulse);
+      }
+      el.parentElement?.setAttribute("data-wand", wand.visible ? wandHeatRef.current || "on" : "off"); // tests read it
 
       const at = { x: me.x, z: me.z };
       if (now - lastShown > 250) {
@@ -714,7 +747,17 @@ export function QuarterScene({
         el.parentElement?.setAttribute("data-home", String(home)); // tests read it
       }
       // The detector, from the street too (owner, 3 Nov 2026: "the metal detector helps in locating where treasures are buried")
-      const nearNow = here >= 0 ? here : kw.places.findIndex((p) => dist(at, p.front) < NEAR_M);
+      let nearNow = here;
+      if (nearNow < 0) {
+        let best = NEAR_M;
+        kw.places.forEach((p, k) => {
+          const d = dist(at, p.front);
+          if (d < best) {
+            best = d;
+            nearNow = k;
+          }
+        });
+      }
       if (nearNow !== lastNear) {
         lastNear = nearNow;
         setNear(nearNow);
@@ -1126,6 +1169,10 @@ export function QuarterScene({
   const canDig = !!on?.outdoor && !busy && !dodge && !roomPuzzle && !digging && view?.dug !== on.id;
   const read = view && near >= 0 ? view.rooms[near] : null;
   const reading = read ? HEAT[heat[read.id] ?? ""] : null;
+  const wandHeat = read ? heat[read.id] ?? "" : "";
+  useEffect(() => {
+    wandHeatRef.current = wandHeat; // the detector's head glows with it
+  }, [wandHeat]);
   const readingOf = read && standing < 0 ? read.name : "";
   return (
     <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy} data-inside={on?.id ?? ""} data-me={uid ?? ""}>

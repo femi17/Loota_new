@@ -143,7 +143,7 @@ try {
   // Walk at a building from the street, beside its door: stopped at the wall
   const fronts = JSON.parse(await attr("data-fronts"));
   const [fx, fz] = fronts.manga;
-  const sideways = Math.abs(fx) > Math.abs(fz) ? [0, 3.2] : [3.2, 0]; // along the street, not into the building
+  const sideways = Math.abs(fx) > Math.abs(fz) ? [0, 4.7] : [4.7, 0]; // along the street, past its open front, not into it
   const spot = { x: fx + sideways[0], z: fz + sideways[1] };
   await tap({ tap: "ground", ...spot });
   await until(async () => { const [x, z] = await where(); return Math.hypot(x - spot.x, z - spot.z) < 0.5; }, 20000);
@@ -209,6 +209,9 @@ try {
   check("walking into the right house: the key's chest, locked", !!rooms, rooms ?? (await say()));
   const hot = await until(async () => ((await detector())?.heat === "hot" ? await detector() : null), 10000);
   check("…the detector: hot here, the key's place", !!hot && hot.at === "noodles", JSON.stringify(await detector()));
+  // In the hunter's hand, its head glowing hot (owner, 4 Nov 2026: "is the metal detector not suppose to be in his hand")
+  const wand = await until(async () => ((await attr("data-wand")) === "hot" ? "hot" : null), 5000);
+  check("…held in the hunter's hand, its head glowing hot", wand === "hot", String(await attr("data-wand")));
   await wait(1200);
   await page.screenshot({ path: `${OUT}/world-5-key-chest.png` });
   const keyRoom = 1;

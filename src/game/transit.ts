@@ -35,15 +35,31 @@ export function flightS(metres: number) {
   return Math.min(720, 120 + (Math.max(0, metres) / 1_000_000) * 40);
 }
 
-/** The same for a trip of `metres`: a long-distance bus does 60 km/h on the highway; a flight takes flightS. */
+/**
+ * A bus or train journey's time (owner, 5 Nov 2026: "Like you did the plane, reduce the bus and train time too"): a
+ * city bus 45 s plus 4 s a km (at most 3½ minutes), a long-distance bus 2 minutes plus a minute per 100 km (at most
+ * 10), a train 1½ minutes plus 45 s per 100 km (at most 8). Matches bus_s() and train_s() in the database.
+ */
+export function busS(metres: number) {
+  const m = Math.max(0, metres);
+  // (a long-distance bus never quicker than the longest city ride)
+  return metres > BUS_RANGE_M ? Math.min(600, Math.max(210, 120 + (m / 100_000) * 60)) : Math.min(210, 45 + (m / 1000) * 4);
+}
+export function trainS(metres: number) {
+  return Math.min(480, 90 + (Math.max(0, metres) / 100_000) * 45);
+}
+
+/** The speed for a trip of `metres`: buses, trains and flights take their journey's time; a taxi drives. */
 export function transitSpeedFor(mode: TransitMode, metres: number) {
   if (mode === "plane") return Math.max(metres, 1) / flightS(metres);
-  return mode === "bus" && metres > BUS_RANGE_M ? (60 / 3.6) * TIME_SCALE : transitSpeed(mode);
+  if (mode === "bus") return Math.max(metres, 1) / busS(metres);
+  if (mode === "train") return Math.max(metres, 1) / trainS(metres);
+  return transitSpeed(mode);
 }
 
 export function transitWaitS(mode: TransitMode, fastPass: boolean) {
-  if (mode === "bus") return fastPass ? 0 : 35;
-  if (mode === "train") return fastPass ? 0 : 50;
+  if (mode === "bus") return fastPass ? 0 : 20; // (5 Nov 2026: was 35)
+  if (mode === "train") return fastPass ? 0 : 30; // (was 50)
   if (mode === "taxi") return 0;
   return fastPass ? 60 : 180; // check-in and boarding
 }

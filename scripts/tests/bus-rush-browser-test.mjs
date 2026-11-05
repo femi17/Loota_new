@@ -119,7 +119,7 @@ try {
   if (t1.rush === "boarded") {
     console.log("      (all wrong, but lucky: the 10% chance got on; the miss is skipped)");
   } else {
-    check("all wrong: the bus is full, wait for the next one", /Bus full!/.test(after ?? "") && t1.rush_tries === 1 && Date.parse(t1.departs_at) > Date.now() + 20000, after);
+    check("all wrong: the bus is full, wait for the next one", /Bus full!/.test(after ?? "") && t1.rush_tries === 1 && Date.parse(t1.departs_at) > Date.now() + 10000, after);
     await shot("2-full");
     // ---- The next bus: all right, sure to get on
     // Not 1:45 of waiting: the next bus comes sooner, and the page (reloaded) hears of it.

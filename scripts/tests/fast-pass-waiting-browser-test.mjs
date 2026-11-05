@@ -85,7 +85,8 @@ try {
   check("the server: the bus leaves now, the scramble skipped", Date.parse(t.departs_at) <= Date.now() + 2000 && t.fast_pass === true && t.rush === "boarded", `${t.departs_at} ${t.rush}`);
   check("…and one use of the pass is gone", (await charges()) === 1);
   await wait(3000);
-  const now = await banner();
+  // On the bus the trip shows as the ride pill (where to, how far, how long); the waiting banner and its Fast Pass go
+  const now = (await banner()) ?? (await page.evaluate(() => document.querySelector('[data-pill="ride"]')?.textContent?.trim() ?? null));
   check("on the bus: no more waiting, no Fast Pass button", !!now && !/leaves in|crowd/i.test(now) && !(await passButton()), now);
   check("no bus rush on screen", !(await page.evaluate(() => !!document.querySelector('[aria-label="Bus rush"]'))));
   await page.screenshot({ path: `${OUT}/fastpass-2-aboard.png` });

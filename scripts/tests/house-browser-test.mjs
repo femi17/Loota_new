@@ -141,7 +141,13 @@ try {
   const dodged = await until(async () => /You dodged it/.test(await say()) && (await say()), 15000);
   check("walking into the kitchen: the right answer in time, dodged, still here", !!dodged && !(await page.$('[role="alertdialog"][data-penalty]')) && !!(await page.$(SCENE)), dodged ?? (await say()));
   await wait(3500); // a breather after a dodge
-  await tap({ tap: "object", id: "portrait" });
+  // Walked up to (5 Nov 2026: things are looked at as the hunter comes up to them, as the boxes are)
+  await tap({ tap: "room", id: "study" });
+  await until(async () => (await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-inside"), SCENE)) === "study", 20000);
+  const seeIt = await say();
+  check("into the study: it says what's there to look at", /You see .*portrait/i.test(seeIt), seeIt);
+  const [px, pz] = JSON.parse(await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-things") ?? "{}", SCENE)).portrait;
+  await tap({ tap: "ground", x: px, z: pz });
   const found = await until(async () => /Taped to the back/.test(await say()) && (await say()), 20000);
   const carried = await page.evaluate(() => [...document.querySelectorAll('[aria-label^="Carrying "]')].map((c) => c.textContent).join(" "));
   check("the study's portrait: the brass key, carried", !!found && carried.includes("A small brass key"), `${found} | ${carried}`);

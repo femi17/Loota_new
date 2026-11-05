@@ -203,6 +203,29 @@ export function QuarterScene({
   const [digLeft, setDigLeft] = useState(0);
   const [heard, setHeard] = useState(0); // bumped to ask the detector again (one just bought)
   const openRoomRef = useRef<(n: number) => Promise<void>>(async () => {});
+  // Looking at a thing in a place (a drawer, a portrait…): by tapping it, or walking up to it
+  const touchRef = useRef<(id: string) => Promise<void>>(async () => {});
+  const lookedRef = useRef(new Set<string>()); // things looked at on this approach (a tap or a walk-up: once)
+  useEffect(() => {
+    touchRef.current = async (id: string) => {
+      if (busyRef.current) return;
+      lookedRef.current.add(id);
+      setBusy(true);
+      try {
+        const { data } = await supabase.rpc("house_touch", { p_hunt: huntId, p_object: id });
+        const t = data as (Partial<QuarterView> & { text?: string; gained?: Item | null }) | null;
+        if (!t?.ok) return setSay("You can't reach that from here.");
+        setView((old) => (old ? { ...old, ...(t as QuarterView) } : old));
+        setSay(t.text ?? "");
+        if (t.gained) {
+          setGained(t.gained);
+          setTimeout(() => setGained(null), 2600);
+        }
+      } finally {
+        setBusy(false);
+      }
+    };
+  });
   const enterRef = useRef<(i: number) => Promise<void>>(async () => {});
   const scene = useRef<{ world: KeyWorld; walkTo: (path: Point[]) => Promise<void>; at: () => Point; shake: () => void; trap: (kind: string, i: number) => void } | null>(null);
   const viewRef = useRef<QuarterView | null>(null);
@@ -376,7 +399,10 @@ export function QuarterScene({
           setSay(`You use ${r.used.name}: the ${open ? "gate" : "door"} of ${v.rooms[i].name} opens.`);
         } else if (open) setSay(`🌳 At ${v.rooms[i].name}, out in the open. Look around, or dig if you think it's buried here.`);
         else if (v.dug === v.rooms[i].id && !v.inner) setSay(`🏠 Inside ${v.rooms[i].name}. You've searched it: it's empty.`);
-        else setSay(`🏠 Inside ${v.rooms[i].name}…`);
+        else {
+          const things = v.objects.filter((o) => o.room === v.rooms[i].id).map((o) => o.label.replace(/^(The|An|A) /, (w) => w.toLowerCase()));
+          setSay(`🏠 Inside ${v.rooms[i].name}…${things.length ? ` You see ${things.join(", ")}: walk up to look closer.` : ""}`);
+        }
       }
       return true;
     };
@@ -470,6 +496,8 @@ export function QuarterScene({
     av.root.add(wand);
     // The street just outside each place's way in (tests walk there to read the detector from the street)
     el.parentElement?.setAttribute("data-fronts", JSON.stringify(Object.fromEntries(kw.places.map((p) => [p.id, [p.front.x, p.front.z]]))));
+    // …and where to stand to look at each thing in a place
+    el.parentElement?.setAttribute("data-things", JSON.stringify(Object.fromEntries(v.objects.map((o) => [o.id, kw.objectSpot(o.id)]).filter(([, p]) => p).map(([k, p]) => [k, [(p as Point).x, (p as Point).z]]))));
     let handled = -1; // the place whose going-in the game has dealt with
     if (v.room) {
       const i = v.rooms.findIndex((r) => r.id === v.room);
@@ -756,6 +784,20 @@ export function QuarterScene({
           void openRoomRef.current(n);
         }
       }
+      // A thing in the place the hunter is in, walked up to: looked at (once each time they come up to it)
+      if (v && here >= 0 && !busyRef.current && !stepping && !roomPuzzleRef.current) {
+        for (const o of v.objects) {
+          if (o.room !== v.rooms[here]?.id) continue;
+          const spot = kw.objectSpot(o.id);
+          if (!spot) continue;
+          const d = dist(at, spot);
+          if (d > 2) lookedRef.current.delete(o.id);
+          else if (d < 1 && !lookedRef.current.has(o.id) && !path.length) {
+            void touchRef.current(o.id);
+            break;
+          }
+        }
+      }
       // Into a small house: what's there (a box, or nothing at all)
       const home = kw.homeAt(at);
       if (home !== lastHome) {
@@ -962,20 +1004,7 @@ export function QuarterScene({
         const spot = kw.objectSpot(id);
         if (spot) await s.walkTo(kw.route(s.at(), spot));
         if (kw.placeAt(s.at()) !== i) return setSay("You can't reach that from here.");
-        setBusy(true);
-        try {
-          const { data } = await supabase.rpc("house_touch", { p_hunt: huntId, p_object: id });
-          const t = data as (Partial<QuarterView> & { text?: string; gained?: Item | null }) | null;
-          if (!t?.ok) return setSay("You can't reach that from here.");
-          setView((old) => (old ? { ...old, ...(t as QuarterView) } : old));
-          setSay(t.text ?? "");
-          if (t.gained) {
-            setGained(t.gained);
-            setTimeout(() => setGained(null), 2600);
-          }
-        } finally {
-          setBusy(false);
-        }
+        await touchRef.current(id);
       }
     };
     window.addEventListener("loota:house-tap", onTap);

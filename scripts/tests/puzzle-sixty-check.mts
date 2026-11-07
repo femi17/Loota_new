@@ -5,7 +5,7 @@
 //   - how much there is to do: the taps or squares the answer takes, and the time the hand needs for them (a tap
 //     0.6 s, a square dragged through 0.3 s, a letter 0.35 s, a Sudoku square 1.2 s: chosen, then its number), at most
 //     30 s, so at least half the minute is left for thinking;
-//   - Sudoku: 80% given (65 of 81), and solvable by plain deduction (each empty square has one possible number, square
+//   - Sudoku: one empty square in each 3×3 box (72 of 81 given: owner, 7 Nov 2026; was 65), and solvable by plain deduction (each empty square has one possible number, square
 //     after square): no guessing.
 // Thinking time can't be measured by a machine: the hand time is the floor, and the sizes keep the thinking small.
 //   node --import ./scripts/tests/ts-ext.mjs scripts/tests/puzzle-sixty-check.mts [seeds]
@@ -89,7 +89,7 @@ for (const kind of KINDS) {
     const extra = extra0 + (kind === "sudoku" ? `, ${plain}/${made} by plain deduction, ${81 - most} of 81 given (${Math.round(((81 - most) / 81) * 100)}%)` : "");
     check(
       `${kind} level ${level}: ${made}/${SEEDS} made, ${right} right by the game's check; at most ${most} inputs${extra}; slowest to make ${Math.round(slowest)} ms`,
-      made === SEEDS && right === made && hand <= HAND_MAX && (kind !== "sudoku" || (plain === made && 81 - most >= 65)),
+      made === SEEDS && right === made && hand <= HAND_MAX && (kind !== "sudoku" || (plain === made && 81 - most === 72)),
     );
   }
 }

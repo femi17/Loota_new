@@ -7,7 +7,7 @@ import { checkAdire, makeAdire, type AdirePuzzle } from "./adire.ts";
 import { checkRoute, makeRoute, type RoutePuzzle } from "./route.ts";
 import { checkSentries, makeSentries, type SentriesPuzzle } from "./sentries.ts";
 import { checkTornMap, type TornMapAnswer, type TornMapPuzzle } from "./tornmap.ts";
-import { checkSudoku, makeSudoku, type SudokuPuzzle } from "./sudoku.ts";
+import { checkSudoku, makeSudokuOneEach, type SudokuPuzzle } from "./sudoku.ts";
 import { checkThreads, makeThreads, type ThreadsPuzzle } from "./threads.ts";
 import { checkPlots, makePlots, type PlotsAnswer, type PlotsPuzzle } from "./plots.ts";
 import { checkPatchwork, makePatchwork, type PatchworkPlacement, type PatchworkPuzzle } from "./patchwork.ts";
@@ -35,8 +35,8 @@ export function makePuzzle(kind: PuzzleKind, level: number, seed: number): { puz
   // Every puzzle fair in 60 seconds (owner, 3 Nov 2026: "each puzzle time should be 60"): small boards, with enough
   // given that there's no guessing and the hand has time (scripts/tests/puzzle-sixty-check.mts checks each kind).
   if (kind === "sentries") return makeSentries(seed, [6, 6, 7][l - 1]);
-  // 80% done (owner, 3 Nov 2026: "the suduko game should be 80% completed"): 65 of 81 given, at every key.
-  if (kind === "sudoku") return makeSudoku(seed, 65);
+  // One empty square in each box (owner, 7 Nov 2026: "one cell removed from every cell … Just 1"): 72 of 81 given.
+  if (kind === "sudoku") return makeSudokuOneEach(seed);
   if (kind === "threads") return makeThreads(seed, [5, 5, 6][l - 1], [4, 5, 5][l - 1]);
   if (kind === "plots") return makePlots(seed, [5, 5, 6][l - 1], [6, 7, 8][l - 1]);
   if (kind === "patchwork") return makePatchwork(seed, [4, 4, 5][l - 1]);

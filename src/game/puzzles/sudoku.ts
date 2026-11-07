@@ -85,6 +85,21 @@ export function makeSudoku(seed: number, givens: number): { puzzle: SudokuPuzzle
   return { puzzle: { given }, answer };
 }
 
+/**
+ * One empty square in each 3×3 box (owner, 7 Nov 2026: "one cell removed from every cell not 3, not 4. Just 1"): 72 of
+ * 81 given. A box missing one square has only one number left for it, so the answer is always the only one.
+ */
+export function makeSudokuOneEach(seed: number): { puzzle: SudokuPuzzle; answer: SudokuAnswer } {
+  const { answer } = makeSudoku(seed, 81);
+  const rng = seeded(seed ^ 0x5bd1e995);
+  const given = [...answer];
+  for (let b = 0; b < 9; b++) {
+    const cell = rng.int(9);
+    given[(Math.floor(b / 3) * 3 + Math.floor(cell / 3)) * 9 + (b % 3) * 3 + (cell % 3)] = 0;
+  }
+  return { puzzle: { given }, answer };
+}
+
 /** Is this a right answer? Every rule checked, and the squares given left as they were. */
 export function checkSudoku(p: SudokuPuzzle, a: number[]): boolean {
   if (!Array.isArray(a) || a.length !== 81) return false;

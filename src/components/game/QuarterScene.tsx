@@ -203,15 +203,24 @@ export function QuarterScene({
   const [digLeft, setDigLeft] = useState(0);
   const [heard, setHeard] = useState(0); // bumped to ask the detector again (one just bought)
   const openRoomRef = useRef<(n: number) => Promise<void>>(async () => {});
+  // The action button: what's at hand now (a box, a thing, a locked door), done by a tap or Enter / E / Space
+  type Action = { kind: "box"; n: number; label: string } | { kind: "thing"; id: string; label: string } | { kind: "door"; i: number; label: string };
+  const [action, setAction] = useState<Action | null>(null);
+  const actionRef = useRef<Action | null>(null);
+  useEffect(() => {
+    actionRef.current = action;
+  }, [action]);
+  const doActionRef = useRef<() => void>(() => {});
   // Looking at a thing in a place (a drawer, a portrait…): by tapping it, or walking up to it
   const touchRef = useRef<(id: string) => Promise<void>>(async () => {});
-  const lookedRef = useRef(new Set<string>()); // things looked at on this approach (a tap or a walk-up: once)
   useEffect(() => {
     touchRef.current = async (id: string) => {
       if (busyRef.current) return;
-      lookedRef.current.add(id);
       setBusy(true);
       try {
+        // The place it's in, told to the server first (it hands nothing over unless it knows the hunter is there)
+        const room = viewRef.current?.objects.find((o) => o.id === id)?.room;
+        if (room) await supabase.rpc("house_step", { p_hunt: huntId, p_room: room });
         const { data } = await supabase.rpc("house_touch", { p_hunt: huntId, p_object: id });
         const t = data as (Partial<QuarterView> & { text?: string; gained?: Item | null }) | null;
         if (!t?.ok) return setSay("You can't reach that from here.");
@@ -401,7 +410,7 @@ export function QuarterScene({
         else if (v.dug === v.rooms[i].id && !v.inner) setSay(`🏠 Inside ${v.rooms[i].name}. You've searched it: it's empty.`);
         else {
           const things = v.objects.filter((o) => o.room === v.rooms[i].id).map((o) => o.label.replace(/^(The|An|A) /, (w) => w.toLowerCase()));
-          setSay(`🏠 Inside ${v.rooms[i].name}…${things.length ? ` You see ${things.join(", ")}: walk up to look closer.` : ""}`);
+          setSay(`🏠 Inside ${v.rooms[i].name}…${things.length ? ` You see ${things.join(", ")}: go up to one and look.` : ""}`);
         }
       }
       return true;
@@ -524,6 +533,12 @@ export function QuarterScene({
     // Arrow keys / WASD: up the screen is away from the camera.
     const keys = new Set<string>();
     const onKey = (e: KeyboardEvent) => {
+      // Enter, E or Space: the action button's action (pick up, open, try the lock)
+      if (e.type === "keydown" && !e.repeat && (e.code === "Enter" || e.code === "KeyE" || e.code === "Space") && (e.target as HTMLElement)?.tagName !== "INPUT" && actionRef.current && !roomPuzzleRef.current) {
+        e.preventDefault();
+        doActionRef.current();
+        return;
+      }
       const k = { ArrowUp: "u", KeyW: "u", ArrowDown: "d", KeyS: "d", ArrowLeft: "l", KeyA: "l", ArrowRight: "r", KeyD: "r" }[e.code];
       if (!k || (e.target as HTMLElement)?.tagName === "INPUT") return;
       e.preventDefault();
@@ -642,8 +657,7 @@ export function QuarterScene({
     let shownHere = -2;
     let lastNear = -2;
     let stepping = false;
-    const asked = new Set<number>(); // locked doors already tried on this approach
-    const armed = [true, true, true, true, true, true]; // room doors, ready to open as the hunter walks up
+    let lastHand = ""; // what the action button was last set to
     const ghosts = new Map<string, ReturnType<typeof buildAvatar>>(); // the other hunters drawn
     let lastSent = 0;
     let lastBeep = 0;
@@ -759,50 +773,50 @@ export function QuarterScene({
         stepping = true;
         void enterRef.current(here).finally(() => (stepping = false));
       }
-      // A locked door, walked up to: try it (with the thing it needs, if carried)
-      if (v && !stepping && !busyRef.current) {
-        kw.places.forEach((p, i) => {
-          const d = dist(at, p.front);
-          if (d > 3) asked.delete(i);
-          else if (d < 1.6 && v.rooms[i]?.locked && !asked.has(i)) {
-            asked.add(i);
-            stepping = true;
-            void stepRef.current(i).finally(() => (stepping = false));
-          }
-        });
-      }
-      // A locked box in a house (or the key's chest), walked up to: its puzzle opens (owner, 4 Nov 2026: "do not keep
-      // all the item in one house")
+      // What's at hand for the action button: a box or the key's chest (its lock), a thing in this place (to look at,
+      // or pick up), a locked door (to open with what it needs). Nothing happens by walking up: the button does it.
       const spots = kw.boxSpots();
       if (now - lastShown < 1) el.parentElement?.setAttribute("data-boxes", JSON.stringify(spots)); // tests read it
+      let hand: Action | null = null;
+      let handD = Infinity;
       for (const [key, spot] of Object.entries(spots)) {
         const n = Number(key);
         const d = dist(at, spot);
-        if (d > 1.6) armed[n] = true;
-        else if (d < 0.7 && armed[n] && !v?.inner?.[n - 1]?.open && !roomPuzzleRef.current && !busyRef.current) {
-          armed[n] = false;
-          void openRoomRef.current(n);
+        if (d < 1.5 && d < handD && !v?.inner?.[n - 1]?.open) {
+          handD = d;
+          hand = { kind: "box", n, label: n === 1 ? "🔓 Open the key's chest" : "🔓 Try the box's lock" };
         }
       }
-      // A thing in the place the hunter is in, walked up to: looked at (once each time they come up to it)
-      if (v && here >= 0 && !busyRef.current && !stepping && !roomPuzzleRef.current) {
+      if (v && here >= 0) {
         for (const o of v.objects) {
           if (o.room !== v.rooms[here]?.id) continue;
           const spot = kw.objectSpot(o.id);
-          if (!spot) continue;
-          const d = dist(at, spot);
-          if (d > 2) lookedRef.current.delete(o.id);
-          else if (d < 1 && !lookedRef.current.has(o.id) && !path.length) {
-            void touchRef.current(o.id);
-            break;
+          const d = spot ? dist(at, spot) : Infinity;
+          if (d < 1.6 && d < handD) {
+            handD = d;
+            hand = { kind: "thing", id: o.id, label: `✋ Look at ${o.label.replace(/^(The|An|A) /, (w) => w.toLowerCase())}` };
           }
         }
+      }
+      if (v && here < 0) {
+        for (let i = 0; i < kw.places.length; i++) {
+          const d = dist(at, kw.places[i].front);
+          if (d < 2 && d < handD && v.rooms[i]?.locked) {
+            handD = d;
+            hand = { kind: "door", i, label: `🔑 Open ${v.rooms[i].name.replace(/^(The|An|A) /, (w) => w.toLowerCase())}` };
+          }
+        }
+      }
+      const handKey = hand ? `${hand.kind}:${hand.kind === "box" ? hand.n : hand.kind === "thing" ? hand.id : hand.i}` : "";
+      if (handKey !== lastHand) {
+        lastHand = handKey;
+        setAction(hand);
       }
       // Into a small house: what's there (a box, or nothing at all)
       const home = kw.homeAt(at);
       if (home !== lastHome) {
         lastHome = home;
-        if (home >= 0) setSay(kw.homeBox(home) ? "📦 Inside a house: a locked box at the back. Walk up to it to try its lock." : "🏚 Inside a house: nothing here.");
+        if (home >= 0) setSay(kw.homeBox(home) ? "📦 Inside a house: a locked box at the back. Go up to it and try its lock." : "🏚 Inside a house: nothing here.");
         el.parentElement?.setAttribute("data-home", String(home)); // tests read it
       }
       // The detector, from the street too (owner, 3 Nov 2026: "the metal detector helps in locating where treasures are buried")
@@ -998,6 +1012,7 @@ export function QuarterScene({
         // A tap on a place: walk to it, and in (a locked one: up to its door)
         if (kw.placeAt(s.at()) === i && x !== undefined && z !== undefined) return void (await s.walkTo(kw.route(s.at(), { x, z })));
         await s.walkTo(kw.route(s.at(), v.rooms[i].locked ? p.front : p.inside));
+        if (viewRef.current?.rooms[i]?.locked) await stepRef.current(i); // at a locked door: try it (with what it needs, if carried)
         return;
       }
       if (tap === "object" && id) {
@@ -1046,6 +1061,16 @@ export function QuarterScene({
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    doActionRef.current = () => {
+      const a = actionRef.current;
+      if (!a || busyRef.current) return;
+      if (a.kind === "box") void openRoomRef.current(a.n);
+      else if (a.kind === "thing") void touchRef.current(a.id);
+      else void stepRef.current(a.i);
+    };
+  });
 
   useEffect(() => {
     openRoomRef.current = openRoom;
@@ -1185,7 +1210,7 @@ export function QuarterScene({
         // The right place: the key's chest, locked by a puzzle (room 1)
         s.world.setKey(found);
         s.world.setBoxes(next.inner ?? null);
-        setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: the key's chest! Walk up to it: its lock is a 60-second puzzle." : "🔍 This is it! The key's chest is here, locked by a 60-second puzzle. Walk up to it.");
+        setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: the key's chest! Go up to it and open it: its lock is a 60-second puzzle." : "🔍 This is it! The key's chest is here, locked by a 60-second puzzle. Go up to it and open it.");
       } else setSay(open ? `⛏ You dig at ${v.rooms[i].name}… only earth. It isn't here.` : `🏠 Inside ${v.rooms[i].name}… nothing here. It's empty.`);
     } finally {
       setBusy(false);
@@ -1436,7 +1461,19 @@ export function QuarterScene({
         />
       )}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col" data-house-foot>
-        {canDig && (
+        {action && !roomPuzzle && !dodge && !bagOpen && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => doActionRef.current()}
+            className="pointer-events-auto mx-auto mb-3 flex h-14 items-center gap-2 rounded-2xl bg-gold px-6 font-display text-lg font-extrabold text-ink shadow-lg active:scale-95 disabled:opacity-60"
+            data-action={action.kind}
+          >
+            {action.label}
+            {handheld ? "" : <span className="rounded-md bg-ink/15 px-1.5 py-0.5 text-xs font-bold">Enter</span>}
+          </button>
+        )}
+        {canDig && !action && (
           <button
             type="button"
             onClick={() => void startDig(standing)}

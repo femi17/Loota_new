@@ -225,7 +225,12 @@ try {
   await wait(1200);
   await page.screenshot({ path: `${OUT}/world-5-key-chest.png` });
   const keyRoom = 1;
-  await tap({ tap: "inner", id: "1" });
+  // Walked up to: the action button opens it (owner, 5 Nov 2026: "we should have a action button, like enter key")
+  const chestAt = JSON.parse((await attr("data-boxes")) ?? "{}")["1"];
+  await tap({ tap: "ground", x: chestAt.x, z: chestAt.z });
+  const act = await until(() => page.evaluate(() => document.querySelector('[data-action="box"]')?.textContent ?? null), 15000);
+  check("at the chest: the action button", /Open the key's chest/.test(act ?? ""), act ?? "none");
+  await page.keyboard.press("Enter");
   const sheet = await until(() => page.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), keyRoom), 15000);
   check("at the key's chest: its puzzle opens", !!sheet);
   const dark = await page.evaluate(() => document.querySelector("[data-room-puzzle] [data-dark]")?.getAttribute("data-dark"));

@@ -148,6 +148,10 @@ try {
   check("into the study: it says what's there to look at", /You see .*portrait/i.test(seeIt), seeIt);
   const [px, pz] = JSON.parse(await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-things") ?? "{}", SCENE)).portrait;
   await tap({ tap: "ground", x: px, z: pz });
+  // The action button (owner, 5 Nov 2026: "we should have a action button, like enter key or tap to pick up items")
+  const act = await until(() => page.evaluate(() => document.querySelector('[data-action="thing"]')?.textContent ?? null), 15000);
+  check("at the portrait: the action button, to look at it", /Look at .*portrait/i.test(act ?? ""), act ?? "none");
+  await page.keyboard.press("Enter");
   const found = await until(async () => /Taped to the back/.test(await say()) && (await say()), 20000);
   const carried = await page.evaluate(() => [...document.querySelectorAll('[aria-label^="Carrying "]')].map((c) => c.textContent).join(" "));
   check("the study's portrait: the brass key, carried", !!found && carried.includes("A small brass key"), `${found} | ${carried}`);

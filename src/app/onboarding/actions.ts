@@ -12,7 +12,7 @@ export async function finishOnboarding(_prev: OnboardingState, formData: FormDat
   const lng = Number(rawLng);
   const lat = Number(rawLat);
   if (!rawLng || !rawLat || !Number.isFinite(lng) || !Number.isFinite(lat)) {
-    return { error: "Share your location so we know where you start." };
+    return { error: "Choose where you start: your location, a city, or a place you search for." };
   }
 
   const supabase = await createClient();

@@ -58,6 +58,7 @@ import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type Lamp
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
 import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
+import { foldAttribution } from "@/game/attribution";
 import {
   BUS_RANGE_M,
   COACH_RANGE_M,
@@ -803,6 +804,7 @@ export function GameMap({
         keyboard: false, // the keyboard drives the hunter instead
         attributionControl: { compact: true },
       });
+      foldAttribution(map);
       // For the browser tests (development only): the map, to read what it draws.
       if (process.env.NODE_ENV !== "production") Object.assign(window, { __lootaMap: map });
 

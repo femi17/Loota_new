@@ -7,6 +7,7 @@ import { normalizeLook } from "@/lib/avatar";
 import { ordinal } from "@/game/hunt";
 import type { Mode } from "@/game/movement";
 import { alongPath, cumulativeOf } from "@/game/transit";
+import { foldAttribution } from "@/game/attribution";
 
 type Hunter = {
   id: string;
@@ -137,6 +138,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         pitch: 45,
         attributionControl: { compact: true },
       });
+      foldAttribution(map);
 
       // ---- Where each hunter is: live updates if fresh, otherwise their last saved spot.
       let latest: State | null = null;

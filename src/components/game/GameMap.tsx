@@ -862,6 +862,8 @@ export function GameMap({
           __lootaRoad: () => (network && onRoad ? { pocket: roads.cutOffEdges(network)[onRoad.edge], ...traveller.pos } : null),
           // Where the hunter is on their own screen (scripts/tests/broadcast-sync-browser-test.mjs).
           __lootaPos: () => ({ ...traveller.pos, v: traveller.v, mode: traveller.mode }),
+          // Put the hunter somewhere (scripts/tests/stop-on-the-way-browser-test.mjs).
+          __lootaJump: (lng: number, lat: number) => placeAt(lng, lat),
         });
       }
 
@@ -1088,6 +1090,7 @@ export function GameMap({
       async function planDirections(to: LngLat, name: string, quiet = false) {
         const id = ++planId;
         planningTo = to;
+        if (detour && !samePlace(to, detour.stop) && !(detour.back && samePlace(to, detour.back.to))) dropDetour();
         if (name === "the marked spot") {
           if (trip && trip.name !== "the marked spot") replaced = { to: trip.to, name: trip.name };
         } else replaced = null;
@@ -1228,9 +1231,12 @@ export function GameMap({
 
         if (geo.distanceM([here.lng, here.lat], end) < 25 || left < 15) {
           const name = trip.name;
+          const to = trip.to;
           endDirections();
+          stopCruise(); // there: cruise stops too (owner, 7 Nov 2026)
           void savePosition();
-          say(`You've arrived at ${name}.`, true);
+          if (detour && !detour.arrived && samePlace(to, detour.stop)) atDetourStop(name);
+          else say(`You've arrived at ${name}.`, true);
           return;
         }
 
@@ -2361,12 +2367,22 @@ export function GameMap({
         act: (id) => void act(id),
         followAdvice: () => {
           const place = advicePlace;
-          if (place) void planDirections({ lng: place.lng, lat: place.lat }, place.name);
+          if (!place) return;
+          if (adviceKey === "resume") {
+            resumeDetour();
+            return;
+          }
+          // A stop on the way: remember where the hunter was going, to take it up again after (owner, 7 Nov 2026).
+          const back = trip && !samePlace(trip.to, place) ? { to: trip.to, name: trip.name } : (detour?.back ?? null);
+          void planDirections({ lng: place.lng, lat: place.lat }, place.name);
+          detour = back || journey ? { stop: { lng: place.lng, lat: place.lat }, back, arrived: false } : null;
+          if (back) replaced = back; // the directions card's "↩ Back to", on the way to the stop too
         },
         pickupAction: () => void pickupAction(),
         cancelPickup: () => void cancelPickup(),
         dismissAdvice: () => {
           if (adviceKey === "fuel" || adviceKey === "flat") strandGuideOff = performance.now() + 300_000;
+          if (adviceKey === "resume") detour = null;
           advicePlace = null;
           setHud((h) => ({ ...h, advice: null }));
         },
@@ -3987,7 +4003,7 @@ export function GameMap({
         return best;
       }
 
-      async function spotAhead(kinds: Spot["kind"][], closest = false): Promise<{ spot: Spot; behind: boolean; nearest?: boolean } | null> {
+      async function spotAhead(kinds: Spot["kind"][], closest = false, maxM = Infinity): Promise<{ spot: Spot; behind: boolean; nearest?: boolean } | null> {
         const at = { ...traveller.pos };
         if (closest) {
           // The nearest of them, whichever way (on foot, e.g. from a dry tank).
@@ -4014,7 +4030,9 @@ export function GameMap({
         const found = new Map<number, Spot>();
         for (const list of await Promise.all(searches)) for (const sp of list) found.set(sp.id, sp);
         if (disposed || !found.size) return null;
-        const spots = [...found.values()].map((sp) => ({ ...sp, metres: Math.round(geo.distanceM([at.lng, at.lat], [sp.lng, sp.lat])) }));
+        // Only places within reach: one ahead but too far mustn't hide a near one behind (owner, 7 Nov 2026).
+        const spots = [...found.values()].map((sp) => ({ ...sp, metres: Math.round(geo.distanceM([at.lng, at.lat], [sp.lng, sp.lat])) })).filter((sp) => sp.metres <= maxM);
+        if (!spots.length) return null;
         let best: { spot: Spot; cost: number } | null = null;
         for (const sp of spots) {
           let cost: number;
@@ -4052,7 +4070,7 @@ export function GameMap({
         nearest = false,
       ) {
         strandAdvice = false; // adviseFuelWalk marks its own
-        let found = kinds ? await spotAhead(kinds, nearest) : null;
+        let found = kinds ? await spotAhead(kinds, nearest, maxM) : null;
         if (disposed) return;
         if (found && found.spot.metres > maxM) found = null;
         const spot = found?.spot ?? null;
@@ -4172,6 +4190,52 @@ export function GameMap({
         return owned.find((v) => !v.in_use && !v.stranded_at && v.kind !== "bicycle" && v.fuel <= 0) ?? null;
       }
 
+      /**
+       * A stop on the way (owner, 7 Nov 2026: "When going to the key location… and I needed to rest or eat, the journey
+       * plotted was going, no where to resume"): following a warning's directions to a place to eat, rest or refuel keeps
+       * the way the hunter was going. At the stop a card offers it back, and it's drawn again once they move on (60 m).
+       */
+      let detour: { stop: LngLat; back: { to: LngLat; name: string } | null; arrived: boolean } | null = null;
+      const samePlace = (a: LngLat, b: LngLat) => geo.distanceM([a.lng, a.lat], [b.lng, b.lat]) < 30;
+      function dropDetour() {
+        detour = null;
+        clearAdvice("resume");
+      }
+      function atDetourStop(name: string) {
+        if (!detour) return;
+        detour.arrived = true;
+        const onTo = journey ? journey.journey.place.name : detour.back?.name;
+        if (!onTo) {
+          detour = null;
+          say(`You've arrived at ${name}.`, true);
+          return;
+        }
+        const to = journey ? detour.stop : detour.back!.to;
+        adviceKey = "resume";
+        advicePlace = { name: onTo, lng: to.lng, lat: to.lat };
+        const text = `You've arrived at ${name}. When you're done here, carry on to ${onTo}: the way comes back as you leave, or tap the arrow.`;
+        setHud((h) => ({ ...h, advice: { key: "resume", title: `Then on to ${onTo}`, text, where: onTo, place: advicePlace } }));
+        say(text, true);
+      }
+      function resumeDetour() {
+        const d = detour;
+        dropDetour();
+        if (!d) return;
+        if (journey) journeyWay();
+        else if (d.back) {
+          say(`🧭 Back on your way to ${d.back.name}.`);
+          void planDirections(d.back.to, d.back.name, true);
+        }
+      }
+      /** Leaving the stop: the way on, drawn again. */
+      function detourTick() {
+        if (!detour?.arrived || trip || inWorld || visit || ride) return;
+        if (geo.distanceM([traveller.pos.lng, traveller.pos.lat], [detour.stop.lng, detour.stop.lat]) > 60) resumeDetour();
+      }
+
+      /** The place cruise last stopped at (it doesn't stop there again until the hunter has left it). */
+      let cruiseStopId: number | null = null;
+
       /** What can be done here: by the place the hunter is at, and the vehicles next to them. */
       function computeActions() {
         const list: { id: LimitAction; icon: string; short: string; label: string }[] = [];
@@ -4256,6 +4320,23 @@ export function GameMap({
           if (broken) {
             const fee = CALL_OUT_PRICE[broken.kind];
             list.push({ id: "mechanic", icon: "🔧", short: `Mechanic · ${fee}`, label: `Call a mechanic for your ${vehicleName(broken.kind)} · ${fee} coins` });
+          }
+        }
+        // Cruise stops at a place the hunter needs (owner, 7 Nov 2026: "when using cruise, and I get to a rest or gas station
+        // or key location. the cruise does not stop"): a petrol station when the tank is under half or a warning points
+        // there, a place to eat or rest when energy is under 60 or a warning points there.
+        if (!visit && !ride) {
+          const pointed = (sp: Spot | null) => !!sp && !!advicePlace && samePlace(sp, advicePlace);
+          const station = spotHere(["fuel"]);
+          const chill = spotHere(["rest", "eat"]);
+          const thirsty = thirstyVehicle();
+          const fuelStop = station && list.some((a) => a.id === "refuel") && ((thirsty?.fuel ?? 100) < 50 || !!strandedVehicle() || pointed(station)) ? station : null;
+          const chillStop = chill && list.some((a) => a.id === "rest" || a.id === "eat") && (traveller.energy < 60 || pointed(chill)) ? chill : null;
+          const stop = fuelStop ?? chillStop;
+          if (!station && !chill) cruiseStopId = null;
+          if (stop && cruiseOn && stop.id !== cruiseStopId) {
+            cruiseStopId = stop.id;
+            stopCruise(`${fuelStop ? "⛽" : "🪑"} ${stop.name}: cruise off, so you can stop here.`);
           }
         }
         setHud((h) => (JSON.stringify(h.actions) === JSON.stringify(list) ? h : { ...h, actions: list }));
@@ -7620,6 +7701,7 @@ export function GameMap({
         if (p.exact) {
           // A story key: no hot and cold. This is the place, and the chest is right here.
           const key = p.key ?? 0;
+          if (!heat || heat.key !== key) stopCruise(); // at the key's place: cruise stops (owner, 7 Nov 2026)
           if (!heat || heat.key !== key)
             say(p.house ? `📍 This is the place. Key ${key} is buried somewhere here: explore the place, and dig where you think it is.` : `📍 This is the place. Key ${key}'s chest is right here: find it and open it.`, true);
           heat = { level: 1, key, trend: "steady", exact: true, house: !!p.house };
@@ -7631,6 +7713,7 @@ export function GameMap({
         }
         const level = p.heat ?? 0;
         const key = p.key ?? 0;
+        if (!heat || heat.key !== key) stopCruise();
         if (!heat || heat.key !== key) say(`🔥 You're in Key ${key}'s area! Search here is on your hunt card now. Feel for the heat: the edges glow and pulse faster as you get closer.`, true);
         const trend = heat && heat.key === key ? (level > heat.level + 0.01 ? "warmer" : level < heat.level - 0.01 ? "colder" : heat.trend) : "steady";
         heat = { level, key, trend };
@@ -7754,6 +7837,7 @@ export function GameMap({
         }
         spendCruiseToken();
         cruiseOn = true;
+        cruiseStopId = (spotHere(["fuel"]) ?? spotHere(["rest", "eat"]))?.id ?? null; // setting off from a place: not stopped by it
         cue("go");
         say("🚗 Cruise on: straight on at junctions. Swipe or press ← → to turn there. Tap Cruise to stop.");
         showCruise();
@@ -8303,6 +8387,7 @@ export function GameMap({
           if (rental) showVehicle();
           checkLimits();
           computeActions();
+          detourTick();
         }
 
         announce(now, riding); // aboard: to the live show only (others just see the hunter leave and arrive)

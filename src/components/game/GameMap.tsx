@@ -380,6 +380,8 @@ export function GameMap({
     findRepairShop: (kind: VehicleKind) => void;
     /** The way by road to a vehicle parked at the roadside (out of fuel). */
     wayToParked: (kind: VehicleKind) => void;
+    /** Send a recovery truck for a vehicle left at the roadside far away; resolves when done (the vehicles list is fresh). */
+    recover: (kind: VehicleKind) => Promise<void>;
     /** Ask the key check again now, forgetting what it last said (the quarter wouldn't open here). */
     recheckKey: () => void;
     /** Go into a repair shop: the open-roof shop on the map, the camera looking in (an in-world scene). */
@@ -1407,6 +1409,8 @@ export function GameMap({
         flat_wheel: "off" | "fixed" | null;
         /** The vulcanizer walking back with the player to change the flat (their name). */
         flat_helper: string | null;
+        /** On a recovery truck (owner, 7 Nov 2026): back in the pocket at this time. */
+        recovery_ready_at: string | null;
       };
       let owned: VehicleRow[] = [];
       let vehiclesLoaded = false; // owned is filled in (refreshVehicles)
@@ -1525,7 +1529,7 @@ export function GameMap({
 
       async function refreshVehicles() {
         const [{ data: vehicles }, { data: rentals }, { data: papers }] = await Promise.all([
-          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured, jack, flat_wheel, flat_helper"),
+          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured, jack, flat_wheel, flat_helper, recovery_ready_at"),
           supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
           supabase.from("profiles").select("rider_licence, driver_licence").maybeSingle(),
         ]);
@@ -1814,6 +1818,7 @@ export function GameMap({
             else if (started?.reason === "taxi") say("Cars come as taxis: call one from Taxi, bus, train or plane.", true);
             else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the gold 🔧 button, or in Vehicles): they come to you.`, true);
             else if (started?.reason === "repairing") say(`The mechanic is still working on your ${vehicleName(kind)}. Try again in a moment.`, true);
+            else if (started?.reason === "recovering") say(`Your ${vehicleName(kind)} is still on the recovery truck: it's back in your pocket by ${new Date((started as { readyAt?: string }).readyAt ?? Date.now()).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`, true);
             else say("Couldn't get on. Please try again.", true);
             afterModeChange();
             return started?.reason ?? "error";
@@ -2152,7 +2157,9 @@ export function GameMap({
             kind: v.kind,
             fuel: v.fuel,
             inUse: v.in_use,
-            state: v.stranded_at
+            state: v.recovery_ready_at && Date.parse(v.recovery_ready_at) > Date.now()
+              ? "recovering"
+              : v.stranded_at
               ? isFlat(v)
                 ? "flat"
                 : "stranded"
@@ -2166,11 +2173,32 @@ export function GameMap({
             away: v.stranded_at ? Math.round(metresTo(v)) : null,
             carrying: v.stranded_at && v.fuel <= 0 ? (keg && keg.fuel > 0 ? "can" : jerryRelicId ? "relic" : null) : null,
             flat: v.stranded_at && isFlat(v) ? { wheel: v.flat_wheel, helper: v.flat_helper, jack: v.jack } : null,
+            readyAt: v.recovery_ready_at,
             papers: ADDONS[v.kind].map((a) => ({ ...a, have: hasPaper(v, a.id) })),
           })),
         ride: (kind, how, addons) => void chooseVehicle(kind, how, addons),
         buyAddon: (kind, id) => buyAddon(kind, id),
         findRepairShop: (kind) => void findRepairShop(kind, true),
+        recover: async (kind) => {
+          if (busy) return;
+          setBusy(true);
+          try {
+            const { data, error } = await supabase.rpc("recover_vehicle", { p_kind: kind });
+            const r = data as { ok: boolean; reason?: string; fee?: number; minutes?: number; km?: number; readyAt?: string; balance?: number } | null;
+            if (error || !r) say("Couldn't reach the recovery service. Please try again.", true);
+            else if (r.ok) {
+              if (r.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
+              const at = new Date(r.readyAt!).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+              say(`🚚 A recovery truck is on its way to your ${vehicleName(kind)}, ${r.km?.toLocaleString()} km away (${r.fee} coins). It's back in your pocket at ${at}, tyre fixed and with a little fuel.`);
+            } else if (r.reason === "coins") say(`The recovery truck costs ${r.fee} coins: not enough coins yet.`, true);
+            else if (r.reason === "near") say(`Your ${vehicleName(kind)} is close: walk to it (🧭 in Vehicles shows the way).`, true);
+            else if (r.reason === "already") say(`Your ${vehicleName(kind)} is already on a recovery truck.`, true);
+            else say("Couldn't send for it. Please try again.", true);
+            await refreshVehicles();
+          } finally {
+            setBusy(false);
+          }
+        },
         recheckKey: () => movedFar(),
         wayToParked: (kind) => {
           const v = owned.find((o) => o.kind === kind && o.stranded_at);
@@ -9561,6 +9589,9 @@ export function GameMap({
           onWayTo={(kind) => {
             actions.current?.wayToParked(kind);
             setGarage(null);
+          }}
+          onRecover={(kind) => {
+            void actions.current?.recover(kind).then(() => setGarage(actions.current?.vehicles() ?? []));
           }}
           onTaxi={() => {
             setGarage(null);

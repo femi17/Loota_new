@@ -88,3 +88,20 @@ export const FLAT_FIX_SECONDS = { jack: 30, mechanic: 25 } as const;
 /** A vulcanizer patching the wheel you rolled to them. Must match wheel_fix_price(). */
 export const WHEEL_FIX_PRICE = 20;
 export const WHEEL_FIX_SECONDS = 20;
+
+/**
+ * A recovery truck for a motorbike or car left at the roadside far away (owner, 7 Nov 2026: "If you leave your vehicle
+ * in a far country… charge them for someone to help them locate it and it takes 24hrs depending on the location"): more
+ * than RECOVERY_MIN_M from the player, it can be sent for. The fee and the wait grow with the distance (about 2 hours
+ * nearby, at most 24); it comes back to the pocket with its tyre fixed and RECOVERY_FUEL% in the tank. Must match
+ * recovery_min_m(), recovery_fuel() and recovery_quote().
+ */
+export const RECOVERY_MIN_M = 2000;
+export const RECOVERY_FUEL = 15;
+export function recoveryQuote(kind: VehicleKind, km: number) {
+  const d = Math.max(km, 0);
+  return {
+    fee: kind === "car" ? Math.min(1500, Math.round(100 + 0.12 * d)) : Math.min(900, Math.round(60 + 0.08 * d)),
+    minutes: Math.min(1440, Math.round(120 + 0.5 * d)),
+  };
+}

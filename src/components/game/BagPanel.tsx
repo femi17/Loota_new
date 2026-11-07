@@ -48,6 +48,7 @@ const STATE_CHIP: Record<OwnedVehicle["state"], { text: string; style: string }>
   repairing: { text: "Being repaired", style: "bg-[#F4B41A]/15 text-gold" },
   stranded: { text: "Parked · no fuel", style: "bg-danger/20 text-[#FF8A8A]" },
   flat: { text: "Parked · flat tyre", style: "bg-danger/20 text-[#FF8A8A]" },
+  recovering: { text: "On a recovery truck", style: "bg-[#F4B41A]/15 text-gold" },
 };
 
 /** The player's inventory: their vehicles' gear and papers (and buying what's missing), the jerry can, relics, Wonders. */

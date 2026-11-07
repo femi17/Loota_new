@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, PAPER_ICON, REPAIR, VEHICLE_KINDS, VEHICLES, WHEEL_FIX_PRICE, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, PAPER_ICON, RECOVERY_MIN_M, REPAIR, VEHICLE_KINDS, VEHICLES, WHEEL_FIX_PRICE, recoveryQuote, type AddonId, type VehicleKind } from "@/game/economy";
 import { formatDistance } from "@/game/geo";
 import { CloseIcon, VehicleIcon } from "./HudIcons";
 
@@ -14,7 +14,9 @@ export type OwnedVehicle = {
   fuel: number;
   inUse: boolean;
   /** `flat`: a motorbike or car with a flat tyre, parked at the roadside until it's changed. */
-  state: "ready" | "empty" | "broken" | "repairing" | "stranded" | "flat";
+  state: "ready" | "empty" | "broken" | "repairing" | "stranded" | "flat" | "recovering";
+  /** `recovering`: on a recovery truck, back in the pocket at this time. */
+  readyAt?: string | null;
   away?: number | null;
   /** Dry at the roadside: the fuel the player already carries for it (a jerry can with fuel in it, or the relic). */
   carrying?: "can" | "relic" | null;
@@ -84,6 +86,11 @@ function flatText(v: OwnedVehicle) {
 }
 
 /** Beside it (within 25 m): see to it now; dry with no fuel in hand: a petrol station first; otherwise the way to it. */
+/** Far enough away to send a recovery truck for (a motorbike or car at the roadside). */
+const far = (v: OwnedVehicle) => v.kind !== "bicycle" && (v.state === "stranded" || v.state === "flat") && v.away != null && v.away >= RECOVERY_MIN_M;
+const RECOVERY_FUEL_TEXT = "a little fuel to reach a petrol station";
+const hoursText = (minutes: number) => (minutes < 90 ? `${minutes} minutes` : `about ${Math.round(minutes / 60)} hours`);
+
 function parkedButton(v: OwnedVehicle) {
   const here = v.away != null && v.away <= 25;
   if (v.state === "flat") {
@@ -110,6 +117,7 @@ export function VehiclePanel({
   onMechanic,
   onRepairShop,
   onWayTo,
+  onRecover,
   onTaxi,
   onClose,
 }: {
@@ -128,6 +136,8 @@ export function VehiclePanel({
   onRepairShop: (kind: VehicleKind) => void;
   /** The way (by road) to a vehicle parked at the roadside. */
   onWayTo: (kind: VehicleKind) => void;
+  /** Send a recovery truck for a vehicle left at the roadside far away (owner, 7 Nov 2026). */
+  onRecover: (kind: VehicleKind) => void;
   /** Cars aren't rented: a taxi is called instead. */
   onTaxi: () => void;
   onClose: () => void;
@@ -200,6 +210,20 @@ export function VehiclePanel({
               <button type="button" disabled={busy} onClick={() => onWayTo(parked.kind)} className="h-11 rounded-xl bg-gold text-sm font-bold text-ink disabled:opacity-40">
                 {parkedButton(parked)}
               </button>
+              {far(parked) && (() => {
+                const q = recoveryQuote(parked.kind, parked.away! / 1000);
+                return (
+                  <>
+                    <button type="button" disabled={busy || coins < q.fee} onClick={() => onRecover(parked.kind)} className="h-11 rounded-xl border-[1.5px] border-gold text-sm font-bold text-paper disabled:opacity-40" data-recover={parked.kind}>
+                      🚚 Send a recovery truck · {q.fee} coins
+                    </button>
+                    <p className="text-xs text-paper/70">
+                      Too far to go back? A recovery truck finds it and brings it back to your pocket in {hoursText(q.minutes)}, tyre fixed and {RECOVERY_FUEL_TEXT}.
+                      {coins < q.fee ? ` You need ${q.fee - coins} more coins.` : ""}
+                    </p>
+                  </>
+                );
+              })()}
             </div>
           )}
 
@@ -213,6 +237,8 @@ export function VehiclePanel({
                 ? { text: "Riding", style: "bg-[#1E9E62]/25 text-[#3DD68C]" }
                 : !mine
                   ? { text: `${info.price.toLocaleString("en-NG")} coins`, style: "bg-gold/15 text-gold" }
+                  : mine.state === "recovering"
+                    ? { text: "On a recovery truck", style: "bg-gold/15 text-gold" }
                   : mine.state === "stranded"
                     ? { text: "Parked · no fuel", style: "bg-danger/20 text-[#FF8A8A]" }
                     : mine.state === "flat"
@@ -278,9 +304,11 @@ export function VehiclePanel({
                     </div>
                   )}
 
-                  {mine && !onIt && (mine.state === "broken" || mine.state === "repairing" || mine.state === "empty" || mine.state === "flat") && (
+                  {mine && !onIt && (mine.state === "broken" || mine.state === "repairing" || mine.state === "empty" || mine.state === "flat" || mine.state === "recovering") && (
                     <p className="text-xs text-gold">
-                      {mine.state === "flat"
+                      {mine.state === "recovering"
+                        ? `🚚 On a recovery truck: back in your pocket at ${mine.readyAt ? new Date(mine.readyAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "soon"}.`
+                        : mine.state === "flat"
                         ? `A flat tyre, at the roadside${mine.away ? ` ${mine.away} m away` : ""}. ${flatText(mine)}`
                         : mine.state === "empty"
                         ? "Empty tank: any petrol station fills it in your pocket, or pour in a jerry can."
@@ -294,9 +322,16 @@ export function VehiclePanel({
                     <div className="flex flex-wrap gap-2">
                       {mine ? (
                         mine.state === "stranded" || mine.state === "flat" ? (
-                          <button type="button" disabled={busy} onClick={() => onWayTo(kind)} className={primary}>
-                            {parkedButton(mine)}
-                          </button>
+                          <>
+                            <button type="button" disabled={busy} onClick={() => onWayTo(kind)} className={primary}>
+                              {parkedButton(mine)}
+                            </button>
+                            {far(mine) && (
+                              <button type="button" disabled={busy || coins < recoveryQuote(kind, mine.away! / 1000).fee} onClick={() => onRecover(kind)} className={secondary} data-recover-row={kind}>
+                                🚚 Recovery · {recoveryQuote(kind, mine.away! / 1000).fee}
+                              </button>
+                            )}
+                          </>
                         ) : mine.state === "broken" ? (
                           <>
                             <button type="button" disabled={busy} onClick={() => onRepairShop(kind)} className={primary}>
@@ -307,7 +342,7 @@ export function VehiclePanel({
                             </button>
                           </>
                         ) : (
-                          <button type="button" disabled={busy || mine.state === "empty" || mine.state === "repairing"} onClick={() => onRide(kind, "own")} className={primary}>
+                          <button type="button" disabled={busy || mine.state === "empty" || mine.state === "repairing" || mine.state === "recovering"} onClick={() => onRide(kind, "own")} className={primary}>
                             {mine.inUse ? "Ride it" : "Take it out"}
                           </button>
                         )

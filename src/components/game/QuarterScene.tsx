@@ -66,7 +66,8 @@ const AVATAR = 0.8; // the hunter's size in the world
 const EYE = { street: { back: 7.5, up: 4.6 }, inside: { back: 6, up: 6.5 }, wide: new THREE.Vector3(0, 88, 64) };
 // How far out: the wheel or a pinch, within these
 const ZOOM = { phone: 1.6, laptop: 1.8, min: 0.55, max: 3 }; // owner, 4 Nov 2026: "too zoomed in"
-const TURN = 2.6; // radians a second, turning with the keys or the joystick
+const TURN = 2.6; // radians a second, turning with the keys
+const STICK_TURN = 1.7; // …and with the joystick pushed all the way to one side
 const REFUSED: Record<string, string> = {
   away: "On the map you're no longer at the key's place, so it won't open. Leave, and go back to it.",
   no_house: "There's nothing to search here.",
@@ -670,7 +671,7 @@ export function QuarterScene({
       let moved = 0;
       // Steering (the joystick or the keys): it takes over from a walk to a tapped spot.
       const stick = joy.current;
-      const steering = keys.size > 0 || Math.hypot(stick.x, stick.y) > 0.15;
+      const steering = keys.size > 0 || Math.hypot(stick.x, stick.y) > 0;
       const frozen = busyRef.current || !!roomPuzzleRef.current || !!diggingRef.current; // digging: on the spot
       if (steering && path.length && !frozen) {
         path = [];
@@ -708,8 +709,11 @@ export function QuarterScene({
           ahead = (keys.has("u") ? 1 : 0) - (keys.has("d") ? 1 : 0);
           turn = (keys.has("l") ? 1 : 0) - (keys.has("r") ? 1 : 0);
         } else {
-          ahead = Math.abs(stick.y) > 0.15 ? -stick.y : 0;
-          turn = Math.abs(stick.x) > 0.15 ? -stick.x : 0;
+          // Gentler (owner, 7 Nov 2026: "it is too sensitive"): a thumb pushed mostly ahead walks straight, and turning
+          // eases in, slow near the middle and STICK_TURN only at the edge
+          ahead = -stick.y;
+          const side = Math.abs(stick.x) < 0.2 || Math.abs(stick.x) < 0.45 * Math.abs(stick.y) ? 0 : (Math.abs(stick.x) - 0.2) / 0.8;
+          turn = -Math.sign(stick.x) * side * side * (STICK_TURN / TURN);
         }
         av.root.rotation.y += turn * TURN * dt;
         if (ahead) {
@@ -1454,7 +1458,7 @@ export function QuarterScene({
       </div>
       {handheld && view && !roomPuzzle && !bagOpen && (
         <Joystick
-          className="absolute left-4 z-10"
+          className="absolute right-4 z-10" // on the right, under the thumb, as on the map (owner, 7 Nov 2026)
           style={{ bottom: "calc(var(--house-foot, 5rem) + 0.75rem)" }}
           onMove={(x, y) => (joy.current = { x, y })}
           onEnd={() => (joy.current = { x: 0, y: 0 })}

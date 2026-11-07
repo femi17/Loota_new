@@ -7,6 +7,8 @@ import { useState, useSyncExternalStore, type CSSProperties } from "react";
 // does is up to the screen it's on.
 
 const HANDHELD = "(any-pointer: coarse), (max-width: 767px)";
+/** How far from the middle (of the way to the edge) the thumb must go before it counts. */
+const DEAD = 0.22;
 
 /** A phone or tablet (any touch screen), or a window as narrow as a phone's. */
 export function useHandheld() {
@@ -55,7 +57,10 @@ export function Joystick({
           const m = Math.hypot(x, y);
           if (m > 1) [x, y] = [x / m, y / m];
           setThumb({ x, y });
-          onMove(x, y);
+          // A dead middle (owner, 7 Nov 2026: "it is too sensitive"): a thumb resting near the centre does nothing, and
+          // past it the push counts from 0 again, so the edge is still full
+          const push = Math.min(1, m), live = push < DEAD ? 0 : (push - DEAD) / (1 - DEAD) / push;
+          onMove(x * live, y * live);
         };
         move(e.clientX, e.clientY);
         const el = e.currentTarget;

@@ -1,6 +1,6 @@
 // The joystick in the key's quarter (owner, 1 Nov 2026: "we should have a joystick on mobile to move and turn"). On a
 // phone (touch), at a story key with a quarter:
-//   1. the joystick shows (bottom left);
+//   1. the joystick shows (bottom right: owner, 7 Nov 2026), a small nudge does nothing, a crooked push walks straight;
 //   2. a finger pushing it walks the hunter (they move several metres), and letting go stops them;
 //   3. it never takes them through a hedge: held long enough, they are still on the street or inside a plot;
 //   4. on a computer (no touch, a wide window) there is no joystick.
@@ -65,11 +65,24 @@ try {
   await page.screenshot({ path: `${OUT}/joystick-0.png` });
   const box = await stick.boundingBox();
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
-  const before = await at(page);
+  // On the right, under the thumb, as on the map (owner, 7 Nov 2026)
+  check("…on the right", box.x > 390 / 2, `left edge at ${Math.round(box.x)} of 390`);
+  // Less sensitive (owner, 7 Nov 2026: "it is too sensitive"): a thumb resting near the middle does nothing
+  const heading = async () => Number(await page.evaluate((sel) => document.querySelector(sel)?.getAttribute("data-heading"), SCENE));
+  const still = await at(page), facing = await heading();
   await page.touchscreen.touchStart(cx, cy);
-  await page.touchscreen.touchMove(cx, cy - box.height * 0.45); // pushed up: away from you
+  await page.touchscreen.touchMove(cx + box.width * 0.06, cy - box.height * 0.06);
+  await wait(1500);
+  await page.touchscreen.touchEnd();
+  const nudged = await at(page);
+  check("a small nudge near the middle: no walking, no turning", Math.hypot(nudged[0] - still[0], nudged[1] - still[1]) < 0.05 && Math.abs((await heading()) - facing) < 0.02);
+  await wait(300);
+  const before = await at(page), facingBefore = await heading();
+  await page.touchscreen.touchStart(cx, cy);
+  await page.touchscreen.touchMove(cx + box.width * 0.12, cy - box.height * 0.45); // pushed up (away from you), a little crooked
   await wait(2500);
   const during = await at(page);
+  check("pushed ahead, a little crooked: walks straight, no turning", Math.abs((await heading()) - facingBefore) < 0.05, `turned ${((await heading()) - facingBefore).toFixed(2)} rad`);
   await page.screenshot({ path: `${OUT}/joystick-1-walking.png` });
   await page.touchscreen.touchEnd();
   await wait(800);

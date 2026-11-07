@@ -34,6 +34,21 @@ if (chapterDir && work.skeleton) {
 }
 const problems: string[] = [];
 const warnings: string[] = [];
+const app = createRequire(new URL("../../package.json", import.meta.url));
+const { createClient } = app("@supabase/supabase-js");
+const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
+// Worldwide, or every key in Nigeria (owner, 7 Nov 2026): the hunt's choice, or --nigeria
+const nigeria = argv.includes("--nigeria") || (opt("hunt", "") ? (await db.from("hunts").select("region").eq("id", opt("hunt", "")).maybeSingle()).data?.region === "nigeria" : false);
+/** The country a spot is in (its two-letter code), from OpenStreetMap; null when it can't tell. */
+async function countryAt(at: Spot) {
+  try {
+    const res = await fetch(`https://photon.komoot.io/reverse?lon=${at.lng}&lat=${at.lat}&lang=en&limit=1`, { headers: { "User-Agent": "Loota/0.1 (story check)" }, signal: AbortSignal.timeout(15_000) });
+    const p = ((await res.json()) as { features: { properties: { countrycode?: string } }[] }).features[0]?.properties;
+    return p?.countrycode?.toUpperCase() ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ---- Its shape
 const shape = (what: string, schema: { safeParse: (v: unknown) => { success: boolean; error?: { issues: { path: PropertyKey[]; message: string }[] } } }, value: unknown) => {
@@ -115,6 +130,14 @@ for (const key of b.keys) {
   if (!m.found) problems.push(`key ${key.n}: "${key.answer.searchName}" isn't found on the map (change searchName; or, if every lookup fails, the map search is busy: try again later)`);
   for (const a of m.aliases.filter((x) => !x.ok)) warnings.push(`key ${key.n}: alias "${a.alias}" finds ${a.got} (add it to the game's own places, or drop it)`);
   for (const d of m.decoys.filter((x) => !x.ok)) (/only \d+ m/.test(d.why) ? problems : warnings).push(`key ${key.n}: decoy "${d.place}" ${d.why}`);
+  // A Nigeria hunt (owner, 7 Nov 2026: "worldwide and Nigeria"): every key and decoy found in Nigeria
+  if (nigeria) {
+    for (const [what, at] of [[`key ${key.n} (${key.answer.name})`, m.found] as const, ...m.decoys.map((d) => [`key ${key.n}: decoy "${d.place}"`, d.at] as const)]) {
+      if (!at) continue;
+      const code = await countryAt(at);
+      if (code && code !== "NG") problems.push(`${what} is in ${code}, not Nigeria (a Nigeria hunt keeps every place in Nigeria)`);
+    }
+  }
 }
 writeFileSync(file, JSON.stringify(work, null, 2)); // keep the checks with the draft
 writeFileSync(CACHE, JSON.stringify(Object.fromEntries(mapCache)));
@@ -129,9 +152,6 @@ if (argv.includes("--check")) {
 }
 
 // ---- The hunt
-const app = createRequire(new URL("../../package.json", import.meta.url));
-const { createClient } = app("@supabase/supabase-js");
-const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 let hunt = opt("hunt", "");
 if (hunt) {
   const { data: h } = await db.from("hunts").select("id, published").eq("id", hunt).maybeSingle();
@@ -145,7 +165,7 @@ if (hunt) {
   const { data: h, error } = await db.from("hunts").insert({
     title: b.title.slice(0, 80), prize: opt("prize", "To be announced"), description: "", winners: Number(opt("winners", "3")),
     questions_per_trial: 3, seconds_per_question: 12, starts_at: startsAt.toISOString(),
-    ends_at: new Date(startsAt.getTime() + (days - 1) * 86_400_000 + 12 * 3_600_000).toISOString(), keys_wanted: work.keys, story_status: "waiting",
+    ends_at: new Date(startsAt.getTime() + (days - 1) * 86_400_000 + 12 * 3_600_000).toISOString(), keys_wanted: work.keys, story_status: "waiting", region: nigeria ? "nigeria" : "world",
   }).select("id").single();
   if (error) throw error;
   hunt = h.id;

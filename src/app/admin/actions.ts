@@ -120,6 +120,8 @@ export async function createStoryHunt(form: FormData) {
     created_by: player.id,
     keys_wanted: keys,
     story_status: "waiting",
+    // Worldwide, or every key in Nigeria (owner, 7 Nov 2026)
+    region: text(form, "region") === "nigeria" ? "nigeria" : "world",
   });
   if (error) back(`Couldn't start the hunt: ${error.message}`, true);
   revalidatePath("/admin");

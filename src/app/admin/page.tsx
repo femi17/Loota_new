@@ -55,6 +55,7 @@ type HuntRow = {
   /** A story hunt: writing, ready or failed (null: made by hand). */
   story_status: "waiting" | "writing" | "ready" | "failed" | null;
   keys_wanted: number | null;
+  region: "world" | "nigeria";
   story_pictures: { n: number; chapter: number; prompt: string; path: string | null }[];
   /** The story's trailer in Storage (bucket story-trailers), shown in the lobby. */
   trailer_path: string | null;
@@ -97,7 +98,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
   const { data } = await createAdminClient()
     .from("hunts")
-    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, trailer_path, trailer:story->production->trailer, voices:story->production->voices, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
+    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, region, trailer_path, trailer:story->production->trailer, voices:story->production->voices, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
     .order("starts_at", { ascending: false });
   const hunts = (data ?? []) as HuntRow[];
   // Live first, then coming up, drafts, and the finished ones folded away (owner, 31 Oct 2026: tidy the admin).
@@ -133,7 +134,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
           )}
         </div>
         {!taken && (
-        <form action={createStoryHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <form action={createStoryHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-4">
           <Field label="Keys">
             <input name="keys" type="number" min={1} max={30} defaultValue={5} required className={field} />
           </Field>
@@ -142,6 +143,12 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
           </Field>
           <Field label="Winners">
             <input name="winners" type="number" min={1} max={1000} defaultValue={3} required className={field} />
+          </Field>
+          <Field label="Where">
+            <select name="region" defaultValue="world" className={field}>
+              <option value="world">🌍 Worldwide</option>
+              <option value="nigeria">🇳🇬 Nigeria</option>
+            </select>
           </Field>
           <CreateButton />
         </form>
@@ -193,10 +200,10 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                       </div>
                     </div>
                     <p className="text-sm text-muted">
-                      Prize: {h.prize} · {h.winners} winners · {lagos(h.starts_at)} to {lagos(h.ends_at)} · {keys || h.keys_wanted || 0} keys · {players} hunters joined
+                      Prize: {h.prize} · {h.winners} winners · {lagos(h.starts_at)} to {lagos(h.ends_at)} · {keys || h.keys_wanted || 0} keys{h.region === "nigeria" ? " in Nigeria" : " worldwide"} · {players} hunters joined
                     </p>
 
-                    {h.story_status === "waiting" && <StoryWaiting hunt={h.id} keys={h.keys_wanted ?? 5} />}
+                    {h.story_status === "waiting" && <StoryWaiting hunt={h.id} keys={h.keys_wanted ?? 5} nigeria={h.region === "nigeria"} />}
                     {(h.story_status === "writing" || h.story_status === "failed") && <StoryProgress hunt={h.id} status={h.story_status} />}
                     {h.story_status === "ready" && (
                       <>

@@ -9,6 +9,14 @@ The owner creates a hunt in the admin (Owner tools → New story hunt: keys, pri
 you the request on its card: `/new-story-hunt <hunt id> <N> keys`. You write the story here (no paid API: owner,
 31 Oct 2026) and import it. Arguments: $ARGUMENTS
 
+**Worldwide or Nigeria** (owner, 7 Nov 2026: "The hunt creation should have the option of worldwide and Nigeria"):
+the owner picks "Where" when making the hunt, and a Nigeria hunt's request ends in `Nigeria`
+(`/new-story-hunt <id> 5 keys Nigeria`); `story:pick` prints "Where:". In a Nigeria hunt EVERY key, alias and
+decoy is a real place in Nigeria (spread over several cities and states, not all Lagos), and its clues may rest on what
+anyone who grew up in or follows Nigeria knows (its music, football, history, food, landmarks, Nollywood), still never
+street-level local knowledge. The importer checks each place's country and refuses one outside Nigeria. Worldwide hunts
+keep every rule below as written.
+
 Work in `C:\Users\oduol\loota`. The bar is high: the owner rejected stories that were "too easy" or "not the juice", and then one that read "like work, not a thrill", jumped between eras and people ("the story does not tally"), and parked its decoys together. Fun first.
 Read the Bible in full every time, and meet every rule in it.
 
@@ -35,7 +43,7 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    each key: question, answer (ONE exact place, e.g. the
    lighthouse not the fort, the gun not the hill; `searchName` that OpenStreetMap finds; `radius` 120 m, up to 300 for a
    canal or island fortress; aliases only if they land inside it), lockId,
-   channelId, the conditions only the answer meets. Spread the keys around the world. Fiction woven into real places.
+   channelId, the conditions only the answer meets. Spread the keys around the world (a Nigeria hunt: around Nigeria). Fiction woven into real places.
 2. **Each key's design** (`designs["<n>"]`): solving steps, plants (chapter + detail), the live piece written out in full
    (the deciding piece AI can't read in advance: never in the chapters), and `check` data when the lock is an acrostic,
    letter shift or anagram (it must decode exactly: the importer works it out). And its **quarter** (written as `house`,

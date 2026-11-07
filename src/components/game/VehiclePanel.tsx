@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, PAPER_ICON, RECOVERY_MIN_M, REPAIR, VEHICLE_KINDS, VEHICLES, WHEEL_FIX_PRICE, recoveryQuote, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, PAPER_ICON, RECOVERY_MIN_M, REPAIR, STRAND_FAR_M, VEHICLE_KINDS, VEHICLES, WHEEL_FIX_PRICE, recoveryQuote, type AddonId, type VehicleKind } from "@/game/economy";
 import { formatDistance } from "@/game/geo";
 import { CloseIcon, VehicleIcon } from "./HudIcons";
 
@@ -88,6 +88,8 @@ function flatText(v: OwnedVehicle) {
 /** Beside it (within 25 m): see to it now; dry with no fuel in hand: a petrol station first; otherwise the way to it. */
 /** Far enough away to send a recovery truck for (a motorbike or car at the roadside). */
 const far = (v: OwnedVehicle) => v.kind !== "bicycle" && (v.state === "stranded" || v.state === "flat") && v.away != null && v.away >= RECOVERY_MIN_M;
+/** Too far to carry fuel or a wheel to (the map says so too): the truck is the main way. */
+const veryFar = (v: OwnedVehicle) => far(v) && v.away! > STRAND_FAR_M;
 const RECOVERY_FUEL_TEXT = "a little fuel to reach a petrol station";
 const hoursText = (minutes: number) => (minutes < 90 ? `${minutes} minutes` : `about ${Math.round(minutes / 60)} hours`);
 
@@ -201,24 +203,28 @@ export function VehiclePanel({
                 </div>
               </div>
               <p className="text-xs leading-relaxed text-paper/80">
-                {parked.state === "flat"
+                {veryFar(parked)
+                  ? "Too far away to carry fuel or a wheel to. Send a recovery truck for it, or travel back to it."
+                  : parked.state === "flat"
                   ? flatText(parked)
                   : parked.carrying
                     ? `🛢 You already carry fuel for it (${parked.carrying === "can" ? "your jerry can" : "a Jerry Can relic"}): no petrol station needed. Take it there and pour it in: the tank goes to ${KEG_CAPACITY}%.`
                     : `🛢 Fill a jerry can at a petrol station, carry it back and pour it in: it takes the tank to ${KEG_CAPACITY}%.`}
               </p>
-              <button type="button" disabled={busy} onClick={() => onWayTo(parked.kind)} className="h-11 rounded-xl bg-gold text-sm font-bold text-ink disabled:opacity-40">
-                {parkedButton(parked)}
-              </button>
+              {!veryFar(parked) && (
+                <button type="button" disabled={busy} onClick={() => onWayTo(parked.kind)} className="h-11 rounded-xl bg-gold text-sm font-bold text-ink disabled:opacity-40">
+                  {parkedButton(parked)}
+                </button>
+              )}
               {far(parked) && (() => {
                 const q = recoveryQuote(parked.kind, parked.away! / 1000);
                 return (
                   <>
-                    <button type="button" disabled={busy || coins < q.fee} onClick={() => onRecover(parked.kind)} className="h-11 rounded-xl border-[1.5px] border-gold text-sm font-bold text-paper disabled:opacity-40" data-recover={parked.kind}>
+                    <button type="button" disabled={busy || coins < q.fee} onClick={() => onRecover(parked.kind)} className={`h-11 rounded-xl text-sm font-bold disabled:opacity-40 ${veryFar(parked) ? "bg-gold text-ink" : "border-[1.5px] border-gold text-paper"}`} data-recover={parked.kind}>
                       🚚 Send a recovery truck · {q.fee} coins
                     </button>
                     <p className="text-xs text-paper/70">
-                      Too far to go back? A recovery truck finds it and brings it back to your pocket in {hoursText(q.minutes)}, tyre fixed and {RECOVERY_FUEL_TEXT}.
+                      A recovery truck finds it and brings it back to your pocket in {hoursText(q.minutes)}, tyre fixed and {RECOVERY_FUEL_TEXT}.
                       {coins < q.fee ? ` You need ${q.fee - coins} more coins.` : ""}
                     </p>
                   </>

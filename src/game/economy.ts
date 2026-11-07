@@ -105,3 +105,5 @@ export function recoveryQuote(kind: VehicleKind, km: number) {
     minutes: Math.min(1440, Math.round(120 + 0.5 * d)),
   };
 }
+/** Further than this, a stranded vehicle is too far to carry fuel or a wheel to: the recovery truck is the way. */
+export const STRAND_FAR_M = 50_000;

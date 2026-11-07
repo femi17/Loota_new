@@ -38,6 +38,9 @@ try {
     if (error) throw new Error(`vehicle: ${error.message}`);
   }
   await admin.from("player_positions").upsert({ user_id: id, lng: me.lng, lat: me.lat, mode: "walk", energy: 100, updated_at: ago(20) });
+  // A full jerry can in hand: the map says "Carry the fuel back" to the car (until the truck is sent: owner, 7 Nov 2026)
+  const { error: kegError } = await admin.from("player_kegs").insert({ user_id: id, fuel: 65, uses_left: 40 });
+  if (kegError) throw new Error(`keg: ${kegError.message}`);
   // No road events in this test (one "just happened").
   await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: new Date(Date.now() + 3600e3).toISOString(), created_at: new Date(Date.now() + 3600e3).toISOString() });
   const jar = new Map();
@@ -65,6 +68,19 @@ try {
   }, id);
   await page.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
   await wait(18000);
+  // What the map says over a while (the advice card, folded or open, and passing messages)
+  const watch = async (ms) => {
+    const seen = new Set();
+    for (let t = 0; t < ms; t += 1000) {
+      const html = await page.evaluate(() => document.body.innerHTML);
+      for (const [k, re] of [["far", /Your car is far away/], ["carry", /Carry the fuel back|Carry the jerry can/], ["retry", /find the way by road to your car/]]) if (re.test(html)) seen.add(k);
+      await wait(1000);
+    }
+    return seen;
+  };
+  const far = await watch(25000);
+  check("before: the car is 8,000 km away, so the map says it's far away (send a truck)", far.has("far"), [...far].join(", "));
+  check("…not 'carry the fuel back', and no endless 'Couldn't find the way by road'", !far.has("carry") && !far.has("retry"), [...far].join(", "));
   const openVehicles = async () => {
     await page.evaluate(() => document.querySelector('[data-tool="travel"]')?.click());
     await wait(1200);
@@ -88,6 +104,11 @@ try {
   check("…the car is on a recovery truck for about 24 hours", !car.stranded_at && hours > 23.5 && hours <= 24, `${hours.toFixed(2)} h`);
   const said = await page.evaluate(() => document.body.innerText);
   check("…and the game says so", /recovery truck is on its way/.test(said));
+  await page.evaluate(() => document.querySelector('[role="dialog"][aria-label="Vehicles"] button[aria-label="Close"]')?.click());
+  await wait(4000);
+  const after = await watch(20000);
+  check("…and the map stops telling you to fetch it (owner, 7 Nov 2026)", after.size === 0, [...after].join(", "));
+  await page.screenshot({ path: `${OUT}/recovery-1b-no-carry-back.png` });
   await openVehicles();
   const card = await page.evaluate(() => document.querySelector('[role="dialog"][aria-label="Vehicles"]')?.textContent ?? "");
   const takeOut = await page.evaluate(() => [...document.querySelectorAll('[role="dialog"][aria-label="Vehicles"] button')].find((b) => /Take it out|Ride it/.test(b.textContent ?? "") && b.closest("li")?.textContent?.includes("Car"))?.disabled);

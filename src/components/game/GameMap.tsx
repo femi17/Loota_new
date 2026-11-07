@@ -10,7 +10,7 @@ import { ClanChat } from "@/components/ClanChat";
 import type { LngLat } from "@/game/geo";
 import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELIC_ICON, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
-import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, NOT_PAPERS, VEHICLES, WHEEL_FIX_PRICE, WHEEL_FIX_SECONDS, type AddonId, type VehicleKind } from "@/game/economy";
+import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, NOT_PAPERS, STRAND_FAR_M, VEHICLES, WHEEL_FIX_PRICE, WHEEL_FIX_SECONDS, type AddonId, type VehicleKind } from "@/game/economy";
 import { cue, setSound, soundOn } from "@/game/sound";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
@@ -1079,11 +1079,13 @@ export function GameMap({
       };
       let trip: Trip | null = null;
       let planId = 0;
+      let planningTo: LngLat | null = null; // the place the latest planDirections is for (it retries while there's no road route)
       // The way a tap on the map replaced (a tap by mistake mid-journey: owner, 1 Nov 2026), to go back to.
       let replaced: { to: LngLat; name: string } | null = null;
 
       async function planDirections(to: LngLat, name: string, quiet = false) {
         const id = ++planId;
+        planningTo = to;
         if (name === "the marked spot") {
           if (trip && trip.name !== "the marked spot") replaced = { to: trip.to, name: trip.name };
         } else replaced = null;
@@ -1608,6 +1610,11 @@ export function GameMap({
           return;
         }
         const s = strandedVehicle();
+        if (!s) dropStrandGuide();
+        if (s && metresTo(s) > STRAND_FAR_M) {
+          adviseFarStranded(s);
+          return;
+        }
         if (!s || trip || inWorld || ride || visit || now < strandGuideOff || busy || !onRoad) return;
         if (fuelInHand()) {
           if (metresTo(s) <= 25) return; // there: pour it in
@@ -1655,6 +1662,43 @@ export function GameMap({
         return null;
       }
 
+      /** The advice on the screen is about a vehicle at the roadside (not the low-fuel warning, which shares its key). */
+      let strandAdvice = false;
+      /**
+       * Nothing left at the roadside (the jerry can poured in, or the vehicle sent for by the recovery truck: owner, 7 Nov
+       * 2026, "I should not keep getting carry the fuel back once I have sent a recovery truck"): its advice goes, and the
+       * way drawn to it or to a petrol station for it.
+       */
+      function dropStrandGuide() {
+        if (!strandAdvice) return;
+        strandAdvice = false;
+        const place = advicePlace;
+        clearAdvice("fuel");
+        const same = (p: LngLat | null) => !!p && !!place && Math.abs(p.lng - place.lng) < 1e-6 && Math.abs(p.lat - place.lat) < 1e-6;
+        // The way there, or the search for one still retrying ("Couldn't find the way by road… Trying again")
+        if (trip ? same(trip.to) : same(planningTo)) endDirections();
+        setGoing(null);
+      }
+
+      /**
+       * A vehicle stranded far away (another city, another country): no jerry can is carried there, and no road route is
+       * drawn (it never stopped trying across an ocean). The advice points to the recovery truck in Vehicles instead.
+       */
+      let farAdvised = "";
+      function adviseFarStranded(v: VehicleRow) {
+        const name = vehicleName(v.kind);
+        const away = geo.formatDistance(metresTo(v));
+        if (farAdvised === `${v.kind}:${v.lng},${v.lat}` && adviceKey === "fuel" && strandAdvice) return;
+        farAdvised = `${v.kind}:${v.lng},${v.lat}`;
+        if (trip ? same2(trip.to, v) : same2(planningTo, v)) endDirections();
+        strandAdvice = true;
+        adviceKey = "fuel";
+        advicePlace = null;
+        const text = `Your ${name} ran dry ${away} away: too far to carry fuel to. Send a recovery truck for it from Vehicles (🚚), or travel back to it.`;
+        setHud((h) => ({ ...h, advice: { key: "fuel", title: `Your ${name} is far away`, text, where: `Your ${name} · ${away}`, place: null } }));
+      }
+      const same2 = (p: LngLat | null, v: VehicleRow) => !!p && Math.abs(p.lng - v.lng) < 1e-6 && Math.abs(p.lat - v.lat) < 1e-6;
+
       /** On foot from a dry tank: to the nearest petrol station, by road, with (or for) a jerry can. */
       function adviseFuelWalk(name: string, first = false) {
         void advise(
@@ -1668,6 +1712,7 @@ export function GameMap({
           undefined,
           true,
         ).then(() => {
+          if (adviceKey === "fuel") strandAdvice = true;
           if (advicePlace && adviceKey === "fuel" && !trip) void planDirections({ lng: advicePlace.lng, lat: advicePlace.lat }, advicePlace.name, true);
         });
       }
@@ -1676,8 +1721,10 @@ export function GameMap({
       function adviseCarryBack() {
         const s = strandedVehicle();
         if (!s || !fuelInHand()) return;
+        if (metresTo(s) > STRAND_FAR_M) return adviseFarStranded(s);
         const name = vehicleName(s.kind);
         const away = metresTo(s);
+        strandAdvice = true;
         adviceKey = "fuel";
         advicePlace = { name: `your ${name}`, lng: s.lng, lat: s.lat };
         const text = `Carry the ${keg && keg.fuel > 0 ? "jerry can" : "Jerry Can relic"} back to your ${name}, ${geo.formatDistance(away)} away, and pour it in (the gold button there).`;
@@ -1806,7 +1853,9 @@ export function GameMap({
               else say(f ? flatHowTo(f) : `Your ${vehicleName(kind)} has a flat.`, true);
             } else if (started?.reason === "stranded")
               say(
-                fuelInHand()
+                (strandedVehicle()?.kind === kind && metresTo(strandedVehicle()!) > STRAND_FAR_M)
+                  ? `Your ${vehicleName(kind)} is parked at the roadside ${geo.formatDistance(metresTo(strandedVehicle()!))} away, with an empty tank. Send a recovery truck for it (🚚 in Vehicles).`
+                  : fuelInHand()
                   ? `Your ${vehicleName(kind)} is parked at the roadside with an empty tank. You have fuel with you: take it there and pour it in (🧭 in Vehicles shows the way).`
                   : `Your ${vehicleName(kind)} is parked at the roadside with an empty tank. Bring it fuel in a jerry can from a petrol station (⛽ in Vehicles shows the way).`,
                 true,
@@ -2195,6 +2244,7 @@ export function GameMap({
             else if (r.reason === "already") say(`Your ${vehicleName(kind)} is already on a recovery truck.`, true);
             else say("Couldn't send for it. Please try again.", true);
             await refreshVehicles();
+            if (!strandedVehicle()) dropStrandGuide();
           } finally {
             setBusy(false);
           }
@@ -3999,6 +4049,7 @@ export function GameMap({
         none?: { text: string; where: string },
         nearest = false,
       ) {
+        strandAdvice = false; // adviseFuelWalk marks its own
         let found = kinds ? await spotAhead(kinds, nearest) : null;
         if (disposed) return;
         if (found && found.spot.metres > maxM) found = null;
@@ -4014,6 +4065,7 @@ export function GameMap({
       }
       function clearAdvice(key: string) {
         if (adviceKey !== key) return;
+        if (key === "fuel") strandAdvice = false;
         adviceKey = "";
         advicePlace = null;
         setHud((h) => (h.advice?.key === key ? { ...h, advice: null } : h));

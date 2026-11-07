@@ -74,13 +74,13 @@ const Skeleton = z.object({
 export const HOUSE_ROOM_KINDS = ["study", "bedroom", "kitchen", "library", "cellar", "parlour", "bathroom", "chapel", "storeroom"] as const;
 export const HOUSE_OBJECT_KINDS = ["picture", "drawer", "clock", "rug", "bookcase", "vase", "mirror", "safe", "desk", "bed", "wardrobe", "radio"] as const;
 /** What the key's world can show on its square (src/game/keyworld.ts draws each). */
-export const SCENE_PIECES = ["station", "dog-statue", "scramble", "screens", "clock-station", "river", "brick-station", "trolley-wall", "rusty-engines", "water-tower", "tracks", "two-engines", "golden-spike"] as const;
+export const SCENE_PIECES = ["station", "dog-statue", "scramble", "screens", "clock-station", "river", "brick-station", "trolley-wall", "rusty-engines", "water-tower", "tracks", "two-engines", "golden-spike", "cap-theatre", "shrine-stage", "palace-walls", "park-lake", "sculptures", "canopy-walk"] as const;
 const House = z.object({
   title: z.string().describe("e.g. 'The keeper's house'"),
   style: z.enum(["cottage", "manor", "stone", "fort", "cave", "keeper"]).optional().describe("How it looks: a cottage, a manor, a stone house, a fort, a cave, a lighthouse keeper's house"),
   layout: z.enum(["hall", "gallery", "court"]).optional().describe("Its floor plan: a hall down the middle, a gallery across, or rooms round an open courtyard"),
   scene: z.object({
-    ground: z.enum(["city", "salt", "desert"]).optional().describe("The land: a city's streets and grass, a salt flat, a desert"),
+    ground: z.enum(["city", "salt", "desert", "laterite"]).optional().describe("The land: a city's streets and grass, a salt flat, a desert, red-earth roads in green country"),
     pieces: z.array(z.enum(SCENE_PIECES)).optional().describe("The landmark on the square, so the world looks like the key's place: e.g. ['station', 'dog-statue', 'scramble']"),
   }).optional().describe("What the key's world looks like (owner, 3 Nov 2026: \"You can even mimic the key location\")"),
   items: z.record(z.string(), z.object({ name: z.string(), icon: z.string() })).describe("Things to carry, by id: { 'brass-key': { name: 'A small brass key', icon: '🗝️' } }"),

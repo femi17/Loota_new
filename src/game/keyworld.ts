@@ -19,7 +19,7 @@ import { ball, box, cyl, floorMaterial, makeChest, makeObject, mat, type HouseOb
 export type Point = { x: number; z: number };
 export type Rect = { x0: number; x1: number; z0: number; z1: number };
 /** What the key's place looks like (the story's house.scene). */
-export type KeyScene = { ground?: "city" | "salt" | "desert"; pieces?: string[] };
+export type KeyScene = { ground?: "city" | "salt" | "desert" | "laterite"; pieces?: string[] };
 
 export const REACH = 44; // the world's edge, each way from the middle (the big houses wall it in from 37.5 m)
 const RING = 15; // the square and the street round it, out to here
@@ -47,6 +47,7 @@ const LOOK = {
   city: { sky: "#9FD3F2", ground: "#7FB069", street: "#5A5F66", square: "#CFC6B4", line: "#F4F1EA" },
   salt: { sky: "#A9D8F5", ground: "#EFEDE6", street: "#C9C2B4", square: "#E2DCCF", line: "#B5AD9C" },
   desert: { sky: "#9CCBEB", ground: "#D9B98A", street: "#B89B70", square: "#CDB28A", line: "#A08356" },
+  laterite: { sky: "#A6D4EE", ground: "#6E9E4E", street: "#A0583A", square: "#C08A63", line: "#E8D9C4" }, // red-earth roads in green country
 };
 
 // ---- Drawing helpers ----------------------------------------------------------------------------------------------
@@ -584,6 +585,64 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     const g = new THREE.Group();
     g.add(box(0.6, 1.5, 0.6, "#D9CFB8", 0, 0.75, 4), cyl(0.08, 0.5, "#F4B41A", 0, 1.75, 4, 0.02));
     piece(g, { x0: -0.4, x1: 0.4, z0: 3.6, z1: 4.4 });
+  }
+  // Nigerian landmarks (owner, 7 Nov 2026: a lifetime hunt in Nigeria only)
+  const tree = (x: number, z: number, h = 3.2, leaf = "#3E7A3A") => {
+    const g = new THREE.Group();
+    g.add(cyl(0.18, h, "#6B4A2B", x, h / 2, z), ball(h * 0.42, leaf, x, h + 0.4, z));
+    piece(g, { x0: x - 0.6, x1: x + 0.6, z0: z - 0.6, z1: z + 0.6 });
+  };
+  if (pieces.has("cap-theatre")) {
+    // A great round hall shaped like a soldier's peaked cap: a pale drum, a dark band, the crown, and the peak
+    const g = new THREE.Group();
+    g.add(cyl(6.4, 4.2, "#E9E4D8", 0, 2.1, -5, 6.4, 32), cyl(6.6, 0.9, "#2F3A46", 0, 3.7, -5, 6.6, 32), cyl(6.8, 1.8, "#E9E4D8", 0, 5.0, -5, 5.0, 32));
+    const peak = box(6.4, 0.25, 2.4, "#2F3A46", 0, 3.5, 2.2, false);
+    peak.rotation.x = 0.2;
+    g.add(peak);
+    for (const x of [-2.4, 2.4]) g.add(box(1.6, 2.6, 0.06, "#3B4A5A", x, 1.3, 1.42, false));
+    piece(g, { x0: -6.8, x1: 6.8, z0: -11.6, z1: 1.6 });
+  }
+  if (pieces.has("shrine-stage")) {
+    // A music shrine: a stage under a tin roof, speaker stacks, lights in red, gold and green, benches before it
+    const g = new THREE.Group();
+    g.add(box(12, 1.0, 5, "#4A3A2E", 0, 0.5, -8), box(13, 0.2, 6.4, "#9AA3AA", 0, 5.2, -8, false));
+    for (const x of [-6.2, 6.2]) g.add(cyl(0.12, 4.6, "#3B4048", x, 2.9, -5.2), box(1.2, 2.4, 1.0, "#1C1C1C", x * 0.85, 2.2, -6.2));
+    for (const [x, c] of [[-3, "#D93B3B"], [0, "#F4B41A"], [3, "#1E9E62"]] as const) g.add(ball(0.35, c, x, 4.8, -5.4));
+    piece(g, { x0: -6.6, x1: 6.6, z0: -11, z1: -5 });
+    for (const z of [-1, 2]) for (const x of [-4, 0, 4]) piece(box(2.6, 0.45, 0.5, "#6B4A2B", x, 0.25, z), { x0: x - 1.3, x1: x + 1.3, z0: z - 0.25, z1: z + 0.25 });
+  }
+  if (pieces.has("palace-walls")) {
+    // Red earth walls with pointed tops, and a great gate (a palace of the old north)
+    const g = new THREE.Group();
+    for (const x of [-9, 9]) g.add(box(10, 4.2, 1.2, "#A8573A", x, 2.1, -9));
+    g.add(box(8, 6.2, 1.6, "#9B4E33", 0, 3.1, -9), box(3, 4, 0.06, "#2B1A10", 0, 2, -8.17, false));
+    for (let x = -13.5; x <= 13.5; x += 1.5) g.add(cyl(0.5, 1.0, "#9B4E33", x, Math.abs(x) < 4 ? 6.7 : 4.7, -9, 0.02, 4));
+    piece(g, { x0: -14, x1: 14, z0: -9.8, z1: -8.2 });
+  }
+  if (pieces.has("park-lake")) {
+    // A park: lawn, a winding stream with a little bridge, flame trees
+    group.add(flat(26, 18, "#6FA85A", 0, -2, 0.035));
+    group.add(flat(22, 2.6, "#4F8FB8", 0, -4, 0.045));
+    piece(box(2.8, 0.3, 3.4, "#8A6A4A", 0, 0.3, -4));
+    for (const [x, z] of [[-9, -9], [-4, -9.5], [5, -9], [10, -8], [-10, 3], [9, 4]]) tree(x, z, 3.4, "#C8452E");
+  }
+  if (pieces.has("sculptures")) {
+    // A sacred grove: tall curving earth sculptures among the trees
+    for (const [x, z, h] of [[-6, -7, 5.5], [0, -9, 7], [6, -6.5, 5]] as const) {
+      const g = new THREE.Group();
+      g.add(cyl(0.9, h, "#8E6A4E", x, h / 2, z, 0.5, 10), ball(1.1, "#7E5A40", x + 0.3, h + 0.6, z), cyl(0.35, 2.4, "#8E6A4E", x - 0.9, h * 0.6, z, 0.2, 8).rotateZ(0.6));
+      piece(g, { x0: x - 1.2, x1: x + 1.2, z0: z - 1.2, z1: z + 1.2 });
+    }
+    for (const [x, z] of [[-11, -10], [-9, 1], [11, -10], [10, 2], [-3, -12], [3, -12]]) tree(x, z, 4.2, "#2F6B34");
+  }
+  if (pieces.has("canopy-walk")) {
+    // A swamp forest crossed high up by a walkway of planks on posts, with a lookout tower at its end
+    group.add(flat(26, 16, "#5E7A4A", 0, -3, 0.035));
+    const g = new THREE.Group();
+    for (let x = -10; x <= 6; x += 4) g.add(cyl(0.15, 6, "#5A4030", x, 3, -6), box(4.1, 0.15, 1.1, "#8A6A4A", x + 2, 6, -6, false));
+    g.add(box(3, 8, 3, "#7A5A3A", 9, 4, -6), box(3.6, 0.3, 3.6, "#4A3A2E", 9, 8.2, -6, false));
+    piece(g, { x0: -10.5, x1: 10.5, z0: -7.6, z1: -4.4 });
+    for (const [x, z] of [[-8, -11], [-2, -11], [4, -11], [-11, 1], [11, 2], [-5, 2]]) tree(x, z, 5, "#2F6B34");
   }
   if (!pieces.size) {
     // Any square: a fountain in the middle, benches

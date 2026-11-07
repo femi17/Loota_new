@@ -56,9 +56,10 @@ reaches players), plus everything earlier stories used (never reuse it), and the
    OPEN-AIR (`"outdoor": true`: a yard, a garden, a well, a square; dug: the right one holds a buried chest, "no need to
    enter a house, the metal detector helps here"). Mix them: in some quarters the key is in a building, in others buried. Walking into a
    building searches it (a trap building springs as the hunter goes in). Give each quarter a `scene` so the key's
-   world looks like the place: `{ "ground": "city" | "salt" | "desert", "pieces": [...] }` from station, dog-statue,
+   world looks like the place: `{ "ground": "city" | "salt" | "desert" | "laterite", "pieces": [...] }` from station, dog-statue,
    scramble, screens, clock-station, river, brick-station, trolley-wall, rusty-engines, water-tower, tracks,
-   two-engines, golden-spike (bible 3b).
+   two-engines, golden-spike, and for Nigeria cap-theatre, shrine-stage, palace-walls, park-lake, sculptures,
+   canopy-walk (bible 3b).
 3. **Decoys** (`decoys["<n>"]`): 3+ per key (the short format, owner, 1 Nov 2026), real places a search finds, each
    failing a named condition, at least radius + 200 m from the answer: the near miss next door the clue rules out (the
    studio beside the crossing), the famous wrong reading the wording invites, a rival's wrong guess. Each is a phrase in

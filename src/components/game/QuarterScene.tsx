@@ -36,7 +36,7 @@ type QuarterView = {
   inner?: InnerRoomView[] | null;
   at: { lng: number; lat: number };
 };
-/** A room of the treasure building being opened: its puzzle (from /api/house/room), and when its 60 seconds end. */
+/** A room of the treasure building being opened: its puzzle (from /api/house/room), and when its time ends. */
 type RoomPuzzle = { n: number; kind: string; puzzle: unknown; ends: number };
 const NEAR_M = 6; // the detector reads a place from the street this close to its way in (swept round, it reaches)
 const BEEP_M = 20; // it beeps within this of the key's place, faster the closer
@@ -1056,10 +1056,12 @@ export function QuarterScene({
       if (r?.reason === "jammed") return setSay(`⏳ ${boxName(n)}'s lock is jammed: try again in ${Math.max(1, Math.ceil(r.seconds ?? 30))} s.`);
       if (!r?.ok || !r.kind) return setSay(REFUSED[r?.reason ?? ""] ?? "The door won't budge right now.");
       setRoomNote(null);
-      const left = Math.max(1, Math.min(60, r.secondsLeft ?? 60));
+      // Each puzzle's own time (owner, 8 Nov 2026: "add the right time to solving this if 60 secs is not right").
+      const total = r.seconds ?? 60;
+      const left = Math.max(1, Math.min(total, r.secondsLeft ?? total));
       setRoomLeft(left);
       setRoomPuzzle({ n, kind: r.kind, puzzle: r.puzzle, ends: Date.now() + left * 1000 });
-      setSay(`🔒 ${boxName(n)} is locked by a puzzle: solve it in 60 seconds to open it.`);
+      setSay(`🔒 ${boxName(n)} is locked by a puzzle: solve it in ${total} seconds to open it.`);
     } finally {
       opening.current = false;
       setBusy(false);
@@ -1129,7 +1131,7 @@ export function QuarterScene({
     }
   }
 
-  // A room's 60 seconds (owner, 3 Nov 2026: "each puzzle time should be 60"): out of time, the lock jams for 30 s.
+  // A room's time (its own, by kind and level: owner, 8 Nov 2026): out of time, the lock jams for 30 s.
   useEffect(() => {
     if (!roomPuzzle) return;
     const n = roomPuzzle.n;
@@ -1214,7 +1216,7 @@ export function QuarterScene({
         // The right place: the key's chest, locked by a puzzle (room 1)
         s.world.setKey(found);
         s.world.setBoxes(next.inner ?? null);
-        setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: the key's chest! Go up to it and open it: its lock is a 60-second puzzle." : "🔍 This is it! The key's chest is here, locked by a 60-second puzzle. Go up to it and open it.");
+        setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: the key's chest! Go up to it and open it: its lock is a timed puzzle." : "🔍 This is it! The key's chest is here, locked by a timed puzzle. Go up to it and open it.");
       } else setSay(open ? `⛏ You dig at ${v.rooms[i].name}… only earth. It isn't here.` : `🏠 Inside ${v.rooms[i].name}… nothing here. It's empty.`);
     } finally {
       setBusy(false);

@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { makePuzzle } from "@/game/puzzles";
+import { makePuzzle, puzzleSeconds } from "@/game/puzzles";
 import { roomKind, roomLevel, roomSeed } from "@/lib/house-rooms";
 
 /**
@@ -26,7 +26,8 @@ export async function POST(request: Request) {
   const { data: hp } = await admin.from("hunt_players").select("house_key, keys_held").eq("hunt_id", body.hunt).eq("user_id", uid).single();
   const key = hp?.house_key ?? (hp?.keys_held ?? 0) + 1;
   const kind = roomKind(uid, body.hunt, key, room);
-  const made = makePuzzle(kind, roomLevel(key), roomSeed(uid, body.hunt, key, room, step.try ?? 0));
+  const level = roomLevel(key);
+  const made = makePuzzle(kind, level, roomSeed(uid, body.hunt, key, room, step.try ?? 0));
   const { data, error } = await admin.rpc("house_room_ready", {
     p_user: uid,
     p_hunt: body.hunt,
@@ -35,6 +36,7 @@ export async function POST(request: Request) {
     p_puzzle: made.puzzle,
     p_solution: made.answer,
     p_try: step.try ?? 0,
+    p_seconds: puzzleSeconds(kind, level), // its own time (owner, 8 Nov 2026), not 60 for all
   });
   if (error) return Response.json({ error: "Couldn't open the room" }, { status: 500 });
   return Response.json(data);

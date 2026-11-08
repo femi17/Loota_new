@@ -9,7 +9,9 @@
 //     after square): no guessing.
 // Thinking time can't be measured by a machine: the hand time is the floor, and the sizes keep the thinking small.
 //   node --import ./scripts/tests/ts-ext.mjs scripts/tests/puzzle-sixty-check.mts [seeds]
-import { checkPuzzle, makePuzzle, type PuzzleKind } from "../../src/game/puzzles/index.ts";
+// Each kind and level now has its own time (owner, 8 Nov 2026: "add the right time to solving this if 60 secs is not
+// right"): the hand may take at most half of it. With DB=1, the database's puzzle_seconds() must give the same times.
+import { checkPuzzle, makePuzzle, puzzleSeconds, PUZZLE_SECONDS, type PuzzleKind } from "../../src/game/puzzles/index.ts";
 
 const SEEDS = Number(process.argv[2] ?? 40);
 // Every kind the game picks now (owner, 4 Nov 2026: no more Sentries; the quick ones in)
@@ -39,7 +41,7 @@ function inputs(kind: string, puzzle: unknown, answer: unknown): number {
 
 /** Seconds the hand needs for that many inputs (no thinking): see the top. */
 const HAND: Record<string, number> = { sentries: 0.6, route: 0.3, adire: 0.6, sudoku: 1.2, threads: 0.3, plots: 0.6, patchwork: 0.6, vowels: 0.35, grammar: 0.6, flags: 0.6, brands: 0.6, algebra: 0.6, countries: 0.35 };
-const HAND_MAX = 30;
+const handMax = (kind: PuzzleKind, level: number) => puzzleSeconds(kind, level) / 2;
 
 /** Sudoku by plain deduction: fill any square with only one possible number, again and again; stuck = guessing. */
 function singlesSolve(given: number[]) {
@@ -85,11 +87,11 @@ for (const kind of KINDS) {
       if (kind === "sudoku" && singlesSolve((out.puzzle as { given: number[] }).given)) plain++;
     }
     const hand = most * HAND[kind];
-    const extra0 = `, hand ${hand.toFixed(1)} s`;
+    const extra0 = `, hand ${hand.toFixed(1)} s of ${puzzleSeconds(kind, level)} s`;
     const extra = extra0 + (kind === "sudoku" ? `, ${plain}/${made} by plain deduction, ${81 - most} of 81 given (${Math.round(((81 - most) / 81) * 100)}%)` : "");
     check(
       `${kind} level ${level}: ${made}/${SEEDS} made, ${right} right by the game's check; at most ${most} inputs${extra}; slowest to make ${Math.round(slowest)} ms`,
-      made === SEEDS && right === made && hand <= HAND_MAX && (kind !== "sudoku" || (plain === made && 81 - most === 72)),
+      made === SEEDS && right === made && hand <= handMax(kind, level) && (kind !== "sudoku" || (plain === made && 81 - most === 72)),
     );
   }
 }
@@ -97,6 +99,21 @@ for (const kind of KINDS) {
 // (1.5 s each), and from level 3 turned too (up to 3 taps a piece, 0.4 s each).
 for (const level of [1, 2, 3]) {
   const hand = 9 * 1.5 + (level >= 3 ? 9 * 3 * 0.4 : 0);
-  check(`tornmap level ${level}: 9 pieces; hand ${hand.toFixed(1)} s at most`, hand <= HAND_MAX);
+  check(`tornmap level ${level}: 9 pieces; hand ${hand.toFixed(1)} s at most of ${puzzleSeconds("tornmap", level)} s`, hand <= handMax("tornmap", level));
+}
+if (process.env.DB) {
+  const { createRequire } = await import("node:module");
+  const app = createRequire(new URL("../../package.json", import.meta.url));
+  const { createClient } = app("@supabase/supabase-js");
+  process.loadEnvFile(new URL("../../.env.local", import.meta.url));
+  const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
+  const differ: string[] = [];
+  for (const kind of Object.keys(PUZZLE_SECONDS) as PuzzleKind[]) {
+    for (const level of [1, 2, 3]) {
+      const { data } = await admin.rpc("puzzle_seconds", { p_kind: kind, p_level: level });
+      if (data !== puzzleSeconds(kind, level)) differ.push(`${kind} ${level}: ${data} vs ${puzzleSeconds(kind, level)}`);
+    }
+  }
+  check("the database's puzzle_seconds() gives every kind and level the same time as the game", differ.length === 0, differ.join("; "));
 }
 console.log(fails ? `${fails} FAILED` : "all passed");

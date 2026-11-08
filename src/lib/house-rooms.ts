@@ -17,16 +17,17 @@ export function roomSeed(uid: string, hunt: string, key: number, room: number, a
   return n % 2147483646 || 1;
 }
 
+/** The kinds at a key: no quick picks (flags, brands) at the last keys (owner, 8 Nov 2026: "not tasking"). */
+const kindsAt = (key: number) => (roomLevel(key) >= 3 ? ROOM_KINDS.filter((k) => k !== "flags" && k !== "brands") : ROOM_KINDS);
+
 /** Which puzzle a box is locked by, for this hunter at this key (the same every time they come to it); never the kind
  * the same box had at the key before. */
 export function roomKind(uid: string, hunt: string, key: number, room: number): PuzzleKind {
-  return ROOM_KINDS[kindAt(uid, hunt, key, room)];
-}
-function kindAt(uid: string, hunt: string, key: number, room: number): number {
   let n = roomSeed(uid, hunt, key, room) ^ 0x9e3779b9;
   n = Math.imul(n ^ (n >>> 16), 0x85ebca6b) >>> 0;
-  const k = n % ROOM_KINDS.length;
-  return key > 1 && k === kindAt(uid, hunt, key - 1, room) ? (k + 1) % ROOM_KINDS.length : k;
+  const kinds = kindsAt(key);
+  const k = kinds[n % kinds.length];
+  return key > 1 && k === roomKind(uid, hunt, key - 1, room) ? kinds[(kinds.indexOf(k) + 1) % kinds.length] : k;
 }
 
 /** How hard: never the easiest (owner, 8 Nov 2026: "the questions are cheap not tasking"), the hardest from the third key. */

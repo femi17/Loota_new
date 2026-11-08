@@ -64,10 +64,53 @@ const BANK: [string, string, string[]][] = [
   ["Two plus two ___ four.", "makes", ["make", "making"]],
 ];
 
-/** A puzzle of `count` sentences (4 at every key: quick enough for a minute). */
-export function makeGrammar(seed: number, count = 4): { puzzle: GrammarPuzzle; answer: GrammarAnswer } {
+/** Harder ones, for the later keys (owner, 8 Nov 2026: "the questions are cheap not tasking"). */
+const HARD: [string, string, string[]][] = [
+  ["To ___ it may concern.", "whom", ["who", "whose"]],
+  ["She insisted that he ___ on time.", "be", ["is", "was"]],
+  ["Had I known, I ___ have come earlier.", "would", ["will", "had"]],
+  ["The dog has ___ by the door all day.", "lain", ["laid", "layed"]],
+  ["Yesterday I ___ in bed until noon.", "lay", ["laid", "lied"]],
+  ["The main ___ behind the plan is fairness.", "principle", ["principal"]],
+  ["The school ___ gave a speech.", "principal", ["principle"]],
+  ["He ___ the rules every chance he gets.", "flouts", ["flaunts"]],
+  ["She loves to ___ her new car.", "flaunt", ["flout"]],
+  ["We must ___ the damage first.", "assess", ["access"]],
+  ["Neither the teacher nor the pupils ___ ready.", "were", ["was"]],
+  ["Either the pupils or the teacher ___ wrong.", "is", ["are"]],
+  ["The number of cars on the road ___ rising.", "is", ["are"]],
+  ["A number of cars ___ parked outside.", "are", ["is"]],
+  ["She is one of those people who ___ always late.", "are", ["is"]],
+  ["Between you and ___, the plan won't work.", "me", ["I", "myself"]],
+  ["The pictures were ___ on the wall.", "hung", ["hanged"]],
+  ["The murderer was ___ at dawn.", "hanged", ["hung"]],
+  ["I'm ___ to leave so early.", "loath", ["loathe"]],
+  ["I ___ the smell of smoke.", "loathe", ["loath"]],
+  ["The ship ___ in the storm last night.", "sank", ["sunk", "sinked"]],
+  ["She has ___ the marathon three times.", "run", ["ran", "runned"]],
+  ["My ___ is that we leave early.", "advice", ["advise"]],
+  ["I ___ you to leave early.", "advise", ["advice"]],
+  ["These criteria ___ clear.", "are", ["is"]],
+  ["We have very ___ water left.", "little", ["few"]],
+  ["They were accused ___ theft.", "of", ["for", "with"]],
+  ["I look forward to ___ you.", "seeing", ["see", "have seen"]],
+  ["He denied ___ the money.", "taking", ["to take", "take"]],
+  ["She suggested ___ before dark.", "leaving", ["to leave", "leave"]],
+  ["It's high time we ___ home.", "went", ["go", "going"]],
+  ["Hardly ___ arrived when it began to rain.", "had we", ["we had", "did we"]],
+  ["No sooner had he sat down ___ the phone rang.", "than", ["when", "then"]],
+  ["Not only ___ late, he also forgot the tickets.", "was he", ["he was", "he is"]],
+  ["The new law will ___ thousands of workers.", "affect", ["effect"]],
+  ["She ___ a new plan to save money.", "devised", ["devices", "deviced"]],
+  ["Please ___ the noise down.", "keep", ["kept", "keeping"]],
+  ["___ the rain, the match went ahead.", "Despite", ["Although", "Despite of"]],
+  ["___ it rained, the match went ahead.", "Although", ["Despite", "In spite"]],
+];
+
+/** A puzzle of `count` sentences: the harder mix-ups from level 2. */
+export function makeGrammar(seed: number, count = 4, level = 1): { puzzle: GrammarPuzzle; answer: GrammarAnswer } {
   const rng = seeded(seed);
-  const picked = rng.shuffle(BANK).slice(0, count);
+  const picked = rng.shuffle(level >= 2 ? HARD : BANK).slice(0, count);
   const items = picked.map(([sentence, right, wrong]) => {
     const options = rng.shuffle([right, ...wrong]);
     return { sentence, options, right: options.indexOf(right) };

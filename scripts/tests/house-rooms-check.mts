@@ -30,5 +30,10 @@ check("the same key and room: the same puzzle each time it's asked", made(uid, 2
 check("the rooms are never at the easiest level: 2 at keys 1–2, 3 from key 3", roomLevel(1) === 2 && roomLevel(2) === 2 && roomLevel(3) === 3 && roomLevel(6) === 3);
 const words = (key: number) => (makePuzzle("vowels", roomLevel(key), 7).puzzle as { words: unknown[] }).words.length;
 check("Lost Vowels: 4 words at the first keys, 5 from key 3 (was 3)", words(1) === 4 && words(3) === 5, `${words(1)}, ${words(3)}`);
+let quick = 0;
+for (let i = 0; i < 200; i++) for (const room of [1, 2, 3, 4, 5]) if (["flags", "brands"].includes(roomKind(`u${i}`, HUNT, 3, room))) quick++;
+check("no quick picks (flags, brands) from key 3", quick === 0, `${quick}`);
+const theme = (key: number) => (makePuzzle("vowels", roomLevel(key), 11).puzzle as { theme: string }).theme;
+check("Lost Vowels at the keys: the harder themes", !["Money", "Fruit", "Colours", "Planets"].includes(theme(1)), theme(1));
 console.log(fails ? `${fails} FAILED` : "all passed");
 process.exit(fails ? 1 : 0);

@@ -42,12 +42,36 @@ const THEMES: { theme: string; words: [string, string][] }[] = [
   { theme: "Clothes", words: [["TROUSERS", "Two legs"], ["JACKET", "Worn over a shirt"], ["SANDALS", "Open shoes"], ["SWEATER", "Knitted, keeps you warm"], ["SCARF", "Round the neck"]] },
 ];
 
+/**
+ * Harder themes, for the later keys (owner, 8 Nov 2026: "the questions are cheap not tasking… We already gave easy
+ * story clues"): words that need knowing, with clues that don't give them away.
+ */
+const HARD_THEMES: { theme: string; words: [string, string][] }[] = [
+  { theme: "African capitals", words: [["OUAGADOUGOU", "Burkina Faso's"], ["ADDIS ABABA", "Ethiopia's, home of the African Union"], ["ANTANANARIVO", "Madagascar's"], ["NIAMEY", "Niger's"], ["MAPUTO", "Mozambique's"]] },
+  { theme: "Chemical elements", words: [["TUNGSTEN", "Symbol W"], ["POTASSIUM", "Symbol K"], ["SODIUM", "Symbol Na"], ["ANTIMONY", "Symbol Sb"], ["LEAD", "Symbol Pb"]] },
+  { theme: "Nigeria's history", words: [["LUGARD", "The British governor who joined north and south in 1914"], ["ABUJA", "The capital since 1991"], ["BIAFRA", "The breakaway republic of 1967"], ["AZIKIWE", "The first President"], ["BALEWA", "The first Prime Minister"]] },
+  { theme: "Nigerian writers", words: [["ACHEBE", "Things Fall Apart"], ["SOYINKA", "Africa's first Nobel Prize in Literature"], ["ADICHIE", "Half of a Yellow Sun"], ["OKRI", "The Famished Road, Booker Prize 1991"], ["EMECHETA", "Second Class Citizen"]] },
+  { theme: "Painters", words: [["PICASSO", "Guernica"], ["VERMEER", "Girl with a Pearl Earring"], ["REMBRANDT", "The Night Watch"], ["MONET", "Impression, Sunrise"], ["MATISSE", "The Snail, cut from paper"]] },
+  { theme: "Composers", words: [["BEETHOVEN", "Deaf when he wrote his Ninth"], ["MOZART", "The Magic Flute"], ["VIVALDI", "The Four Seasons"], ["TCHAIKOVSKY", "Swan Lake"], ["HANDEL", "Messiah"]] },
+  { theme: "Thinkers", words: [["SOCRATES", "Drank hemlock in Athens"], ["DESCARTES", "I think, therefore I am"], ["CONFUCIUS", "China's teacher of the Analects"], ["NIETZSCHE", "God is dead"], ["ARISTOTLE", "Taught Alexander the Great"]] },
+  { theme: "Bones", words: [["FEMUR", "The longest"], ["CLAVICLE", "The collarbone"], ["PATELLA", "The kneecap"], ["STERNUM", "The breastbone"], ["MANDIBLE", "The lower jaw"]] },
+  { theme: "Geometry", words: [["HYPOTENUSE", "A right-angled triangle's longest side"], ["RADIUS", "Half the diameter"], ["TRAPEZIUM", "Four sides, one pair parallel"], ["PERIMETER", "The distance round a shape"], ["OCTAGON", "A stop sign's shape"]] },
+  { theme: "Mountains", words: [["KILIMANJARO", "Africa's highest"], ["ACONCAGUA", "The highest in the Americas"], ["ELBRUS", "Europe's highest, in the Caucasus"], ["MATTERHORN", "The pyramid peak above Zermatt"], ["EVEREST", "The world's highest"]] },
+  { theme: "Deserts", words: [["SAHARA", "The largest hot one"], ["GOBI", "Mongolia's"], ["KALAHARI", "Botswana's"], ["ATACAMA", "Chile's, the driest"], ["NAMIB", "Along Africa's south-west coast"]] },
+  { theme: "Greek gods", words: [["ZEUS", "King of Olympus"], ["POSEIDON", "The sea"], ["ATHENA", "Wisdom"], ["HERMES", "The messenger, with winged sandals"], ["APHRODITE", "Love"]] },
+  { theme: "Money matters", words: [["INFLATION", "Prices rising over time"], ["RECESSION", "Two quarters of shrinking"], ["DIVIDEND", "A share of the profit, paid out"], ["MONOPOLY", "One seller has the whole market"], ["TARIFF", "A tax on imports"]] },
+  { theme: "Computers", words: [["ALGORITHM", "Step-by-step instructions"], ["PROCESSOR", "The CPU"], ["FIREWALL", "Blocks unwanted traffic"], ["COMPILER", "Turns code into machine code"], ["BANDWIDTH", "How much data gets through each second"]] },
+  { theme: "Languages of Africa", words: [["HAUSA", "Across northern Nigeria and Niger"], ["SWAHILI", "East Africa's common tongue"], ["AMHARIC", "Ethiopia's official language"], ["YORUBA", "Lagos, Ibadan and Benin Republic"], ["ZULU", "South Africa's most spoken at home"]] },
+  { theme: "Inventors", words: [["TESLA", "Alternating current"], ["MARCONI", "Radio"], ["NOBEL", "Dynamite, and the prizes in his name"], ["FLEMING", "Penicillin"], ["GUTENBERG", "The printing press"]] },
+];
+
 const VOWELS = /[AEIOU]/g;
 
-/** A puzzle of `count` words (3 to 5) from one theme. */
-export function makeVowels(seed: number, count: number): { puzzle: VowelsPuzzle; answer: VowelsAnswer } {
+/** A puzzle of `count` words (3 to 5) from one theme: the harder themes from level 2. */
+export function makeVowels(seed: number, count: number, level = 1): { puzzle: VowelsPuzzle; answer: VowelsAnswer } {
   const rng = seeded(seed);
-  const t = THEMES[rng.int(THEMES.length)];
+  const themes = level >= 2 ? HARD_THEMES : THEMES;
+  const t = themes[rng.int(themes.length)];
   const words = rng.shuffle(t.words).slice(0, Math.max(3, Math.min(5, count)));
   return {
     puzzle: { theme: t.theme, words: words.map(([w, clue]) => ({ shown: w.replace(VOWELS, "_"), clue, letters: w.replace(/ /g, "").length })) },

@@ -11,10 +11,16 @@ export type CountriesAnswer = string[];
 
 const LETTERS = [..."ABCEGILMNPST"].filter((l) => COUNTRIES.filter((c) => firstLetter(c) === l).length >= 8);
 
-/** A letter, and how many to name (five, as the owner asked). */
-export function makeCountries(seed: number, count = 5): { puzzle: CountriesPuzzle; answer: CountriesAnswer } {
+/** The letters with fewest countries to choose from (seven to nine), for the last keys (owner, 8 Nov 2026: "not tasking"). */
+const HARD_LETTERS = [..."EILU"].filter((l) => COUNTRIES.filter((c) => firstLetter(c) === l).length >= 7);
+/** The letters with the most (S, M, B, C) are left out from level 2. */
+const MID_LETTERS = LETTERS.filter((l) => !"SMBC".includes(l));
+
+/** A letter, and how many to name (five, as the owner asked); harder letters at the later keys. */
+export function makeCountries(seed: number, count = 5, level = 1): { puzzle: CountriesPuzzle; answer: CountriesAnswer } {
   const rng = seeded(seed);
-  const letter = LETTERS[rng.int(LETTERS.length)];
+  const letters = level >= 3 ? HARD_LETTERS : level === 2 ? MID_LETTERS : LETTERS;
+  const letter = letters[rng.int(letters.length)];
   return { puzzle: { letter, count }, answer: COUNTRIES.filter((c) => firstLetter(c) === letter).slice(0, count).map((c) => c.name) };
 }
 

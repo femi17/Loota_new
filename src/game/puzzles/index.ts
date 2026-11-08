@@ -28,6 +28,29 @@ export type AnyPuzzle = SentriesPuzzle | RoutePuzzle | AdirePuzzle | TornMapPuzz
  * makes it itself). */
 export const PICKED_KINDS: PuzzleKind[] = ["route", "adire", "sudoku", "threads", "plots", "patchwork", "vowels", "grammar", "algebra", "countries", "flags", "brands"];
 
+/**
+ * How long a puzzle gets, by kind and level (owner, 8 Nov 2026: "add the right time to solving this if 60 secs is not
+ * right"): the quick picks less, the harder words and boards more. Kept the same as puzzle_seconds() in the database
+ * (scripts/tests/puzzle-sixty-check.mts checks both, and that the hand needs at most half of it).
+ */
+export const PUZZLE_SECONDS: Record<PuzzleKind, [number, number, number]> = {
+  flags: [30, 40, 50],
+  brands: [30, 40, 50],
+  grammar: [45, 60, 75],
+  algebra: [60, 75, 90],
+  vowels: [60, 90, 120],
+  countries: [60, 75, 90],
+  sudoku: [60, 60, 60],
+  route: [60, 75, 90],
+  threads: [60, 75, 90],
+  plots: [60, 75, 90],
+  patchwork: [60, 75, 90],
+  adire: [60, 75, 90],
+  sentries: [60, 75, 90],
+  tornmap: [75, 90, 90],
+};
+export const puzzleSeconds = (kind: PuzzleKind, level: number) => PUZZLE_SECONDS[kind]?.[Math.max(1, Math.min(3, Math.round(level || 1))) - 1] ?? 60;
+
 /** The puzzle for a kind and level (1–3), from a seed. */
 export function makePuzzle(kind: PuzzleKind, level: number, seed: number): { puzzle: AnyPuzzle; answer: unknown } {
   const l = Math.max(1, Math.min(3, Math.round(level || 1)));
@@ -40,13 +63,13 @@ export function makePuzzle(kind: PuzzleKind, level: number, seed: number): { puz
   if (kind === "threads") return makeThreads(seed, [5, 5, 6][l - 1], [4, 5, 5][l - 1]);
   if (kind === "plots") return makePlots(seed, [5, 5, 6][l - 1], [6, 7, 8][l - 1]);
   if (kind === "patchwork") return makePatchwork(seed, [4, 4, 5][l - 1]);
-  if (kind === "vowels") return makeVowels(seed, [3, 4, 5][l - 1]);
+  if (kind === "vowels") return makeVowels(seed, [3, 4, 5][l - 1], l);
   // The quick ones (owner, 4 Nov 2026: "grammar, simple algebra, type 5 coutries starting with L, guess the flag, …
   // guess the brand")
   // More of them at the later keys (owner, 8 Nov 2026: "the questions are cheap not tasking").
-  if (kind === "grammar") return makeGrammar(seed, [4, 5, 6][l - 1]);
+  if (kind === "grammar") return makeGrammar(seed, [4, 5, 6][l - 1], l);
   if (kind === "algebra") return makeAlgebra(seed, l, [3, 4, 4][l - 1]);
-  if (kind === "countries") return makeCountries(seed, 5); // six is too much typing for the minute (puzzle-sixty-check)
+  if (kind === "countries") return makeCountries(seed, 5, l); // six is more typing than its time allows (puzzle-sixty-check)
   if (kind === "flags") return makeFlags(seed, [3, 4, 5][l - 1]);
   if (kind === "brands") return makeBrands(seed, [3, 4, 5][l - 1]);
   if (kind === "route") {

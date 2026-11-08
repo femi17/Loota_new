@@ -42,8 +42,6 @@ type View = { kind: "field" } | { kind: "follow"; id: string };
 const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
 const POLL_MS = 4000;
 const LIVE_FRESH_MS = 15_000; // a live position newer than this beats the saved one
-/** A jump this far between two positions (a flight, a hop) is a cut, not a slide across the map. */
-const JUMP_M = 1500;
 const BANNER_MS = 7000;
 /** Auto camera: a minute on each hunter before moving on; the whole field for a moment between rounds. */
 const DWELL_MS = 60_000;
@@ -118,13 +116,15 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
     let disposed = false;
     let cleanup = () => {};
     (async () => {
-      const [{ Map: MapLibre, setWorkerUrl, LngLatBounds, Marker }, models, { ThreeMapLayer }, { createClient }, { styleMapForGame }, geo] = await Promise.all([
+      const [{ Map: MapLibre, setWorkerUrl, LngLatBounds, Marker }, models, { ThreeMapLayer }, { createClient }, { styleMapForGame }, geo, follow, roads] = await Promise.all([
         import("maplibre-gl"),
         import("@/game/models3d"),
         import("@/game/ThreeMapLayer"),
         import("@/lib/supabase/client"),
         import("@/game/mapStyle"),
         import("@/game/geo"),
+        import("@/game/follow"),
+        import("@/game/roads"),
       ]);
       if (disposed || !container.current) return;
       if (window.innerWidth < 640) setBoard(false);
@@ -144,69 +144,40 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       let latest: State | null = null;
       const live = new Map<string, { lng: number; lat: number; mode: Mode; at: number }>();
       const shown = new Map<string, { lng: number; lat: number; heading: number }>();
-      // Every position heard, per hunter. Each is drawn a little in the past, gliding between the two positions around
-      // that moment, so they walk and ride smoothly instead of leaping to each new one and waiting (owner, 3 Nov 2026:
-      // "the movement on there leaps like a frog"). `gap`: the usual time between their positions.
-      // `delay`: how far behind they're drawn; it follows the gap between positions gently (a sudden change would make
-      // them dash or stall).
-      type Track = { samples: { t: number; lng: number; lat: number }[]; gap: number; arrived: number; delay: number };
-      const tracks = new Map<string, Track>();
-      const delayFor = (gap: number) => Math.min(5000, gap * 1.3 + 250);
-      const delayOf = (tr: Track) => tr.delay;
+      // Every position heard, per hunter, joined to the one before along the roads, and the hunter drawn gliding along
+      // that way (owner, 8 Nov 2026: "In an attempt for the avatar to catch up with the users avatar. They travel along a
+      // path, and is not the path, like crossing roads or walking on buildings"): src/game/follow.ts. Before, they glided
+      // in straight lines between positions (and guessed ahead in a straight line), cutting across blocks at every corner
+      // and whenever they caught up after a gap.
+      const follows = new Map<string, import("@/game/follow").Follow>();
+      // The roads around each hunter, from the map's own tiles (the same roads the game uses abroad), built again when
+      // they've moved on; only for hunters on or near the screen (the others aren't seen), one build a frame at most.
+      const nets = new Map<string, { net: import("@/game/roads").RoadNetwork; centre: { lng: number; lat: number }; mode: Mode; at: number }>();
+      let builtThisFrame = false;
+      const netFor = (id: string, pos: { lng: number; lat: number }): import("@/game/roads").RoadNetwork | null => {
+        const mode = (live.get(id)?.mode ?? latest?.hunters.find((h) => h.id === id)?.mode ?? "walk") as Mode;
+        const known = nets.get(id);
+        const fresh = known && known.mode === mode && geo.distanceM([known.centre.lng, known.centre.lat], [pos.lng, pos.lat]) < 350 && performance.now() - known.at < 20_000;
+        if (fresh) return known.net;
+        const view = map.getBounds();
+        const pad = 0.01;
+        const onScreen = pos.lng > view.getWest() - pad && pos.lng < view.getEast() + pad && pos.lat > view.getSouth() - pad && pos.lat < view.getNorth() + pad;
+        if (builtThisFrame || !onScreen || map.getZoom() < 14) return known?.net ?? null;
+        const features = map.querySourceFeatures("openmaptiles", { sourceLayer: "transportation" }) as import("@/game/roads").RoadFeature[];
+        if (!features.length) return known?.net ?? null;
+        builtThisFrame = true;
+        const net = roads.buildNetwork(features, mode, pos, 700);
+        nets.set(id, { net, centre: { ...pos }, mode, at: performance.now() });
+        return net;
+      };
       const heard = (id: string, lng: number, lat: number) => {
-        const now = performance.now();
-        let tr = tracks.get(id);
-        if (!tr) tracks.set(id, (tr = { samples: [], gap: 1000, arrived: now, delay: delayFor(1000) }));
-        const last = tr.samples[tr.samples.length - 1];
-        if (last) {
-          // Late: the hunter has been waiting at the last spot heard; go on from there, not with a dash to catch up.
-          const drawn = now - delayOf(tr);
-          if (drawn > last.t) last.t = drawn;
-          tr.gap = tr.gap * 0.7 + Math.min(6000, Math.max(300, now - tr.arrived)) * 0.3;
-          if (geo.distanceM([last.lng, last.lat], [lng, lat]) > JUMP_M) tr.samples = [];
-        }
-        tr.arrived = now;
-        tr.samples.push({ t: now, lng, lat });
-        if (tr.samples.length > 10) tr.samples.shift();
+        const at = { lng, lat };
+        follows.set(id, follow.heard(follows.get(id) ?? null, at, performance.now(), netFor(id, at)));
       };
-      // Positions stamped by the hunter's own game (twice a second while moving): the last two give their exact speed
-      // and direction (by the sender's clock), so they're drawn where they are now, at that speed, and nudged gently
-      // when the next one lands. (Unstamped positions, like the saved ones, glide a moment behind as above.)
-      type Stamped = { st: number; at: number; lng: number; lat: number };
-      const stamped = new Map<string, { a: Stamped | null; b: Stamped }>();
-      const NET_MS = 100; // about how long a position takes to arrive
-      const stampedHeard = (id: string, lng: number, lat: number, st: number) => {
-        const known = stamped.get(id);
-        const b = { st, at: performance.now(), lng, lat };
-        if (known && st <= known.b.st) return; // out of order
-        const far = known && geo.distanceM([known.b.lng, known.b.lat], [lng, lat]) > JUMP_M;
-        stamped.set(id, { a: known && !far ? known.b : null, b });
-      };
-      const nowAt = (id: string, now: number) => {
-        const k = stamped.get(id);
-        if (!k || now - k.b.at > 3000) return null;
-        const { a, b } = k;
-        const ahead = Math.min(800, now - b.at + NET_MS);
-        const span = a ? b.st - a.st : 0;
-        if (!a || span < 100 || span > 3000) return { lng: b.lng, lat: b.lat, moving: false };
-        return { lng: b.lng + ((b.lng - a.lng) / span) * ahead, lat: b.lat + ((b.lat - a.lat) / span) * ahead, moving: a.lng !== b.lng || a.lat !== b.lat };
-      };
-      const placeAt = (tr: Track, now: number, dtMs: number) => {
-        const list = tr.samples;
-        const want = delayFor(tr.gap);
-        tr.delay += Math.max(-0.15 * dtMs, Math.min(0.15 * dtMs, want - tr.delay));
-        const r = now - tr.delay;
-        if (r <= list[0].t) return list[0];
-        for (let i = 1; i < list.length; i++) {
-          if (r > list[i].t) continue;
-          const a = list[i - 1], b = list[i];
-          const f = (r - a.t) / (b.t - a.t || 1);
-          return { lng: a.lng + (b.lng - a.lng) * f, lat: a.lat + (b.lat - a.lat) * f };
-        }
-        return list[list.length - 1];
-      };
-      // For the browser tests (in development only): where each hunter is drawn now.
-      if (process.env.NODE_ENV !== "production") (window as unknown as { __broadcastShown?: () => object }).__broadcastShown = () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], zoom: map.getZoom() });
+      // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
+      if (process.env.NODE_ENV !== "production") {
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], zoom: map.getZoom() }), __broadcastMap: map });
+      }
       let drawnAt = 0; // the last frame's time
       // Trips under way, by hunter: the route (continuous) and its length along the way, measured once.
       let skew = 0; // the server's clock minus this one
@@ -233,7 +204,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (p.sid && now && p.sid !== now) return;
         live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
         heard(p.id, p.lng, p.lat);
-        if (typeof p.t === "number") stampedHeard(p.id, p.lng, p.lat, p.t);
       });
       channel.subscribe();
 
@@ -307,7 +277,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           shownSince = Date.now();
         }
         if (!autoRef.current || Date.now() - shownSince < (cur.kind === "field" ? FIELD_MS : DWELL_MS)) return;
-        const here = new Set(latest.hunters.filter((h) => tracks.has(h.id) || routes.has(h.id)).map((h) => h.id));
+        const here = new Set(latest.hunters.filter((h) => follows.has(h.id) || routes.has(h.id)).map((h) => h.id));
         let next: string | null = null;
         if (wantNext && here.has(wantNext) && wantNext !== key) next = wantNext;
         wantNext = null;
@@ -356,6 +326,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (!s) return;
 
         drawnAt = t;
+        builtThisFrame = false;
         // Every hunter where they were a moment ago, between the positions heard; on a trip, where the trip is.
         const serverNow = Date.now() + skew;
         for (const h of s.hunters) {
@@ -368,34 +339,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
             continue;
           }
-          const stampedNow = nowAt(h.id, t);
-          if (stampedNow) {
-            const cur = shown.get(h.id);
-            if (!cur || geo.distanceM([cur.lng, cur.lat], [stampedNow.lng, stampedNow.lat]) > 300) {
-              shown.set(h.id, { lng: stampedNow.lng, lat: stampedNow.lat, heading: cur?.heading ?? 0 });
-              continue;
-            }
-            const k = Math.min(1, 10 * dt);
-            const next = { lng: cur.lng + (stampedNow.lng - cur.lng) * k, lat: cur.lat + (stampedNow.lat - cur.lat) * k };
-            if (stampedNow.moving && geo.distanceM([cur.lng, cur.lat], [next.lng, next.lat]) > 0.05) {
-              cur.heading = geo.turnTowards(cur.heading, geo.headingOf([cur.lng, cur.lat], [next.lng, next.lat]), Math.min(1, 8 * dt));
-            }
-            cur.lng = next.lng;
-            cur.lat = next.lat;
-            continue;
-          }
-          const tr = tracks.get(h.id);
-          if (!tr?.samples.length) continue;
-          const at = placeAt(tr, t, dt * 1000);
+          const fw = follows.get(h.id);
+          if (!fw) continue;
+          const at = follow.drawn(fw, t, dt, netFor(h.id, fw.last));
           const cur = shown.get(h.id);
-          if (!cur) {
-            shown.set(h.id, { lng: at.lng, lat: at.lat, heading: 0 });
-            continue;
-          }
-          const moved = geo.distanceM([cur.lng, cur.lat], [at.lng, at.lat]);
-          if (moved > 0.05) cur.heading = geo.turnTowards(cur.heading, geo.headingOf([cur.lng, cur.lat], [at.lng, at.lat]), Math.min(1, 8 * dt));
-          cur.lng = at.lng;
-          cur.lat = at.lat;
+          if (!cur) shown.set(h.id, { ...at });
+          else Object.assign(cur, at);
         }
 
         // A dot and name for every hunter, moved every frame.

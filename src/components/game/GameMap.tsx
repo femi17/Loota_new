@@ -12,6 +12,7 @@ import { MODES, canSprint, type Mode } from "@/game/movement";
 import { PICKUP_RADIUS_M, RELIC_ICON, RELICS, type Lead, type RelicId, type WorldItem } from "@/game/items";
 import { ADDONS, CALL_OUT_PRICE, FLAT_FIX_PRICE, KEG_CAPACITY, KEG_PRICE, MEAL_ENERGY, MEAL_PRICE, NOT_PAPERS, STRAND_FAR_M, VEHICLES, WHEEL_FIX_PRICE, WHEEL_FIX_SECONDS, type AddonId, type VehicleKind } from "@/game/economy";
 import { cue, setSound, soundOn } from "@/game/sound";
+import { leaveFullscreen, playFullscreen, useCanFullscreen, useFullscreen } from "@/lib/fullscreen";
 import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
@@ -566,6 +567,9 @@ export function GameMap({
   const huntStory = useHuntStory(huntId);
   const radio = useRadio();
   const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
+  // Full screen on an Android phone, and the way out of it (owner, 8 Nov 2026: "how do I go out of fullscreen mode").
+  const fullscreen = useFullscreen();
+  const canFullscreen = useCanFullscreen();
   const [searchOpen, setSearchOpen] = useState(false);
   const [huntShown, setHuntShown] = useState(!huntHidden);
   // Asked for from the lobby: it isn't hidden any more.
@@ -1093,7 +1097,7 @@ export function GameMap({
         if (detour && !samePlace(to, detour.stop) && !(detour.back && samePlace(to, detour.back.to))) dropDetour();
         if (name === "the marked spot") {
           if (trip && trip.name !== "the marked spot") replaced = { to: trip.to, name: trip.name };
-        } else replaced = null;
+        } else if (!(trip && samePlace(trip.to, to))) replaced = null; // a new place; the same one again (back on the route) keeps its way back
         // Nearby places on the loaded roads: the shortest way, straight away.
         let route: import("@/game/geo").Route | null = null;
         let forks: { index: number; side: -1 | 1 }[] = [];
@@ -8761,9 +8765,11 @@ export function GameMap({
         <div ref={container} className="h-full w-full" />
       </div>
 
-      <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-col gap-2" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      {/* On a phone, edge to edge (owner, 8 Nov 2026: "the health, the timer, the coin, are tightly close together. Maybe
+          there should be no body margin or padding, so each item can utilize the space on both sides"). */}
+      <div className="pointer-events-none absolute inset-x-1 top-2 flex flex-col gap-2 sm:inset-x-3 sm:top-3" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         {/* Top bar: back (with the logo), energy, the hunt's clock, coins, bag (help is with the tools below) */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between gap-1">
           <Link
             href="/lobby"
             aria-label="Back to the lobby"
@@ -9358,6 +9364,17 @@ export function GameMap({
                   >
                     {sound ? "🔊 Sound: on" : "🔇 Sound: off"}
                   </button>
+                  {canFullscreen && (
+                    <button
+                      type="button"
+                      data-fullscreen-switch={fullscreen ? "on" : "off"}
+                      onClick={() => void (fullscreen ? leaveFullscreen() : playFullscreen())}
+                      aria-pressed={fullscreen}
+                      className="rounded-xl bg-ink-2 px-3 py-2 text-sm font-bold"
+                    >
+                      {fullscreen ? "⛶ Exit full screen" : "⛶ Full screen"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -9584,7 +9601,7 @@ export function GameMap({
 
       {hud.street && !inside && !(joyShown && hinting) && (
         <div
-          className={`pointer-events-none absolute bottom-[112px] left-1/2 flex max-w-[calc(100%-200px)] -translate-x-1/2 items-center gap-1.5 px-4 sm:bottom-[100px] rounded-full bg-paper py-1.5 text-sm font-bold text-ink shadow sm:max-w-md`}
+          className={`pointer-events-none absolute bottom-[112px] left-1/2 flex max-w-[calc(100%-200px)] -translate-x-1/2 items-center gap-1.5 px-4 sm:bottom-[100px] rounded-full bg-paper py-1.5 text-sm font-bold text-ink shadow sm:max-w-md [@media(max-height:500px)]:bottom-3! [@media(max-height:500px)]:max-w-[calc(100%-400px)]!`}
           style={{ marginBottom: "env(safe-area-inset-bottom)" }}
           aria-label={`You're on ${hud.street}`}
         >
@@ -9602,7 +9619,7 @@ export function GameMap({
           joyShown
             ? "bottom-[120px] left-3 right-3 sm:bottom-[100px]" // in the street's place (the bottom row is full)
             : `bottom-9 left-3 ${hud.ride || hud.care ? "right-3" : canSprint(hud.mode) ? "right-[176px]" : "right-[96px]"}` // clear of CRUISE (and SPRINT)
-        } rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center ${
+        } rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center [@media(max-height:500px)]:bottom-3! [@media(max-height:500px)]:w-[min(460px,calc(100%-380px))]! [@media(max-height:500px)]:py-2! ${
           hud.alert ? "ring-2 ring-gold" : ""
         } ${hinting && !inside ? "" : "invisible"}`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}
@@ -9995,8 +10012,10 @@ export function GameMap({
       {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || hud.heat?.house) && (
         <div
           className={`pointer-events-none absolute inset-x-3 ${
-            joyShown && hinting ? "bottom-[calc(120px+var(--hint-h)+8px)] sm:bottom-[calc(100px+var(--hint-h)+8px)]" : "bottom-[156px] sm:bottom-[144px]"
-          } flex flex-wrap items-end justify-center gap-2`}
+            joyShown && hinting
+              ? "bottom-[calc(120px+var(--hint-h)+8px)] sm:bottom-[calc(100px+var(--hint-h)+8px)] [@media(max-height:500px)]:bottom-[calc(12px+var(--hint-h)+8px)]!"
+              : "bottom-[156px] sm:bottom-[144px] [@media(max-height:500px)]:bottom-[56px]!"
+          } flex flex-wrap items-end justify-center gap-2 [@media(max-height:500px)]:inset-x-[190px]!`}
           style={{ marginBottom: "env(safe-area-inset-bottom)", ["--hint-h" as string]: `${hintH}px` }}
           onPointerDownCapture={hereDown}
           onClickCapture={hereClick}

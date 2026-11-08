@@ -55,6 +55,8 @@ try {
   };
   const tapText = async (page, re) => {
     const el = await page.evaluateHandle((src) => [...document.querySelectorAll("a, button")].find((x) => new RegExp(src).test(x.textContent ?? "")) ?? null, re.source);
+    await el.asElement()?.evaluate((x) => x.scrollIntoView({ block: "center" }));
+    await wait(300);
     const box = await el.asElement()?.boundingBox();
     if (!box) return false;
     await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
@@ -79,6 +81,24 @@ try {
   await tapText(android, /^Full screen$/);
   const again = await until(android, () => !!document.fullscreenElement, 5000);
   check("…tapped: full screen again, and the offer goes", again && !(await android.$("[data-fullscreen-offer]")));
+  // The way out (owner, 8 Nov 2026: "how do I go out of fullscreen mode, I went to the lobby, and it was still on landscape")
+  await android.evaluate(() => document.querySelector('button[aria-label="Help"]')?.click());
+  await until(android, () => !!document.querySelector("[data-fullscreen-switch]"), 5000);
+  const label = await android.evaluate(() => document.querySelector("[data-fullscreen-switch]")?.textContent?.trim() ?? "");
+  await tapText(android, /Exit full screen/);
+  const out = await until(android, () => !document.fullscreenElement, 5000);
+  check("the help panel: 'Exit full screen' leaves full screen", label === "⛶ Exit full screen" && out, label);
+  await wait(1500); // the screen settles back first
+  await tapText(android, /^⛶ Full screen$/);
+  check("…and '⛶ Full screen' goes back in", await until(android, () => !!document.fullscreenElement, 5000));
+  await android.evaluate(() => document.querySelector('button[aria-label="Help"]')?.click());
+  await wait(500);
+  const back = await android.evaluateHandle(() => document.querySelector('a[aria-label="Back to the lobby"]'));
+  const bb = await back.asElement()?.boundingBox();
+  if (bb) await android.touchscreen.tap(bb.x + bb.width / 2, bb.y + bb.height / 2);
+  const lobby = await until(android, () => location.pathname === "/lobby", 30000);
+  const left = await until(android, () => !document.fullscreenElement, 10000);
+  check("back to the lobby: out of full screen (and no longer held sideways)", lobby && left);
   await android.close();
 
   // 3. Sideways in a story hunt: every tool on the screen
@@ -105,6 +125,20 @@ try {
   });
   check("…the lamp under the leaderboard, in the far right column", !!place.lamp && !!place.board && Math.abs(place.lamp.left - place.board.left) < 2 && place.lamp.top > place.board.top, JSON.stringify({ lamp: place.lamp, board: place.board }));
   check("…and no tool behind the joystick", place.stick && place.hit.length === 0, place.hit.join(", ") || "none");
+  // Owner, 8 Nov 2026: "on the landscape mode, the action button and the toast messages can be below, not blocking the
+  // avatar, there is enought space between the joystick and the sprint button"
+  const bottom = await sideways.evaluate(() => {
+    const box = (el) => { const r = el?.getBoundingClientRect(); return r && r.width ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null; };
+    const sprint = box([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "SPRINT"));
+    const cruise = box(document.querySelector('button[aria-label^="Cruise"]'));
+    const stick = box(document.querySelector('[aria-label^="Joystick"]'));
+    const street = box(document.querySelector('[aria-label^="You\'re on"]'));
+    const hint = box(document.querySelector('p[role="status"]'));
+    return { sprint, cruise, stick, street, hint, h: window.innerHeight, mid: window.innerHeight / 2 };
+  });
+  const between = (b) => !!b && b.left >= Math.max(bottom.sprint?.right ?? 0, bottom.cruise?.right ?? 0) - 2 && b.right <= (bottom.stick?.left ?? 844) + 2;
+  check("sideways: the street name and the messages along the bottom, between Sprint and the joystick", (!bottom.street || (between(bottom.street) && bottom.street.bottom > bottom.h - 30)) && between(bottom.hint) && bottom.hint.bottom > bottom.h - 30, JSON.stringify({ street: bottom.street, hint: bottom.hint, sprint: bottom.sprint?.right, cruise: bottom.cruise?.right, stick: bottom.stick?.left }));
+  check("…clear of the hunter in the middle of the screen", bottom.hint.top > bottom.mid + 40, `messages from ${Math.round(bottom.hint.top)} px; the middle ${bottom.mid}`);
   for (let i = 0; i < 4; i++) {
     await sideways.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Skip|Not now|^✕$/.test(b.textContent?.trim() ?? ""))?.click());
     await wait(1200);

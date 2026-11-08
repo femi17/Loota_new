@@ -20,7 +20,7 @@ try {
   const email = `land-${Date.now()}@example.com`, password = `T3st-${Math.random().toString(36).slice(2)}!`;
   const { data } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   id = data.user.id;
-  await admin.from("profiles").update({ home_lng: HOME.lng, home_lat: HOME.lat, home_set_at: new Date().toISOString(), cruise_tokens: 3 }).eq("id", id);
+  await admin.from("profiles").update({ home_lng: HOME.lng, home_lat: HOME.lat, home_set_at: new Date().toISOString(), cruise_tokens: 3, coins: 8543 }).eq("id", id);
   await admin.from("player_positions").upsert({ user_id: id, lng: HOME.lng, lat: HOME.lat, mode: "walk", energy: 100, updated_at: ago(30) });
   const { data: hunt } = await admin.from("hunts").insert({ title: "Landscape test (automated)", prize: "Nothing", winners: 1, starts_at: ago(3600), ends_at: new Date(Date.now() + 3600e3).toISOString(), published: true, all_day: true }).select("id").single();
   huntId = hunt.id;
@@ -34,22 +34,22 @@ try {
     args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] });
   const shoot = async (path, name) => {
     const page = await (await browser.createBrowserContext()).newPage();
-    await page.emulate({ viewport: { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true }, userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Mobile Safari/537.36" });
+    await page.emulate({ viewport: (process.env.UPRIGHT ? { width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true } : { width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true }), userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Mobile Safari/537.36" });
     await page.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
     await page.evaluateOnNewDocument((uid) => { try { localStorage.setItem(`loota:welcome:${uid}`, "1"); } catch {} }, id);
     await page.goto(`http://localhost:3000${path}`, { waitUntil: "domcontentloaded", timeout: 120000 });
     await wait(20000);
-    await page.screenshot({ path: `${OUT}/landscape-${name}.png` });
+    await page.screenshot({ path: `${OUT}/${process.env.UPRIGHT ? "upright" : "landscape"}-${name}.png` });
     console.log("shot", name);
     for (let i = 0; i < 4; i++) {
       await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Skip/.test(b.textContent ?? ""))?.click());
       await wait(1500);
     }
     await wait(3000);
-    await page.screenshot({ path: `${OUT}/landscape-${name}-2.png` });
+    await page.screenshot({ path: `${OUT}/${process.env.UPRIGHT ? "upright" : "landscape"}-${name}-2.png` });
     await page.evaluate(() => document.querySelector('button[aria-label^="Inventory"]')?.click());
     await wait(1500);
-    await page.screenshot({ path: `${OUT}/landscape-${name}-panel.png` });
+    await page.screenshot({ path: `${OUT}/${process.env.UPRIGHT ? "upright" : "landscape"}-${name}-panel.png` });
     await page.close();
   };
   await shoot("/play", "free-roam");

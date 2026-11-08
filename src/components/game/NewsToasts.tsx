@@ -71,7 +71,7 @@ export function NewsToasts({ hidden }: { hidden: boolean }) {
 
   if (!toasts.length || hidden) return null;
   return (
-    <div className="pointer-events-none fixed inset-x-3 bottom-[190px] z-20 mx-auto flex max-w-sm flex-col gap-1.5" aria-live="polite" aria-label="News">
+    <div className="pointer-events-none fixed inset-x-3 bottom-[190px] z-20 mx-auto flex max-w-sm flex-col gap-1.5 [@media(max-height:500px)]:top-16! [@media(max-height:500px)]:bottom-auto!" aria-live="polite" aria-label="News">
       {toasts.map((t) => (
         <p
           key={t.id}

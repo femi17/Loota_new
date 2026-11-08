@@ -5,6 +5,7 @@
  * the map's own "Full screen" offer. Android's Chrome does both; an iPhone's Safari does neither (it can only be asked
  * to turn the phone).
  */
+import { useSyncExternalStore } from "react";
 
 /** A phone (a touch screen whose short side is a phone's). */
 export const isTouchPhone = () =>
@@ -31,3 +32,27 @@ export async function playFullscreen(): Promise<boolean> {
   }
   return true;
 }
+
+/** Back to a normal screen: no longer turned sideways, out of full screen (the lobby; the help panel's switch). */
+export async function leaveFullscreen() {
+  try {
+    (screen.orientation as ScreenOrientation & { unlock?: () => void }).unlock?.();
+  } catch {
+    // Not locked, or can't be.
+  }
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+  } catch {
+    // Already out.
+  }
+}
+
+const onFullscreenChange = (fn: () => void) => {
+  document.addEventListener("fullscreenchange", fn);
+  return () => document.removeEventListener("fullscreenchange", fn);
+};
+/** Whether the page is full screen now, kept up to date. */
+export const useFullscreen = () => useSyncExternalStore(onFullscreenChange, isFullscreen, () => false);
+/** Whether this is a phone that can go full screen (an Android phone; not an iPhone), for showing the switch. */
+export const useCanFullscreen = () => useSyncExternalStore(noChange, () => isTouchPhone() && canFullscreen(), () => false);
+const noChange = () => () => {};

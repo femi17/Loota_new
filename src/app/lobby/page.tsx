@@ -12,7 +12,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { logOut } from "../(auth)/actions";
 import { joinHunt } from "./actions";
-import { JoinButton, PlayLink } from "./PlayButtons";
+import { JoinButton, LeaveFullscreen, PlayLink } from "./PlayButtons";
 import { huntResumesAt, type HuntSummary } from "@/game/hunt";
 
 /**
@@ -455,6 +455,7 @@ async function Lobby() {
         </div>
       </header>
 
+      <LeaveFullscreen />
       <main className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 pb-10 pt-5">
         <section className="flex items-center gap-3">
           <div className="flex size-13 shrink-0 items-end justify-center overflow-hidden rounded-2xl bg-map">

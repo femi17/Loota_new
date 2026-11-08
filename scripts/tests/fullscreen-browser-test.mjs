@@ -95,6 +95,16 @@ try {
   const h = await sideways.evaluate(() => window.innerHeight);
   const off = tools.filter((t) => t.bottom > h || t.right > 844);
   check("held sideways in a hunt: every tool on the screen", tools.length >= 7 && tools.every((t) => t.bottom <= h && t.right <= 844), `${tools.length} tools; lowest at ${Math.round(Math.max(...tools.map((t) => t.bottom)))} of ${h}${off.length ? `; off: ${off.map((t) => t.label).join(", ")}` : ""}`);
+  // Owner, 8 Nov 2026: "the joystick blocks, putting it under the leadboard icon or above should be better"
+  const place = await sideways.evaluate(() => {
+    const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null; };
+    const stick = box(document.querySelector('[aria-label^="Joystick"]'));
+    const all = [...document.querySelectorAll('nav[aria-label="Tools"] button')].map((b) => ({ label: b.getAttribute("aria-label"), ...box(b) }));
+    const hit = stick ? all.filter((t) => t.left < stick.right && t.right > stick.left && t.top < stick.bottom && t.bottom > stick.top).map((t) => t.label) : [];
+    return { lamp: box(document.querySelector('[data-tool="lamp"]')), board: box(document.querySelector('[data-tool="leaderboard"]')), stick: !!stick, hit };
+  });
+  check("…the lamp under the leaderboard, in the far right column", !!place.lamp && !!place.board && Math.abs(place.lamp.left - place.board.left) < 2 && place.lamp.top > place.board.top, JSON.stringify({ lamp: place.lamp, board: place.board }));
+  check("…and no tool behind the joystick", place.stick && place.hit.length === 0, place.hit.join(", ") || "none");
   for (let i = 0; i < 4; i++) {
     await sideways.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Skip|Not now|^✕$/.test(b.textContent?.trim() ?? ""))?.click());
     await wait(1200);

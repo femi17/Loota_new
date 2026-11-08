@@ -9455,8 +9455,9 @@ export function GameMap({
           </div>
 
           {/* Right: the tools, as icons. On a short screen (a phone held sideways: owner, 8 Nov 2026) in two columns of up
-              to five, so none run off the bottom. */}
-          <nav className={`flex shrink-0 flex-col gap-2 [@media(max-height:500px)]:grid [@media(max-height:500px)]:grid-flow-col [@media(max-height:500px)]:grid-rows-5 ${inside ? "invisible" : ""}`} aria-label="Tools">
+              to four, so none run off the bottom or sit behind the joystick; the lamp last, under the leaderboard in the far
+              right column (owner, 8 Nov 2026: "the joystick blocks… putting it under the leadboard icon"). */}
+          <nav className={`flex shrink-0 flex-col gap-2 [@media(max-height:500px)]:grid [@media(max-height:500px)]:grid-flow-col [@media(max-height:500px)]:grid-rows-4 ${inside ? "invisible" : ""}`} aria-label="Tools">
             {/* Help, at the top of the tools (owner, 26 Oct 2026: the inventory takes the end of the top bar) */}
             <button
               type="button"
@@ -9507,7 +9508,7 @@ export function GameMap({
               aria-label={`The lamp${hud.lamp.has ? (hud.lamp.unseen ? ": something new" : ": something waiting") : ""}`}
               title="The lamp"
               onClick={() => (hud.djinn?.fresh ? setDjinnOpen({ chamber: null }) : setLampOpen({ quiz: null }))}
-              className={`${tool} relative ${
+              className={`${tool} relative [@media(max-height:500px)]:order-last ${
                 hud.djinn && ["summoned", "gate", "seals"].includes(hud.djinn.stage)
                   ? "loota-lamp-djinn bg-[#5B2A9E] text-paper"
                   : hud.lamp.unseen

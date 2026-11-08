@@ -9619,7 +9619,7 @@ export function GameMap({
           joyShown
             ? "bottom-[120px] left-3 right-3 sm:bottom-[100px]" // in the street's place (the bottom row is full)
             : `bottom-9 left-3 ${hud.ride || hud.care ? "right-3" : canSprint(hud.mode) ? "right-[176px]" : "right-[96px]"}` // clear of CRUISE (and SPRINT)
-        } rounded-2xl bg-ink px-4 py-3 text-sm sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center [@media(max-height:500px)]:bottom-3! [@media(max-height:500px)]:w-[min(460px,calc(100%-380px))]! [@media(max-height:500px)]:py-2! ${
+        } rounded-2xl bg-ink px-4 py-3 text-sm max-sm:px-3 max-sm:py-2 max-sm:text-xs [@media(max-height:500px)]:text-xs sm:left-1/2 sm:right-auto sm:w-[min(520px,calc(100%-24px))] sm:-translate-x-1/2 sm:text-center [@media(max-height:500px)]:bottom-3! [@media(max-height:500px)]:w-[min(460px,calc(100%-380px))]! [@media(max-height:500px)]:py-2! ${
           hud.alert ? "ring-2 ring-gold" : ""
         } ${hinting && !inside ? "" : "invisible"}`}
         style={{ marginBottom: "env(safe-area-inset-bottom)" }}

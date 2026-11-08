@@ -75,7 +75,7 @@ export function NewsToasts({ hidden }: { hidden: boolean }) {
       {toasts.map((t) => (
         <p
           key={t.id}
-          className="loota-wonder-banner rounded-xl bg-ink/95 px-3 py-2 text-sm font-bold text-paper ring-1 ring-gold max-sm:line-clamp-2 max-sm:[&:not(:last-child)]:hidden"
+          className="loota-wonder-banner rounded-xl bg-ink/95 px-3 py-2 text-sm font-bold max-sm:py-1.5 max-sm:text-xs [@media(max-height:500px)]:text-xs text-paper ring-1 ring-gold max-sm:line-clamp-2 max-sm:[&:not(:last-child)]:hidden"
         >
           {t.text}
         </p>

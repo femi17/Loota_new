@@ -139,6 +139,9 @@ try {
   const between = (b) => !!b && b.left >= Math.max(bottom.sprint?.right ?? 0, bottom.cruise?.right ?? 0) - 2 && b.right <= (bottom.stick?.left ?? 844) + 2;
   check("sideways: the street name and the messages along the bottom, between Sprint and the joystick", (!bottom.street || (between(bottom.street) && bottom.street.bottom > bottom.h - 30)) && between(bottom.hint) && bottom.hint.bottom > bottom.h - 30, JSON.stringify({ street: bottom.street, hint: bottom.hint, sprint: bottom.sprint?.right, cruise: bottom.cruise?.right, stick: bottom.stick?.left }));
   check("…clear of the hunter in the middle of the screen", bottom.hint.top > bottom.mid + 40, `messages from ${Math.round(bottom.hint.top)} px; the middle ${bottom.mid}`);
+  // Owner, 8 Nov 2026: "The toast font size should be reduce on mobile."
+  const sideSize = await sideways.evaluate(() => parseFloat(getComputedStyle(document.querySelector('p[role="status"]')).fontSize));
+  check("…in smaller type on a phone (12 px, was 14)", sideSize <= 12.5, `${sideSize} px`);
   for (let i = 0; i < 4; i++) {
     await sideways.evaluate(() => [...document.querySelectorAll("button")].find((b) => /Skip|Not now|^✕$/.test(b.textContent?.trim() ?? ""))?.click());
     await wait(1200);
@@ -151,6 +154,8 @@ try {
   await iphone.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
   const hint = await until(iphone, () => document.querySelector("[data-fullscreen-offer]")?.getAttribute("data-fullscreen-offer") === "turn", 40000);
   check("iPhone held upright: a hint to turn the phone sideways (no full screen there)", hint);
+  const upSize = await iphone.evaluate(() => parseFloat(getComputedStyle(document.querySelector('p[role="status"]')).fontSize));
+  check("upright on a phone, the messages in smaller type (about 14 px, was 16)", upSize <= 14, `${upSize} px`);
   await iphone.screenshot({ path: `${OUT}/fullscreen-iphone-hint.png` });
   await iphone.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isLandscape: true });
   const gone = await until(iphone, () => !document.querySelector("[data-fullscreen-offer]"), 5000);

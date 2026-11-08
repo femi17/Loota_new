@@ -27,6 +27,18 @@ check("a room at key 1 and at key 2: never the same puzzle", same === 0, `${same
 check("…and never the same kind of puzzle as that room at the key before", kinds === total, `${kinds} of ${total}`);
 const uid = "d49dbcbc-8bd1-4ffa-bb5b-b1e6ff66e31e";
 check("the same key and room: the same puzzle each time it's asked", made(uid, 2, 3) === made(uid, 2, 3));
+// Owner, 8 Nov 2026: "remember all the users gets same category but different questions"
+let sameKind = 0, ownPuzzle = 0, pairs = 0;
+for (let i = 0; i < 100; i++) {
+  const a = `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, b = `00000000-0000-4000-9000-${String(i).padStart(12, "0")}`;
+  for (const key of [1, 2, 3]) for (const room of [1, 2, 3, 4, 5]) {
+    pairs++;
+    if (roomKind(a, HUNT, key, room) === roomKind(b, HUNT, key, room)) sameKind++;
+    if (made(a, key, room) !== made(b, key, room)) ownPuzzle++;
+  }
+}
+check("two hunters at the same room of a key: the same kind of puzzle", sameKind === pairs, `${sameKind} of ${pairs}`);
+check("…each their own puzzle of it (different words, sums, boards)", ownPuzzle >= pairs * 0.9, `${ownPuzzle} of ${pairs} different`);
 check("the rooms are never at the easiest level: 2 at keys 1–2, 3 from key 3", roomLevel(1) === 2 && roomLevel(2) === 2 && roomLevel(3) === 3 && roomLevel(6) === 3);
 const words = (key: number) => (makePuzzle("vowels", roomLevel(key), 7).puzzle as { words: unknown[] }).words.length;
 check("Lost Vowels: 4 words at the first keys, 5 from key 3 (was 3)", words(1) === 4 && words(3) === 5, `${words(1)}, ${words(3)}`);

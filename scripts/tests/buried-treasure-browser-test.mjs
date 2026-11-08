@@ -144,7 +144,8 @@ try {
   const sheet = await until(() => page.evaluate(() => !!document.querySelector('[data-room-puzzle="1"]')), 20000);
   check("walked up to the chest: its puzzle opens, here in the world", !!sheet && !!(await page.$(SCENE)));
   const left = Number(await page.evaluate(() => document.querySelector("[data-room-left]")?.getAttribute("data-room-left")));
-  check("…60 seconds for its puzzle", left > 45 && left <= 60, `${left} s`);
+  const own = (await admin.from("house_room_puzzles").select("kind, seconds").eq("user_id", id).eq("hunt_id", huntId).eq("room", 1).single()).data;
+  check(`…its puzzle's own time (${own.kind}, ${own.seconds} s)`, left > own.seconds - 15 && left <= own.seconds, `${left} s`);
   await wait(800);
   await page.screenshot({ path: `${OUT}/buried-3-trial.png` });
   const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", 1).single()).data;

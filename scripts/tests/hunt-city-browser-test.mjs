@@ -89,7 +89,8 @@ try {
   await page.goto(`http://localhost:3000/play?hunt=${huntId}`, { waitUntil: "domcontentloaded", timeout: 120000 });
   // 1. The city
   check("🧭 Explore the place: the city opens", await explore());
-  const fronts = await page.evaluate((sel) => Object.keys(JSON.parse(document.querySelector(sel)?.getAttribute("data-fronts") ?? "{}")).join(" | "), SCENE);
+  const frontsOf = () => page.evaluate((sel) => Object.keys(JSON.parse(document.querySelector(sel)?.getAttribute("data-fronts") ?? "{}")).join(" | "), SCENE);
+  const fronts = (await until(async () => (await frontsOf()) || null, 15000)) ?? "";
   check("…its buildings, each with its way in", /noodles/.test(fronts) && /fountain/.test(fronts) && /books/.test(fronts), fronts);
   await page.evaluate(() => document.querySelector('button[aria-label="See the whole place"]')?.click());
   await wait(1500);
@@ -136,18 +137,19 @@ try {
       await page.evaluate(() => window.__lootaRoomSolve?.(["WRONG"]));
       const wrong = await until(async () => /Not quite/.test(await page.evaluate(() => document.body.innerText)), 10000);
       check("a wrong answer: the box stays shut", !!wrong);
-      // 60 seconds a puzzle (owner, 3 Nov 2026): the clock shows; past it, the answer is too late and the lock jams
+      // Each puzzle its own time (owner, 8 Nov 2026; it was 60 s for all): the clock shows it; past it, the answer is too
+      // late and the lock jams for 30 s
       const left = Number(await page.evaluate(() => document.querySelector("[data-room-left]")?.getAttribute("data-room-left")));
-      check("the box's clock: 60 seconds", left > 45 && left <= 60, `${left} s`);
-      const first = (await admin.from("house_room_puzzles").select("kind, solution, tries").eq("user_id", id).eq("hunt_id", huntId).eq("room", 2).single()).data;
-      await admin.from("house_room_puzzles").update({ started_at: ago(70) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 2);
+      const first = (await admin.from("house_room_puzzles").select("kind, solution, tries, seconds").eq("user_id", id).eq("hunt_id", huntId).eq("room", 2).single()).data;
+      check(`the box's clock: its own time (${first.kind}, ${first.seconds} s)`, left > first.seconds - 15 && left <= first.seconds, `${left} s`);
+      await admin.from("house_room_puzzles").update({ started_at: ago(first.seconds + 10) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 2);
       await page.evaluate((a) => window.__lootaRoomSolve?.(a), answerOf(first));
       const late = await until(async () => /Too slow/.test(await say()) && !(await page.evaluate(() => !!document.querySelector("[data-room-puzzle]"))) && (await say()), 10000);
-      check("the right answer, after 60 s: too late, the sheet closes", !!late, late ?? (await say()));
+      check("the right answer, after its time: too late, the sheet closes", !!late, late ?? (await say()));
       await tap({ tap: "inner", id: "2" });
       const jammed = await until(async () => /jammed/.test(await say()) && (await say()), 10000);
       check("…the lock is jammed for a while", !!jammed, jammed ?? (await say()));
-      await admin.from("house_room_puzzles").update({ started_at: ago(100) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 2);
+      await admin.from("house_room_puzzles").update({ started_at: ago(first.seconds + 40) }).eq("user_id", id).eq("hunt_id", huntId).eq("room", 2);
       await tap({ tap: "inner", id: "2" });
       const again = await until(() => page.evaluate(() => !!document.querySelector('[data-room-puzzle="2"]')), 15000);
       const next = (await admin.from("house_room_puzzles").select("tries, solved_at").eq("user_id", id).eq("hunt_id", huntId).eq("room", 2).single()).data;

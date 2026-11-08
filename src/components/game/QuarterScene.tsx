@@ -40,6 +40,9 @@ type QuarterView = {
 type RoomPuzzle = { n: number; kind: string; puzzle: unknown; ends: number };
 const NEAR_M = 6; // the detector reads a place from the street this close to its way in (swept round, it reaches)
 const BEEP_M = 20; // it beeps within this of the key's place, faster the closer
+/** The detector reads a place only from this close to it (owner, 8 Nov 2026: "The room should not be an obvious find,
+ * they should walk around before seeing it"): it used to read every place as the hunter arrived. */
+const DETECT_M = 12;
 type Opened = {
   ok?: boolean;
   right?: boolean;
@@ -179,6 +182,15 @@ export function QuarterScene({
   const detectorRef = useRef(false); // the detector, in the hunter's hand when they have one
   const wandHeatRef = useRef(""); // what it reads now (its head glows with it)
   const hotRef = useRef(-1); // the place it found hot (the key's), once read
+  const [inRange, setInRange] = useState(""); // the places the detector can read from here ("2,5")
+  // A Key Trial on (the chest's puzzle): the detector is quiet (owner, 8 Nov 2026: "when user is doing the puzzle, the
+  // beeping from the metal detector should stop")
+  const trialOnRef = useRef(false);
+  useEffect(() => {
+    const on = (e: Event) => (trialOnRef.current = !!(e as CustomEvent<{ on: boolean }>).detail?.on);
+    window.addEventListener("loota:trial", on);
+    return () => window.removeEventListener("loota:trial", on);
+  }, []);
   useEffect(() => {
     detectorRef.current = !!me?.detector;
   }, [me?.detector]);
@@ -657,6 +669,7 @@ export function QuarterScene({
     let lastShown = 0;
     let shownHere = -2;
     let lastNear = -2;
+    let lastRange = ""; // the places the detector could read, last time
     let stepping = false;
     let lastHand = ""; // what the action button was last set to
     const ghosts = new Map<string, ReturnType<typeof buildAvatar>>(); // the other hunters drawn
@@ -743,7 +756,8 @@ export function QuarterScene({
         const k = hotRef.current;
         const area = k >= 0 ? kw.places[k]?.area : null;
         const away = area ? Math.hypot(Math.max(area.x0 - me.x, 0, me.x - area.x1), Math.max(area.z0 - me.z, 0, me.z - area.z1)) : Infinity;
-        if (away < BEEP_M) {
+        const puzzling = !!roomPuzzleRef.current || trialOnRef.current; // quiet while a puzzle is being done
+        if (away < BEEP_M && !puzzling) {
           const close = 1 - away / BEEP_M;
           if (now - lastBeep > 180 + (1 - close) * 1220) {
             lastBeep = now;
@@ -838,6 +852,18 @@ export function QuarterScene({
       if (nearNow !== lastNear) {
         lastNear = nearNow;
         setNear(nearNow);
+      }
+      // The places close enough for the detector to read (only with one in hand)
+      if (detectorRef.current) {
+        const range = kw.places
+          .map((p, k) => [k, Math.hypot(Math.max(p.area.x0 - at.x, 0, at.x - p.area.x1), Math.max(p.area.z0 - at.z, 0, at.z - p.area.z1))] as const)
+          .filter(([, d]) => d < DETECT_M)
+          .map(([k]) => k)
+          .join(",");
+        if (range !== lastRange) {
+          lastRange = range;
+          setInRange(range);
+        }
       }
 
       // Where the hunter is, for the others here (a few times a second while walking; out of sight inside a place)
@@ -1158,11 +1184,12 @@ export function QuarterScene({
       setHeat((h) => ({ ...h, [room]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
     });
   }, [near, huntId, supabase, heard]);
-  // …and with a detector, every place as the hunter arrives: it beeps as they near the hot one (owner, 4 Nov 2026)
+  // …and with a detector, each place as the hunter comes near it (within DETECT_M): it beeps as they near the hot one
+  // (owner, 4 Nov 2026), but only once they've walked close enough to read it (8 Nov 2026: "walk around before seeing it")
   useEffect(() => {
     const v = viewRef.current;
-    if (!me?.detector || !v) return;
-    for (const r of v.rooms) {
+    if (!me?.detector || !v || !inRange) return;
+    for (const r of inRange.split(",").map((k) => v.rooms[Number(k)]).filter(Boolean)) {
       if (heatAsked.current.has(r.id)) continue;
       heatAsked.current.add(r.id);
       void supabase.rpc("house_detect", { p_hunt: huntId, p_room: r.id }).then(({ data }) => {
@@ -1171,7 +1198,7 @@ export function QuarterScene({
         else heatAsked.current.delete(r.id); // ask again later (not at the place yet)
       });
     }
-  }, [me?.detector, view?.key, huntId, supabase, heard]);
+  }, [inRange, me?.detector, view?.key, huntId, supabase, heard]);
 
   /** Searching a place (a building, as the hunter walks in; open ground, with ⛏ Dig here): the server decides (a
    * trap's challenge, nothing, the treasure building's rooms, or a buried chest). */

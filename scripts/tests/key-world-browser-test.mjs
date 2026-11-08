@@ -124,6 +124,12 @@ try {
   const buttons = await page.evaluate((sel) => [...document.querySelector(sel).querySelectorAll("button")].map((b) => b.textContent?.trim()).filter(Boolean), SCENE);
   check("no buttons for the places (only the map and Leave)", !buttons.some((b) => /noodle|fountain|comic|garden|bicycle/i.test(b)), buttons.join(" | "));
   await page.screenshot({ path: `${OUT}/world-1-arrive.png` });
+  // Not given away on arrival (owner, 8 Nov 2026: "The room should not be an obvious find, they should walk around
+  // before seeing it"): with a detector in hand, standing where they arrive, no beeping and no place read hot yet.
+  const arriveBeeps0 = await page.evaluate(() => (window.__lootaCues ?? []).filter((c) => c === "beep").length);
+  await wait(2500);
+  const arriveBeeps = (await page.evaluate(() => (window.__lootaCues ?? []).filter((c) => c === "beep").length)) - arriveBeeps0;
+  check("arrived with a detector: no beeping yet (it reads a place only from close by)", arriveBeeps === 0 && (await attr("data-beep")) == null, `${arriveBeeps} beeps`);
 
   // 2. Walking: the arrow keys move the hunter; a wall stops them
   await until(async () => (await attr("data-at")) != null && !(await page.$('[aria-label="Open on more than one device"]')), 15000);
@@ -235,6 +241,12 @@ try {
   check("at the key's chest: its puzzle opens", !!sheet);
   const dark = await page.evaluate(() => document.querySelector("[data-room-puzzle] [data-dark]")?.getAttribute("data-dark"));
   check("…dark in there without a torch (the board dimmed)", dark === "true", String(dark));
+  // Quiet while the puzzle is being done (owner, 8 Nov 2026: "when user is doing the puzzle, the beeping from the metal
+  // detector should stop"), though the hunter stands right at the key's place.
+  const quiet0 = await page.evaluate(() => (window.__lootaCues ?? []).filter((c) => c === "beep").length);
+  await wait(2500);
+  const quiet = (await page.evaluate(() => (window.__lootaCues ?? []).filter((c) => c === "beep").length)) - quiet0;
+  check("…and the detector quiet while the puzzle is open", quiet === 0, `${quiet} beeps in 2.5 s`);
   const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", keyRoom).single()).data;
   const answer = stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution;
   await page.evaluate((a) => window.__lootaRoomSolve?.(a), answer);

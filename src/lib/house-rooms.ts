@@ -20,14 +20,15 @@ export function roomSeed(uid: string, hunt: string, key: number, room: number, a
 /** The kinds at a key: no quick picks (flags, brands) at the last keys (owner, 8 Nov 2026: "not tasking"). */
 const kindsAt = (key: number) => (roomLevel(key) >= 3 ? ROOM_KINDS.filter((k) => k !== "flags" && k !== "brands") : ROOM_KINDS);
 
-/** Which puzzle a box is locked by, for this hunter at this key (the same every time they come to it); never the kind
- * the same box had at the key before. */
-export function roomKind(uid: string, hunt: string, key: number, room: number): PuzzleKind {
-  let n = roomSeed(uid, hunt, key, room) ^ 0x9e3779b9;
+/** Which kind of puzzle a box is locked by at this key: the same for every hunter (owner, 8 Nov 2026: "all the users
+ * gets same category but different questions"; each hunter's own puzzle of it comes from roomSeed), and never the kind
+ * the same box had at the key before. `uid` is kept for the callers but no longer chooses the kind. */
+export function roomKind(_uid: string, hunt: string, key: number, room: number): PuzzleKind {
+  let n = roomSeed("", hunt, key, room) ^ 0x9e3779b9;
   n = Math.imul(n ^ (n >>> 16), 0x85ebca6b) >>> 0;
   const kinds = kindsAt(key);
   const k = kinds[n % kinds.length];
-  return key > 1 && k === roomKind(uid, hunt, key - 1, room) ? kinds[(kinds.indexOf(k) + 1) % kinds.length] : k;
+  return key > 1 && k === roomKind("", hunt, key - 1, room) ? kinds[(kinds.indexOf(k) + 1) % kinds.length] : k;
 }
 
 /** How hard: never the easiest (owner, 8 Nov 2026: "the questions are cheap not tasking"), the hardest from the third key. */

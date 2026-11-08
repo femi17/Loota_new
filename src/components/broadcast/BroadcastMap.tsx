@@ -6,7 +6,7 @@ import { LootaLogo } from "@/components/Logo";
 import { normalizeLook } from "@/lib/avatar";
 import { ordinal } from "@/game/hunt";
 import type { Mode } from "@/game/movement";
-import { alongPath, cumulativeOf } from "@/game/transit";
+import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 
 type Hunter = {
@@ -188,7 +188,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const dep = Date.parse(r.trip.departsAt), arr = Date.parse(r.trip.arrivesAt);
         const f = now <= dep ? 0 : now >= arr ? 1 : (now - dep) / Math.max(1, arr - dep);
         const total = r.cum[r.cum.length - 1] ?? 0;
-        const { pos, segment } = alongPath(r.path, r.cum, f * total);
+        // A train pulls away and brakes into the station, as the game draws it (owner, 8 Nov 2026).
+        const { pos, segment } = alongPath(r.path, r.cum, (r.trip.mode === "train" ? trainAlong(f) : f) * total);
         const a = r.path[Math.max(0, segment - 1)], b = r.path[Math.min(r.path.length - 1, Math.max(1, segment))];
         return { lng: pos[0], lat: pos[1], heading: a && b && (a[0] !== b[0] || a[1] !== b[1]) ? geo.headingOf(a, b) : 0, f, flying: f > 0 && f < 1 };
       };
@@ -424,6 +425,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             // The laptop's zoom (GameMap's GAME_ZOOM and rideZoom): 17; a train or a long-distance bus 16; a plane pulls
             // back to 10 at cruising height (40 km from either end) and comes in again to land, climbing as the game's does.
             let zoom = ride === "train" || (ride === "bus" && (r?.cum[r.cum.length - 1] ?? 0) > 40_000) ? 16 : 17;
+            if (r && ride === "train") {
+              // Pulled back as far as its speed needs, as on the hunter's laptop (owner, 8 Nov 2026: "yes, it should be so").
+              const total = r.cum[r.cum.length - 1] ?? 0;
+              const secs = (Date.parse(r.trip.arrivesAt) - Date.parse(r.trip.departsAt)) / 1000;
+              const dep = Date.parse(r.trip.departsAt);
+              const f = Math.max(0, Math.min(1, (serverNow - dep) / Math.max(1, secs * 1000)));
+              zoom = trainZoom(total, secs, trainAlong(f) * total, p.lat, 16);
+            }
             if (r && ride === "plane") {
               const total = r.cum[r.cum.length - 1] ?? 0;
               const along = tripAt(r, serverNow).f * total;

@@ -76,8 +76,7 @@ import {
   transitSpeedFor,
   transitWaitS,
   type TransitStop,
-  type Trip as TransitTrip,
-} from "@/game/transit";
+  type Trip as TransitTrip, trainAlong, trainZoom } from "@/game/transit";
 
 type Hud = {
   energy: number;
@@ -3358,21 +3357,6 @@ export function GameMap({
         setHud((h) => ({ ...h, ride: null }));
       }
 
-      /**
-       * A train pulls away and brakes into the station (owner, 8 Nov 2026: "The train movement is wierd. It moves too
-       * fast"): the share of the way gone at a share of the time, speeding up over the first 12% of it and slowing over
-       * the last 12%, steady between, and arriving on time.
-       */
-      const TRAIN_EASE = 0.12;
-      function trainAlong(f: number) {
-        const a = TRAIN_EASE, v = 1 / (1 - a);
-        if (f <= 0) return 0;
-        if (f >= 1) return 1;
-        if (f < a) return (0.5 * v * f * f) / a;
-        if (f > 1 - a) return 1 - (0.5 * v * (1 - f) * (1 - f)) / a;
-        return v * (f - a / 2);
-      }
-
       /** Put the vehicle (each carriage of a train) `s` metres along its path. */
       function placeRide(r: Ride, s: number, dt: number, jump: boolean) {
         const path = r.trip.path;
@@ -3655,16 +3639,8 @@ export function GameMap({
         if (!ride || ride.s === 0) return GAME_ZOOM;
         if (ride.trip.mode === "bus") return ride.trip.metres > BUS_RANGE_M ? GAME_ZOOM - 1 : GAME_ZOOM;
         if (ride.trip.mode === "taxi") return GAME_ZOOM;
-        if (ride.trip.mode === "train") {
-          // Pulled back as far as its speed needs, so it goes at a steady pace on the screen (about 120 pixels a second
-          // at full speed) instead of a blur (owner, 8 Nov 2026: "It moves too fast"); close in at the stations.
-          const total = ride.cum[ride.cum.length - 1];
-          const top = total / Math.max(1, (ride.arrives - ride.departs) / 1000) / (1 - TRAIN_EASE);
-          const far = Math.log2((120 * 40075016.686 * Math.cos((traveller.pos.lat * Math.PI) / 180)) / (512 * Math.max(1, top)));
-          const z = Math.max(11, Math.min(GAME_ZOOM - 1, far));
-          const k = Math.min(1, Math.min(ride.s, total - ride.s) / 2000);
-          return GAME_ZOOM - 1 - (GAME_ZOOM - 1 - z) * k * k * (3 - 2 * k);
-        }
+        // Pulled back as far as its speed needs, a steady pace on the screen (owner, 8 Nov 2026: "It moves too fast").
+        if (ride.trip.mode === "train") return trainZoom(ride.cum[ride.cum.length - 1], (ride.arrives - ride.departs) / 1000, ride.s, traveller.pos.lat, GAME_ZOOM - 1);
         const total = ride.cum[ride.cum.length - 1];
         const k = Math.min(1, Math.min(ride.s, total - ride.s) / 40000);
         return GAME_ZOOM - 7 * k * k * (3 - 2 * k);

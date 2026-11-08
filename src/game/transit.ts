@@ -241,3 +241,31 @@ export function thinPath(points: Coord[], tolM = 4): Coord[] {
 
 /** Carriages in a train on the map. */
 export const TRAIN_CARS = 3;
+
+/**
+ * A train pulls away and brakes into the station (owner, 8 Nov 2026: "The train movement is wierd. It moves too fast"):
+ * the share of the way gone at a share of the time `f`, speeding up over the first 12% of the time and slowing over the
+ * last 12%, steady between, and arriving on time. Used by the game and the broadcast alike.
+ */
+export const TRAIN_EASE = 0.12;
+export function trainAlong(f: number) {
+  const a = TRAIN_EASE, v = 1 / (1 - a);
+  if (f <= 0) return 0;
+  if (f >= 1) return 1;
+  if (f < a) return (0.5 * v * f * f) / a;
+  if (f > 1 - a) return 1 - (0.5 * v * (1 - f) * (1 - f)) / a;
+  return v * (f - a / 2);
+}
+
+/**
+ * The camera's zoom on a train (owner, 8 Nov 2026): pulled back as far as its top speed needs to cross the screen at
+ * about 120 pixels a second (zoom 11 at the least), and close in (`near`) within 2 km of either station. `totalM`: the
+ * trip's length; `seconds`: its time; `along`: how far it has gone.
+ */
+export function trainZoom(totalM: number, seconds: number, along: number, lat: number, near: number) {
+  const top = totalM / Math.max(1, seconds) / (1 - TRAIN_EASE);
+  const far = Math.log2((120 * 40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * Math.max(1, top)));
+  const z = Math.max(11, Math.min(near, far));
+  const k = Math.min(1, Math.max(0, Math.min(along, totalM - along)) / 2000);
+  return near - (near - z) * k * k * (3 - 2 * k);
+}

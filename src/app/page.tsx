@@ -48,7 +48,7 @@ const extras = [
   { icon: "🌍", title: "Roam the real world", text: "Start where you are. Real streets, shops, petrol stations and bus stops, in any country." },
   { icon: "🧑🏾‍🍳", title: "People on every corner", text: "The cook, the pump attendant, the mechanic, the ticket clerk: every stop is a little scene, with local names and talk." },
   { icon: "🚨", title: "Trouble on the road", text: "Checkpoints, police chases, flat tyres and an empty tank far from the pump. Bring your papers." },
-  { icon: "🪔", title: "The Lamp", text: "It glows when something's close: a detour, a relic, a reward for the curious." },
+  { icon: "🪔", title: "The Lamp", text: "Your guide in free roam. It glows when something's close (a detour, a relic, the Djinn) and points the way." },
   { icon: "🧞", title: "The Djinn's Wager", text: "Once a week, without warning, the Djinn opens a wager. One winner takes a Wonder, a power nobody else has." },
   { icon: "📻", title: "Loota Radio", text: "Live stations from the country you're in while you travel, and Nigeria's from anywhere." },
 ];

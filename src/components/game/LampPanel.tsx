@@ -34,7 +34,8 @@ export type LampOrb = { id: string; lng: number; lat: number; metres: number; en
 
 /** The lamp holds one thing at a time (owner's call, 15 Oct 2026). */
 export type LampItem = ({ type: "detour" } & LampDetour) | ({ type: "whisper" } & LampWhisper) | ({ type: "orb" } & LampOrb);
-/** `inHunt`: false when the player isn't in a live hunt (finds still come, at half the coins: owner, 22 Oct 2026). */
+/** `inHunt`: false when the player isn't in a live hunt. (The lamp is free roam's: off while racing in a hunt, full
+ * rewards out of one: owner, 8 Nov 2026.) */
 /** `restUntil`: the lamp rests after each thing is done (owner, 26 Oct 2026), until then (ms, this device's clock). */
 export type LampState = { current: LampItem | null; inHunt?: boolean; restUntil?: number; riding?: boolean };
 
@@ -172,7 +173,7 @@ export function LampPanel({
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-2xl font-extrabold">{quiz ? quiz.title : "🪔 The lamp"}</h2>
-            <p className="text-sm text-muted">{quiz ? "Answer before the time runs out." : "One thing at a time: chase it, or let it go."}</p>
+            <p className="text-sm text-muted">{quiz ? "Answer before the time runs out." : "Free roam's guide: chase what it holds, or let it go."}</p>
           </div>
           {(!quiz || result) && (
             <button type="button" onClick={onClose} aria-label="Close" className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-ink-2">
@@ -273,9 +274,7 @@ export function LampPanel({
           </p>
         ) : !item ? (
           <p className="rounded-2xl bg-ink-2 p-4 text-sm text-muted">
-            {state.inHunt === false
-              ? "The lamp is quiet. Keep roaming: it glows when something stirs nearby. Between hunts, finds pay half: join a hunt in the lobby for full rewards."
-              : "The lamp is quiet. Keep roaming: it glows when something stirs nearby."}
+            The lamp is quiet. Keep roaming: it glows when something stirs nearby, and its arrow points the way.
           </p>
         ) : item.type === "orb" ? (
           <div className="flex flex-col gap-2 rounded-2xl bg-[#2A1747] p-4 ring-2 ring-[#9B5DE5]">
@@ -321,7 +320,6 @@ export function LampPanel({
                 <p className="text-sm text-paper/85">{d.story}</p>
                 <p className="text-xs text-muted">
                   {d.place} · {here ? "you're here" : distance(d.metres)} · <span className="font-bold text-gold">{rewardText(d.coins, d.relic, d.item, d.qty)}</span>
-                  {state.inHunt === false && !d.relic && !d.item && <span className="text-muted"> (free roam: half)</span>}
                   {d.capacity !== null && (
                     <>
                       {" "}

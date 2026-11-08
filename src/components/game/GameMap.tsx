@@ -159,8 +159,11 @@ type Hud = {
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
   /** lost: this step's way isn't drawn (ended, or a tap on the map replaced it): "Show the way" draws it again. */
   journey: { place: string; step: number; total: number; text: string; board: string | null; lost: boolean } | null;
-  /** The lamp: whether it holds something (one thing at a time), and whether the player has looked at it yet (it glows). */
-  lamp: { has: boolean; unseen: boolean };
+  /** The lamp: whether it holds something (one thing at a time), and whether the player has looked at it yet (it glows).
+   * `off`: racing in a live hunt, the lamp isn't there (owner, 8 Nov 2026: "the lamps only shows in the free roam").
+   * `point`: which way (degrees on screen, 0 = up) and how far what it holds is (the same: "it points to stuff user can
+   * do, both the jinee and the other lamps"). */
+  lamp: { has: boolean; unseen: boolean; off?: boolean; point?: { deg: number; metres: number } | null };
   /** At a Detour's place, not yet tried: the Claim button. */
   detourHere: LampDetour | null;
   /** The local time where the player is, whether it's night, and whether it's rush hour. */
@@ -486,7 +489,7 @@ export function GameMap({
     clock: null,
     jam: 0,
     redLight: null,
-    lamp: { has: false, unseen: false },
+    lamp: { has: false, unseen: false, off: true },
     detourHere: null,
     journey: null,
     djinn: null,
@@ -5895,6 +5898,7 @@ export function GameMap({
       // with the way there drawn only when the player asks. It glows while what it
       // holds is new to the player.
       let lamp: LampState | null = null;
+      let lampOff = false; // racing in a live hunt: no lamp (free roam is its ground)
       let lampAt = -Infinity;
       let lampShownAt = -Infinity;
       const LAMP_SEEN_KEY = "loota:lamp-seen";
@@ -5913,7 +5917,7 @@ export function GameMap({
           | ({ type: "detour" } & Omit<LampDetour, "endsAt"> & { endsAt: string })
           | { type: "whisper"; id: string; lng: number; lat: number; metres: number; endsAt: string }
           | { type: "orb"; id: string; lng: number; lat: number; metres: number; endsAt: string };
-        const raw = data as { now: string; current: RawItem | null; hunt?: boolean; restUntil?: string; riding?: boolean } | null;
+        const raw = data as { now: string; current: RawItem | null; hunt?: boolean; off?: boolean; restUntil?: string; riding?: boolean } | null;
         if (disposed || !raw) return lamp ?? { current: null };
         const skew = Date.now() - Date.parse(raw.now);
         const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
@@ -5925,6 +5929,7 @@ export function GameMap({
             ? { ...c, endsAt: Date.parse(c.endsAt) + skew, direction: compassWord(geo.compassFromHeading(geo.headingOf(here, [c.lng, c.lat]))) }
             : { ...c, endsAt: Date.parse(c.endsAt) + skew };
         lamp = { current, inHunt: raw.hunt !== false, restUntil: raw.restUntil ? Date.parse(raw.restUntil) + skew : undefined, riding: !!raw.riding };
+        lampOff = !!raw.off;
         // Something new: say so (the lamp glows too).
         if (current && current.id !== before && !seenLamp.has(current.id)) {
           say(
@@ -5953,9 +5958,25 @@ export function GameMap({
           geo.distanceM(at, [item.lng, item.lat]) <= DETOUR_REACH_M
             ? item
             : null;
-        const view = { has: !!item, unseen: !!item && !seenLamp.has(item.id) };
+        // Which way it points: what it holds, else the Djinn's seal once one is broken (far away, as a rule)
+        const seal = djinn?.stage === "chosen" && !djinnOff ? djinn.chosen : null;
+        const target = item ? [item.lng, item.lat] as [number, number] : seal ? [seal.lng, seal.lat] as [number, number] : null;
+        const point =
+          target && !ride
+            ? {
+                deg: Math.round((geo.compassFromHeading(geo.headingOf(at, target)) - map.getBearing() + 360) % 360),
+                metres: Math.round(geo.distanceM(at, target)),
+              }
+            : null;
+        const view = { has: !!item, unseen: !!item && !seenLamp.has(item.id), off: lampOff, point };
         setHud((h) =>
-          h.lamp.has === view.has && h.lamp.unseen === view.unseen && h.detourHere?.id === detourHere?.id ? h : { ...h, lamp: view, detourHere },
+          h.lamp.has === view.has &&
+          h.lamp.unseen === view.unseen &&
+          h.lamp.off === view.off &&
+          JSON.stringify(h.lamp.point) === JSON.stringify(view.point) &&
+          h.detourHere?.id === detourHere?.id
+            ? h
+            : { ...h, lamp: view, detourHere },
         );
       }
 
@@ -7012,6 +7033,7 @@ export function GameMap({
               full: "Too late: others claimed them all.",
               over: "This one's gone.",
               tried: "You've already tried this one.",
+              hunting: "The lamp rests while you race in a hunt: it's back in free roam.",
             };
             return why[r?.reason ?? ""] ?? "Couldn't claim it just now. Try again.";
           }
@@ -7053,6 +7075,8 @@ export function GameMap({
       // puzzle, then his map of eight seals (one real). The way to the chosen seal
       // is drawn only when the player asks, through the journey planner.
       let djinn: DjinnState | null = null;
+      let djinnOff = false; // racing in a live hunt: the Djinn waits for free roam
+      const djinnToldOf = new Set<string>();
       let djinnAt = -Infinity;
       const noDjinn: DjinnState = { wager: null, stage: "over", gate: null, retryAt: null, favour: 0, riddle: null, seals: null, chosen: null };
       const djinnSeenKey = (id: string) => `loota:djinn-seen:${id}`;
@@ -7077,9 +7101,11 @@ export function GameMap({
           riddle?: string | null;
           seals?: DjinnState["seals"];
           chosen?: DjinnState["chosen"];
+          off?: boolean;
         };
         const raw = data as Raw | null;
         if (disposed || !raw) return djinn ?? noDjinn;
+        djinnOff = !!raw.off;
         const skew = Date.now() - Date.parse(raw.now);
         const at = (iso: string) => Date.parse(iso) + skew;
         const before = djinn?.wager?.id ?? null;
@@ -7094,7 +7120,9 @@ export function GameMap({
           seals: raw.seals ?? null,
           chosen: raw.chosen ?? null,
         };
-        if (djinn.wager && djinn.stage === "summoned" && djinn.wager.id !== before && !djinnSeen(djinn.wager.id)) {
+        // Told once a visit, when in free roam (racing in a hunt, the lamp isn't there: told when the hunt rests or ends)
+        if (djinn.wager && djinn.stage === "summoned" && !djinnOff && !djinnToldOf.has(djinn.wager.id) && !djinnSeen(djinn.wager.id)) {
+          djinnToldOf.add(djinn.wager.id);
           say("🧞 The lamp shakes and smokes purple: the Djinn has woken! Open the lamp.", true);
         }
         const taken = djinn.wager?.claimedBy;
@@ -7108,7 +7136,7 @@ export function GameMap({
       function showDjinn() {
         const w = djinn?.wager;
         const view =
-          w && djinn
+          w && djinn && !djinnOff
             ? {
                 stage: djinn.stage,
                 wonder: w.wonder,
@@ -7142,7 +7170,7 @@ export function GameMap({
       };
 
       function djinnApproachTick(now: number) {
-        const site = djinn?.stage === "chosen" && !ride && !visit ? djinn.chosen : null;
+        const site = djinn?.stage === "chosen" && !djinnOff && !ride && !visit ? djinn.chosen : null;
         const d = site ? geo.distanceM([traveller.pos.lng, traveller.pos.lat], [site.lng, site.lat]) : Infinity;
         const here = site && d <= 55 ? { place: site.name } : null;
         setHud((h) => (h.djinnHere?.place === here?.place ? h : { ...h, djinnHere: here }));
@@ -7204,7 +7232,9 @@ export function GameMap({
           const { data } = await supabase.rpc("djinn_start_gate");
           const r = data as { ok: boolean; reason?: string } | null;
           if (!r?.ok) {
-            return r?.reason === "turned_away"
+            return r?.reason === "hunting"
+              ? "The lamp rests while you race in a hunt: it's back in free roam."
+              : r?.reason === "turned_away"
               ? "The Djinn will not see you yet."
               : r?.reason === "passed"
                 ? "You've already passed his gate."
@@ -7232,7 +7262,11 @@ export function GameMap({
           type Raw = Omit<DjinnChamber, "id" | "deadline"> & { ok: boolean; reason?: string; chamber: string; deadline: string; now: string };
           const r = data as Raw | null;
           if (!r?.ok) {
-            return r?.reason === "far" ? "The chamber's door is right at the place: get closer." : "The Djinn's Wager is over.";
+            return r?.reason === "far"
+              ? "The chamber's door is right at the place: get closer."
+              : r?.reason === "hunting"
+                ? "The lamp rests while you race in a hunt: it's back in free roam."
+                : "The Djinn's Wager is over.";
           }
           return {
             id: r.chamber,
@@ -9356,7 +9390,7 @@ export function GameMap({
                   <li className="flex items-center gap-2"><span className="text-paper"><DirectionsIcon /></span> Directions: search a place or tap the map</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><VehicleIcon kind={hud.vehicle?.kind ?? null} /></span> Walk, or ride a bicycle, motorbike or car</li>
                   <li className="flex items-center gap-2"><span className="text-paper"><BusIcon /></span> Bus, train, plane or taxi (gold at a stop)</li>
-                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp: Detours and finds (it glows); the Djinn between hunts (purple smoke)</li>
+                  <li className="flex items-center gap-2"><span className="text-gold"><LampIcon /></span> The lamp, in free roam: Detours and finds (it glows) and the Djinn (purple smoke); its arrow points the way. It rests while you race in a hunt</li>
                   <li className="flex items-center gap-2"><span className="text-[#C3A6FF]"><BagIcon /></span> Inventory: gear, papers, relics</li>
                   <li className="flex items-center gap-2"><span className="text-[#2EC4B6]"><RadioIcon /></span> Radio: live stations from where you are (and Nigeria&apos;s) while you move</li>
                 </ul>
@@ -9543,7 +9577,7 @@ export function GameMap({
               <BusIcon />
               {hud.stopHere && <span className={`${badge} bg-ink text-paper`} aria-hidden="true">{hud.stopHere.icon}</span>}
             </button>
-            <button
+            {!hud.lamp.off && <button
               type="button"
               data-tool="lamp"
               aria-label={`The lamp${hud.lamp.has ? (hud.lamp.unseen ? ": something new" : ": something waiting") : ""}`}
@@ -9561,7 +9595,16 @@ export function GameMap({
             >
               <LampIcon />
               {hud.lamp.has && <span className={`absolute -right-1 -top-1 size-3 rounded-full ring-2 ring-ink ${hud.lamp.unseen ? "bg-ink" : "bg-gold"}`} aria-hidden="true" />}
-            </button>
+              {/* Which way it points, and how far (owner, 8 Nov 2026: "it points to stuff user can do") */}
+              {hud.lamp.point && (
+                <span data-lamp-point={hud.lamp.point.deg} className="pointer-events-none absolute -bottom-1.5 -left-1.5 flex items-center gap-0.5 rounded-full bg-ink py-0.5 pl-0.5 pr-1 text-[9px] font-bold leading-none text-gold ring-1 ring-gold/60" aria-hidden="true">
+                  <svg width="10" height="10" viewBox="0 0 10 10" style={{ transform: `rotate(${hud.lamp.point.deg}deg)` }}>
+                    <path d="M5 0.5 L8.8 9 L5 7 L1.2 9 Z" fill="currentColor" />
+                  </svg>
+                  {hud.lamp.point.metres >= 10_000 ? `${Math.round(hud.lamp.point.metres / 1000)}k` : hud.lamp.point.metres >= 1000 ? `${(hud.lamp.point.metres / 1000).toFixed(1)}k` : `${hud.lamp.point.metres}m`}
+                </span>
+              )}
+            </button>}
             {/* Loota Radio (owner, 27 Oct 2026: "so users can listen as they move so it is not just boring") */}
             <button
               type="button"

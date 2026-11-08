@@ -88,7 +88,7 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
             [<DirectionsIcon key="d" />, "Directions: search any place, the way is drawn"],
             [<VehicleIcon key="v" kind={null} />, "Walk, rent or buy a bicycle, motorbike or car"],
             [<BusIcon key="b" />, "Taxis, buses, trains and planes"],
-            [<LampIcon key="la" />, "The lamp: secrets during a hunt, and the Djinn"],
+            [<LampIcon key="la" />, "The lamp, in free roam: Detours, finds and the Djinn"],
             [<BagIcon key="i" />, "Inventory (top): gear, papers, relics"],
           ].map(([icon, text], i) => (
             <li key={i} className="flex items-center gap-3">

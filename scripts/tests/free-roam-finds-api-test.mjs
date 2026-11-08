@@ -1,7 +1,8 @@
-// The lamp's finds in free roam, with smaller rewards (owner, 22 Oct 2026), through the real database functions.
-// Outside a hunt: the lamp holds something, a 40-coin find gives 20, a Detour pays half (a Radar one: 60 coins, no
-// Radar), the Lockdown Orb isn't shown and can't be taken. In a live hunt: full rewards. The finds, Detours, hunt and
-// test player made here are deleted.
+// Free roam is the lamp's ground (owner, 8 Nov 2026: "the lamps only shows in the free roam"), through the real database
+// functions. Outside a hunt: the lamp holds something, its Detours pay in full (a Radar one: the Radar), a 40-coin find
+// on the map gives 20 (22 Oct), the Lockdown Orb isn't shown and can't be taken. Racing in a live hunt: the lamp is off,
+// a Detour can't be claimed, the Djinn's gate won't open; the map's finds pay in full and the Orb shows. Finished the
+// hunt: the lamp is back. The finds, Detours, hunt and test player made here are deleted.
 //   node scripts/tests/free-roam-finds-api-test.mjs
 import { createRequire } from "node:module";
 const app = createRequire(new URL("../../package.json", import.meta.url));
@@ -64,9 +65,9 @@ try {
   r = await rpc("pickup_item", { p_item: orb, p_lng: yaba.lng, p_lat: yaba.lat, p_mode: "walk" });
   check("the Orb can't be taken in free roam", r?.ok === false && r.reason === "no_hunt", JSON.stringify(r));
   r = await winDetour(await detour({ reward_coins: 80 }));
-  check("an 80-coin Detour: 40 coins in free roam", r?.outcome === "won" && r.coins === 40, JSON.stringify(r));
+  check("an 80-coin Detour: all 80 in free roam (was half)", r?.outcome === "won" && r.coins === 80, JSON.stringify(r));
   r = await winDetour(await detour({ reward_relic: "radar" }));
-  check("a Radar Detour: 60 coins instead, and no Radar", r?.outcome === "won" && r.coins === 60 && !r.relic && (await relics("radar")) === 0, JSON.stringify(r));
+  check("a Radar Detour: the Radar itself", r?.outcome === "won" && r.relic === "radar" && (await relics("radar")) === 1, JSON.stringify(r));
   r = await winDetour(await detour({ reward_relic: "shield" }));
   check("a Shield Detour: still the Shield", r?.outcome === "won" && r.relic === "shield" && (await relics("shield")) === 1, JSON.stringify(r));
 
@@ -80,11 +81,16 @@ try {
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: id });
   r = await rpc("pickup_item", { p_item: await plant({ kind: "coins", coins: 40 }), p_lng: yaba.lng, p_lat: yaba.lat, p_mode: "walk" });
   check("in a hunt: the full 40 coins", r?.ok && r.coins === 40 && r.freeRoam === false, JSON.stringify(r));
-  r = await winDetour(await detour({ reward_coins: 80 }));
-  check("in a hunt: the full 80 from a Detour", r?.outcome === "won" && r.coins === 80, JSON.stringify(r));
-  r = await winDetour(await detour({ reward_relic: "radar" }));
-  check("in a hunt: the Radar itself", r?.outcome === "won" && r.relic === "radar" && (await relics("radar")) === 1, JSON.stringify(r));
+  const off = await rpc("lamp_state");
+  check("racing in a hunt: the lamp is off, holding nothing", off?.off === true && off.current === null, JSON.stringify(off));
+  r = await rpc("start_detour", { p_detour: await detour({ reward_coins: 80 }) });
+  check("…a Detour can't be claimed", r?.ok === false && r.reason === "hunting", JSON.stringify(r));
+  r = await rpc("djinn_start_gate");
+  check("…nor the Djinn's gate", r?.ok === false && r.reason === "hunting", JSON.stringify(r));
   check("in a hunt: the Orb shows on the map", (await rpc("world_nearby")).items.some((i) => i.id === orb));
+  await admin.from("hunt_players").update({ finished_at: new Date().toISOString() }).eq("hunt_id", huntId).eq("user_id", id);
+  const back = await rpc("lamp_state");
+  check("finished the hunt: the lamp is back", !back?.off && "current" in (back ?? {}), JSON.stringify(back).slice(0, 120));
 } catch (e) {
   fails++;
   console.log("ERROR", e);

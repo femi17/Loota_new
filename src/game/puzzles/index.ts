@@ -40,14 +40,15 @@ export function makePuzzle(kind: PuzzleKind, level: number, seed: number): { puz
   if (kind === "threads") return makeThreads(seed, [5, 5, 6][l - 1], [4, 5, 5][l - 1]);
   if (kind === "plots") return makePlots(seed, [5, 5, 6][l - 1], [6, 7, 8][l - 1]);
   if (kind === "patchwork") return makePatchwork(seed, [4, 4, 5][l - 1]);
-  if (kind === "vowels") return makeVowels(seed, [3, 3, 4][l - 1]);
+  if (kind === "vowels") return makeVowels(seed, [3, 4, 5][l - 1]);
   // The quick ones (owner, 4 Nov 2026: "grammar, simple algebra, type 5 coutries starting with L, guess the flag, …
   // guess the brand")
-  if (kind === "grammar") return makeGrammar(seed, 4);
-  if (kind === "algebra") return makeAlgebra(seed, l, 3);
-  if (kind === "countries") return makeCountries(seed, 5);
-  if (kind === "flags") return makeFlags(seed, 3);
-  if (kind === "brands") return makeBrands(seed, 3);
+  // More of them at the later keys (owner, 8 Nov 2026: "the questions are cheap not tasking").
+  if (kind === "grammar") return makeGrammar(seed, [4, 5, 6][l - 1]);
+  if (kind === "algebra") return makeAlgebra(seed, l, [3, 4, 4][l - 1]);
+  if (kind === "countries") return makeCountries(seed, 5); // six is too much typing for the minute (puzzle-sixty-check)
+  if (kind === "flags") return makeFlags(seed, [3, 4, 5][l - 1]);
+  if (kind === "brands") return makeBrands(seed, [3, 4, 5][l - 1]);
   if (kind === "route") {
     const [n, keep] = ([[5, 8], [5, 7], [6, 9]] as const)[l - 1];
     return makeRoute(seed, n, keep);

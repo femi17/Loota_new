@@ -7,33 +7,32 @@ import { joinHunt } from "@/app/lobby/actions";
 import { ChestArt } from "@/components/ChestArt";
 import { Masquerade } from "./Masquerade";
 
-/** How to move, shown rather than told: hold the lower screen, swipe there to turn, SPRINT. */
+/** How to move, shown rather than told (owner, 8 Nov 2026: movement is automatic): tap where to go, it goes, STOP / GO. */
 export function MoveDemo() {
   const tile = "flex flex-1 flex-col items-center gap-2 rounded-2xl bg-ink-2 p-2.5 text-center text-xs font-bold";
   return (
     <div className="flex gap-2" aria-hidden="true">
       <div className={tile}>
         <span className="relative flex h-20 w-12 items-end justify-center overflow-hidden rounded-xl bg-map ring-2 ring-line">
-          <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gold/25" />
-          <span className="loota-ripple absolute bottom-3 size-7 rounded-full bg-gold/60" />
-          <span className="loota-press relative mb-4 size-5 rounded-full bg-gold ring-2 ring-paper" />
+          <span className="loota-ripple absolute top-4 size-7 rounded-full bg-gold/60" />
+          <span className="loota-press absolute top-5 size-5 rounded-full bg-gold ring-2 ring-paper" />
         </span>
-        Hold low to walk
+        Tap where to go
       </div>
       <div className={tile}>
         <span className="relative flex h-20 w-12 items-end justify-center overflow-hidden rounded-xl bg-map ring-2 ring-line">
-          <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gold/25" />
-          <span className="loota-swipe relative mb-4 text-lg font-extrabold text-ink">⟷</span>
+          <span className="absolute inset-y-2 left-1/2 w-1 -translate-x-1/2 rounded bg-[#4A90E2]" />
+          <span className="loota-press relative mb-3 size-4 rounded-full bg-paper ring-2 ring-ink" />
         </span>
-        Swipe to turn
+        It goes by itself
       </div>
       <div className={tile}>
         <span className="flex h-20 items-center justify-center">
-          <span className="loota-press flex size-14 items-center justify-center rounded-full bg-ink text-[10px] font-extrabold tracking-wide text-paper ring-[3px] ring-gold">
-            SPRINT
+          <span className="loota-press flex size-14 items-center justify-center rounded-full bg-ink text-[10px] font-extrabold tracking-wide text-paper ring-[3px] ring-[#D93B3B]">
+            STOP
           </span>
         </span>
-        Hold to run
+        Stop or go
       </div>
     </div>
   );
@@ -73,10 +72,10 @@ export function WelcomeTour({ username, coins, openHunt, onDone }: { username: s
       body: (
         <>
           <p>
-            <b>Hold the lower part of the screen</b> to walk. Swipe left or right anywhere on the map to turn at the next junction, down (low on the screen) to turn
-            back. <b>SPRINT</b> is faster, but tires you.
+            <b>Tap the map</b> where you want to go, or search a place: the way is drawn and you go along it by yourself. <b>STOP</b> and <b>GO</b> pause
+            it; <b>SPRINT</b> is faster on foot or a bicycle, but tires you.
           </p>
-          <p className="text-sm text-muted">Walking uses energy: eat at a buka or rest at a park when it runs low. On a keyboard: ↑ to go, ← → to turn, ↓ to go back.</p>
+          <p className="text-sm text-muted">Walking uses energy: eat at a buka or rest at a park when it runs low. On a keyboard: Space stops and goes.</p>
         </>
       ),
     },

@@ -114,7 +114,7 @@ try {
   const tools = await sideways.evaluate(() => [...document.querySelectorAll('nav[aria-label="Tools"] button')].map((b) => { const r = b.getBoundingClientRect(); return { bottom: r.bottom, right: r.right, label: b.getAttribute("aria-label") }; }));
   const h = await sideways.evaluate(() => window.innerHeight);
   const off = tools.filter((t) => t.bottom > h || t.right > 844);
-  check("held sideways in a hunt: every tool on the screen", tools.length >= 7 && tools.every((t) => t.bottom <= h && t.right <= 844), `${tools.length} tools; lowest at ${Math.round(Math.max(...tools.map((t) => t.bottom)))} of ${h}${off.length ? `; off: ${off.map((t) => t.label).join(", ")}` : ""}`);
+  check("held sideways in a hunt: every tool on the screen", tools.length >= 6 && tools.every((t) => t.bottom <= h && t.right <= 844), `${tools.length} tools; lowest at ${Math.round(Math.max(...tools.map((t) => t.bottom)))} of ${h}${off.length ? `; off: ${off.map((t) => t.label).join(", ")}` : ""}`);
   // Owner, 8 Nov 2026: "the joystick blocks, putting it under the leadboard icon or above should be better"
   const place = await sideways.evaluate(() => {
     const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null; };
@@ -123,21 +123,21 @@ try {
     const hit = stick ? all.filter((t) => t.left < stick.right && t.right > stick.left && t.top < stick.bottom && t.bottom > stick.top).map((t) => t.label) : [];
     return { lamp: box(document.querySelector('[data-tool="lamp"]')), board: box(document.querySelector('[data-tool="leaderboard"]')), stick: !!stick, hit };
   });
-  check("…the lamp under the leaderboard, in the far right column", !!place.lamp && !!place.board && Math.abs(place.lamp.left - place.board.left) < 2 && place.lamp.top > place.board.top, JSON.stringify({ lamp: place.lamp, board: place.board }));
-  check("…and no tool behind the joystick", place.stick && place.hit.length === 0, place.hit.join(", ") || "none");
+  // (The lamp is free roam's: racing in a hunt it isn't in the tools: owner, 8 Nov 2026.)
+  check("…no lamp while racing in the hunt; the leaderboard in the far right column", !place.lamp && !!place.board && place.board.right > 800, JSON.stringify({ lamp: place.lamp, board: place.board }));
+  check("…and no joystick on the map (owner, 8 Nov 2026: players don't steer; it's only in the key's world)", !place.stick);
   // Owner, 8 Nov 2026: "on the landscape mode, the action button and the toast messages can be below, not blocking the
   // avatar, there is enought space between the joystick and the sprint button"
   const bottom = await sideways.evaluate(() => {
     const box = (el) => { const r = el?.getBoundingClientRect(); return r && r.width ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null; };
     const sprint = box([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "SPRINT"));
-    const cruise = box(document.querySelector('button[aria-label^="Cruise"]'));
-    const stick = box(document.querySelector('[aria-label^="Joystick"]'));
+    const drive = box(document.querySelector("button[data-drive]"));
     const street = box(document.querySelector('[aria-label^="You\'re on"]'));
     const hint = box(document.querySelector('p[role="status"]'));
-    return { sprint, cruise, stick, street, hint, h: window.innerHeight, mid: window.innerHeight / 2 };
+    return { sprint, drive, street, hint, h: window.innerHeight, mid: window.innerHeight / 2 };
   });
-  const between = (b) => !!b && b.left >= Math.max(bottom.sprint?.right ?? 0, bottom.cruise?.right ?? 0) - 2 && b.right <= (bottom.stick?.left ?? 844) + 2;
-  check("sideways: the street name and the messages along the bottom, between Sprint and the joystick", (!bottom.street || (between(bottom.street) && bottom.street.bottom > bottom.h - 30)) && between(bottom.hint) && bottom.hint.bottom > bottom.h - 30, JSON.stringify({ street: bottom.street, hint: bottom.hint, sprint: bottom.sprint?.right, cruise: bottom.cruise?.right, stick: bottom.stick?.left }));
+  const clear = (b) => !!b && b.left >= 0 && b.right <= Math.min(bottom.sprint?.left ?? 844, bottom.drive?.left ?? 844) + 2;
+  check("sideways: the street name and the messages along the bottom, clear of STOP and SPRINT", (!bottom.street || (clear(bottom.street) && bottom.street.bottom > bottom.h - 30)) && clear(bottom.hint) && bottom.hint.bottom > bottom.h - 30, JSON.stringify({ street: bottom.street, hint: bottom.hint, sprint: bottom.sprint?.left, drive: bottom.drive?.left }));
   check("…clear of the hunter in the middle of the screen", bottom.hint.top > bottom.mid + 40, `messages from ${Math.round(bottom.hint.top)} px; the middle ${bottom.mid}`);
   // Owner, 8 Nov 2026: "The toast font size should be reduce on mobile."
   const sideSize = await sideways.evaluate(() => parseFloat(getComputedStyle(document.querySelector('p[role="status"]')).fontSize));

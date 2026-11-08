@@ -705,7 +705,7 @@ export function advance(
   net: RoadNetwork,
   rp: RoadPosition,
   distance: number,
-  aim: number,
+  aim: number | ((at: LngLat) => number),
   turn: -1 | 0 | 1 = 0,
 ): { position: RoadPosition; deadEnd: boolean; turned: boolean; passed: PassedJunction | null } {
   let { edge, t, dir } = rp;
@@ -737,7 +737,8 @@ export function advance(
       return best;
     };
 
-    let choice: { id: number; dir: 1 | -1 } = closestTo(aim);
+    // `aim` as a function: which way to leave this junction, asked there (driving along a drawn route)
+    let choice: { id: number; dir: 1 | -1 } = closestTo(typeof aim === "function" ? aim(net.nodes[node]) : aim);
     const junction = options.length >= 2;
     const straight = headingAway(net, node, edge) + Math.PI; // the way the player arrived
     const branch = turn !== 0 && !turned && junction ? sideBranch(net, node, straight, turn) : null;

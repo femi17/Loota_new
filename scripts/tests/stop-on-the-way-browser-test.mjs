@@ -4,8 +4,9 @@
 //   1. A tired walker with directions to a far place; the "tired" card's directions to a place to rest: the way to it,
 //      with "↩ Back to" the far place.
 //   2. There: a card "Then on to" the far place; moving on from the stop, the way to the far place is drawn again.
-//   3. Cruising onto a place to rest while tired: cruise goes off by itself. Cruise turned on there: it keeps going.
-//   4. Cruising to the end of directions: cruise goes off on arrival.
+//   3. Driving itself (owner, 8 Nov 2026: movement is automatic; was cruise) onto a place to rest while tired: it stops by
+//      itself. Setting off from there: it keeps going.
+//   4. Driving to the end of directions: it stops on arrival.
 // The test player is deleted.   SHOTS=<folder> node scripts/tests/stop-on-the-way-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -29,13 +30,14 @@ async function until(page, fn, arg, ms = 30000) {
 }
 const directions = (page) => page.evaluate(() => document.querySelector('[aria-label="Directions"]')?.innerText ?? "");
 const body = (page) => page.evaluate(() => document.body.innerText);
-const cruise = (page) => page.evaluate(() => document.querySelector('button[aria-label^="Cruise"]')?.getAttribute("aria-pressed"));
+const cruise = (page) => page.evaluate(() => document.querySelector("button[data-drive]")?.getAttribute("aria-pressed") ?? "false");
+const goOn = (page) => page.evaluate(() => { const b = document.querySelector("button[data-drive]"); if (b?.getAttribute("aria-pressed") === "false") b.click(); });
 
 try {
   const email = `stopway-${Date.now()}@example.com`, password = `T3st-${Math.random().toString(36).slice(2)}!`;
   const { data } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   id = data.user.id;
-  await admin.from("profiles").update({ cruise_tokens: 8, home_lng: HOME.lng, home_lat: HOME.lat, home_set_at: new Date().toISOString() }).eq("id", id);
+  await admin.from("profiles").update({ home_lng: HOME.lng, home_lat: HOME.lat, home_set_at: new Date().toISOString() }).eq("id", id);
   await admin.from("player_positions").upsert({ user_id: id, lng: HOME.lng, lat: HOME.lat, mode: "walk", energy: 32, updated_at: ago(30) });
   // No road events in this test (one "just happened").
   await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: new Date(Date.now() + 3600e3).toISOString(), created_at: new Date(Date.now() + 3600e3).toISOString() });
@@ -89,10 +91,10 @@ try {
   await page.screenshot({ path: `${OUT}/stop-way-2-there.png` });
 
   // 3. Cruise turned on at the stop keeps going; cruising back onto it while tired stops
-  await page.evaluate(() => document.querySelector('button[aria-label^="Cruise"]')?.click());
+  await page.evaluate((n) => document.querySelector(`button[aria-label="Directions to ${n}"]`)?.click(), far); // the card's arrow
   await wait(2500);
-  check("cruise turned on at the place to rest: it keeps going", (await cruise(page)) === "true", await cruise(page));
-  await page.evaluate(() => { const b = document.querySelector('button[aria-label^="Cruise"]'); if (b?.getAttribute("aria-pressed") === "true") b.click(); }); // off (unless a dead end already stopped it)
+  check("setting off from the place to rest (the card's arrow): it goes, not stopped by the place", (await cruise(page)) === "true", await cruise(page));
+  await page.evaluate(() => { const b = document.querySelector("button[data-drive]"); if (b?.getAttribute("aria-pressed") === "true") b.click(); }); // stopped
   await wait(800);
   await jump(HOME);
   const back = await until(page, (n) => (document.querySelector('[aria-label="Directions"]')?.innerText ?? "").includes(`To ${n}`), far, 30000);
@@ -112,15 +114,15 @@ try {
   });
   if (ahead) await jump(ahead);
   await wait(5000);
-  await page.evaluate(() => document.querySelector('button[aria-label^="Cruise"]')?.click());
+  await goOn(page);
   await wait(300);
   const on = await cruise(page);
-  if (on !== "true") console.log("cruise didn't start:", JSON.stringify((await body(page)).match(/[^\n]*(ruise|token|road ends)[^\n]*/g)));
+  if (on !== "true") console.log("it didn't go:", JSON.stringify((await body(page)).match(/[^\n]*(ruise|token|road ends)[^\n]*/g)));
   await jump(at);
-  const stopped = await until(page, () => document.querySelector('button[aria-label^="Cruise"]')?.getAttribute("aria-pressed") === "false", null, 8000);
-  check("cruising onto a place to rest while tired: cruise goes off", on === "true" && stopped, `${on} → ${await cruise(page)}`);
-  const why = (await body(page)).split(String.fromCharCode(10)).find((l) => /cruise off|road ends/i.test(l)) ?? "";
-  check("…and says why", /cruise off, so you can stop here/.test(why), why);
+  const stopped = await until(page, () => document.querySelector("button[data-drive]")?.getAttribute("aria-pressed") === "false", null, 8000);
+  check("driving onto a place to rest while tired: it stops by itself", on === "true" && stopped, `${on} → ${await cruise(page)}`);
+  const why = (await body(page)).split(String.fromCharCode(10)).find((l) => /Stopped at|road ends/i.test(l)) ?? "";
+  check("…and says why", /Stopped at .+, so you can (eat or rest|refuel)/.test(why), why);
 
   // 4. Cruise to the end of directions
   await jump(HOME);
@@ -149,12 +151,13 @@ try {
   });
   if (start) await jump(start); // on the way (the road beside home can end in a dead end)
   await wait(5000);
-  await page.evaluate(() => document.querySelector('button[aria-label^="Cruise"]')?.click());
+  await goOn(page);
   await wait(300);
   const on2 = await cruise(page);
   if (end) await jump({ lng: end[0], lat: end[1] });
   const arrived = await until(page, () => /You've arrived at/.test(document.body.innerText), null, 15000);
-  check("cruising to the end of directions: arrived, and cruise goes off", !!end && on2 === "true" && arrived && (await cruise(page)) === "false", `end ${!!end}, ${on2} → ${await cruise(page)}, arrived ${arrived}`);
+  if (!arrived) console.log("lines:", JSON.stringify((await body(page)).split(String.fromCharCode(10)).filter((l) => /arrived|Stopped|road|way|Directions|To /i.test(l)).slice(0, 12)));
+  check("driving to the end of directions: arrived, and it stops", !!end && on2 === "true" && arrived && (await cruise(page)) === "false", `end ${!!end}, ${on2} → ${await cruise(page)}, arrived ${arrived}`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

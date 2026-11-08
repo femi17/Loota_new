@@ -868,6 +868,11 @@ export function GameMap({
           __lootaPos: () => ({ ...traveller.pos, v: traveller.v, mode: traveller.mode }),
           // Put the hunter somewhere (scripts/tests/stop-on-the-way-browser-test.mjs).
           __lootaJump: (lng: number, lat: number) => placeAt(lng, lat),
+          // A ride under way: the vehicle's parts (a train's carriages), how far along, the zoom (scripts/tests/train-ride-browser-test.mjs).
+          __lootaRide: () =>
+            ride
+              ? { mode: ride.trip.mode, s: ride.s, total: ride.cum[ride.cum.length - 1], zoom: map.getZoom(), spacing: models.TRAIN_CAR_SPACING * layer.enlargement() * TRAIN_SCALE, parts: ride.parts.map((p) => ({ lng: p.lng, lat: p.lat, heading: p.heading ?? 0 })) }
+              : null,
         });
       }
 
@@ -3353,10 +3358,44 @@ export function GameMap({
         setHud((h) => ({ ...h, ride: null }));
       }
 
+      /**
+       * A train pulls away and brakes into the station (owner, 8 Nov 2026: "The train movement is wierd. It moves too
+       * fast"): the share of the way gone at a share of the time, speeding up over the first 12% of it and slowing over
+       * the last 12%, steady between, and arriving on time.
+       */
+      const TRAIN_EASE = 0.12;
+      function trainAlong(f: number) {
+        const a = TRAIN_EASE, v = 1 / (1 - a);
+        if (f <= 0) return 0;
+        if (f >= 1) return 1;
+        if (f < a) return (0.5 * v * f * f) / a;
+        if (f > 1 - a) return 1 - (0.5 * v * (1 - f) * (1 - f)) / a;
+        return v * (f - a / 2);
+      }
+
       /** Put the vehicle (each carriage of a train) `s` metres along its path. */
       function placeRide(r: Ride, s: number, dt: number, jump: boolean) {
         const path = r.trip.path;
         const spacing = models.TRAIN_CAR_SPACING * layer.enlargement() * TRAIN_SCALE;
+        if (r.parts.length > 1) {
+          // A train (owner, 8 Nov 2026: "the coaches are disjointed when it does"): every carriage on the track, end to
+          // end (at the station too, not one on top of the other), each lined up with the track under it, from its back
+          // to its front; turning a carriage a little each frame left them pointing off the track on the bends.
+          const total = r.cum[r.cum.length - 1];
+          const length = Math.min(total, (r.parts.length - 1) * spacing);
+          const lead = length + (Math.min(total, s) / Math.max(1, total)) * (total - length);
+          const half = Math.min(spacing / 2, total / 2);
+          r.parts.forEach((part, i) => {
+            const at = Math.max(0, lead - i * spacing);
+            const pos = alongPath(path, r.cum, at).pos;
+            const back = alongPath(path, r.cum, Math.max(0, at - half)).pos;
+            const front = alongPath(path, r.cum, Math.min(total, at + half)).pos;
+            part.lng = pos[0];
+            part.lat = pos[1];
+            if (back[0] !== front[0] || back[1] !== front[1]) part.heading = geo.headingOf(back, front);
+          });
+          return;
+        }
         r.parts.forEach((part, i) => {
           const { pos, segment } = alongPath(path, r.cum, Math.max(0, s - i * spacing));
           const heading = geo.headingOf(path[segment - 1], path[segment]);
@@ -3413,7 +3452,7 @@ export function GameMap({
         }
         const f = Math.min(1, (serverNow - r.departs) / Math.max(1, r.arrives - r.departs));
         const bus = r.way ? busAt(r, serverNow - r.departs) : null;
-        r.s = Math.max(1e-6, bus ? bus.s : f * total);
+        r.s = Math.max(1e-6, bus ? bus.s : (r.trip.mode === "train" ? trainAlong(f) : f) * total);
         if (bus) moveRiders(r, serverNow - r.departs, dt, now / 1000);
         placeRide(r, r.s, dt, false);
         for (const p of r.parts) p.object.visible = true;
@@ -3616,7 +3655,16 @@ export function GameMap({
         if (!ride || ride.s === 0) return GAME_ZOOM;
         if (ride.trip.mode === "bus") return ride.trip.metres > BUS_RANGE_M ? GAME_ZOOM - 1 : GAME_ZOOM;
         if (ride.trip.mode === "taxi") return GAME_ZOOM;
-        if (ride.trip.mode === "train") return GAME_ZOOM - 1;
+        if (ride.trip.mode === "train") {
+          // Pulled back as far as its speed needs, so it goes at a steady pace on the screen (about 120 pixels a second
+          // at full speed) instead of a blur (owner, 8 Nov 2026: "It moves too fast"); close in at the stations.
+          const total = ride.cum[ride.cum.length - 1];
+          const top = total / Math.max(1, (ride.arrives - ride.departs) / 1000) / (1 - TRAIN_EASE);
+          const far = Math.log2((120 * 40075016.686 * Math.cos((traveller.pos.lat * Math.PI) / 180)) / (512 * Math.max(1, top)));
+          const z = Math.max(11, Math.min(GAME_ZOOM - 1, far));
+          const k = Math.min(1, Math.min(ride.s, total - ride.s) / 2000);
+          return GAME_ZOOM - 1 - (GAME_ZOOM - 1 - z) * k * k * (3 - 2 * k);
+        }
         const total = ride.cum[ride.cum.length - 1];
         const k = Math.min(1, Math.min(ride.s, total - ride.s) / 40000);
         return GAME_ZOOM - 7 * k * k * (3 - 2 * k);

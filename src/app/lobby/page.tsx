@@ -12,6 +12,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { logOut } from "../(auth)/actions";
 import { joinHunt } from "./actions";
+import { JoinButton, PlayLink } from "./PlayButtons";
 import { huntResumesAt, type HuntSummary } from "@/game/hunt";
 
 /**
@@ -214,10 +215,10 @@ function HuntHero({ h, trailer, held }: { h: HuntSummary; trailer?: Trailer; hel
               <b className="text-paper">{h.prize}</b> · {h.winners} winner{h.winners === 1 ? "" : "s"} · {h.players} hunter{h.players === 1 ? "" : "s"}
             </span>
           </p>
-          <Link href={`/play?hunt=${h.id}`} className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-gold text-lg font-extrabold text-ink hover:bg-gold-hover">
+          <PlayLink href={`/play?hunt=${h.id}`} className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-gold text-lg font-extrabold text-ink hover:bg-gold-hover">
             {Icon.play()}
             Continue the hunt
-          </Link>
+          </PlayLink>
         </div>
       </article>
     </section>
@@ -240,10 +241,10 @@ function FreeRoamHero({ resting }: { resting: boolean }) {
           <h1 className="font-display text-3xl font-extrabold leading-none">Free roam</h1>
           <p className="mt-1.5 text-muted">Explore from where you are: the Lamp&apos;s Detours, roadside games, rides and finds.</p>
         </div>
-        <Link href="/play" className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-gold text-lg font-extrabold text-ink hover:bg-gold-hover">
+        <PlayLink href="/play" className="flex h-14 items-center justify-center gap-2 rounded-2xl bg-gold text-lg font-extrabold text-ink hover:bg-gold-hover">
           {Icon.play()}
           Play free roam
-        </Link>
+        </PlayLink>
       </div>
     </section>
   );
@@ -253,15 +254,15 @@ function FreeRoamHero({ resting }: { resting: boolean }) {
 function HuntCard({ h, trailer }: { h: HuntSummary; trailer?: Trailer }) {
   const live = h.phase === "live";
   const action = h.phase === "ended" ? null : h.joined ? (
-    <Link href={`/play?hunt=${h.id}`} className="inline-flex h-11 shrink-0 items-center rounded-xl bg-gold px-4 font-extrabold text-ink hover:bg-gold-hover">
+    <PlayLink href={`/play?hunt=${h.id}`} className="inline-flex h-11 shrink-0 items-center rounded-xl bg-gold px-4 font-extrabold text-ink hover:bg-gold-hover">
       {live ? "Continue" : "You're in"}
-    </Link>
+    </PlayLink>
   ) : (
     <form action={joinHunt} className="shrink-0">
       <input type="hidden" name="hunt" value={h.id} />
-      <button type="submit" className="h-11 rounded-xl border-[1.5px] border-gold px-4 font-extrabold text-gold hover:bg-gold hover:text-ink">
+      <JoinButton className="h-11 rounded-xl border-[1.5px] border-gold px-4 font-extrabold text-gold hover:bg-gold hover:text-ink">
         {live ? "Join the hunt" : "Join"}
-      </button>
+      </JoinButton>
     </form>
   );
   return (
@@ -338,14 +339,14 @@ async function LobbyBody({ player }: { player: Player }) {
       {mine ? <HuntHero h={mine} trailer={trailers.get(mine.id)} held={held.get(mine.id) ?? 0} /> : <FreeRoamHero resting={resting} />}
 
       {mine && (
-        <Link href="/play" className="flex items-center gap-3 rounded-[20px] bg-ink-2 p-3 pr-4 hover:bg-line">
+        <PlayLink href="/play" className="flex items-center gap-3 rounded-[20px] bg-ink-2 p-3 pr-4 hover:bg-line">
           <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-map text-you">{Icon.map}</span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="font-display text-base font-extrabold">Free roam</span>
             <span className="text-[13px] text-muted">Off the hunt: detours, road games, rides</span>
           </span>
           <span className="text-muted">{Icon.chevron}</span>
-        </Link>
+        </PlayLink>
       )}
 
       <section aria-label="Hunts" className="flex flex-col gap-2.5">

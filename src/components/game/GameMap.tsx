@@ -9454,8 +9454,9 @@ export function GameMap({
             )}
           </div>
 
-          {/* Right: the tools, as icons */}
-          <nav className={`flex shrink-0 flex-col gap-2 ${inside ? "invisible" : ""}`} aria-label="Tools">
+          {/* Right: the tools, as icons. On a short screen (a phone held sideways: owner, 8 Nov 2026) in two columns of up
+              to five, so none run off the bottom. */}
+          <nav className={`flex shrink-0 flex-col gap-2 [@media(max-height:500px)]:grid [@media(max-height:500px)]:grid-flow-col [@media(max-height:500px)]:grid-rows-5 ${inside ? "invisible" : ""}`} aria-label="Tools">
             {/* Help, at the top of the tools (owner, 26 Oct 2026: the inventory takes the end of the top bar) */}
             <button
               type="button"

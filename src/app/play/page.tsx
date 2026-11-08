@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { GameMap } from "@/components/game/GameMap";
 import { OneDevice } from "@/components/game/OneDevice";
+import { FullscreenNudge } from "@/components/game/FullscreenNudge";
 import { getPlayer } from "@/lib/player";
 import { listHunts, pickHunt } from "@/lib/hunts";
 import { createClient } from "@/lib/supabase/server";
@@ -57,6 +58,7 @@ async function Play({ searchParams }: { searchParams: Promise<{ hunt?: string | 
       hasDetector={player.detector}
       huntClock={hunt ? { startsAt: hunt.startsAt, endsAt: hunt.endsAt, allDay: hunt.allDay } : open ? { startsAt: open.startsAt, endsAt: open.endsAt, allDay: open.allDay } : null}
     />
+      <FullscreenNudge />
     </OneDevice>
   );
 }

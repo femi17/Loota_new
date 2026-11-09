@@ -170,13 +170,19 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         nets.set(id, { net, centre: { ...pos }, mode, at: performance.now() });
         return net;
       };
+      // The way each hunter goes along by themselves (owner, 9 Nov 2026: "since the users moves on auto now, we should
+      // looke for users actions, so we can really align the avatar on the correct path"): sent by their game with how far
+      // along it they are and how fast; drawn on that very line, carried on at their speed between positions, never
+      // back a few metres for a late one. Without it (standing, off it, an older game): follow.ts as before.
+      const ways = new Map<string, { id: number; pts: [number, number][]; cum: number[] }>();
+      const onWay = new Map<string, { way: number; s: number; v: number; at: number; drawnS: number | null; heading: number }>();
       const heard = (id: string, lng: number, lat: number) => {
         const at = { lng, lat };
         follows.set(id, follow.heard(follows.get(id) ?? null, at, performance.now(), netFor(id, at)));
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], zoom: map.getZoom() }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], onWay: [...onWay.keys()], zoom: map.getZoom() }), __broadcastMap: map, __broadcastWay: (id: string) => ways.get(id)?.pts ?? null });
       }
       let drawnAt = 0; // the last frame's time
       // Trips under way, by hunter: the route (continuous) and its length along the way, measured once.
@@ -198,13 +204,25 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         return !!l && Date.now() - l.at < LIVE_FRESH_MS;
       };
       const channel = supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
+      channel.on("broadcast", { event: "way" }, ({ payload }) => {
+        const p = payload as { id: string; way: number; pts: [number, number][] };
+        if (typeof p.way !== "number" || !Array.isArray(p.pts) || p.pts.length < 2) return;
+        if (ways.get(p.id)?.id === p.way) return; // sent again for a show opened later
+        ways.set(p.id, { id: p.way, pts: p.pts, cum: cumulativeOf(p.pts) });
+      });
       channel.on("broadcast", { event: "pos" }, ({ payload }) => {
-        const p = payload as { id: string; lng: number; lat: number; mode: Mode; sid?: string; t?: number };
+        const p = payload as { id: string; lng: number; lat: number; heading?: number; mode: Mode; sid?: string; t?: number; way?: number; s?: number; v?: number };
         if (typeof p.lng !== "number" || typeof p.lat !== "number") return;
         const now = latest?.hunters.find((h) => h.id === p.id)?.session;
         if (p.sid && now && p.sid !== now) return;
         live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
         heard(p.id, p.lng, p.lat);
+        const w = ways.get(p.id);
+        if (w && typeof p.way === "number" && p.way === w.id && typeof p.s === "number") {
+          const o = onWay.get(p.id);
+          const same = o && o.way === p.way;
+          onWay.set(p.id, { way: p.way, s: p.s, v: p.v ?? 0, at: performance.now(), drawnS: same ? o.drawnS : null, heading: o?.heading ?? p.heading ?? 0 });
+        } else onWay.delete(p.id);
       });
       channel.subscribe();
 
@@ -338,6 +356,23 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           if (r && !(l && Date.now() - l.at < 4000)) {
             const at = tripAt(r, serverNow);
             shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
+            continue;
+          }
+          // Going along their way: on it, where they are now (at their speed since the last position, at most 1.5 s on)
+          const ow = onWay.get(h.id);
+          const w = ways.get(h.id);
+          if (ow && w && w.id === ow.way && t - ow.at < (ow.v > 0.3 ? 4000 : 10_000)) {
+            const total = w.cum[w.cum.length - 1] ?? 0;
+            const target = Math.min(total, ow.s + ow.v * Math.min(1.5, (t - ow.at) / 1000));
+            if (ow.drawnS === null || Math.abs(target - ow.drawnS) > 150) ow.drawnS = target;
+            else if (!(target < ow.drawnS && ow.drawnS - target < 10)) ow.drawnS += (target - ow.drawnS) * Math.min(1, 6 * dt);
+            const { pos, segment } = alongPath(w.pts, w.cum, ow.drawnS);
+            const a = w.pts[Math.max(0, segment - 1)], b = w.pts[Math.min(w.pts.length - 1, Math.max(1, segment))];
+            if (a && b && (a[0] !== b[0] || a[1] !== b[1])) ow.heading = geo.turnTowards(ow.heading, geo.headingOf(a, b), Math.min(1, 8 * dt));
+            const cur = shown.get(h.id);
+            const at = { lng: pos[0], lat: pos[1], heading: ow.heading };
+            if (!cur) shown.set(h.id, at);
+            else Object.assign(cur, at);
             continue;
           }
           const fw = follows.get(h.id);

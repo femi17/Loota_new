@@ -218,6 +218,10 @@ type HunterUpdate = {
   sid?: string;
   /** When it was sent, by the sender's clock (the broadcast measures speed between two). */
   t?: number;
+  /** Going along a drawn way (the live show only): which (sent as "way"), metres along it, and the speed (m/s). */
+  way?: number;
+  s?: number;
+  v?: number;
 };
 
 /** The Lamp's messenger (in purple, like the lamp's glow). */
@@ -2923,6 +2927,31 @@ export function GameMap({
        * hears it (owner, 3 Nov 2026: the broadcast's bus should be where the rider's own screen shows it); the hunters
        * around just see the hunter leave and arrive.
        */
+      // ---- The way, for the live show (owner, 9 Nov 2026: "since the users moves on auto now, we should looke for users
+      // actions, so we can really align the avatar on the correct path"). The hunter goes along the drawn way by
+      // themselves, so the show is sent that way (thinned; again every 15 s, for a broadcast opened later) and each
+      // position says how far along it they are and how fast: the broadcast draws them on that very line, measured the
+      // same way, instead of guessing the roads between positions.
+      let shownWay: { trip: Trip; id: number; route: import("@/game/geo").Route; seg: number; sentAt: number } | null = null;
+      function wayForShow(now: number): { way: number; s: number; v: number } | null {
+        if (!huntChannel || !trip || trip.straight) {
+          shownWay = null;
+          return null;
+        }
+        if (!shownWay || shownWay.trip !== trip) {
+          const pts = thinPath(trip.route.coords, 0.5).map(([x, y]) => [Math.round(x * 1e6) / 1e6, Math.round(y * 1e6) / 1e6] as [number, number]);
+          shownWay = { trip, id: Math.floor(Math.random() * 1e9), route: geo.buildRoute(pts), seg: 0, sentAt: -Infinity };
+        }
+        if (now - shownWay.sentAt > 15_000) {
+          shownWay.sentAt = now;
+          toShow("way", { id: playerId, way: shownWay.id, pts: shownWay.route.coords });
+        }
+        const at = directions.progressOn(shownWay.route, traveller.pos, shownWay.seg);
+        shownWay.seg = at.segment;
+        // Off it (a stop on the way, a scene): the broadcast follows the positions as before.
+        return at.off < 12 ? { way: shownWay.id, s: Math.round(at.s * 10) / 10, v: Math.round(traveller.v * 10) / 10 } : null;
+      }
+
       function announce(now: number, aboard = false) {
         if (Date.now() < cloakedUntil) return;
         const moving = aboard || traveller.v > 0.5;
@@ -2951,7 +2980,7 @@ export function GameMap({
           sid: device.current ?? undefined,
           t: Date.now(),
         };
-        if (toLive) toShow("pos", update);
+        if (toLive) toShow("pos", { ...update, ...(aboard ? null : wayForShow(now)) });
         if (!toArea) return;
         // Only over the open connection: a channel still joining would send each update as a web request of its own
         const area = areaChannels.get(key);

@@ -58,6 +58,7 @@ import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
 import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, jamSpeed, trafficFactor, trafficLevel, type Jam } from "@/game/clock";
+import { jamLines } from "@/game/traffic";
 import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
 import { foldAttribution } from "@/game/attribution";
 import {
@@ -2935,8 +2936,10 @@ export function GameMap({
       type MotionWay = { src: object; id: number; route: import("@/game/geo").Route; seg: number; sent: boolean; scale: number };
       let rideProgress: { s: number; at: number; v: number } | null = null; // the vehicle's speed, from its progress
       let motionWay: MotionWay | null = null;
-      let motionKeys: [number, number, number][] = []; // [device ms, metres along, m/s], waiting to be saved
-      let lastKey: { at: number; s: number; v: number } | null = null; // device ms
+      // [device ms, metres along, m/s, why slow: 0 nothing, 1 a red light, 2 slow traffic, 3 a go-slow], waiting to be saved
+      // (owner, 9 Nov 2026: "so viewers can know the reason the slows down is because of the traffic or traffic light")
+      let motionKeys: [number, number, number, number][] = [];
+      let lastKey: { at: number; s: number; v: number; why: number } | null = null; // device ms
       let motionSaving = false;
       let motionSavedAt = 0;
       let motionOff = false; // the server has been told they're not on a way
@@ -2946,10 +2949,10 @@ export function GameMap({
       let serverSkew: number | null = null;
       let skewRtt = Infinity;
       let skewReplies = 0;
-      async function motionSave(way: number | null, pts: [number, number][] | null, keys: [number, number, number][]) {
+      async function motionSave(way: number | null, pts: [number, number][] | null, keys: [number, number, number, number][]) {
         motionSaving = true;
         const t0 = Date.now();
-        const sent = serverSkew === null ? keys : keys.map(([t, m, v]) => [t + serverSkew!, m, v] as [number, number, number]);
+        const sent = serverSkew === null ? keys : keys.map(([t, m, v, why]) => [t + serverSkew!, m, v, why] as [number, number, number, number]);
         const { data } = await supabase.rpc("motion_put", { p_way: way, p_pts: pts, p_keys: sent, p_mode: traveller.mode });
         const t1 = Date.now();
         const r = data as { ok?: boolean; reason?: string; now?: number } | null;
@@ -3011,17 +3014,19 @@ export function GameMap({
         }
         // Where the broadcast will have them (on at the last keyframe's speed): a new one once that's a metre out
         const guess = lastKey ? lastKey.s + lastKey.v * ((ms - lastKey.at) / 1000) : 0;
+        const why = ride ? 0 : redShown !== null ? 1 : jamHere === 2 ? 3 : jamHere === 1 ? 2 : 0;
         const changed =
           !lastKey ||
           (v < 0.3) !== (lastKey.v < 0.3) || // stopped, or moving again
+          why !== lastKey.why ||
           Math.abs(along - guess) > 1 ||
           ms - lastKey.at > 10_000;
         // Stopping or moving on is saved at once (the broadcast must have it before it plays that moment); the rest at
         // most once a second
-        const urgent = !!lastKey && (v < 0.3) !== (lastKey.v < 0.3);
+        const urgent = !!lastKey && ((v < 0.3) !== (lastKey.v < 0.3) || why !== lastKey.why);
         if (changed) {
-          motionKeys.push([ms, Math.round(along * 10) / 10, Math.round(v * 10) / 10]);
-          lastKey = { at: ms, s: along, v };
+          motionKeys.push([ms, Math.round(along * 10) / 10, Math.round(v * 10) / 10, why]);
+          lastKey = { at: ms, s: along, v, why };
         }
         if (motionSaving || !motionKeys.length) return;
         if (!motionWay.sent || urgent || now - motionSavedAt > 1000) {
@@ -5574,52 +5579,14 @@ export function GameMap({
       let jamHere: Jam = 0;
       let wasNight: boolean | null = null;
       let jamWarnedAt = -Infinity;
-      const pointsOf = new WeakMap<RoadCellData, Map<number, { lng: number; lat: number }>>();
       const JAM_SHOWN_M = 2500;
 
-      /** The jammed stretches around the hunter, drawn on the map (red: standstill, orange: slow). */
+      /** The jammed stretches around the hunter, drawn on the map (red: standstill, orange: slow): src/game/traffic.ts. */
       function drawTraffic(now: number) {
         const src = map.getSource("traffic") as import("maplibre-gl").GeoJSONSource | undefined;
         if (!src) return;
-        const { lng, lat } = traveller.pos;
-        const level = trafficLevel(now, lng, lat);
-        const features: GeoJSON.Feature[] = [];
-        if (level > 0) {
-          for (const key of squaresAround()) {
-            const cell = roadSquares.get(key);
-            if (typeof cell !== "object") continue;
-            const urban = roads.cellUrban(cell);
-            if (urban <= 0) continue;
-            let pts = pointsOf.get(cell);
-            if (!pts) {
-              pts = new Map(cell.points.map((p) => [p.id, p]));
-              pointsOf.set(cell, pts);
-            }
-            for (const way of cell.ways) {
-              let line: [number, number][] = [];
-              let lineJam: Jam = 0;
-              const flush = () => {
-                if (lineJam && line.length > 1) features.push({ type: "Feature", properties: { jam: lineJam }, geometry: { type: "LineString", coordinates: line } });
-                line = [];
-              };
-              for (let i = 1; i < way.points.length; i++) {
-                const a = pts.get(way.points[i - 1]);
-                const b = pts.get(way.points[i]);
-                if (!a || !b) continue;
-                const jam = jamOn(way.cls, roads.jamStretch(way, a), urban, level, now);
-                if (jam !== lineJam || !line.length) {
-                  flush();
-                  lineJam = jam;
-                  if (jam && geo.distanceM([lng, lat], [a.lng, a.lat]) > JAM_SHOWN_M) lineJam = 0;
-                  line = [[a.lng, a.lat]];
-                }
-                line.push([b.lng, b.lat]);
-              }
-              flush();
-            }
-          }
-        }
-        src.setData({ type: "FeatureCollection", features });
+        const cells = squaresAround().map((key) => roadSquares.get(key)).filter((c): c is RoadCellData => typeof c === "object");
+        src.setData({ type: "FeatureCollection", features: jamLines(cells, traveller.pos, now, JAM_SHOWN_M) });
       }
 
       /** The jam (if any) where the hunter is, as the map draws it under them: slows motorbikes and cars. */

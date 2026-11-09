@@ -92,7 +92,8 @@ try {
   const shown = () => show.evaluate((id) => { const all = window.__broadcastShown?.(); return { scene: all?.scene ?? null, followed: !!all?.[id] }; }, hunter.id);
   const caption = () => show.evaluate((nl) => document.querySelector('[aria-label="Scene caption"]')?.innerText.split(nl).join(" | ") ?? null, NL);
   let built = null, first = null;
-  for (let i = 0; i < 30 && !(built?.scene && first); i++) {
+  // (it grows in, and the first line comes up at its moment)
+  for (let i = 0; i < 40 && !(built?.scene?.scale > 1 && /red traffic light/.test(first ?? "")); i++) {
     await wait(500);
     built = await shown();
     first = await caption();

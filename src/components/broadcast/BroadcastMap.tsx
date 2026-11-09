@@ -8,6 +8,9 @@ import { ordinal } from "@/game/hunt";
 import { baseSpeed, type Mode } from "@/game/movement";
 import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
+import { jamLines } from "@/game/traffic";
+import { loadSignals, signalState, signalsNear, type Signal } from "@/game/signals";
+import { ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, roadCellOf, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 
 type Hunter = {
   id: string;
@@ -92,6 +95,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [now, setNow] = useState(() => Date.now());
   const [failed, setFailed] = useState(false);
   /** A scene the followed hunter is in: what it is, and what was last said (a TV caption). */
+  /** Why the followed hunter is slow just now: 1 a red light, 2 slow traffic, 3 a go-slow (from their motion). */
+  const [slowWhy, setSlowWhy] = useState(0);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
   const viewRef = useRef(view);
   const autoRef = useRef(auto);
@@ -181,7 +186,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // without a way (standing, the key's place): their saved spots, along the roads (follow.ts).
       const MOTION_DELAY_MS = 6000;
       const MOTION_POLL_MS = 1500;
-      type Key = [number, number, number]; // [server ms, metres along, m/s]
+      type Key = [number, number, number, number?]; // [server ms, metres along, m/s, why slow: 1 a red light, 2 slow traffic, 3 a go-slow]
       const motions = new Map<string, { way: number; keys: Key[]; ended: boolean; drawnS: number | null; heading: number }>();
       const ways = new Map<string, { id: number; pts: [number, number][]; cum: number[] }>();
       const wayAsked = new Set<string>();
@@ -245,6 +250,101 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         sceneView = null;
       };
       let captionKey = "";
+
+      // ---- Why they slow down (owner, 9 Nov 2026: "add the traffic light, the traffic, so viewers can know the reason the
+      // slows down is because of the traffic or traffic light"). Around the hunter followed: the real traffic lights in 3D
+      // at the kerb, coloured as they were at the moment shown (the same cycle for everyone: src/game/signals.ts), and the
+      // jammed stretches of road as their own map draws them (our road data, src/game/traffic.ts); and the reason, from
+      // their motion's keyframes, as a chip.
+      let allSignals: Signal[] = [];
+      void loadSignals().then((list) => (allSignals = list));
+      const lightModels = new Map<number, { entity: import("@/game/ThreeMapLayer").MapEntity; model: ReturnType<typeof models.makeTrafficLight> }>();
+      let lightsFrom: { lng: number; lat: number } | null = null;
+      let lightsNear: Signal[] = [];
+      const ROADS_URL = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/roads/${ROAD_DATA_VERSION}`;
+      const roadCells = new Map<string, RoadCellData | "loading" | "none">();
+      async function loadCell(key: string) {
+        roadCells.set(key, "loading");
+        try {
+          const res = await fetch(`${ROADS_URL}/${key}.json.gz`);
+          if (!res.ok || !res.body) throw new Error(String(res.status));
+          roadCells.set(key, decodeRoadCell((await new Response(res.body.pipeThrough(new DecompressionStream("gzip"))).json()) as RoadCellFile));
+        } catch {
+          roadCells.set(key, "none");
+        }
+      }
+      /** Our road squares within 2.5 km of a spot (loading those not here yet). */
+      function cellsAround(at: { lng: number; lat: number }) {
+        const dLat = 2500 / 110574, dLng = 2500 / (111320 * Math.cos((at.lat * Math.PI) / 180));
+        const a = roadCellOf(at.lng - dLng, at.lat - dLat), b = roadCellOf(at.lng + dLng, at.lat + dLat);
+        const out: RoadCellData[] = [];
+        for (let ix = a.ix; ix <= b.ix; ix++) {
+          for (let iy = a.iy; iy <= b.iy; iy++) {
+            const key = roadCellKey(ix, iy);
+            const c = roadCells.get(key);
+            if (c === undefined) void loadCell(key);
+            else if (typeof c === "object") out.push(c);
+          }
+        }
+        return out;
+      }
+      /** A light beside the road, facing along it (its spot is in the junction). */
+      function kerbOf(sg: Signal, net: import("@/game/roads").RoadNetwork | null) {
+        const rp = net ? roads.snapToNetwork(net, sg, 0) : null;
+        const p = net && rp ? roads.positionOf(net, rp) : null;
+        if (!p || geo.distanceM([p.lng, p.lat], [sg.lng, sg.lat]) > 25) return { lng: sg.lng, lat: sg.lat, heading: 0 };
+        const m = 5 * layer.enlargement(); // to the right of the way the road runs (east = sin, north = −cos)
+        const east = -Math.cos(p.heading) * m, north = -Math.sin(p.heading) * m;
+        return { lng: p.lng + east / (111320 * Math.cos((p.lat * Math.PI) / 180)), lat: p.lat + north / 110574, heading: p.heading };
+      }
+      let lastJams = -Infinity;
+      function trafficTick(t: number, T: number, at: { lng: number; lat: number }, net: import("@/game/roads").RoadNetwork | null) {
+        if (!lightsFrom || geo.distanceM([lightsFrom.lng, lightsFrom.lat], [at.lng, at.lat]) > 100) {
+          lightsFrom = { ...at };
+          lightsNear = signalsNear(allSignals, at, 700);
+          const keep = new Set(lightsNear.map((sg) => sg.id));
+          for (const [id, l] of lightModels) {
+            if (keep.has(id)) continue;
+            layer.remove(l.entity);
+            lightModels.delete(id);
+          }
+        }
+        for (const sg of lightsNear) {
+          let l = lightModels.get(sg.id);
+          if (!l) {
+            if (!net) continue; // once the roads are known, to stand at the kerb
+            const k = kerbOf(sg, net);
+            const model = models.makeTrafficLight();
+            l = { entity: layer.add({ object: model.group, lng: k.lng, lat: k.lat, heading: k.heading }), model };
+            lightModels.set(sg.id, l);
+          }
+          l.model.show(signalState(sg.group, T).light);
+        }
+        if (t - lastJams > 2000) {
+          lastJams = t;
+          (map.getSource("b-traffic") as import("maplibre-gl").GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: jamLines(cellsAround(at), at, T, 2500) });
+        }
+      }
+      function clearTraffic() {
+        if (!lightModels.size && !lightsFrom) return;
+        for (const l of lightModels.values()) layer.remove(l.entity);
+        lightModels.clear();
+        lightsFrom = null;
+        lastJams = -Infinity;
+        (map.getSource("b-traffic") as import("maplibre-gl").GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: [] });
+      }
+      /** Why a hunter is slow at server time `T`: the reason on the keyframe in force then (0 none). */
+      const whySlow = (id: string, T: number) => {
+        const mo = motions.get(id);
+        if (!mo) return 0;
+        let why = 0;
+        for (const k of mo.keys) {
+          if (k[0] > T) break;
+          why = k[3] ?? 0;
+        }
+        return why;
+      };
+      let lastWhy = 0;
       async function pollMotion() {
         const t0 = Date.now();
         const { data } = await supabase.rpc("broadcast_motion", { p_hunt: huntId });
@@ -301,7 +401,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -516,7 +616,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const inThreeD = !!r && h.id === following; // the 3D vehicle is drawn instead
           const icon = r && !inThreeD ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
           const inScene = motionSkew !== null ? sceneAt(h.id, drawnWall + motionSkew - MOTION_DELAY_MS) : null;
-          const label = r ? `${icon} ${h.name} → ${r.trip.to}` : inScene ? `${sceneLabel(inScene).icon} ${h.name} · ${sceneLabel(inScene).what}` : `${h.name} · ${h.keysHeld}/${s.hunt.keys}`;
+          const slow = motionSkew !== null ? whySlow(h.id, drawnWall + motionSkew - MOTION_DELAY_MS) : 0;
+          const label = r
+            ? `${icon} ${h.name} → ${r.trip.to}`
+            : inScene
+              ? `${sceneLabel(inScene).icon} ${h.name} · ${sceneLabel(inScene).what}`
+              : `${h.name} · ${h.keysHeld}/${s.hunt.keys}${slow === 1 ? " · 🚦" : slow ? " · 🚗" : ""}`;
           if (m.label !== label) {
             m.label = label;
             m.el.querySelector(".name")!.textContent = label;
@@ -657,6 +762,13 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 padding: { top: 0, left: 0, right: 0, bottom: 0 },
               });
             }
+            // The traffic around them, and why they're slow
+            trafficTick(t, motionSkew !== null ? T : Date.now(), p, netFor(h.id, p));
+            const why = motionSkew !== null && !sc ? whySlow(h.id, T) : 0;
+            if (why !== lastWhy) {
+              lastWhy = why;
+              setSlowWhy(why);
+            }
             // The caption: the last two lines said, in the order they were said, and by whom
             let next: typeof caption = null;
             if (sc) {
@@ -683,6 +795,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             followed = null;
           }
           dropSceneView();
+          clearTraffic();
+          if (lastWhy !== 0) {
+            lastWhy = 0;
+            setSlowWhy(0);
+          }
           if (captionKey !== "null") {
             captionKey = "null";
             setCaption(null);
@@ -705,6 +822,18 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
 
       map.on("load", () => {
         styleMapForGame(map);
+        map.addSource("b-traffic", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+        map.addLayer({
+          id: "b-traffic",
+          type: "line",
+          source: "b-traffic",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ["match", ["get", "jam"], 2, "#D62828", "#F28C28"],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2, 17, 6, 20, 9],
+            "line-opacity": 0.9,
+          },
+        });
         map.addSource("b-domes", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         map.addLayer({ id: "b-domes-fill", type: "fill", source: "b-domes", paint: { "fill-color": "#9B5DE5", "fill-opacity": 0.22 } });
         map.addLayer({ id: "b-domes-edge", type: "line", source: "b-domes", paint: { "line-color": "#C89BFF", "line-width": 3 } });
@@ -737,6 +866,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
+      {/* Why the hunter followed is slow just now (owner, 9 Nov 2026) */}
+      {slowWhy > 0 && view.kind === "follow" && (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-20 -translate-x-1/2" role="status" aria-label="Why they're slow">
+          <span className={`flex items-center gap-2 rounded-full px-4 py-2 text-base font-extrabold shadow-xl ${slowWhy === 2 ? "bg-[#F28C28] text-ink" : "bg-danger text-white"}`}>
+            {slowWhy === 1 ? "🚦 Red light: waiting for green" : slowWhy === 3 ? "🚗 Go-slow: the traffic has stopped" : "🚗 Slow traffic"}
+          </span>
+        </div>
+      )}
       {/* A scene's caption, like TV's lower third: what it is, what was last said and by whom */}
       {caption && (
         <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center px-4" role="status" aria-label="Scene caption">

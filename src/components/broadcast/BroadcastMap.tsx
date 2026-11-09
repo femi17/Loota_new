@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { LootaLogo } from "@/components/Logo";
 import { normalizeLook } from "@/lib/avatar";
 import { ordinal } from "@/game/hunt";
-import type { Mode } from "@/game/movement";
+import { baseSpeed, type Mode } from "@/game/movement";
 import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 
@@ -175,7 +175,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // along it they are and how fast; drawn on that very line, carried on at their speed between positions, never
       // back a few metres for a late one. Without it (standing, off it, an older game): follow.ts as before.
       const ways = new Map<string, { id: number; pts: [number, number][]; cum: number[] }>();
-      const onWay = new Map<string, { way: number; s: number; v: number; at: number; drawnS: number | null; heading: number }>();
+      // Glided, not stepped (owner, 9 Nov 2026: "it looks back, then move, looks back, then move… just have a smooth
+      // gliding"): where they are is worked out by the time on the hunter's own device (when each position was sent, less
+      // the least delay seen), so a position that arrives late changes nothing; the drawn spot moves on at their speed
+      // and leans gently toward that, never back.
+      const onWay = new Map<string, { way: number; s: number; v: number; t: number; at: number; offset: number; drawnS: number | null; heading: number }>();
       const heard = (id: string, lng: number, lat: number) => {
         const at = { lng, lat };
         follows.set(id, follow.heard(follows.get(id) ?? null, at, performance.now(), netFor(id, at)));
@@ -221,7 +225,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (w && typeof p.way === "number" && p.way === w.id && typeof p.s === "number") {
           const o = onWay.get(p.id);
           const same = o && o.way === p.way;
-          onWay.set(p.id, { way: p.way, s: p.s, v: p.v ?? 0, at: performance.now(), drawnS: same ? o.drawnS : null, heading: o?.heading ?? p.heading ?? 0 });
+          const sent = typeof p.t === "number" ? p.t : Date.now();
+          // The hunter's clock against this one: the least delay seen (allowed to creep up, for clocks that drift)
+          const offset = o ? Math.min(o.offset + 5, Date.now() - sent) : Date.now() - sent;
+          if (same && sent < o.t) return; // older than one already heard (they can arrive out of order)
+          onWay.set(p.id, { way: p.way, s: p.s, v: p.v ?? 0, t: sent, at: performance.now(), offset, drawnS: same ? o.drawnS : null, heading: o?.heading ?? p.heading ?? 0 });
         } else onWay.delete(p.id);
       });
       channel.subscribe();
@@ -319,6 +327,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         id: string;
         avatar: ReturnType<typeof models.buildAvatar> | null;
         plane: ReturnType<typeof models.makePlane> | null;
+        pace: number; // metres a second it moves on screen, smoothed (its stride)
         entity: import("@/game/ThreeMapLayer").MapEntity;
       } | null = null;
       let lastView = "";
@@ -363,12 +372,21 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const w = ways.get(h.id);
           if (ow && w && w.id === ow.way && t - ow.at < (ow.v > 0.3 ? 4000 : 10_000)) {
             const total = w.cum[w.cum.length - 1] ?? 0;
-            const target = Math.min(total, ow.s + ow.v * Math.min(1.5, (t - ow.at) / 1000));
-            if (ow.drawnS === null || Math.abs(target - ow.drawnS) > 150) ow.drawnS = target;
-            else if (!(target < ow.drawnS && ow.drawnS - target < 10)) ow.drawnS += (target - ow.drawnS) * Math.min(1, 6 * dt);
-            const { pos, segment } = alongPath(w.pts, w.cum, ow.drawnS);
-            const a = w.pts[Math.max(0, segment - 1)], b = w.pts[Math.min(w.pts.length - 1, Math.max(1, segment))];
-            if (a && b && (a[0] !== b[0] || a[1] !== b[1])) ow.heading = geo.turnTowards(ow.heading, geo.headingOf(a, b), Math.min(1, 8 * dt));
+            // Where they are now, by their own clock (at most 2 s on from the last position)
+            const since = Math.max(0, Math.min(2, (Date.now() - ow.offset - ow.t) / 1000));
+            const target = Math.min(total, ow.s + ow.v * since);
+            if (ow.drawnS === null || Math.abs(target - ow.drawnS) > 120) ow.drawnS = target;
+            else {
+              // On at their speed, a little faster or slower to meet where they are: while they move, never under half
+              // their speed (a few metres ahead eases off, it doesn't stand and wait); stopped, it comes to a stop. Never back.
+              const v = ow.s >= total ? 0 : ow.v;
+              const pace = Math.max(v > 0.3 ? v * 0.5 : 0, Math.min(v * 1.6 + 2, v + (target - ow.drawnS) * 1.5));
+              ow.drawnS = Math.min(total, ow.drawnS + pace * dt);
+            }
+            const { pos } = alongPath(w.pts, w.cum, ow.drawnS);
+            // Facing the way a few metres on: bends turn them smoothly, not in a snap at each corner
+            const a = alongPath(w.pts, w.cum, Math.max(0, ow.drawnS - 3)).pos, b = alongPath(w.pts, w.cum, Math.min(total, ow.drawnS + 4)).pos;
+            if (a[0] !== b[0] || a[1] !== b[1]) ow.heading = geo.turnTowards(ow.heading, geo.headingOf(a, b), Math.min(1, 5 * dt));
             const cur = shown.get(h.id);
             const at = { lng: pos[0], lat: pos[1], heading: ow.heading };
             if (!cur) shown.set(h.id, at);
@@ -448,7 +466,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               const plane = ride === "plane" ? models.makePlane() : null;
               const object = plane ? plane.group : ride === "taxi" ? models.makeTaxi() : ride === "train" ? models.makeTrainCar(true) : ride ? models.makeBus() : avatar!.root;
               object.add(layer.billboard(models.makeNameplate(h.name, "#F4B41A")));
-              followed = { id: key, avatar, plane, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading, scaleBy: ride === "train" ? 0.8 : plane ? 0.45 : undefined }) };
+              followed = { id: key, avatar, plane, pace: 0, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading, scaleBy: ride === "train" ? 0.8 : plane ? 0.45 : undefined }) };
             }
             const before = { lng: followed.entity.lng, lat: followed.entity.lat };
             followed.entity.lng = p.lng;
@@ -456,7 +474,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             followed.entity.heading = p.heading;
             const stepM = geo.distanceM([before.lng, before.lat], [p.lng, p.lat]);
             const mode = live.get(h.id)?.mode ?? h.mode ?? "walk";
-            if (followed.avatar) models.animateAvatar(followed.avatar, { mode, phase: "idle", moving: stepM > 0.02 ? 1 : 0, distance: stepM / layer.enlargement() }, dt, t / 1000);
+            // Its stride by their speed, smoothed: a frame without a step doesn't drop it to standing (which looked like
+            // turning back); it comes to a stand only once they've really stopped.
+            followed.pace += ((dt > 0 ? stepM / dt : 0) - followed.pace) * Math.min(1, 4 * dt);
+            const moving = followed.pace < 0.4 ? 0 : Math.min(1, followed.pace / baseSpeed(mode as Mode));
+            if (followed.avatar) models.animateAvatar(followed.avatar, { mode, phase: "idle", moving, distance: stepM / layer.enlargement() }, dt, t / 1000);
             // The laptop's zoom (GameMap's GAME_ZOOM and rideZoom): 17; a train or a long-distance bus 16; a plane pulls
             // back to 10 at cruising height (40 km from either end) and comes in again to land, climbing as the game's does.
             let zoom = ride === "train" || (ride === "bus" && (r?.cum[r.cum.length - 1] ?? 0) > 40_000) ? 16 : 17;

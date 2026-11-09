@@ -3,8 +3,10 @@
 // movement is always off the path"). A hunter in a live test hunt taps a spot about 1.5 km away and goes there by
 // themselves (a phone); the owner's broadcast is opened after they've set off (a laptop), so the way reaches it by its
 // re-sending. Sampled side by side: the broadcast draws them along their way (not guessing the roads), on that line
-// (within a metre), never stepping back along it, where their own screen has them, at their speed. The hunt and the
-// accounts are deleted.   SHOTS=<folder> node scripts/tests/broadcast-way-browser-test.mjs
+// (within a metre), never stepping back along it, where their own screen has them, at their speed. And frame by frame
+// (owner, 9 Nov 2026: "it looks back, then move, looks back, then move… just have a smooth gliding"): no stalls while
+// they walk, no jumps, no sudden turns. The broadcast has a browser of its own (a page behind another is slowed down).
+// The hunt and the accounts are deleted.   SHOTS=<folder> node scripts/tests/broadcast-way-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
 const app = createRequire(new URL("../../package.json", import.meta.url));
@@ -17,7 +19,7 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const admin = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
 const ids = [];
-let huntId = null, browser;
+let huntId = null, browser, browser2;
 let fails = 0;
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 const start = { lng: 3.3787, lat: 6.5186 }; // a road in Yaba
@@ -70,8 +72,10 @@ try {
   browser = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true, protocolTimeout: 300000,
     args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] });
   const problems = [];
-  const open = async (jar, path, viewport, uid) => {
-    const context = await browser.createBrowserContext();
+  browser2 = await puppeteer.launch({ executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true, protocolTimeout: 300000,
+    args: ["--use-angle=d3d11", "--enable-gpu", "--ignore-gpu-blocklist"] });
+  const open = async (jar, path, viewport, uid, b = browser) => {
+    const context = await b.createBrowserContext();
     const page = await context.newPage();
     await page.setViewport(viewport);
     page.on("pageerror", (e) => problems.push(e.message));
@@ -91,7 +95,7 @@ try {
   for (let i = 0; i < 30 && !going; i++) { await wait(500); going = await game.evaluate(() => document.querySelector("button[data-drive]")?.getAttribute("data-drive") === "on"); }
   check("the hunter taps a spot and sets off by themselves", going);
   // The owner opens the broadcast now, after they've set off
-  const show = await open(await signedIn(owner), `/broadcast?hunt=${huntId}`, { width: 1280, height: 800 });
+  const show = await open(await signedIn(owner), `/broadcast?hunt=${huntId}`, { width: 1280, height: 800 }, null, browser2);
   await wait(15000);
   await show.evaluate((n) => [...document.querySelectorAll("button")].find((x) => x.textContent?.includes(n))?.click(), name);
   let onWay = false;
@@ -132,12 +136,46 @@ try {
   check("…at their speed", ownPace > 5 && Math.abs(seenPace - ownPace) < ownPace * 0.15, `${seenPace.toFixed(1)} vs ${ownPace.toFixed(1)} m/s`);
   await show.screenshot({ path: `${OUT}/broadcast-way-follow.png` });
   await game.screenshot({ path: `${OUT}/broadcast-way-game.png` });
+  // Frame by frame on the broadcast, for 4 s
+  const frames = await show.evaluate(
+    (id) =>
+      new Promise((done) => {
+        const out = [];
+        const t0 = performance.now();
+        const step = (t) => {
+          const p = window.__broadcastShown?.()[id];
+          if (p) out.push({ t, lng: p.lng, lat: p.lat, heading: p.heading });
+          if (t - t0 < 4000) requestAnimationFrame(step);
+          else done(out);
+        };
+        requestAnimationFrame(step);
+      }),
+    hunter.id,
+  );
+  const steps = [];
+  for (let i = 1; i < frames.length; i++) {
+    const dt = (frames[i].t - frames[i - 1].t) / 1000;
+    if (dt < 0.008) continue; // two paints with no time between them (a busy test machine): not a frame
+    const d = way ? along(frames[i], way).s - along(frames[i - 1], way).s : metres(frames[i - 1], frames[i]);
+    const turn = Math.abs(((frames[i].heading - frames[i - 1].heading + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * (180 / Math.PI);
+    steps.push({ v: d / dt, turn });
+  }
+  const vs = steps.map((x) => x.v).sort((x, y) => x - y);
+  const median = vs[Math.floor(vs.length / 2)] ?? 0;
+  const stalls = steps.filter((x) => x.v < median * 0.3).length;
+  const jumps = steps.filter((x) => x.v > median * 2.5).length;
+  const backs = steps.filter((x) => x.v < -0.5).length;
+  const sharp = Math.max(0, ...steps.map((x) => x.turn));
+  check("frame by frame: a smooth glide (no stalls, no jumps, never back)", steps.length > 120 && median > 5 && stalls === 0 && jumps === 0 && backs === 0,
+    `${steps.length} frames at ${median.toFixed(1)} m/s; ${stalls} stalls, ${jumps} jumps, ${backs} back`);
+  check("…turning gently (never more than 8° a frame)", sharp < 8, `at most ${sharp.toFixed(1)}° in a frame`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;
   console.log("ERROR", e);
 } finally {
   await browser?.close();
+  await browser2?.close();
   if (huntId) {
     await admin.from("hunt_players").delete().eq("hunt_id", huntId);
     await admin.from("hunt_keys").delete().eq("hunt_id", huntId);

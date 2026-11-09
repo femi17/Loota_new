@@ -9,8 +9,9 @@ import type { TransitQuote } from "./TransitPanel";
 
 /**
  * At a railway station's ticket office or an airport's check-in desk (owner, 18 Oct 2026: "for trains, the user
- * must go and purchase the ticket; at the airport, the user must go and check in"). `quote`: a trip already chosen
- * in the travel panel; otherwise the clerk asks where to.
+ * must go and purchase the ticket; at the airport, the user must go and check in"), or a motor park's ticket office
+ * for a bus to another city (owner, 9 Nov 2026). `quote`: a trip already chosen in the travel panel or a journey;
+ * otherwise the clerk asks where to.
  */
 export type TicketOffer = { stop: TransitStop; clerk: string; quote: TransitQuote | null };
 
@@ -45,12 +46,13 @@ export function TicketScene({
   onClose: () => void;
 }) {
   const plane = offer.stop.kind === "plane";
-  const place = plane ? `${offer.stop.name}${offer.stop.code ? ` (${offer.stop.code})` : ""}` : `${offer.stop.name} station`;
+  const coach = offer.stop.kind === "bus"; // a motor park
+  const place = plane ? `${offer.stop.name}${offer.stop.code ? ` (${offer.stop.code})` : ""}` : coach ? offer.stop.name : `${offer.stop.name} station`;
   type Step = "where" | "quote" | "id" | "bag" | "done" | "short" | "bye";
   const quoteLine = (q: TransitQuote) =>
     plane
       ? `${q.label}: ${q.fare} coins, and boarding starts in about ${clock(q.waitSeconds)}. Shall I check you in?`
-      : `${q.label}: that's ${q.fare} coins. The next train leaves in about ${clock(q.waitSeconds)}, and the ride takes about ${clock(q.seconds - q.waitSeconds)}.`;
+      : `${q.label}: that's ${q.fare} coins. The next ${coach ? "bus" : "train"} leaves in about ${clock(q.waitSeconds)}, and the ride takes about ${clock(q.seconds - q.waitSeconds)}.`;
   const ask = (q: TransitQuote) => (plane ? `I'm flying to ${q.label}.` : `One ticket to ${q.label}, please.`);
   const [quote, setQuote] = useState<TransitQuote | null>(offer.quote);
   const [step, setStep] = useState<Step>(offer.quote ? "quote" : "where");
@@ -104,7 +106,12 @@ export function TicketScene({
       onMoment?.({ type: "ticket" });
       say(
         { who: "you", text: `Here you are: ${quote.fare} coins.` },
-        { who: "them", text: `Thank you. Here's your ticket to ${quote.label}. Platform 1, through the gate: the train will be in shortly. Safe journey!` },
+        {
+          who: "them",
+          text: coach
+            ? `Thank you. Here's your ticket to ${quote.label}. Your bus is loading at the bay over there: find your seat, it moves once it's full. Safe journey!`
+            : `Thank you. Here's your ticket to ${quote.label}. Platform 1, through the gate: the train will be in shortly. Safe journey!`,
+        },
       );
       setStep("done");
     }
@@ -115,7 +122,7 @@ export function TicketScene({
     const options = (list ?? []).slice(0, 4);
     choices = [
       ...options.map((d, i) => ({ label: `${d.name}${d.code ? ` (${d.code})` : ""} · ${d.fare}`, primary: i === 0, onPick: () => void choose(d) })),
-      ...(list ? [{ label: plane ? "Somewhere else in the world…" : "Somewhere else…", onPick: actions.elsewhere }] : []),
+      ...(list ? [{ label: plane ? "Somewhere else in the world…" : coach ? "Choose a city…" : "Somewhere else…", onPick: actions.elsewhere }] : []),
       {
         label: "Not today",
         onPick: () => {
@@ -162,7 +169,7 @@ export function TicketScene({
       },
     ];
   } else if (step === "done") {
-    choices = [{ label: plane ? "Thanks! To the lounge 🛋️" : "Thanks! To the platform 🚆", primary: true, onPick: onClose }];
+    choices = [{ label: plane ? "Thanks! To the lounge 🛋️" : coach ? "Thanks! To the bus 🚌" : "Thanks! To the platform 🚆", primary: true, onPick: onClose }];
   } else {
     choices = [{ label: "Bye", onPick: onClose }];
   }

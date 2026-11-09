@@ -1606,12 +1606,13 @@ export const TICKET_SPOTS: PlaceSpots = {
 
 /**
  * A railway station's ticket hall with no roof: the counter with its glass windows and the clerk behind, the
- * departures board, benches, the turnstile to the platform, and a train waiting beyond the back wall.
- * `ticket(true)` shows the printed ticket on the counter.
+ * departures board, benches, the turnstile to the platform, and a train waiting beyond the back wall. A motor park's
+ * (`park`: owner, 9 Nov 2026) is signed with the park's own name, and long-distance buses wait at the loading bay
+ * beyond. `ticket(true)` shows the printed ticket on the counter.
  */
-export function makeTicketHall(station: string, departures: string[]) {
+export function makeTicketHall(station: string, departures: string[], park = false) {
   const { width: W, depth: D } = TICKET_SPOTS;
-  const group = openRoom(W, D, "#E3E8EE", "#B9B4AA", `${station} station`, "#1E9E62");
+  const group = openRoom(W, D, "#E3E8EE", "#B9B4AA", park ? station : `${station} station`, "#1E9E62");
   // The counter, with glass above it and two windows
   group.add(
     mesh(new THREE.BoxGeometry(5, 1.1, 0.7), "#1E9E62", -1.5, 0.69, -4.6),
@@ -1631,14 +1632,25 @@ export function makeTicketHall(station: string, departures: string[]) {
   group.add(board);
   for (const z of [-2.2, -3.6]) group.add(mesh(new THREE.BoxGeometry(2.6, 0.12, 0.6), "#7A5230", 3.2, 0.62, z), mesh(new THREE.BoxGeometry(2.6, 0.5, 0.1), "#7A5230", 3.2, 0.9, z - 0.3));
   group.add(mesh(new THREE.BoxGeometry(0.2, 1, 1.2), "#9AA1AC", W / 2 - 1.8, 0.64, -D + 1.2), mesh(new THREE.BoxGeometry(0.2, 1, 1.2), "#9AA1AC", W / 2 - 0.8, 0.64, -D + 1.2));
-  // The platform and the train beyond the back wall
-  group.add(mesh(new THREE.BoxGeometry(W + 4, 0.4, 2.2), "#C9C2B4", 0, 0.2, -D - 1.3));
-  for (let i = 0; i < 2; i++) {
-    const car = makeTrainCar(i === 0);
-    car.rotation.y = Math.PI / 2;
-    car.scale.setScalar(0.85);
-    car.position.set(-4 + i * 8.6, 0, -D - 3.6);
-    group.add(car);
+  if (park) {
+    // The loading bay beyond the back wall: tarmac, and two buses waiting to fill up
+    group.add(mesh(new THREE.BoxGeometry(W + 6, 0.06, 7), "#4A4F57", 0, 0.03, -D - 3.6));
+    for (let i = 0; i < 2; i++) {
+      const bus = makeBus();
+      bus.rotation.y = Math.PI / 2;
+      bus.position.set(-3.5 + i * 7.5, 0, -D - 3.6);
+      group.add(bus);
+    }
+  } else {
+    // The platform and the train beyond the back wall
+    group.add(mesh(new THREE.BoxGeometry(W + 4, 0.4, 2.2), "#C9C2B4", 0, 0.2, -D - 1.3));
+    for (let i = 0; i < 2; i++) {
+      const car = makeTrainCar(i === 0);
+      car.rotation.y = Math.PI / 2;
+      car.scale.setScalar(0.85);
+      car.position.set(-4 + i * 8.6, 0, -D - 3.6);
+      group.add(car);
+    }
   }
   return { group, ticket: (shown: boolean) => (ticket.visible = shown) };
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { LngLat } from "@/game/geo";
 import type { Place } from "@/game/places";
-import { BUS_RANGE_M, TRANSIT, clock, type TransitDestination, type TransitMode, type TransitStop } from "@/game/transit";
+import { BUS_RANGE_M, TRANSIT, clock, ticketed, type TransitDestination, type TransitMode, type TransitStop } from "@/game/transit";
 import { PlaceSearch } from "./PlaceSearch";
 
 /**
@@ -350,7 +350,7 @@ export function TransitPanel({ actions, coins, onClose }: { actions: TransitActi
               </label>
             )}
             <div className="flex flex-wrap gap-2">
-              {quote.mode === "train" || quote.mode === "plane" ? (
+              {ticketed(quote) ? (
                 <button
                   type="button"
                   disabled={working || coins < quote.fare}

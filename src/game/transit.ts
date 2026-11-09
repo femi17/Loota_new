@@ -22,6 +22,22 @@ export const DRIVER_SPEED = (30 / 3.6) * TIME_SCALE;
 export const BUS_RANGE_M = 40_000;
 export const COACH_RANGE_M = 1_500_000;
 
+/**
+ * A motor park is a compound, its point often set back from the road (owner, 9 Nov 2026, at Mallam Karto Park: 48 m from
+ * the nearest road, and nothing happened): it counts you there within this (the server: park_reach_m(), 150).
+ */
+export const PARK_REACH_M = 140;
+/** How close counts as at a stop. */
+export const reachOf = (st: { kind: TransitMode; park?: boolean }) => (st.kind === "bus" && st.park ? PARK_REACH_M : TRANSIT[st.kind].reachM);
+/** Where there's a desk to buy at: a station's ticket office, an airport's check-in, a motor park's ticket office. */
+export const hasOffice = (st: { kind: TransitMode; park?: boolean }) => st.kind === "train" || st.kind === "plane" || (st.kind === "bus" && !!st.park);
+/**
+ * A trip bought at the desk, not on the spot: a train ticket, a flight's check-in, and a long-distance bus from a motor
+ * park (owner, 9 Nov 2026: "I should buy ticket since this is a inter state motor park").
+ */
+export const ticketed = (q: { mode: TransitMode; from: { park?: boolean }; metres: number }) =>
+  q.mode === "train" || q.mode === "plane" || (q.mode === "bus" && !!q.from.park && q.metres > BUS_RANGE_M);
+
 /** On-screen metres per second, like the active modes (movement.baseSpeed). */
 export function transitSpeed(mode: TransitMode) {
   return (TRANSIT[mode].kmh / 3.6) * TIME_SCALE;

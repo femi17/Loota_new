@@ -76,7 +76,7 @@ import {
   transitSpeedFor,
   transitWaitS,
   type TransitStop,
-  type Trip as TransitTrip, trainAlong, trainZoom } from "@/game/transit";
+  type Trip as TransitTrip, trainAlong, trainZoom, reachOf as stopReach, hasOffice, ticketed } from "@/game/transit";
 
 type Hud = {
   energy: number;
@@ -131,7 +131,7 @@ type Hud = {
   stopHere: { icon: string; label: string } | null;
   /** At a station's ticket office or an airport's check-in desk: the button to go in. */
   /** At a train station or airport: its ticket office or check-in (`away`: metres to its door; 0 at it). */
-  ticketHere: { kind: "train" | "plane"; name: string; away: number } | null;
+  ticketHere: { kind: "train" | "plane" | "bus"; name: string; away: number } | null;
   /** What can be done where the player stands: eat, rest, refuel, kegs, tyres, repairs. */
   actions: { id: LimitAction; icon: string; short: string; label: string }[];
   /** A warning that needs acting on (tired, fuel low, soft tyres, a worn engine), with the nearest place that helps. */
@@ -5784,7 +5784,7 @@ export function GameMap({
         }
         const { legs } = journey.journey;
         const leg = legs[journey.step];
-        const atStop = leg.kind === "ride" && !ride && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [leg.from.lng, leg.from.lat]) <= TRANSIT[leg.mode].reachM;
+        const atStop = leg.kind === "ride" && !ride && geo.distanceM([traveller.pos.lng, traveller.pos.lat], [leg.from.lng, leg.from.lat]) <= stopReach(leg.from);
         // This step's way isn't drawn: ended, or a tap on the map took its place (owner, 1 Nov 2026).
         const needsWay = leg.kind === "go" || (!atStop && !ride);
         const view = {
@@ -5792,7 +5792,10 @@ export function GameMap({
           step: journey.step + 1,
           total: legs.length,
           text: leg.kind === "ride" && !atStop && !ride ? `Get to ${leg.from.name} to board` : legText(leg),
-          board: atStop && leg.kind === "ride" ? `Board ${TRANSIT[leg.mode].icon} · about ${leg.fare.toLocaleString("en-NG")} coins` : null,
+          board:
+            atStop && leg.kind === "ride"
+              ? `${ticketed({ mode: leg.mode, from: leg.from, metres: leg.metres }) ? (leg.mode === "plane" ? "🛫 Check in" : "🎫 Buy a ticket") : `Board ${TRANSIT[leg.mode].icon}`} · about ${leg.fare.toLocaleString("en-NG")} coins`
+              : null,
           lost: needsWay && (!trip || trip.name === "the marked spot"),
         };
         setHud((h) => (JSON.stringify(h.journey) === JSON.stringify(view) ? h : { ...h, journey: view }));
@@ -5812,8 +5815,8 @@ export function GameMap({
           say(quote, true);
           return;
         }
-        if (quote.mode === "train" || quote.mode === "plane") {
-          // Tickets at the ticket office, flights checked in at the desk: in, or the way there.
+        if (ticketed(quote)) {
+          // Tickets at the ticket office (a station's, a motor park's), flights checked in at the desk: in, or the way there.
           const where = ticketOffice({ ...quote, then: place });
           if (where) say(where, true);
           return;
@@ -5847,7 +5850,7 @@ export function GameMap({
         const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
         if (leg.kind === "go") {
           const next = legs[journey.step + 1];
-          const reach = next?.kind === "ride" ? TRANSIT[next.mode].reachM + 20 : 60;
+          const reach = next?.kind === "ride" ? stopReach(next.from) : 60; // the same as "at the stop" (it was 20 m more: no Board button)
           if (geo.distanceM(here, [leg.to.lng, leg.to.lat]) <= reach) {
             if (!next) return endJourney(true);
             journey.step++;
@@ -6349,6 +6352,13 @@ export function GameMap({
       // airport, the user must go and check in"). A station's ticket office stands at the road nearest the station
       // (within the 150 m the server allows), an airport's terminal at the road nearest it (within its 2 km).
       const TICKET_AT_M = 30;
+      /** What it's called: a station, a motor park (its own name), an airport. */
+      const officeName = (st: TransitStop) => (st.kind === "train" ? `${st.name} station` : st.name);
+      /** The desk here: the one the chosen trip leaves from, else a station's or an airport's, else a motor park's. */
+      const officeHere = () => {
+        const list = (near?.here ?? []).filter(hasOffice);
+        return list.find((st) => st.id === pendingTicket?.from.id) ?? list.find((st) => st.kind !== "bus") ?? list[0] ?? null;
+      };
       let pendingTicket: TransitQuote | null = null; // chosen in the travel panel, to buy at the office
       const boards = new Map<number, string[]>(); // each station's or airport's departures, for its board
       /** The desk the server knows (it insists on it), else the road nearest the stop. */
@@ -6362,13 +6372,13 @@ export function GameMap({
       };
 
       function openTicketPlace(st: TransitStop, quote: TransitQuote | null) {
-        if (st.kind !== "train" && st.kind !== "plane") return;
+        if (!hasOffice(st)) return;
         const plane = st.kind === "plane";
         const S = plane ? models.TERMINAL_SPOTS : models.TICKET_SPOTS;
         const clerk = nameFor("clerk", String(st.id));
         // The departures board: the trip chosen, then where else the line or airport goes (looked up as you approach).
         const board = [...(quote ? [quote.label] : []), ...(boards.get(st.id) ?? []).filter((r) => r !== quote?.label)].slice(0, 5);
-        const hall = plane ? null : models.makeTicketHall(st.name, board);
+        const hall = plane ? null : models.makeTicketHall(st.name, board, st.kind === "bus");
         const terminal = plane ? models.makeTerminal(`${st.name}${st.code ? ` (${st.code})` : ""}`, board) : null;
         const opened = openPlace({
           kind: "ticket",
@@ -6415,12 +6425,11 @@ export function GameMap({
       function ticketTick(now: number) {
         if (now - lastTicketCheck < 500) return;
         lastTicketCheck = now;
-        let here: { kind: "train" | "plane"; name: string; away: number } | null = null;
+        let here: { kind: "train" | "plane" | "bus"; name: string; away: number } | null = null;
         let station: TransitStop | null = null;
         let at: LngLat | null = null;
         if (!ride && !visit && !inWorld && network && near) {
-          for (const st of near.here) {
-            if (st.kind !== "train" && st.kind !== "plane") continue;
+          for (const st of [officeHere()].filter((x): x is TransitStop => !!x)) {
             const { door } = ticketDoor(st);
             const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]);
             // An airport's Check in only once a flight from it is chosen in the travel panel: never just for being
@@ -6428,7 +6437,7 @@ export function GameMap({
             // airport "it changed to airport check in… when I land in any airport, the check in action button should be
             // removed. It confuses users").
             const wanted = st.kind !== "plane" || pendingTicket?.from.id === st.id;
-            if (wanted) here = { kind: st.kind, name: st.kind === "plane" ? st.name : `${st.name} station`, away: away <= TICKET_AT_M ? 0 : Math.round(away / 10) * 10 };
+            if (wanted) here = { kind: st.kind as "train" | "plane" | "bus", name: officeName(st), away: away <= TICKET_AT_M ? 0 : Math.round(away / 10) * 10 };
             station = st;
             at = door;
             if (!boards.has(st.id)) {
@@ -6450,7 +6459,7 @@ export function GameMap({
        * steps from its door you walk straight in; further, the way to it is drawn.
        */
       function enterTicket() {
-        const st = near?.here.find((s) => s.kind === "train" || s.kind === "plane");
+        const st = officeHere();
         if (!st) return;
         const { door } = ticketDoor(st);
         const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]);
@@ -6459,7 +6468,7 @@ export function GameMap({
           openTicketPlace(st, quote);
           return;
         }
-        const office = st.kind === "plane" ? `${st.name}'s check-in` : `${st.name} station's ticket office`;
+        const office = st.kind === "plane" ? `${st.name}'s check-in` : `${officeName(st)}'s ticket office`;
         if (away <= 110 && !ride && !visit) {
           // Walk over to the door and in (the server is told where you are first: it checks you're at the desk).
           traveller.pos = { lng: door.lng, lat: door.lat };
@@ -6477,7 +6486,7 @@ export function GameMap({
         const st = quote.from;
         const { door } = ticketDoor(st);
         const away = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [door.lng, door.lat]);
-        const office = st.kind === "plane" ? `${st.name}'s check-in desk` : `${st.name} station's ticket office`;
+        const office = st.kind === "plane" ? `${st.name}'s check-in desk` : `${officeName(st)}'s ticket office`;
         if (away <= TICKET_AT_M) {
           setTransitOpen(false);
           openTicketPlace(st, quote);

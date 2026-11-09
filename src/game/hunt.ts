@@ -140,7 +140,7 @@ export type AnswerResult =
   /** A relay chest: no key, a clue (the riddle) to the next place, where the key is. */
   | { ok: true; result: "relay"; key: number; keysHeld: number; keys: number; riddle: string }
   /** A puzzle answered wrong, with lives left. */
-  | { ok: true; result: "wrong"; lives: number }
+  | { ok: true; result: "wrong"; lives: number; rightOf?: { right: number; of: number } | null }
   | { ok: true; result: "key"; keysHeld: number; keys: number; riddle: string; bonuses?: Bonus[] }
   | { ok: true; result: "finished"; keysHeld: number; keys: number; place: number; winner: boolean; bonuses?: Bonus[] }
   | { ok: false; reason: "no_trial" };

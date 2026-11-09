@@ -126,6 +126,7 @@ export function PuzzleTrial({
   async function send(answer: unknown) {
     if (done.current || sending) return;
     setSending(true);
+    setNote(null); // the last try's word goes as this one is checked
     const res = await fetch("/api/trial/solve", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -136,7 +137,8 @@ export function PuzzleTrial({
     if (r?.ok && r.result === "wrong") {
       setView((v) => ({ ...v, lives: r.lives }));
       setShake((s) => s + 1);
-      setNote(`Not right! ${r.lives === 1 ? "One life left." : `${r.lives} lives left.`} Look again.`);
+      const some = r.rightOf && r.rightOf.right > 0 ? ` ${r.rightOf.right} of ${r.rightOf.of} are right.` : "";
+      setNote(`Not right!${some} ${r.lives === 1 ? "One life left." : `${r.lives} lives left.`} Look again.`);
       cue("wrong");
       return;
     }
@@ -232,7 +234,7 @@ export function PuzzleTrial({
           {!warn && showRule && <span className="text-muted"> No warnings at this key: a wrong answer costs a life.</span>}
         </button>
 
-        <div key={shake} className={`relative mx-auto w-full max-w-[min(100%,26rem)] ${shake ? "loota-shake" : ""}`}>
+        <div key={JSON.stringify(view.puzzle)} className={`relative mx-auto w-full max-w-[min(100%,26rem)] ${shake ? (shake % 2 ? "loota-shake" : "loota-shake-again") : ""}`}>
           {solved && (
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex aspect-square items-center justify-center rounded-xl ring-4 ring-gold" aria-live="polite">
               <span className="loota-wonder-banner rounded-2xl bg-ink px-5 py-2 font-display text-3xl font-extrabold text-gold shadow-lg ring-2 ring-gold">Solved!</span>

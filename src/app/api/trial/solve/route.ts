@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { checkPuzzle, type AnyPuzzle, type PuzzleKind } from "@/game/puzzles";
+import { checkPuzzle, rightCount, type AnyPuzzle, type PuzzleKind } from "@/game/puzzles";
 
 /**
  * POST /api/trial/solve { attempt, answer }: the player's answer to their Key Trial puzzle, checked here by the
@@ -30,5 +30,8 @@ export async function POST(request: Request) {
   const { data, error } = await admin.rpc("puzzle_result", { p_attempt: t.id, p_right: right });
   if (error) return Response.json({ error: "Couldn't check the answer" }, { status: 500 });
   // The map hears of a key won or a trial failed through the hunt's own updates (as with a quiz).
+  // A wrong answer with lives left: how many are right, for a puzzle of questions ("3 of 4 are right")
+  const r = data as { result?: string } | null;
+  if (r?.result === "wrong") return Response.json({ ...r, rightOf: rightCount(t.kind as PuzzleKind, body.answer, t.solution) });
   return Response.json(data);
 }

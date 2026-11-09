@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { checkPuzzle, type AnyPuzzle, type PuzzleKind } from "@/game/puzzles";
+import { checkPuzzle, rightCount, type AnyPuzzle, type PuzzleKind } from "@/game/puzzles";
 
 /**
  * POST /api/house/room/solve { hunt, room, answer }: the hunter's answer to a room's puzzle, checked here by the
@@ -22,7 +22,8 @@ export async function POST(request: Request) {
   if (!p?.ok) return Response.json({ ok: false, reason: p?.reason ?? "no_puzzle" });
   if (p.late) return Response.json({ ok: false, reason: "late" }); // past its time: the lock has jammed
   if (!p.open && !(body.answer != null && checkPuzzle(p.kind as PuzzleKind, p.puzzle as AnyPuzzle, body.answer, p.solution))) {
-    return Response.json({ ok: true, right: false });
+    // How many are right, for a puzzle of questions ("3 of 4 are right")
+    return Response.json({ ok: true, right: false, rightOf: rightCount(p.kind as PuzzleKind, body.answer, p.solution) });
   }
   const { data, error } = await admin.rpc("house_room_open", { p_user: uid, p_hunt: body.hunt, p_room: room });
   if (error) return Response.json({ error: "Couldn't open the room" }, { status: 500 });

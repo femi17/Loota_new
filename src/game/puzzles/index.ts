@@ -80,6 +80,18 @@ export function makePuzzle(kind: PuzzleKind, level: number, seed: number): { puz
 }
 
 /**
+ * How many of the answers are right, for a puzzle of questions (the grammar, the algebra, the flags, the logos, the
+ * lost vowels): "3 of 4 are right" says where to look again without giving any away. Null for a board (a grid, a path).
+ */
+export function rightCount(kind: PuzzleKind, answer: unknown, solution: unknown): { right: number; of: number } | null {
+  if (!Array.isArray(solution) || !Array.isArray(answer)) return null;
+  const one = (a: unknown, s: unknown) =>
+    kind === "vowels" ? checkVowels([s as string], [a as string]) : kind === "grammar" || kind === "algebra" || kind === "flags" || kind === "brands" ? Number(a) === s : null;
+  if (one(answer[0], solution[0]) === null) return null;
+  return { right: solution.filter((s, i) => one(answer[i], s)).length, of: solution.length };
+}
+
+/**
  * Is this answer right, by the puzzle's rules? (Sentries: [row, col] pairs; Route: squares in order; Adire: the cloth.)
  * Lost Vowels is checked against its stored words (`solution`): the puzzle on the phone doesn't hold them.
  */

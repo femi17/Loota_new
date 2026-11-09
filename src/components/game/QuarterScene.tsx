@@ -49,6 +49,8 @@ const DETECT_M = 12;
 type Opened = {
   ok?: boolean;
   right?: boolean;
+  /** A wrong answer to a puzzle of questions: how many are right. */
+  rightOf?: { right: number; of: number } | null;
   reason?: string;
   outcome?: InnerRoomView["outcome"];
   coins?: number;
@@ -1182,6 +1184,7 @@ export function QuarterScene({
     const v = viewRef.current;
     if (!rp || !v || busyRef.current) return;
     setBusy(true);
+    setRoomNote(null); // the last try's word goes as this one is checked
     try {
       const res = await fetch("/api/house/room/solve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: rp.n, answer }) });
       const r = (await res.json().catch(() => null)) as Opened | null;
@@ -1194,7 +1197,9 @@ export function QuarterScene({
       if (!r.right) {
         tellShow("result", { n: rp.n, right: false });
         setRoomShake((k) => k + 1);
-        return setRoomNote("Not quite: the lock doesn't turn. Look again.");
+        // How many are right, for a puzzle of questions (owner, 9 Nov 2026: "it said all the answers are wrong")
+        const some = r.rightOf ? (r.rightOf.right > 0 ? ` ${r.rightOf.right} of ${r.rightOf.of} are right.` : " None are right yet.") : "";
+        return setRoomNote(`Not quite: the lock doesn't turn.${some} Look again.`);
       }
       tellShow("result", { n: rp.n, right: true, outcome: r.outcome ?? null });
       setRoomPuzzle(null);
@@ -1457,7 +1462,7 @@ export function QuarterScene({
             </div>
             <p className="text-xs text-paper/80">{PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.rule}</p>
             {/* The rooms are dark: without a torch the board is dim (owner, 3 Nov 2026: a torch "lights dark rooms") */}
-            <div key={roomShake} className={`mx-auto w-full max-w-[min(100%,24rem)] ${roomShake ? "loota-shake" : ""} ${me?.torch ? "" : "brightness-[0.45] contrast-[0.8]"}`} data-dark={me?.torch ? "false" : "true"}>
+            <div key={`${roomPuzzle.n}:${JSON.stringify(roomPuzzle.puzzle)}`} className={`mx-auto w-full max-w-[min(100%,24rem)] ${roomShake ? (roomShake % 2 ? "loota-shake" : "loota-shake-again") : ""} ${me?.torch ? "" : "brightness-[0.45] contrast-[0.8]"}`} data-dark={me?.torch ? "false" : "true"}>
               <AnswerMirror.Provider value={answerMirror}>
               <PuzzleBoard
                 kind={roomPuzzle.kind}

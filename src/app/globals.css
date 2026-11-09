@@ -318,7 +318,9 @@ body {
   75% { transform: translate(-2px, 1px) rotate(0); }
 }
 .loota-shake { animation: loota-shake 0.6s ease-out 1; }
-@media (prefers-reduced-motion: reduce) { .loota-shake { animation: none; } }
+.loota-shake-again { animation: loota-shake-again 0.6s ease-out 1; }
+@keyframes loota-shake-again { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+@media (prefers-reduced-motion: reduce) { .loota-shake, .loota-shake-again { animation: none; } }
 
 /* A trap's challenge: the time running out (owner, 31 Oct 2026: dodge it in time). */
 @keyframes loota-dodge-bar { from { width: 100%; } to { width: 0%; } }

@@ -8,6 +8,8 @@ import { ordinal } from "@/game/hunt";
 import { baseSpeed, type Mode } from "@/game/movement";
 import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
+import { nextAutoView } from "@/game/autocam";
+import { RoadGameBoard, type RoadGame, type RoadGameResult } from "@/components/game/RoadGames";
 import { jamLines } from "@/game/traffic";
 import { loadSignals, signalState, signalsNear, type Signal } from "@/game/signals";
 import { ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, roadCellOf, type RoadCellData, type RoadCellFile } from "@/game/roadData";
@@ -95,6 +97,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [now, setNow] = useState(() => Date.now());
   const [failed, setFailed] = useState(false);
   /** A scene the followed hunter is in: what it is, and what was last said (a TV caption). */
+  /**
+   * The question or game in the scene the followed hunter is in (owner, 9 Nov 2026: "lets see the puzzle, or question
+   * asked by the police or strangers and see how the user plays it"): the replies on offer and the one picked, or the
+   * game's board and how it ended.
+   */
+  const [sceneCard, setSceneCard] = useState<
+    { kind: "ask"; who: string; options: string[]; pick: string | null } | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null } | null
+  >(null);
   /** Why the followed hunter is slow just now: 1 a red light, 2 slow traffic, 3 a go-slow (from their motion). */
   const [slowWhy, setSlowWhy] = useState(0);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
@@ -209,7 +219,9 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         title?: string;
         keeperName?: string;
       };
-      type Scene = { id: number; user: string; start: number; end: number | null; data: SceneData; lines: [number, "them" | "you", string][] };
+      // Lines: [ms, "them" | "you", what's said], and how it's played: "ask" (the replies on offer, JSON), "pick", "game",
+      // "move", "result" (JSON)
+      type Scene = { id: number; user: string; start: number; end: number | null; data: SceneData; lines: [number, string, string][] };
       const scenes = new Map<number, Scene>();
       /** The scene a hunter is in at server time `T`, if any. */
       const sceneAt = (user: string, T: number) => {
@@ -250,6 +262,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         sceneView = null;
       };
       let captionKey = "";
+      let cardKey = "";
+      const parse = <X,>(text: string): X | null => {
+        try {
+          return JSON.parse(text) as X;
+        } catch {
+          return null;
+        }
+      };
 
       // ---- Why they slow down (owner, 9 Nov 2026: "add the traffic light, the traffic, so viewers can know the reason the
       // slows down is because of the traffic or traffic light"). Around the hunter followed: the real traffic lights in 3D
@@ -483,7 +503,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       let wantNext: string | null = null;
       let shownSince = Date.now();
       let shownView = "field";
-      let round: string[] = [];
+      const seenThisRound = new Set<string>();
+      let lastFollowed: string | null = null;
       const autoTimer = window.setInterval(() => {
         if (!latest) return;
         const cur = viewRef.current;
@@ -493,20 +514,17 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           shownSince = Date.now();
         }
         if (!autoRef.current || Date.now() - shownSince < (cur.kind === "field" ? FIELD_MS : DWELL_MS)) return;
-        const here = new Set(latest.hunters.filter((h) => follows.has(h.id) || routes.has(h.id)).map((h) => h.id));
-        let next: string | null = null;
-        if (wantNext && here.has(wantNext) && wantNext !== key) next = wantNext;
+        // Everyone drawn on the map, each in turn (src/game/autocam.ts)
+        const here = latest.hunters.filter((h) => shown.has(h.id)).map((h) => h.id);
+        const next = nextAutoView(here, key, seenThisRound, wantNext, lastFollowed);
         wantNext = null;
-        if (!next) {
-          round = round.filter((id) => here.has(id) && id !== key);
-          if (!round.length && cur.kind !== "field") {
-            setView({ kind: "field" });
-            return;
-          }
-          if (!round.length) round = latest.hunters.filter((h) => here.has(h.id)).map((h) => h.id);
-          next = round.shift() ?? null;
-        } else round = round.filter((id) => id !== next);
-        if (next) setView({ kind: "follow", id: next });
+        if (next === "field") {
+          if (cur.kind !== "field") setView({ kind: "field" });
+        } else {
+          lastFollowed = next;
+          if (key !== next) setView({ kind: "follow", id: next });
+          else shownSince = Date.now(); // one hunter: on them, a new minute
+        }
       }, 1000);
 
       // ---- The followed hunter in 3D.
@@ -777,7 +795,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 icon,
                 title: sc.data.title ?? `${h.name} ${what}`,
                 lines: sc.lines
-                  .filter((l) => l[0] <= T)
+                  .filter((l) => l[0] <= T && (l[1] === "them" || l[1] === "you"))
                   .slice(-2)
                   .map((l) => ({ who: l[1] === "you" ? h.name : (sc.data.keeperName ?? ""), text: l[2], you: l[1] === "you" })),
               };
@@ -786,6 +804,30 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             if (said !== captionKey) {
               captionKey = said;
               setCaption(next);
+            }
+            // The question on offer and the reply picked, or the game being played, as they were then
+            let card: typeof sceneCard = null;
+            if (sc) {
+              let ask: { at: number; options: string[]; pick: string | null } | null = null;
+              let game: { at: number; game: RoadGame; result: RoadGameResult | null } | null = null;
+              for (const l of sc.lines) {
+                if (l[0] > T) break;
+                if (l[1] === "ask") {
+                  const options = parse<string[]>(l[2]);
+                  if (options) ask = { at: l[0], options, pick: null };
+                } else if (l[1] === "pick" && ask) ask.pick = l[2];
+                else if (l[1] === "game") {
+                  const g = parse<RoadGame>(l[2]);
+                  if (g) game = { at: l[0], game: g, result: null };
+                } else if (l[1] === "result" && game) game.result = parse<RoadGameResult>(l[2]);
+              }
+              if (game && (!ask || game.at >= ask.at)) card = { kind: "game", who: h.name, game: game.game, result: game.result };
+              else if (ask) card = { kind: "ask", who: h.name, options: ask.options, pick: ask.pick };
+            }
+            const cardNow = JSON.stringify(card);
+            if (cardNow !== cardKey) {
+              cardKey = cardNow;
+              setSceneCard(card);
             }
           }
         } else {
@@ -803,6 +845,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           if (captionKey !== "null") {
             captionKey = "null";
             setCaption(null);
+          }
+          if (cardKey !== "null") {
+            cardKey = "null";
+            setSceneCard(null);
           }
           // Keep everyone in shot.
           if (viewKey !== lastView || t - lastFit > 8000) {
@@ -872,6 +918,36 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           <span className={`flex items-center gap-2 rounded-full px-4 py-2 text-base font-extrabold shadow-xl ${slowWhy === 2 ? "bg-[#F28C28] text-ink" : "bg-danger text-white"}`}>
             {slowWhy === 1 ? "🚦 Red light: waiting for green" : slowWhy === 3 ? "🚗 Go-slow: the traffic has stopped" : "🚗 Slow traffic"}
           </span>
+        </div>
+      )}
+      {/* The question or game in the scene, as the hunter has it: the replies on offer and the one picked, or the board */}
+      {sceneCard && caption && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[150px] z-20 flex justify-center px-4" role="status" aria-label="Scene card">
+          <div className="w-full max-w-xl rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70">
+            {sceneCard.kind === "ask" ? (
+              <>
+                <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">{sceneCard.pick ? `${sceneCard.who} chose` : `${sceneCard.who} is choosing…`}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {sceneCard.options.map((o) => (
+                    <span
+                      key={o}
+                      className={`rounded-xl px-3 py-2 text-sm font-bold ${o === sceneCard.pick ? "bg-gold text-ink ring-2 ring-paper" : sceneCard.pick ? "bg-ink-2 text-paper/45" : "bg-ink-2 text-paper"}`}
+                    >
+                      {o === sceneCard.pick ? "👉 " : ""}
+                      {o}
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">
+                  {sceneCard.result ? (sceneCard.result.won && !sceneCard.result.late ? `✓ ${sceneCard.who} wins it` : `✗ ${sceneCard.who} loses this one`) : `🎲 ${sceneCard.who} is playing…`}
+                </p>
+                <RoadGameBoard game={sceneCard.game} result={sceneCard.result} locked={false} onMove={() => {}} />
+              </>
+            )}
+          </div>
         </div>
       )}
       {/* A scene's caption, like TV's lower third: what it is, what was last said and by whom */}

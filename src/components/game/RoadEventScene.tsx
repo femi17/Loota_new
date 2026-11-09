@@ -81,11 +81,19 @@ export function RoadEventScene({
   // The game: offered (by a passer-by straight away, by a traveller once helped), being played, and its result.
   const [game, setGame] = useState<"offered" | "playing" | "over" | null>(event.kind === "seller" && event.game ? "offered" : null);
   const [gameResult, setGameResult] = useState<RoadGameResult | null>(null);
+  // The game and how it's played, for the broadcast (the map saves it with the scene: owner, 9 Nov 2026)
+  const tellShow = (type: "game" | "move" | "result", data: unknown) => window.dispatchEvent(new CustomEvent("loota:scene-moment", { detail: { type, data } }));
+  const gameShown = useRef(false);
   const reward = event.kind === "seller" ? 25 : 20;
   // The clock (owner: "some form of urgency"): it runs once the game can be played; at nought the board locks.
   const [deadline, setDeadline] = useState<number | null>(null);
   const [left, setLeft] = useState<number | null>(null);
   const [timeUp, setTimeUp] = useState(false);
+  useEffect(() => {
+    if (game !== "playing" || !event.game || gameShown.current) return;
+    gameShown.current = true;
+    tellShow("game", event.game);
+  }, [game, event.game]);
   const ready = useCallback(() => {
     if (event.game) setDeadline(Date.now() + gameSeconds(event.game) * 1000);
   }, [event.game]);
@@ -195,6 +203,7 @@ export function RoadEventScene({
   async function play(move: string, outOfTime = false) {
     if (sent.current) return;
     sent.current = true;
+    tellShow("move", move);
     setBusy(true);
     const r = await actions.play(event, move);
     setBusy(false);
@@ -206,6 +215,7 @@ export function RoadEventScene({
     }
     if (outOfTime) r.late = true;
     setGameResult(r);
+    tellShow("result", r);
     cue(r.won && !r.late ? "solved" : "wrong");
     const g = event.game!;
     const cup = ["left", "middle", "right"][Number(r.answer ?? 0)] ?? "other";

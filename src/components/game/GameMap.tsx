@@ -3053,12 +3053,14 @@ export function GameMap({
         sceneModel = { make, args };
         return fn(...args);
       }
-      type SceneRec = { id: number | null; queue: [number, "them" | "you", string][]; said: number; meta: object | null; ended: number | null; saving: boolean };
+      // Lines: [ms, "them" | "you", what's said], and how it's played: [ms, "ask", the replies on offer (JSON)], [ms, "pick",
+      // the reply picked], [ms, "game" | "move" | "result", JSON] (a roadside game)
+      type SceneRec = { id: number | null; queue: [number, string, string][]; said: number; asked: string; meta: object | null; ended: number | null; saving: boolean };
       let sceneRec: SceneRec | null = null;
       const serverMs = () => Math.round(Date.now() + (serverSkew ?? 0));
       function sceneStarted(data: object) {
         if (!huntId || serverSkew === null) return;
-        const rec: SceneRec = { id: null, queue: [], said: 0, meta: null, ended: null, saving: true };
+        const rec: SceneRec = { id: null, queue: [], said: 0, asked: "", meta: null, ended: null, saving: true };
         sceneRec = rec;
         void supabase.rpc("scene_start", { p_ms: serverMs(), p_data: data }).then(({ data: r }) => {
           rec.saving = false;
@@ -3082,14 +3084,31 @@ export function GameMap({
       const sceneTalk = (ev: Event) => {
         const rec = sceneRec;
         if (!rec) return;
-        const d = (ev as CustomEvent<{ title: string; sign: string; them: string; lines: SceneLine[] }>).detail;
+        const d = (ev as CustomEvent<{ title: string; sign: string; them: string; lines: SceneLine[]; choices: string[] }>).detail;
         if (d.lines.length < rec.said) rec.said = 0; // a new conversation in the same place
         for (const l of d.lines.slice(rec.said)) rec.queue.push([serverMs(), l.who, l.text]);
         rec.said = d.lines.length;
+        // The replies on offer, when there's a choice to make (not a lone "Go on")
+        const asked = d.choices.length > 1 ? JSON.stringify(d.choices) : "";
+        if (asked && asked !== rec.asked) rec.queue.push([serverMs(), "ask", asked]);
+        rec.asked = asked;
         rec.meta = { title: d.title, sign: d.sign, keeperName: d.them };
         sceneFlush(rec);
       };
       window.addEventListener("loota:scene-talk", sceneTalk);
+      const scenePick = (ev: Event) => {
+        if (!sceneRec) return;
+        sceneRec.queue.push([serverMs(), "pick", (ev as CustomEvent<{ label: string }>).detail.label]);
+        sceneFlush(sceneRec);
+      };
+      const sceneMomentShown = (ev: Event) => {
+        if (!sceneRec) return;
+        const d = (ev as CustomEvent<{ type: string; data: unknown }>).detail;
+        sceneRec.queue.push([serverMs(), d.type, typeof d.data === "string" ? d.data : JSON.stringify(d.data)]);
+        sceneFlush(sceneRec);
+      };
+      window.addEventListener("loota:scene-pick", scenePick);
+      window.addEventListener("loota:scene-moment", sceneMomentShown);
       function sceneEnded() {
         const rec = sceneRec;
         if (!rec) return;
@@ -8613,6 +8632,8 @@ export function GameMap({
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
         window.removeEventListener("loota:scene-talk", sceneTalk);
+        window.removeEventListener("loota:scene-pick", scenePick);
+        window.removeEventListener("loota:scene-moment", sceneMomentShown);
         lookArea.removeEventListener("pointerdown", lookStart);
         window.removeEventListener("pointermove", lookMove);
         window.removeEventListener("pointerup", lookEnd);

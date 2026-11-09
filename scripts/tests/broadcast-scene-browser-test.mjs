@@ -3,8 +3,10 @@
 // themselves (a phone, its own browser); a police checkpoint stops them; they answer wrong (a 20-coin fine) and go on.
 // The owner's broadcast follows them (a laptop, its own browser): a few seconds later the same checkpoint is built at
 // the kerb, the camera looks in, and the words come up as captions as they were said (the officer's question, the
-// hunter's answer, the fine); when they go on, the scene closes and the caption goes. The scene is saved (no
-// Realtime): its model, its place and its lines. The hunt and the accounts are deleted.
+// hunter's answer, the fine); a card shows the answers on offer, then the one they chose (owner, 9 Nov 2026: "lets see
+// the puzzle, or question asked by the police or strangers and see how the user plays it"); when they go on, the scene
+// closes and the caption goes. Then a cups man stops them: on the broadcast, the same three cups while they play, then
+// that they won. The scenes are saved (no Realtime): model, place, lines. The hunt and the accounts are deleted.
 //   SHOTS=<folder> node scripts/tests/broadcast-scene-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -100,11 +102,20 @@ try {
   }
   check("on the broadcast: the checkpoint built at the kerb, the camera looking in", !!built?.scene && built.scene.scale > 1, JSON.stringify(built?.scene));
 
+  const card = () => show.evaluate((nl) => document.querySelector('[aria-label="Scene card"]')?.innerText.split(nl).join(" | ") ?? null, NL);
+  const offered = await card();
+  check("…a card: the answers on offer", /Go faster/.test(offered ?? "") && /Stop/.test(offered ?? "") && /Turn left only/.test(offered ?? ""), offered);
   check("…the caption: a police checkpoint, the officer's question", /police checkpoint/i.test(first ?? "") && /red traffic light/.test(first ?? ""), first);
   await show.screenshot({ path: `${OUT}/broadcast-scene-1-question.png` });
   let answered = null;
-  for (let i = 0; i < 30 && !/Go faster/.test(answered ?? ""); i++) { await wait(500); answered = await caption(); }
+  for (let i = 0; i < 30 && !/Go faster/.test(answered ?? ""); i++) {
+    await wait(500);
+    answered = await caption();
+  }
   check("…then the hunter's answer, as they said it", /Go faster/.test(answered ?? ""), answered);
+  let chose = null;
+  for (let i = 0; i < 20 && !/chose/i.test(chose ?? ""); i++) { await wait(500); chose = await card(); }
+  check("…the card: the answer they chose, picked out", /chose/i.test(chose ?? "") && /👉 Go faster/.test(chose ?? ""), chose);
   let fined = null;
   for (let i = 0; i < 30 && !/20-coin fine/.test(fined ?? ""); i++) { await wait(500); fined = await caption(); }
   check("…and the officer's fine", /20-coin fine/.test(fined ?? ""), fined);
@@ -119,8 +130,35 @@ try {
     if (!gone.scene && !(await caption())) break;
   }
   check("they go on: on the broadcast the scene closes and the caption goes", !gone?.scene && !(await caption()), JSON.stringify(gone));
-  const { data: saved } = await admin.from("hunter_scenes").select("data, lines, ended_ms").eq("user_id", hunter.id).order("started_ms", { ascending: false }).limit(1).single();
-  check("saved: its model, where it stands, every line, and its end", saved?.data?.model?.make === "makeCheckpointScene" && !!saved.data.origin && saved.lines.length >= 3 && !!saved.ended_ms,
+  // A cups man further on: the game, played
+  const swaps = [[0, 1], [1, 2], [0, 2], [0, 1], [1, 2]];
+  let at = 2;
+  for (const [a, b] of swaps) at = at === a ? b : at === b ? a : at;
+  await admin.from("road_events").insert({ user_id: hunter.id, hunt_id: huntId, kind: "seller", npc: "Tunde Wayo", game: { type: "cups", start: 2, swaps, ms: 520, answer: String(at) } });
+  let cups = null;
+  for (let i = 0; i < 90 && !/coin goes under one cup/.test(cups ?? ""); i++) { await wait(1000); cups = await sceneText(); }
+  check("riding on: a cups man stops them (their screen)", /coin goes under one cup/.test(cups ?? ""), cups?.slice(0, 100));
+  for (let i = 0; i < 20 && !(await clickText("Play · win 25")); i++) await wait(500);
+  let ready = false;
+  for (let i = 0; i < 30 && !ready; i++) {
+    await wait(300);
+    ready = await game.evaluate(() => { const c = [...document.querySelectorAll("[data-cup-slot]")]; return c.length === 3 && c.every((b) => !b.disabled); });
+  }
+  await game.evaluate((slot) => document.querySelector(`[data-cup-slot="${slot}"]`)?.click(), at);
+  let board = null;
+  for (let i = 0; i < 30 && !board?.cups; i++) {
+    await wait(500);
+    board = await show.evaluate(() => ({ cups: document.querySelectorAll('[aria-label="Scene card"] [data-cup-slot]').length, text: document.querySelector('[aria-label="Scene card"]')?.textContent ?? "" }));
+  }
+  check("on the broadcast: the same three cups while they play", board?.cups === 3 && /is playing/i.test(board.text), JSON.stringify(board));
+  await show.screenshot({ path: `${OUT}/broadcast-scene-3-cups.png` });
+  let won = null;
+  for (let i = 0; i < 30 && !/wins it/i.test(won ?? ""); i++) { await wait(500); won = await card(); }
+  check("…then that they won it", /wins it/i.test(won ?? ""), won?.slice(0, 80));
+  await show.screenshot({ path: `${OUT}/broadcast-scene-4-won.png` });
+
+  const { data: saved } = await admin.from("hunter_scenes").select("data, lines, ended_ms").eq("user_id", hunter.id).order("started_ms", { ascending: true }).limit(1).single();
+  check("saved: its model, where it stands, every line, and its end", saved?.data?.model?.make === "makeCheckpointScene" && !!saved.data.origin && saved.lines.filter((l) => l[1] === "them" || l[1] === "you").length >= 3 && saved.lines.some((l) => l[1] === "ask") && saved.lines.some((l) => l[1] === "pick") && !!saved.ended_ms,
     `${saved?.data?.model?.make}, ${saved?.lines?.length} lines, ended ${!!saved?.ended_ms}`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {

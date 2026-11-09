@@ -81,10 +81,16 @@ export function EventScene({
   game?: ReactNode;
   onClose: () => void;
 }) {
-  // What's said, for the broadcast (the map saves it with the scene: owner, 9 Nov 2026)
+  // What's said and the replies on offer, for the broadcast (the map saves them with the scene: owner, 9 Nov 2026: "lets
+  // see the puzzle, or question asked by the police or strangers and see how the user plays it")
+  const offered = choices.map((c) => c.label).join("\u0001");
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent("loota:scene-talk", { detail: { title, sign, them: them.name, lines } }));
-  }, [title, sign, them.name, lines]);
+    window.dispatchEvent(new CustomEvent("loota:scene-talk", { detail: { title, sign, them: them.name, lines, choices: offered ? offered.split("\u0001") : [] } }));
+  }, [title, sign, them.name, lines, offered]);
+  const pick = (c: SceneChoice) => {
+    window.dispatchEvent(new CustomEvent("loota:scene-pick", { detail: { label: c.label } }));
+    c.onPick();
+  };
 
   const last = lines.at(-1);
   const typing = last?.who === "them" ? last.text : null;
@@ -190,7 +196,7 @@ export function EventScene({
                   key={c.label}
                   type="button"
                   disabled={busy}
-                  onClick={c.onPick}
+                  onClick={() => pick(c)}
                   className={`min-h-10 flex-auto rounded-xl px-3 text-sm font-bold disabled:opacity-50 ${c.primary ? "bg-gold text-ink" : "border-[1.5px] border-line text-paper"}`}
                 >
                   {c.label}
@@ -268,7 +274,7 @@ export function EventScene({
                 key={c.label}
                 type="button"
                 disabled={busy}
-                onClick={c.onPick}
+                onClick={() => pick(c)}
                 className={`min-h-11 rounded-xl px-4 text-left text-sm font-bold disabled:opacity-50 [@media(max-height:520px)]:min-h-9 [@media(max-height:520px)]:flex-1 [@media(max-height:520px)]:text-xs ${
                   c.primary ? "bg-gold text-ink" : "border-[1.5px] border-line text-paper"
                 }`}

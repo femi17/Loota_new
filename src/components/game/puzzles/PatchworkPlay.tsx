@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { placedCells, turned, type PatchworkPlacement } from "@/game/puzzles/patchwork";
+import { useAnswer } from "./mirror";
 
 type Cell = [number, number];
 type Props = { p: { n: number; target: number[]; pieces: Cell[][] }; disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
@@ -15,8 +16,8 @@ const PATCH = ["#E5484D", "#2F6FEB", "#F4B41A", "#1E9E62", "#9B5DE5", "#F28C28",
 export function PatchworkPlay({ p, disabled, onDone, onProgress }: Props) {
   const { n, pieces } = p;
   const target = new Set(p.target);
-  const [turns, setTurns] = useState<number[]>(() => pieces.map(() => 0));
-  const [placed, setPlaced] = useState<(PatchworkPlacement | null)[]>(() => pieces.map(() => null));
+  const [turns, setTurns] = useAnswer<number[]>("turns", () => pieces.map(() => 0));
+  const [placed, setPlaced] = useAnswer<(PatchworkPlacement | null)[]>("placed", () => pieces.map(() => null));
   const [picked, setPicked] = useState<number | null>(0);
   const [note, setNote] = useState<string | null>(null);
   const owner = new Map<number, number>();

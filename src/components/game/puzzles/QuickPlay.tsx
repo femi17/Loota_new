@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { countryFor } from "@/game/puzzles/countries";
+import { useAnswer } from "./mirror";
 
 type Done = { disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
 
@@ -11,7 +12,7 @@ type Done = { disabled: boolean; onDone: (a: unknown) => void; onProgress: (shar
  * picture (a flag, a logo).
  */
 export function ChoicePlay({ items, disabled, onDone, onProgress }: Done & { items: { sentence?: string; image?: string; clue?: string; options: string[] }[] }) {
-  const [picks, setPicks] = useState<(number | null)[]>(() => items.map(() => null));
+  const [picks, setPicks] = useAnswer<(number | null)[]>("picks", () => items.map(() => null));
   const done = picks.filter((p) => p !== null).length;
   useEffect(() => onProgress(done / items.length), [done, items.length, onProgress]);
   return (
@@ -63,7 +64,7 @@ export function ChoicePlay({ items, disabled, onDone, onProgress }: Done & { ite
 
 /** Algebra (owner, 4 Nov 2026: "simple algebra"): type x for each equation; "Check" sends them. */
 export function AlgebraPlay({ items, disabled, onDone, onProgress }: Done & { items: { equation: string }[] }) {
-  const [xs, setXs] = useState<string[]>(() => items.map(() => ""));
+  const [xs, setXs] = useAnswer<string[]>("xs", () => items.map(() => ""));
   const done = xs.filter((x) => /^-?\d+$/.test(x.trim())).length;
   useEffect(() => onProgress(done / items.length), [done, items.length, onProgress]);
   return (
@@ -97,7 +98,7 @@ export function AlgebraPlay({ items, disabled, onDone, onProgress }: Done & { it
 
 /** Name the countries (owner, 4 Nov 2026: "type 5 coutries starting with L"): each one ticks as it's recognised. */
 export function CountriesPlay({ p, disabled, onDone, onProgress }: Done & { p: { letter: string; count: number } }) {
-  const [names, setNames] = useState<string[]>(() => Array.from({ length: p.count }, () => ""));
+  const [names, setNames] = useAnswer<string[]>("names", () => Array.from({ length: p.count }, () => ""));
   const found = names.map((n) => {
     const c = n.trim() ? countryFor(n, p.letter) : null;
     return c ? c.code : null;

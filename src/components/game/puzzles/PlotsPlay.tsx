@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { checkPlots, type PlotsAnswer } from "@/game/puzzles/plots";
+import { useAnswer } from "./mirror";
 
 type Props = { p: { n: number; clues: Record<number, number> }; disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
 
@@ -13,7 +14,7 @@ const SHADES = ["#F2B591", "#9CC8E8", "#F6DA7A", "#A9D8A6", "#CDB2E6", "#F4A3A0"
  */
 export function PlotsPlay({ p, disabled, onDone, onProgress }: Props) {
   const { n, clues } = p;
-  const [plots, setPlots] = useState<PlotsAnswer>([]);
+  const [plots, setPlots] = useAnswer<PlotsAnswer>("plots", []);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
   const dragRef = useRef<{ from: number; to: number } | null>(null); // at once: a quick drag ends before the next render
   const dragTo = (d: { from: number; to: number } | null) => {

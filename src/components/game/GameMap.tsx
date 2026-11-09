@@ -3148,12 +3148,14 @@ export function GameMap({
         track: [number, number, number, number, number][];
         trackSaving: boolean;
         trackAt: number;
+        /** The key's place: the last boards' answers, [server ms, the puzzle's box, the answers] (kept in its data). */
+        board: [number, number, unknown][];
       };
       let sceneRec: SceneRec | null = null;
       const serverMs = () => Math.round(Date.now() + (serverSkew ?? 0));
       function sceneStarted(data: object) {
         if (!huntId || serverSkew === null) return;
-        const rec: SceneRec = { id: null, queue: [], said: 0, asked: "", meta: null, ended: null, saving: true, world: (data as { kind?: string }).kind === "keyworld", track: [], trackSaving: false, trackAt: 0 };
+        const rec: SceneRec = { id: null, queue: [], said: 0, asked: "", meta: null, ended: null, saving: true, world: (data as { kind?: string }).kind === "keyworld", track: [], trackSaving: false, trackAt: 0, board: [] };
         sceneRec = rec;
         void supabase.rpc("scene_start", { p_ms: serverMs(), p_data: data }).then(({ data: r }) => {
           rec.saving = false;
@@ -3223,6 +3225,13 @@ export function GameMap({
         const rec = sceneRec;
         if (!rec?.world) return;
         if (d.type === "end") return sceneEnded();
+        if (d.type === "answers") {
+          // The last ten (a few seconds: as far as the broadcast plays behind), in its data, replaced each time
+          const b = d.data as { n: number; a: unknown };
+          rec.board = [...rec.board, [serverMs(), b.n, b.a] as [number, number, unknown]].slice(-10);
+          rec.meta = { board: rec.board };
+          return sceneFlush(rec);
+        }
         if (d.type === "at") {
           const a = d.data as { x: number; z: number; r: number; in: boolean };
           rec.track.push([serverMs(), a.x, a.z, a.r, a.in ? 1 : 0]);

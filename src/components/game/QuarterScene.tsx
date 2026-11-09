@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import type { AvatarLook } from "@/lib/avatar";
@@ -10,6 +10,7 @@ import { buildKeyWorld, type KeyScene, type KeyWorld, type Point } from "@/game/
 import { daylight, sunAt } from "@/game/sun";
 import { cue } from "@/game/sound";
 import { RELIC_ICON, RELICS, type RelicId } from "@/game/items";
+import { AnswerMirror } from "@/components/game/puzzles/mirror";
 import { PuzzleBoard } from "./puzzles/PuzzleTrial";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import type { Penalty } from "./PenaltyCard";
@@ -167,6 +168,26 @@ export function QuarterScene({
   // saves the hunter's own arrangement of the place, where they walk, what they're told and the puzzles they open
   const worldTold = useRef(false);
   const lastProgress = useRef(-1);
+  // The board's answers as the hunter puts them in (owner, 9 Nov 2026: "the users answers in the 3d world is not
+  // displayed"): each change, at most every 0.6 s, for the broadcast to show on its card
+  const answers = useRef<{ n: number; a: Record<string, unknown>; sent: string; at: number; timer: number }>({ n: 0, a: {}, sent: "", at: 0, timer: 0 });
+  const answerMirror = useMemo(
+    () => ({
+      record: (key: string, value: unknown) => {
+        const s = answers.current;
+        s.a = { ...s.a, [key]: value };
+        window.clearTimeout(s.timer);
+        s.timer = window.setTimeout(() => {
+          const now = JSON.stringify(s.a);
+          if (now === s.sent) return;
+          s.sent = now;
+          s.at = Date.now();
+          tellShow("answers", { n: s.n, a: s.a });
+        }, Math.max(0, 600 - (Date.now() - s.at)));
+      },
+    }),
+    [],
+  );
   const [dodge, setDodge] = useState<{ room: number; prompt: string; options: string[]; seconds: number } | null>(null);
   const [roomPuzzle, setRoomPuzzle] = useState<RoomPuzzle | null>(null);
   const roomPuzzleRef = useRef<RoomPuzzle | null>(null);
@@ -209,6 +230,8 @@ export function QuarterScene({
   useEffect(() => {
     if (!roomPuzzle) return;
     lastProgress.current = -1;
+    window.clearTimeout(answers.current.timer);
+    answers.current = { n: roomPuzzle.n, a: {}, sent: "", at: 0, timer: 0 };
     tellShow("puzzle", { n: roomPuzzle.n, kind: roomPuzzle.kind, puzzle: roomPuzzle.puzzle, seconds: Math.max(0, Math.round((roomPuzzle.ends - Date.now()) / 1000)) });
   }, [roomPuzzle]);
   const [me, setMe] = useState<Me | null>(null);
@@ -1435,6 +1458,7 @@ export function QuarterScene({
             <p className="text-xs text-paper/80">{PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.rule}</p>
             {/* The rooms are dark: without a torch the board is dim (owner, 3 Nov 2026: a torch "lights dark rooms") */}
             <div key={roomShake} className={`mx-auto w-full max-w-[min(100%,24rem)] ${roomShake ? "loota-shake" : ""} ${me?.torch ? "" : "brightness-[0.45] contrast-[0.8]"}`} data-dark={me?.torch ? "false" : "true"}>
+              <AnswerMirror.Provider value={answerMirror}>
               <PuzzleBoard
                 kind={roomPuzzle.kind}
                 puzzle={roomPuzzle.puzzle}
@@ -1446,6 +1470,7 @@ export function QuarterScene({
                   tellShow("progress", Math.round(p * 100) / 100);
                 }}
               />
+              </AnswerMirror.Provider>
             </div>
             {!me?.torch && (
               <div className="flex items-center gap-2 rounded-lg bg-ink-2 px-2 py-1.5 text-xs">

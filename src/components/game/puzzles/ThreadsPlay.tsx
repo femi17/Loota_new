@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { checkThreads } from "@/game/puzzles/threads";
+import { useAnswer } from "./mirror";
 
 type Props = { p: { n: number; ends: [number, number][] }; disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
 
@@ -14,7 +15,7 @@ const COLOURS = ["#E5484D", "#2F6FEB", "#F4B41A", "#1E9E62", "#9B5DE5", "#F28C28
  */
 export function ThreadsPlay({ p, disabled, onDone, onProgress }: Props) {
   const { n, ends } = p;
-  const [threads, setThreads] = useState<number[][]>(() => ends.map(() => []));
+  const [threads, setThreads] = useAnswer<number[][]>("threads", () => ends.map(() => []));
   const board = useRef<HTMLDivElement>(null);
   const drawing = useRef<number | null>(null); // the colour being drawn
   const now = useRef(threads);

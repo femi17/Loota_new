@@ -101,41 +101,105 @@ try {
   const [x0, z0] = await where();
   const [bx0, bz0] = await bAt();
   check("…the broadcast's hunter stands where they stand", Math.hypot(bx0 - x0, bz0 - z0) < 1, `${bx0},${bz0} vs ${x0.toFixed(1)},${z0.toFixed(1)}`);
+  const watching = show.evaluate(() => new Promise((done) => {
+    const out = [];
+    const t0 = performance.now();
+    const step = (t) => {
+      const a = document.querySelector("[data-key-world]")?.getAttribute("data-at");
+      if (a && a !== out.at(-1)?.join(",")) out.push(a.split(",").map(Number));
+      if (t - t0 < 20000) requestAnimationFrame(step);
+      else done(out);
+    };
+    requestAnimationFrame(step);
+  }));
   await game.keyboard.down("ArrowUp");
   await wait(1500);
   await game.keyboard.up("ArrowUp");
   const [x1, z1] = await where();
   check("the hunter walks (their screen)", z1 < z0 - 3, `${z0.toFixed(1)} → ${z1.toFixed(1)}`);
-  const seen = [];
-  for (let i = 0; i < 40; i++) {
-    await wait(300);
-    seen.push(await bAt());
-    if (Math.hypot(seen.at(-1)[0] - x1, seen.at(-1)[1] - z1) < 0.6) break;
-  }
-  const end = seen.at(-1);
+  const seen = await watching;
+  const end = seen.at(-1) ?? [bx0, bz0];
+  const [xr, zr] = await where(); // where they came to rest (they glide a little after the key is let go)
   const steps = seen.filter((p, i) => i && Math.hypot(p[0] - seen[i - 1][0], p[1] - seen[i - 1][1]) > 0.05).length;
-  check("…on the broadcast, the same walk: ends where they stopped", Math.hypot(end[0] - x1, end[1] - z1) < 0.6, `${end} vs ${x1.toFixed(1)},${z1.toFixed(1)}`);
+  check("…on the broadcast, the same walk: ends where they stopped", Math.hypot(end[0] - xr, end[1] - zr) < 0.6, `${end} vs ${xr.toFixed(1)},${zr.toFixed(1)}`);
   check("…walked, not jumped (several steps on the way)", steps >= 3, `${steps} steps seen`);
   const back = seen.some((p, i) => i && p[1] > seen[i - 1][1] + 0.3);
   check("…never stepping back", !back);
   await show.screenshot({ path: `${OUT}/broadcast-world-2-walked.png` });
 
-  // A locked box: its puzzle, on the broadcast as a card
-  await until(async () => (await attr("data-busy")) === "false", 20000);
-  await game.evaluate(() => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "inner", id: "2" } })));
-  const box = await until(() => game.evaluate(() => !!document.querySelector('[data-room-puzzle="2"]')), 40000);
-  check("they walk up to Box 2: its puzzle opens (their screen)", !!box);
+  // A locked box: its puzzle, on the broadcast as a card. Each box's kind is dealt at random; the first that answers
+  // can be put into by a script (a choice of answers, typed answers, a sudoku) is the one played
   const card = () => show.evaluate((nl) => document.querySelector('[aria-label="Scene card"]')?.innerText.split(nl).join(" | ") ?? null, NL);
-  const shownCard = await until(async () => { const c = await card(); return /Box 2/i.test(c ?? "") && c; }, 20000);
-  const boardCells = await show.evaluate(() => document.querySelectorAll('[aria-label="Scene card"] button').length);
-  check("on the broadcast: a card, Box 2's puzzle, its board and the time left", /Box 2/i.test(shownCard ?? "") && /⏱ \d+s/.test(shownCard ?? "") && boardCells > 3, `${shownCard?.slice(0, 120)} · ${boardCells} cells`);
+  let BOX = 0;
+  for (const n of [2, 3, 4, 5]) {
+    await until(async () => (await attr("data-busy")) === "false", 20000);
+    await game.evaluate((k) => window.dispatchEvent(new CustomEvent("loota:house-tap", { detail: { tap: "inner", id: String(k) } })), n);
+    const open = await until(() => game.evaluate((k) => !!document.querySelector(`[data-room-puzzle="${k}"]`), n), 40000);
+    if (!open) continue;
+    await wait(800);
+    const playable = await game.evaluate((k) => {
+      const root = document.querySelector(`[data-room-puzzle="${k}"]`);
+      return !!root?.querySelector("[data-question], input, [data-cell]");
+    }, n);
+    if (playable) {
+      BOX = n;
+      break;
+    }
+    console.log(`  (Box ${n}'s puzzle has no answers a script can put in: on to the next)`);
+    await game.evaluate(() => document.querySelector('[aria-label="Close the puzzle"]')?.click());
+    await wait(500);
+  }
+  check("they walk up to a box: its puzzle opens (their screen)", BOX > 0, `Box ${BOX}`);
+  const shownCard = await until(async () => { const c = await card(); return new RegExp(`Box ${BOX}`, "i").test(c ?? "") && c; }, 20000);
+  const boardCells = await show.evaluate(() => document.querySelectorAll('[aria-label="Scene card"] button, [aria-label="Scene card"] input').length);
+  check("on the broadcast: a card, the box's puzzle, its board and the time left", new RegExp(`Box ${BOX}`, "i").test(shownCard ?? "") && /⏱ \d+s/.test(shownCard ?? "") && boardCells > 3, `${shownCard?.slice(0, 120)} · ${boardCells} cells`);
+  // The hunter puts answers in (owner, 9 Nov 2026: "the users answers in the 3d world is not displayed"): on the
+  // broadcast's card, the same answers a few seconds later. What's been put in: each square's or answer's label (a
+  // sudoku square says its number) and whether it's picked (a lighter highlight is only the square selected), and
+  // what's typed in each box.
+  const picked = (pg, sel) => pg.evaluate((s) => {
+    const root = document.querySelector(s);
+    if (!root) return null;
+    const cells = [...root.querySelectorAll("[data-cell], [data-question] button")];
+    const typed = [...root.querySelectorAll("input")].map((i) => `[${i.value}]`);
+    return [...cells.map((b) => (b.getAttribute("aria-label") ?? b.textContent?.trim() ?? "") + (/\bbg-gold(\s|$)/.test(b.className) ? "*" : "")), ...typed].join("|");
+  }, sel);
+  const GAME_BOARD = `[data-room-puzzle="${BOX}"]`, CARD = '[aria-label="Scene card"]';
+  const before = await picked(game, GAME_BOARD);
+  await game.evaluate((s) => {
+    const qs = [...document.querySelectorAll(`${s} [data-question]`)];
+    qs[0]?.querySelectorAll("button")[0]?.click();
+    qs[1]?.querySelectorAll("button")[1]?.click();
+  }, GAME_BOARD);
+  // Typed answers (countries, words, equations): the first two boxes
+  for (const [k, word] of [[0, "Testland"], [1, "Other"]]) {
+    const input = (await game.$$(`${GAME_BOARD} input`))[k];
+    if (input) await input.type((await input.evaluate((i) => i.inputMode === "numeric" || i.type === "number")) ? String(7 + k) : word);
+  }
+  // A sudoku: a number into an empty square, then another
+  for (const d of [5, 3]) {
+    const tapped = await game.evaluate((s) => {
+      const empty = [...document.querySelectorAll(`${s} [data-cell]`)].find((b) => /empty$/.test(b.getAttribute("aria-label") ?? ""));
+      empty?.click();
+      return !!empty;
+    }, GAME_BOARD);
+    if (!tapped) break;
+    await wait(150);
+    await game.evaluate((s, n) => document.querySelector(`${s} [aria-label="Number ${n}"]`)?.click(), GAME_BOARD, d);
+    await wait(150);
+  }
+  await wait(300);
+  const mine = await picked(game, GAME_BOARD);
+  const theirs = await until(async () => { const p = await picked(show, CARD); return p === mine && p; }, 20000);
+  const differs = (a, b) => (a ?? "").split("|").filter((x, i) => x !== (b ?? "").split("|")[i]).join(" | ");
+  check("the hunter puts answers in: the broadcast's card shows the same ones", !!mine && mine !== before && theirs === mine, `put in: ${differs(mine, before).slice(0, 120)}${theirs === mine ? "" : `; the broadcast differs: ${differs(await picked(show, CARD), mine).slice(0, 120)}`}`);
   await show.screenshot({ path: `${OUT}/broadcast-world-3-puzzle.png` });
-  const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", hunter.id).eq("hunt_id", huntId).eq("room", 2).single()).data;
+  const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", hunter.id).eq("hunt_id", huntId).eq("room", BOX).single()).data;
   const answer = stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution;
   await wait(1500);
   await game.evaluate((a) => window.__lootaRoomSolve?.(a), answer);
-  const done = await until(async () => { const c = await card(); return /opened Box 2/i.test(c ?? "") && c; }, 20000);
-  check("…solved: on the broadcast, they opened it", /opened Box 2/i.test(done ?? ""), done?.slice(0, 120));
+  const done = await until(async () => { const c = await card(); return new RegExp(`opened Box ${BOX}`, "i").test(c ?? "") && c; }, 20000);
+  check("…solved: on the broadcast, they opened it", new RegExp(`opened Box ${BOX}`, "i").test(done ?? ""), done?.slice(0, 120));
   await show.screenshot({ path: `${OUT}/broadcast-world-4-opened.png` });
   const gone = await until(async () => !(await card()), 15000);
   check("…and the card goes a few seconds later", !!gone);

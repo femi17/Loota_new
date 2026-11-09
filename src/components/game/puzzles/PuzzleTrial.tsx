@@ -17,6 +17,7 @@ import { VowelsPlay } from "./VowelsPlay";
 import { AlgebraPlay, ChoicePlay, CountriesPlay } from "./QuickPlay";
 import { checkTornMap, type TornMapPuzzle } from "@/game/puzzles/tornmap";
 import { cue } from "@/game/sound";
+import { useAnswer } from "./mirror";
 
 type SentriesP = { n: number; regions: number[] };
 type RouteP = { n: number; numbers: Record<number, number>; walls: [number, number][] };
@@ -281,7 +282,7 @@ export function PuzzleBoard({ kind, puzzle, warn = true, disabled, onDone, onPro
 /** Sentries: tap to mark; complete (a sentry in every row) sends it. */
 
 function SentriesPlay({ p, warn, disabled, onDone, onProgress }: PlayProps & { p: SentriesP; warn: boolean }) {
-  const [marks, setMarks] = useState<number[]>(() => new Array(p.n * p.n).fill(0));
+  const [marks, setMarks] = useAnswer<number[]>("marks", () => new Array(p.n * p.n).fill(0));
   const placed = marks.flatMap((m, i) => (m === 2 ? [[Math.floor(i / p.n), i % p.n]] : []));
   useEffect(() => onProgress(Math.min(1, placed.length / p.n)), [placed.length, p.n, onProgress]);
   const complete = placed.length === p.n;
@@ -310,7 +311,7 @@ function SentriesPlay({ p, warn, disabled, onDone, onProgress }: PlayProps & { p
 
 /** Route: draw it; complete (every square, ending on the last number) sends it. */
 function RoutePlay({ p, disabled, onDone, onProgress }: PlayProps & { p: RouteP }) {
-  const [path, setPath] = useState<number[]>([]);
+  const [path, setPath] = useAnswer<number[]>("path", []);
   useEffect(() => onProgress(path.length / (p.n * p.n)), [path.length, p.n, onProgress]);
   const last = useMemo(() => Math.max(...Object.values(p.numbers)), [p.numbers]);
   const complete = path.length === p.n * p.n && p.numbers[path[path.length - 1]] === last;
@@ -344,7 +345,7 @@ function RoutePlay({ p, disabled, onDone, onProgress }: PlayProps & { p: RouteP 
 
 /** Torn Map: tap two squares to swap their pieces (tap a chosen one again to turn it, when pieces turn); whole sends it. */
 function TornMapPlay({ p, disabled, onDone, onProgress }: PlayProps & { p: TornMapPuzzle }) {
-  const [placed, setPlaced] = useState<[number, number][]>(() => p.start.map(([piece, q]) => [piece, q]));
+  const [placed, setPlaced] = useAnswer<[number, number][]>("placed", () => p.start.map(([piece, q]) => [piece, q]));
   const [selected, setSelected] = useState<number | null>(null);
   const whole = useMemo(() => checkTornMap(p, placed), [p, placed]);
   const right = placed.filter(([piece, q], i) => piece === i && q % 4 === 0).length;
@@ -386,7 +387,7 @@ function TornMapPlay({ p, disabled, onDone, onProgress }: PlayProps & { p: TornM
  */
 function AdirePlay({ p, warn, disabled, onDone, onProgress }: PlayProps & { p: AdireP; warn: boolean }) {
   const fresh = () => [...Array(p.n * p.n).keys()].map((i) => (p.given[i] !== undefined ? p.given[i] : -1));
-  const [cloth, setCloth] = useState<number[]>(fresh);
+  const [cloth, setCloth] = useAnswer<number[]>("cloth", fresh);
   const givenCount = Object.keys(p.given).length;
   const dyed = cloth.filter((v) => v >= 0).length - givenCount;
   useEffect(() => onProgress(Math.max(0, dyed) / Math.max(1, p.n * p.n - givenCount)), [dyed, givenCount, p.n, onProgress]);

@@ -13,6 +13,7 @@ import { foldAttribution } from "@/game/attribution";
 import { nextAutoView } from "@/game/autocam";
 import { RoadGameBoard, type RoadGame, type RoadGameResult } from "@/components/game/RoadGames";
 import { PuzzleBoard } from "@/components/game/puzzles/PuzzleTrial";
+import { AnswerMirror } from "@/components/game/puzzles/mirror";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
 import type { InnerRoomView } from "@/game/house3d";
 import { KeyWorldView, type KeyWorldData, type WorldTrack } from "./KeyWorldView";
@@ -129,7 +130,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [sceneCard, setSceneCard] = useState<
     | { kind: "ask"; who: string; options: string[]; pick: string | null }
     | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null }
-    | { kind: "puzzle"; who: string; n: number; puzzleKind: string; puzzle: unknown; left: number; progress: number; result: { right?: boolean; late?: boolean; outcome?: string | null } | null }
+    | { kind: "puzzle"; who: string; n: number; puzzleKind: string; puzzle: unknown; left: number; progress: number; result: { right?: boolean; late?: boolean; outcome?: string | null } | null; answers: Record<string, unknown> | null }
     | null
   >(null);
   /** The key's place the followed hunter is at (step 3): their own arrangement, played from their track. */
@@ -1137,7 +1138,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               }
               // Shown while it's open, and a few seconds after it ends
               if (open && (!open.endedAt || T - open.endedAt < 5000)) {
+                // What they'd put in by then
+                let answers: Record<string, unknown> | null = null;
+                for (const [at, n, a] of ((world.data as { board?: [number, number, Record<string, unknown>][] }).board ?? [])) if (at <= T && n === open.n) answers = a;
                 card = {
+                  answers,
                   kind: "puzzle",
                   who: h.name,
                   n: open.n,
@@ -1336,7 +1341,9 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 {sceneCard.result && !sceneCard.result.right && !sceneCard.result.late && <p className="mt-1 text-xs font-bold text-danger">✗ Not quite: they look again</p>}
                 <p className="my-2 text-xs text-paper/75">{PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.rule}</p>
                 <div style={{ zoom: 0.62 }}>
-                  <PuzzleBoard kind={sceneCard.puzzleKind} puzzle={sceneCard.puzzle} disabled onDone={() => {}} />
+                  <AnswerMirror.Provider value={{ shown: sceneCard.answers }}>
+                    <PuzzleBoard key={sceneCard.n} kind={sceneCard.puzzleKind} puzzle={sceneCard.puzzle} disabled onDone={() => {}} />
+                  </AnswerMirror.Provider>
                 </div>
               </>
             ) : sceneCard.kind === "ask" ? (

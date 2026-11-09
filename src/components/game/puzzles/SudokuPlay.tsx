@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { checkSudoku } from "@/game/puzzles/sudoku";
+import { useAnswer } from "./mirror";
 
 type Props = { p: { given: number[] }; disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
 
@@ -10,7 +11,7 @@ type Props = { p: { given: number[] }; disabled: boolean; onDone: (a: unknown) =
  * column or box turn red. Sent the moment the grid is right.
  */
 export function SudokuPlay({ p, disabled, onDone, onProgress }: Props) {
-  const [grid, setGrid] = useState<number[]>(() => [...p.given]);
+  const [grid, setGrid] = useAnswer<number[]>("grid", () => [...p.given]);
   const [at, setAt] = useState<number | null>(null);
   const open = p.given.filter((d) => !d).length;
   const filled = grid.filter((d, i) => d && !p.given[i]).length;

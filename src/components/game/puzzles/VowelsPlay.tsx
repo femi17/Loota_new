@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useAnswer } from "./mirror";
 
 type Props = { p: { theme: string; words: { shown: string; clue: string; letters: number }[] }; disabled: boolean; onDone: (a: unknown) => void; onProgress: (share: number) => void };
 
 /** Lost Vowels (owner, 1 Nov 2026): type each word whole; "Check" sends them once every word has its letters. */
 export function VowelsPlay({ p, disabled, onDone, onProgress }: Props) {
-  const [words, setWords] = useState<string[]>(() => p.words.map(() => ""));
+  const [words, setWords] = useAnswer<string[]>("words", () => p.words.map(() => ""));
   const letters = (s: string) => s.toUpperCase().replace(/[^A-Z]/g, "");
   const ready = p.words.map((w, i) => letters(words[i]).length === w.letters);
   const all = ready.every(Boolean);

@@ -5855,7 +5855,7 @@ export function GameMap({
             if (!next) return endJourney(true);
             journey.step++;
             saveJourney();
-            say(`🧭 Step ${journey.step + 1} of ${legs.length}: you're at ${next.kind === "ride" ? next.from.name : leg.to.name}. ${next.kind === "ride" ? "Board when you're ready." : ""}`, true);
+            say(`🧭 Step ${journey.step + 1} of ${legs.length}: you're at ${next.kind === "ride" ? next.from.name : leg.to.name}. ${next.kind === "ride" ? (ticketed({ mode: next.mode, from: next.from, metres: next.metres }) ? (next.mode === "plane" ? "Check in when you're ready." : "Buy your ticket at the office when you're ready.") : "Board when you're ready.") : ""}`, true);
             beginStep();
             return;
           }
@@ -8708,8 +8708,8 @@ export function GameMap({
         </div>
 
         <div className="flex items-start gap-2">
-          {/* Left: what's going on (small chips), then the cards */}
-          <div className="flex min-w-0 flex-1 flex-col gap-2">
+          {/* Left: what's going on (small chips), then the cards (narrow and compact on a phone held sideways: loota-side) */}
+          <div className="loota-side flex min-w-0 flex-1 flex-col gap-2">
             {(hud.clock ||
               hud.vehicle ||
               hud.radar ||

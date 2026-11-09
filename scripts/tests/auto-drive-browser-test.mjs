@@ -2,7 +2,9 @@
 // the location"; "on the map, players should not steer but only make decisions"). On a phone-sized screen, a walker in
 // free roam: no joystick and no Cruise on the map. A tap on the map draws the way, and the hunter goes along it by
 // themselves, taking its turns (never far off the blue line). STOP stops them where they are; GO carries on. They
-// arrive and the way ends. The test player is deleted.
+// arrive and the way ends. SPRINT (owner, 9 Nov 2026: with it on, "the avatar stops for nothing even then they get to
+// the location. Also, tapping on stop could not stop an avatar on sprint"): faster; STOP still stops; on arrival it
+// stops and stays, and SPRINT is off. The test player is deleted.
 //   SHOTS=<folder> node scripts/tests/auto-drive-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -119,10 +121,40 @@ try {
   const c2 = await page.evaluate(() => window.__lootaPos());
   check("GO: carries on", metres(b, c2) > 15 && (await drive(page)) === "on", `${Math.round(metres(b, c2))} m`);
 
-  // To the end
+  // SPRINT: faster, and STOP still stops
+  const sprint = () => page.evaluate(() => document.querySelector('button[aria-pressed][aria-label^="Run"], button[aria-pressed][aria-label^="Running"]')?.click());
+  const pace = async (ms) => {
+    const a2 = await page.evaluate(() => window.__lootaPos());
+    await wait(ms);
+    const b2 = await page.evaluate(() => window.__lootaPos());
+    return metres(a2, b2) / (ms / 1000);
+  };
+  const walkPace = await pace(2000);
+  await sprint();
+  await wait(1200);
+  const runPace = await pace(2000);
+  check("SPRINT on: faster", runPace > walkPace * 1.2, `${runPace.toFixed(1)} vs ${walkPace.toFixed(1)} m/s`);
+  await page.evaluate(() => document.querySelector("button[data-drive]").click());
+  await wait(1500);
+  const held = await pace(3000);
+  check("…STOP with SPRINT on: stays where they are", held < 0.5 && (await drive(page)) === "off", `${held.toFixed(2)} m/s, ${await drive(page)}`);
+  await page.evaluate(() => document.querySelector("button[data-drive]").click());
+
+  // To the end (still sprinting)
   const arrived = await until(page, () => /You've arrived at/.test(document.body.innerText) && !document.querySelector("button[data-drive]"), null, 90000);
   const end = await page.evaluate(() => window.__lootaPos());
   check("arrives, and the way ends (no Stop/Go left)", arrived && !(await page.evaluate(() => !!document.querySelector("button[data-drive]"))), `${Math.round(metres(end, TARGET))} m from the tap`);
+  await wait(1500);
+  const after = await pace(3000);
+  check("…sprinting there, they stop on arrival and stay", after < 0.5, `${after.toFixed(2)} m/s after arriving`);
+  // A new way: SPRINT off again
+  await page.evaluate((t) => {
+    const m = window.__lootaMap;
+    m.fire("click", { lngLat: t, point: m.project([t.lng, t.lat]), originalEvent: { target: m.getCanvas() } });
+  }, HOME);
+  for (let i = 0; i < 20 && !(await page.evaluate(() => !!document.querySelector("button[data-drive]"))); i++) await wait(500);
+  const pressed = await page.evaluate(() => document.querySelector('button[aria-pressed][aria-label^="Run"], button[aria-pressed][aria-label^="Running"]')?.getAttribute("aria-pressed") ?? null);
+  check("…and SPRINT is off for the next way", pressed === "false", String(pressed));
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

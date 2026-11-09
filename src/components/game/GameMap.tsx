@@ -331,6 +331,10 @@ export function GameMap({
   const controls = useRef({ go: false, sprint: false });
   const device = useContext(SessionContext); // this device's session (OneDevice), sent with the live position
   const [sprinting, setSprinting] = useState(false);
+  useEffect(() => {
+    controls.current.sprint = sprinting;
+  }, [sprinting]);
+  const [sprintFor, setSprintFor] = useState(false);
   const handheld = useHandheld();
   // The message bar's height: what can be done here sits just above it while it shows, never over it (owner, 2 Nov
   // 2026: the message was "showing under the action button, user cannot fully read what it says").
@@ -8204,7 +8208,9 @@ export function GameMap({
         const driven = driving && !!trip && !trip.straight;
         // On the dev server only, a held ↑ walks straight on (the automated tests move the hunter so; never on the site)
         const go = driven || (DEV_WALK && c.go);
-        const { distance, events } = movement.step(traveller, { go, sprint: c.sprint }, dt, t, canMove);
+        // SPRINT only quickens the going (owner, 9 Nov 2026: with it on, "the avatar stops for nothing… tapping on stop
+        // could not stop an avatar on sprint"): held, it once moved the hunter by itself; on its own now it does nothing.
+        const { distance, events } = movement.step(traveller, { go, sprint: go && c.sprint }, dt, t, canMove);
         for (const event of events) {
           if (event === "fainted") void savePosition(true); // the server confirms (it counts energy too); then the ambulance
         }
@@ -8649,6 +8655,11 @@ export function GameMap({
   // No joystick on the map (owner, 8 Nov 2026: "on the map, players should not steer"): it's only in the key's world. On a
   // phone with a way drawn, STOP / GO and SPRINT fill the bottom row, so the messages go above them (in the street's place).
   const phoneRow = handheld && !inside && !hud.ride && !hud.care && hud.drive.has;
+  // The way done or ended: SPRINT goes off with it (the next way starts at a walk).
+  if (sprintFor !== hud.drive.has) {
+    setSprintFor(hud.drive.has);
+    if (!hud.drive.has && sprinting) setSprinting(false);
+  }
   const hinting = !!hud.hint && !hud.rush;
   const distanceText = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`);
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;

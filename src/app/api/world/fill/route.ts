@@ -19,6 +19,9 @@ export async function POST(request: Request) {
   if (!Number.isFinite(lng) || !Number.isFinite(lat) || Math.abs(lng) > 180 || Math.abs(lat) > 90) {
     return Response.json({ error: "Where?" }, { status: 400 });
   }
+  // At most 15 a minute a player (security audit, 9 Nov 2026: each asks OpenStreetMap's services for a whole area)
+  const { data: allowed } = await supabase.rpc("take_quota", { p_kind: "fill" });
+  if (!allowed) return Response.json({ error: "Too many at once: wait a moment" }, { status: 429 });
   const admin = createAdminClient();
   let filled = await isFilled(admin, lng, lat);
   if (!filled) {

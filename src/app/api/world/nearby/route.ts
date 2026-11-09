@@ -23,6 +23,9 @@ export async function POST() {
   const { data: auth } = await supabase.auth.getClaims();
   if (!auth?.claims?.sub) return Response.json({ error: "Not signed in" }, { status: 401 });
 
+  // At most 60 a minute a player (security audit, 9 Nov 2026; the game asks every 15 s or 200 m)
+  const { data: allowed } = await supabase.rpc("take_quota", { p_kind: "nearby" });
+  if (!allowed) return Response.json({ error: "Too many at once: wait a moment" }, { status: 429 });
   const { data, error } = await supabase.rpc("world_nearby");
   if (error) return Response.json({ error: "Couldn't load nearby items" }, { status: 500 });
   const nearby = data as Nearby;

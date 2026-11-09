@@ -110,6 +110,10 @@ export async function GET(request: NextRequest) {
   const key = `${q.toLowerCase()}|${lng.toFixed(2)}|${lat.toFixed(2)}`;
   const cached = recent.get(key);
   if (cached && Date.now() - cached.at < KEEP_MS) return Response.json({ places: cached.places });
+  // At most 40 fresh searches a minute a player (security audit, 9 Nov 2026: the map services we ask block the
+  // server for overuse, which would stop the search for everyone)
+  const { data: allowed } = await supabase.rpc("take_quota", { p_kind: "geocode" });
+  if (!allowed) return Response.json({ error: "Too many searches: wait a moment" }, { status: 429 });
 
   // Ours and OpenStreetMap's at once; when ours already has some, OpenStreetMap gets only a moment more.
   const world = openStreetMap(q, lng, lat).catch(() => null);

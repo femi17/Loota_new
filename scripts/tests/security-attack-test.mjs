@@ -14,6 +14,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const PUBLIC_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const LIVE = process.env.LIVE ?? "https://loota-plum.vercel.app";
+const LOCAL = "http://localhost:3000"; // (the newest fixes, before they're pushed)
 const admin = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
 const ids = [];
@@ -112,10 +113,18 @@ try {
     const { error } = await me.from("profiles").update({ username: evil }).eq("id", attacker.id);
     const { data: a } = await admin.from("profiles").select("username").eq("id", attacker.id).single();
     result("a username with HTML/script in it (shown to others)", a.username !== evil, error ? error.message.slice(0, 70) : `stored: ${a.username}`);
-    const fake = "Loota";
-    const { error: e2 } = await me.from("profiles").update({ username: fake }).eq("id", attacker.id);
-    const { data: a2 } = await admin.from("profiles").select("username").eq("id", attacker.id).single();
-    console.log(`  (note) a username like "Loota" to impersonate the game: ${a2.username === fake ? "allowed" : "refused"}${e2 ? ` (${e2.message.slice(0, 50)})` : ""}`);
+    for (const fake of ["Loota", "LOOTA_Team", "Admin", "Admin_Joe", "Support", "Official_Loota", "Moderator1"]) {
+      await me.from("profiles").update({ username: fake }).eq("id", attacker.id);
+      const { data: a2 } = await admin.from("profiles").select("username").eq("id", attacker.id).single();
+      result(`call myself "${fake}" (to pass as the game)`, a2.username !== fake, `name is ${a2.username}`);
+    }
+    const { data: free } = await me.rpc("username_available", { name: "Loota" });
+    result("…and the sign-up name check says it isn't free", free === false, String(free));
+    const plain = `Joe_${Date.now() % 100000}`;
+    await me.from("profiles").update({ username: plain }).eq("id", attacker.id);
+    const { data: a3 } = await admin.from("profiles").select("username").eq("id", attacker.id).single();
+    console.log(`  (check) an ordinary name still works: ${a3.username === plain}`);
+    if (a3.username !== plain) holes.push("ordinary names refused");
   }
   {
     const big = { skin: "x".repeat(500_000) };
@@ -172,6 +181,19 @@ try {
     const r = await hit(m, p, b, cookie);
     const leaked = /3\.3123|6\.6123|SECRET RIDDLE/.test(r.text);
     result(`${m} ${p.split("?")[0]} as a player`, !leaked && (r.status >= 400 || /"ok":false/.test(r.text)), `${r.status} ${r.text}`);
+  }
+  {
+    // Hammering what costs the server: the area filling (15 a minute), what's around (60)
+    let fills = 0;
+    for (let i = 0; i < 20; i++) if ((await me.rpc("take_quota", { p_kind: "fill" })).data) fills++;
+    result("hammer the area filling (20 at once)", fills === 15, `${fills} let through`);
+    for (let i = 0; i < 61; i++) await me.rpc("take_quota", { p_kind: "nearby" });
+    const r = await fetch(LOCAL + "/api/world/nearby", { method: "POST", headers: { cookie } });
+    result("…what's around, past its limit: the route says wait", r.status === 429, `${r.status} ${(await r.text()).slice(0, 60)}`);
+    let near = 0;
+    for (let i = 0; i < 35; i++) if ((await me.rpc("hunters_near")).data?.ok) near++;
+    result("hammer who's near (35 at once)", near === 30, `${near} answered`);
+    await admin.from("api_quota").delete().eq("user_id", attacker.id); // (fresh for the rest)
   }
   {
     const r = await fetch(LIVE + "/admin", { redirect: "manual", headers: { cookie } });
@@ -232,6 +254,32 @@ try {
       if (!victimSeen) holes.push("hunters near each other no longer see each other");
     }
     else result(`listen in on hunters' positions and ids, ${label}`, !victimSeen, `join: ${st}; heard ${heard.length}${victimSeen ? `, the victim at ${victimSeen.lng.toFixed(4)},${victimSeen.lat.toFixed(4)}` : ""}`);
+    if (label.startsWith("signed in")) {
+      // Made up by a signed-in player: a hunter who doesn't exist, a Mirror copy without a Mirror, a real hunter (the
+      // attacker) under a false name, and the attacker somewhere they aren't
+      for (let i = 0; i < 4; i++) {
+        await ch.send({ type: "broadcast", event: "pos", payload: { id: "11111111-2222-3333-4444-555555555555", name: "Ghost", look: {}, lng: HOME.lng + 0.0002, lat: HOME.lat, heading: 0, mode: "walk", moving: false } });
+        await ch.send({ type: "broadcast", event: "pos", payload: { id: `${attacker.id}:m1`, name: "Copy", look: {}, lng: HOME.lng + 0.0004, lat: HOME.lat, heading: 0, mode: "walk", moving: false } });
+        await ch.send({ type: "broadcast", event: "pos", payload: { id: attacker.id, name: "Loota Official", look: {}, lng: HOME.lng + 0.0002, lat: HOME.lat, heading: 0, mode: "walk", moving: false } });
+        await wait(1500);
+      }
+      const drawn = await page.evaluate(() => window.__lootaOthers?.() ?? null).catch(() => null);
+      result("put a made-up hunter on others' maps (signed in)", Array.isArray(drawn) && !drawn.includes("11111111-2222-3333-4444-555555555555") && !drawn.includes(`${attacker.id}:m1`), JSON.stringify(drawn));
+      console.log(`  (check) a real hunter near is still drawn: ${!!drawn?.includes(attacker.id)}`);
+      if (!drawn?.includes(attacker.id)) holes.push("real hunters near no longer drawn");
+      // …while a real Mirror of Many's copies still show (the server says their Mirror is on)
+      const { data: mirror } = await admin.from("wonder_events").insert({ user_id: attacker.id, wonder: "mirror_of_many", message: "test", ends_at: new Date(Date.now() + 300e3).toISOString() }).select("id").single();
+      let copies = [];
+      for (let i = 0; i < 12 && !copies.length; i++) {
+        await ch.send({ type: "broadcast", event: "pos", payload: { id: `${attacker.id}:m1`, name: "x", look: {}, lng: HOME.lng + 0.002, lat: HOME.lat, heading: 0, mode: "walk", moving: false } });
+        await wait(1000);
+        copies = ((await page.evaluate(() => window.__lootaOthers?.() ?? []).catch(() => [])) ?? []).filter((id) => id.endsWith(":m1"));
+      }
+      console.log(`  (check) a real Mirror's copies still show: ${copies.length > 0}`);
+      if (!copies.length) holes.push("the Mirror's copies no longer show");
+      if (mirror) await admin.from("wonder_events").delete().eq("id", mirror.id);
+      await ch.send({ type: "broadcast", event: "pos", payload: { id: attacker.id, name: "x", look: {}, lng: HOME.lng + 0.05, lat: HOME.lat + 0.05, heading: 0, mode: "walk", moving: true } });
+    }
     // b) A fake hunter, malformed, onto the victim's map, the same way
     for (let i = 0; i < 2; i++) {
       await ch.send({ type: "broadcast", event: "pos", payload: { id: "fake-hunter", name: "<b>FAKE</b>".repeat(20), look: { skin: 42, hair: null, top: { evil: true } }, lng: HOME.lng + 0.0003, lat: HOME.lat, heading: "x", mode: "spaceship", moving: true } });
@@ -265,6 +313,27 @@ try {
   const { st: ownSt, froze: ownFroze } = await freeze("own", own, true);
   console.log(`  (check) the victim's own second device: joined ${ownSt}, the game paused as it should: ${ownFroze}`);
   if (!ownFroze) holes.push("the one-device rule no longer works");
+
+  // e) Sign-up (no account is made: each is stopped before it)
+  const signup = async (username, password) => {
+    const p = await (await browser.createBrowserContext()).newPage(); // (signed out: a window of its own)
+    await p.goto(LOCAL + "/signup", { waitUntil: "networkidle2", timeout: 120000 }).catch(() => {});
+    await p.type('input[name="username"]', username);
+    await p.type('input[name="email"]', `sec-signup-${Date.now()}@example.com`);
+    await p.type('input[name="password"]', password);
+    await p.click('button[type="submit"]');
+    let said = "";
+    for (let i = 0; i < 30 && !said; i++) {
+      await wait(500);
+      said = await p.evaluate(() => document.querySelector('[role="alert"], .text-danger, [data-error]')?.textContent?.trim() ?? "").catch(() => "");
+    }
+    await p.close();
+    return said;
+  };
+  const weak = await signup(`Sec${Date.now() % 100000}`, "password123");
+  result("sign up with a password from data breaches (password123)", /breach/i.test(weak), weak);
+  const strong = await signup("Loota", `Zq${Math.random().toString(36).slice(2)}!Kp${Date.now()}`);
+  result("sign up as \"Loota\" (a strong password: past the breach check, refused for the name)", /isn't available/i.test(strong), strong);
 
   // d) A rival's Key Trial progress or position at a key's place: only players in that hunt may join
   for (const topic of [`trial:${secret.id}:1`, `keyworld:${secret.id}:1`]) {

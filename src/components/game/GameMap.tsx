@@ -835,6 +835,8 @@ export function GameMap({
           __lootaRoad: () => (network && onRoad ? { pocket: roads.cutOffEdges(network)[onRoad.edge], ...traveller.pos } : null),
           // Where the hunter is on their own screen (scripts/tests/broadcast-sync-browser-test.mjs).
           __lootaPos: () => ({ ...traveller.pos, v: traveller.v, mode: traveller.mode }),
+          // The other hunters drawn, and their names (scripts/tests/security-attack-test.mjs)
+          __lootaOthers: () => [...others.keys()],
           // Put the hunter somewhere (scripts/tests/stop-on-the-way-browser-test.mjs).
           __lootaJump: (lng: number, lat: number) => placeAt(lng, lat),
           // A ride under way: the vehicle's parts (a train's carriages), how far along, the zoom (scripts/tests/train-ride-browser-test.mjs).
@@ -2880,8 +2882,43 @@ export function GameMap({
         }
       }
 
+      // Who's really near (security audit, 9 Nov 2026: anyone signed in could send a made-up hunter onto the maps around
+      // them). A hunter heard on the live channel is drawn only if the server has them near (hunters_near), with the
+      // name and look it has, within a kilometre and a half of where it last saw them; a Mirror's copies only while their
+      // Mirror lasts. Asked when someone new is heard (at most every 4 s), and every 20 s while hunters are shown.
+      type Confirmed = { name: string; look: AvatarLook; lng: number; lat: number; mirrored: boolean };
+      let confirmed = new Map<string, Confirmed>();
+      let confirmedAt = 0;
+      let askingNear = false;
+      async function confirmNear() {
+        const now = performance.now();
+        if (askingNear || now - confirmedAt < 4000) return;
+        askingNear = true;
+        confirmedAt = now;
+        const { data } = await supabase.rpc("hunters_near");
+        askingNear = false;
+        const r = data as { ok: boolean; hunters?: { id: string; name: string; look: unknown; lng: number; lat: number; mirrored: boolean }[] } | null;
+        if (disposed || !r?.ok || !r.hunters) return;
+        confirmed = new Map(r.hunters.map((h) => [h.id, { name: h.name, look: normalizeLook(h.look), lng: h.lng, lat: h.lat, mirrored: h.mirrored }]));
+        // Anyone shown the server doesn't have near (gone, cloaked, or never real): off the map
+        for (const id of [...others.keys()]) if (!confirmedFor(id)) dropHunter(id);
+      }
+      /** The server's word on a hunter heard (a Mirror's copy: its hunter's, while their Mirror lasts). */
+      function confirmedFor(id: string) {
+        const copy = /^(.+):m[1-3]$/.exec(id);
+        const c = confirmed.get(copy ? copy[1] : id);
+        return c && (!copy || c.mirrored) ? c : null;
+      }
+
       function seeHunter(u: HunterUpdate) {
-        if (disposed || u.id === playerId || typeof u.lng !== "number" || typeof u.lat !== "number") return;
+        if (disposed || !u || typeof u.id !== "string" || u.id === playerId || !Number.isFinite(u.lng) || !Number.isFinite(u.lat)) return;
+        const c = confirmedFor(u.id);
+        if (!c) {
+          void confirmNear(); // someone new: ask the server (drawn from their next update if they're real)
+          return;
+        }
+        if (geo.distanceM([c.lng, c.lat], [u.lng, u.lat]) > 1500) return; // not where the server has them
+        u = { ...u, name: c.name, look: c.look, heading: Number.isFinite(u.heading) ? u.heading : 0 };
         const now = performance.now();
         const known = others.get(u.id);
         if (known) {
@@ -3218,6 +3255,7 @@ export function GameMap({
 
       /** Glide other hunters towards their latest announced spot; drop ones gone quiet. */
       function moveOthers(now: number, dt: number, t: number) {
+        if (others.size && now - confirmedAt > 20000) void confirmNear();
         const k = Math.min(1, 3 * dt);
         for (const [id, o] of others) {
           if (now - o.seen > 15000) {

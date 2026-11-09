@@ -62,7 +62,7 @@ export function PuzzleTrial({
   const [racers, setRacers] = useState<Record<string, { name: string; p: number; at: number }>>({});
   useEffect(() => {
     let gone = false;
-    const ch = supabase.channel(`trial:${huntId}:${view.key}`, { config: { broadcast: { self: false } } });
+    const ch = supabase.channel(`trial:${huntId}:${view.key}`, { config: { private: true, broadcast: { self: false } } });
     ch.on("broadcast", { event: "progress" }, ({ payload }) => {
       const { id, name, p } = payload as { id: string; name: string; p: number };
       setRacers((r) => ({ ...r, [id]: { name, p, at: Date.now() } }));

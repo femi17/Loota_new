@@ -2869,7 +2869,7 @@ export function GameMap({
         }
         for (const key of want) {
           if (areaChannels.has(key)) continue;
-          const channel = supabase.channel(`hunters:${key}`, { config: { broadcast: { self: false } } });
+          const channel = supabase.channel(`hunters:${key}`, { config: { private: true, broadcast: { self: false } } });
           channel.on("broadcast", { event: "pos" }, ({ payload }) => seeHunter(payload as HunterUpdate));
           channel.on("broadcast", { event: "bye" }, ({ payload }) => dropHunter(String((payload as { id: string }).id)));
           // Once connected, announce straight away (the first announcement may have gone out too early).

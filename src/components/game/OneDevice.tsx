@@ -30,7 +30,7 @@ export function OneDevice({ playerId, children }: { playerId: string; children: 
     const id = crypto.randomUUID();
     session.current = id;
     void supabase.rpc("claim_session", { p_session: id });
-    const ch = supabase.channel(`device:${playerId}`, { config: { presence: { key: id } } });
+    const ch = supabase.channel(`device:${playerId}`, { config: { private: true, presence: { key: id } } });
     ch.on("presence", { event: "sync" }, () => {
       const state = ch.presenceState<{ kind: Other["kind"] }>();
       setOthers(

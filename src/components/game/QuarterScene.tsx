@@ -333,7 +333,7 @@ export function QuarterScene({
   useEffect(() => {
     if (!uid || worldKey == null) return;
     const others = othersRef.current, looks = looksRef.current;
-    const ch = supabase.channel(`keyworld:${huntId}:${worldKey}`, { config: { presence: { key: uid }, broadcast: { self: false } } });
+    const ch = supabase.channel(`keyworld:${huntId}:${worldKey}`, { config: { private: true, presence: { key: uid }, broadcast: { self: false } } });
     ch.on("presence", { event: "sync" }, () => {
       const state = ch.presenceState() as Record<string, { look?: AvatarLook }[]>;
       const ids = Object.keys(state).filter((k) => k !== uid);

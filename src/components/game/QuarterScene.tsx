@@ -16,6 +16,8 @@ import type { Penalty } from "./PenaltyCard";
 import { Joystick, useHandheld } from "./Joystick";
 
 type Item = { id: string; name: string; icon: string };
+/** What happens at the key's place, for the map to save for the broadcast (GameMap: worldTalk). */
+const tellShow = (type: string, data?: unknown) => window.dispatchEvent(new CustomEvent("loota:world", { detail: { type, data } }));
 type QuarterView = {
   ok: boolean;
   reason?: string;
@@ -161,6 +163,10 @@ export function QuarterScene({
   }, [wide]);
   const [busy, setBusy] = useState(false);
   const [gained, setGained] = useState<Item | null>(null);
+  // For the broadcast (owner, 9 Nov 2026: step 3, "the key location… we can broadcast that too for viewers"): the map
+  // saves the hunter's own arrangement of the place, where they walk, what they're told and the puzzles they open
+  const worldTold = useRef(false);
+  const lastProgress = useRef(-1);
   const [dodge, setDodge] = useState<{ room: number; prompt: string; options: string[]; seconds: number } | null>(null);
   const [roomPuzzle, setRoomPuzzle] = useState<RoomPuzzle | null>(null);
   const roomPuzzleRef = useRef<RoomPuzzle | null>(null);
@@ -177,6 +183,34 @@ export function QuarterScene({
   // Who the hunter is (their own arrangement of the places, and the others at the place), what they have
   const [uid, setUid] = useState<string | null>(null);
   const uidRef = useRef("");
+  useEffect(() => {
+    if (!view || !uid || worldTold.current) return;
+    worldTold.current = true;
+    tellShow("start", {
+      kind: "keyworld",
+      key: view.key,
+      title: view.title,
+      scene: view.scene ?? null,
+      rooms: view.rooms,
+      objects: view.objects,
+      seat: `${uid}:${view.key}`,
+      inner: view.inner ?? null,
+      dug: view.dug ?? null,
+      at: view.at,
+    });
+  }, [view, uid]);
+  useEffect(() => () => void (worldTold.current && tellShow("end")), []);
+  useEffect(() => {
+    if (worldTold.current) tellShow("state", { inner: view?.inner ?? null, dug: view?.dug ?? null });
+  }, [view?.inner, view?.dug]);
+  useEffect(() => {
+    if (worldTold.current && say) tellShow("note", say);
+  }, [say]);
+  useEffect(() => {
+    if (!roomPuzzle) return;
+    lastProgress.current = -1;
+    tellShow("puzzle", { n: roomPuzzle.n, kind: roomPuzzle.kind, puzzle: roomPuzzle.puzzle, seconds: Math.max(0, Math.round((roomPuzzle.ends - Date.now()) / 1000)) });
+  }, [roomPuzzle]);
   const [me, setMe] = useState<Me | null>(null);
   const torchRef = useRef(false);
   const detectorRef = useRef(false); // the detector, in the hunter's hand when they have one
@@ -674,6 +708,8 @@ export function QuarterScene({
     let lastHand = ""; // what the action button was last set to
     const ghosts = new Map<string, ReturnType<typeof buildAvatar>>(); // the other hunters drawn
     let lastSent = 0;
+    let lastTold = 0;
+    let told = { x: 0, z: 0, in: false };
     let lastBeep = 0;
     let lastCount = 0;
     let sent = { x: 0, z: 0, in: false };
@@ -874,6 +910,12 @@ export function QuarterScene({
         lastSent = now;
         sent = { x: at.x, z: at.z, in: inPlace };
         void ch.send({ type: "broadcast", event: "pos", payload: { u: uidRef.current, x: +at.x.toFixed(2), z: +at.z.toFixed(2), r: +av.root.rotation.y.toFixed(2), in: inPlace } });
+      }
+      // …and for the broadcast (the map saves it as the scene's track)
+      if (now - lastTold > 250 && (now - lastTold > 2000 || dist(at, told) > 0.05 || inPlace !== told.in)) {
+        lastTold = now;
+        told = { x: at.x, z: at.z, in: inPlace };
+        tellShow("at", { x: +at.x.toFixed(2), z: +at.z.toFixed(2), r: +av.root.rotation.y.toFixed(2), in: inPlace });
       }
       // The others: the nearest few, walking where they are. Nobody is seen inside a place or digging, and nobody sees
       // what anyone finds (owner: "how do we handle users who are around and they saw a user dig a place and got the
@@ -1121,14 +1163,17 @@ export function QuarterScene({
       const res = await fetch("/api/house/room/solve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: rp.n, answer }) });
       const r = (await res.json().catch(() => null)) as Opened | null;
       if (r?.reason === "late") {
+        tellShow("result", { n: rp.n, late: true });
         setRoomPuzzle(null);
         return setSay(`⏳ Too slow: ${boxName(rp.n)}'s lock jams for 30 s. Then it has a new puzzle.`);
       }
       if (!r?.ok) return setRoomNote(REFUSED[r?.reason ?? ""] ?? "Something went wrong. Try again.");
       if (!r.right) {
+        tellShow("result", { n: rp.n, right: false });
         setRoomShake((k) => k + 1);
         return setRoomNote("Not quite: the lock doesn't turn. Look again.");
       }
+      tellShow("result", { n: rp.n, right: true, outcome: r.outcome ?? null });
       setRoomPuzzle(null);
       const inner = (v.inner ?? []).map((c) => (c.n === rp.n ? { ...c, open: true, outcome: r.outcome ?? null } : c));
       setView((old) => (old ? { ...old, inner } : old));
@@ -1166,6 +1211,7 @@ export function QuarterScene({
       setRoomLeft(left);
       if (left > 0) return;
       window.clearInterval(t);
+      tellShow("result", { n, late: true });
       setRoomPuzzle((p) => (p?.n === n ? null : p));
       setSay(`⏳ Too slow: ${boxName(n)}'s lock jams for 30 s. Then it has a new puzzle.`);
     }, 250);
@@ -1389,7 +1435,17 @@ export function QuarterScene({
             <p className="text-xs text-paper/80">{PUZZLE_NAMES[roomPuzzle.kind as keyof typeof PUZZLE_NAMES]?.rule}</p>
             {/* The rooms are dark: without a torch the board is dim (owner, 3 Nov 2026: a torch "lights dark rooms") */}
             <div key={roomShake} className={`mx-auto w-full max-w-[min(100%,24rem)] ${roomShake ? "loota-shake" : ""} ${me?.torch ? "" : "brightness-[0.45] contrast-[0.8]"}`} data-dark={me?.torch ? "false" : "true"}>
-              <PuzzleBoard kind={roomPuzzle.kind} puzzle={roomPuzzle.puzzle} disabled={busy} onDone={(a) => void solveRoom(a)} />
+              <PuzzleBoard
+                kind={roomPuzzle.kind}
+                puzzle={roomPuzzle.puzzle}
+                disabled={busy}
+                onDone={(a) => void solveRoom(a)}
+                onProgress={(p) => {
+                  if (Math.abs(p - lastProgress.current) < 0.05 && p < 1) return;
+                  lastProgress.current = p;
+                  tellShow("progress", Math.round(p * 100) / 100);
+                }}
+              />
             </div>
             {!me?.torch && (
               <div className="flex items-center gap-2 rounded-lg bg-ink-2 px-2 py-1.5 text-xs">

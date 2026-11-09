@@ -3055,12 +3055,25 @@ export function GameMap({
       }
       // Lines: [ms, "them" | "you", what's said], and how it's played: [ms, "ask", the replies on offer (JSON)], [ms, "pick",
       // the reply picked], [ms, "game" | "move" | "result", JSON] (a roadside game)
-      type SceneRec = { id: number | null; queue: [number, string, string][]; said: number; asked: string; meta: object | null; ended: number | null; saving: boolean };
+      type SceneRec = {
+        id: number | null;
+        queue: [number, string, string][];
+        said: number;
+        asked: string;
+        meta: object | null;
+        ended: number | null;
+        saving: boolean;
+        /** The key's place: where they walk, [server ms, x, z, facing, inside 0/1], waiting to be saved. */
+        world: boolean;
+        track: [number, number, number, number, number][];
+        trackSaving: boolean;
+        trackAt: number;
+      };
       let sceneRec: SceneRec | null = null;
       const serverMs = () => Math.round(Date.now() + (serverSkew ?? 0));
       function sceneStarted(data: object) {
         if (!huntId || serverSkew === null) return;
-        const rec: SceneRec = { id: null, queue: [], said: 0, asked: "", meta: null, ended: null, saving: true };
+        const rec: SceneRec = { id: null, queue: [], said: 0, asked: "", meta: null, ended: null, saving: true, world: (data as { kind?: string }).kind === "keyworld", track: [], trackSaving: false, trackAt: 0 };
         sceneRec = rec;
         void supabase.rpc("scene_start", { p_ms: serverMs(), p_data: data }).then(({ data: r }) => {
           rec.saving = false;
@@ -3108,6 +3121,37 @@ export function GameMap({
         sceneFlush(sceneRec);
       };
       window.addEventListener("loota:scene-pick", scenePick);
+      // The key's place (QuarterScene, owner, 9 Nov 2026: step 3): a scene of its own (no model: the broadcast builds the
+      // hunter's own arrangement of it), where they walk as its track, what they're told, the puzzles they open
+      function trackFlush(rec: SceneRec) {
+        if (rec.id === null || rec.trackSaving || !rec.track.length || performance.now() - rec.trackAt < 1000) return;
+        rec.trackSaving = true;
+        rec.trackAt = performance.now();
+        const batch = rec.track.splice(0, 80);
+        void supabase.rpc("scene_track", { p_id: rec.id, p_track: batch }).then(() => {
+          rec.trackSaving = false;
+        });
+      }
+      const worldTalk = (ev: Event) => {
+        const d = (ev as CustomEvent<{ type: string; data?: unknown }>).detail;
+        if (d.type === "start") {
+          sceneEnded();
+          sceneModel = null;
+          sceneStarted(d.data as object);
+          return;
+        }
+        const rec = sceneRec;
+        if (!rec?.world) return;
+        if (d.type === "end") return sceneEnded();
+        if (d.type === "at") {
+          const a = d.data as { x: number; z: number; r: number; in: boolean };
+          rec.track.push([serverMs(), a.x, a.z, a.r, a.in ? 1 : 0]);
+          return trackFlush(rec);
+        }
+        rec.queue.push([serverMs(), d.type, typeof d.data === "string" ? d.data : JSON.stringify(d.data ?? null)]);
+        sceneFlush(rec);
+      };
+      window.addEventListener("loota:world", worldTalk);
       window.addEventListener("loota:scene-moment", sceneMomentShown);
       function sceneEnded() {
         const rec = sceneRec;
@@ -8633,6 +8677,7 @@ export function GameMap({
         window.removeEventListener("keyup", keyUp);
         window.removeEventListener("loota:scene-talk", sceneTalk);
         window.removeEventListener("loota:scene-pick", scenePick);
+        window.removeEventListener("loota:world", worldTalk);
         window.removeEventListener("loota:scene-moment", sceneMomentShown);
         lookArea.removeEventListener("pointerdown", lookStart);
         window.removeEventListener("pointermove", lookMove);

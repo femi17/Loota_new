@@ -10,6 +10,10 @@ import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 import { nextAutoView } from "@/game/autocam";
 import { RoadGameBoard, type RoadGame, type RoadGameResult } from "@/components/game/RoadGames";
+import { PuzzleBoard } from "@/components/game/puzzles/PuzzleTrial";
+import { PUZZLE_NAMES } from "@/game/puzzles/names";
+import type { InnerRoomView } from "@/game/house3d";
+import { KeyWorldView, type KeyWorldData, type WorldTrack } from "./KeyWorldView";
 import { jamLines } from "@/game/traffic";
 import { loadSignals, signalState, signalsNear, type Signal } from "@/game/signals";
 import { ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, roadCellOf, type RoadCellData, type RoadCellFile } from "@/game/roadData";
@@ -103,8 +107,13 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
    * game's board and how it ended.
    */
   const [sceneCard, setSceneCard] = useState<
-    { kind: "ask"; who: string; options: string[]; pick: string | null } | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null } | null
+    | { kind: "ask"; who: string; options: string[]; pick: string | null }
+    | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null }
+    | { kind: "puzzle"; who: string; n: number; puzzleKind: string; puzzle: unknown; left: number; progress: number; result: { right?: boolean; late?: boolean; outcome?: string | null } | null }
+    | null
   >(null);
+  /** The key's place the followed hunter is at (step 3): their own arrangement, played from their track. */
+  const [keyWorld, setKeyWorld] = useState<{ id: number; data: KeyWorldData; look: unknown; playback: { current: { T: number; track: WorldTrack; inner: InnerRoomView[] | null; dug: string | null } } } | null>(null);
   /** Why the followed hunter is slow just now: 1 a red light, 2 slow traffic, 3 a go-slow (from their motion). */
   const [slowWhy, setSlowWhy] = useState(0);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
@@ -210,7 +219,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // the hunter in it, the camera looking in as on their screen, the words as captions.
       type SceneData = {
         kind: string;
-        model: { make: string; args: unknown[] };
+        model?: { make: string; args: unknown[] }; // none at a key's place (its own arrangement is in the data)
         origin: { lng: number; lat: number };
         facing: number;
         spots: { depth: number; keeper: { x: number; z: number }; customer: { x: number; z: number } };
@@ -221,7 +230,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // Lines: [ms, "them" | "you", what's said], and how it's played: "ask" (the replies on offer, JSON), "pick", "game",
       // "move", "result" (JSON)
-      type Scene = { id: number; user: string; start: number; end: number | null; data: SceneData; lines: [number, string, string][] };
+      type Scene = { id: number; user: string; start: number; end: number | null; data: SceneData; lines: [number, string, string][]; track?: WorldTrack };
       const scenes = new Map<number, Scene>();
       /** The scene a hunter is in at server time `T`, if any. */
       const sceneAt = (user: string, T: number) => {
@@ -231,7 +240,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       /** What a scene is, as an icon and a few words. */
       const sceneLabel = (sc: Scene): { icon: string; what: string } => {
-        const m = sc.data.model.make;
+        if (sc.data.kind === "keyworld") return { icon: "🗝", what: "searching the key's place" };
+        const m = sc.data.model?.make ?? "";
         if (m === "makeCheckpointScene") return { icon: "🚓", what: "at a police checkpoint" };
         if (m === "makeTravellerScene") return { icon: "🧳", what: "with a stranded traveller" };
         if (m === "makeGameTable") return { icon: "🎲", what: "playing a roadside game" };
@@ -263,6 +273,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       let captionKey = "";
       let cardKey = "";
+      let worldShown: { id: number; playback: { current: { T: number; track: WorldTrack; inner: InnerRoomView[] | null; dug: string | null } } } | null = null;
       const parse = <X,>(text: string): X | null => {
         try {
           return JSON.parse(text) as X;
@@ -421,7 +432,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -722,8 +733,31 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             }
             // In a scene: the same place at the kerb, the keeper and the hunter in it, looked into as on their screen
             const T = motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : 0;
-            const sc = motionSkew !== null && !ride ? sceneAt(h.id, T) : null;
-            if (sc && (!sceneView || sceneView.id !== sc.id)) {
+            const anyScene = motionSkew !== null && !ride ? sceneAt(h.id, T) : null;
+            const world = anyScene?.data.kind === "keyworld" ? anyScene : null;
+            const sc = world ? null : anyScene; // a scene built at the kerb
+            // At a key's place: their own arrangement of it, them walking where they walked (step 3)
+            if (world && worldShown?.id !== world.id) {
+              worldShown = { id: world.id, playback: { current: { T, track: [], inner: null, dug: null } } };
+              setKeyWorld({ id: world.id, data: world.data as unknown as KeyWorldData, look: h.look, playback: worldShown.playback });
+            } else if (!world && worldShown) {
+              worldShown = null;
+              setKeyWorld(null);
+            }
+            if (world && worldShown) {
+              const pb = worldShown.playback.current;
+              pb.T = T;
+              pb.track = world.track ?? [];
+              const wd = world.data as unknown as KeyWorldData;
+              let state = { inner: wd.inner, dug: wd.dug };
+              for (const l of world.lines) {
+                if (l[0] > T) break;
+                if (l[1] === "state") state = parse<typeof state>(l[2]) ?? state;
+              }
+              pb.inner = state.inner;
+              pb.dug = state.dug;
+            }
+            if (sc?.data.model && (!sceneView || sceneView.id !== sc.id)) {
               dropSceneView();
               try {
                 const make = (models as unknown as Record<string, (...args: unknown[]) => unknown>)[sc.data.model.make];
@@ -789,15 +823,15 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             }
             // The caption: the last two lines said, in the order they were said, and by whom
             let next: typeof caption = null;
-            if (sc) {
-              const { icon, what } = sceneLabel(sc);
+            if (anyScene) {
+              const { icon, what } = sceneLabel(anyScene);
               next = {
                 icon,
-                title: sc.data.title ?? `${h.name} ${what}`,
-                lines: sc.lines
-                  .filter((l) => l[0] <= T && (l[1] === "them" || l[1] === "you"))
-                  .slice(-2)
-                  .map((l) => ({ who: l[1] === "you" ? h.name : (sc.data.keeperName ?? ""), text: l[2], you: l[1] === "you" })),
+                title: world ? `${h.name} ${what}: ${anyScene.data.title ?? ""}` : (anyScene.data.title ?? `${h.name} ${what}`),
+                lines: anyScene.lines
+                  .filter((l) => l[0] <= T && (l[1] === "them" || l[1] === "you" || l[1] === "note"))
+                  .slice(world ? -1 : -2)
+                  .map((l) => ({ who: l[1] === "you" ? h.name : l[1] === "note" ? "" : (anyScene.data.keeperName ?? ""), text: l[2], you: l[1] === "you" })),
               };
             }
             const said = JSON.stringify(next);
@@ -824,6 +858,35 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               if (game && (!ask || game.at >= ask.at)) card = { kind: "game", who: h.name, game: game.game, result: game.result };
               else if (ask) card = { kind: "ask", who: h.name, options: ask.options, pick: ask.pick };
             }
+            if (world) {
+              // A box's puzzle, as they have it: the board, the time left, how far they've got, and how it ended
+              type Opened = { at: number; n: number; kind: string; puzzle: unknown; seconds: number; progress: number; result: { right?: boolean; late?: boolean; outcome?: string | null } | null; endedAt: number | null };
+              let open: Opened | null = null;
+              for (const l of world.lines) {
+                if (l[0] > T) break;
+                if (l[1] === "puzzle") {
+                  const p = parse<{ n: number; kind: string; puzzle: unknown; seconds: number }>(l[2]);
+                  if (p) open = { at: l[0], ...p, progress: 0, result: null, endedAt: null };
+                } else if (l[1] === "progress" && open && !open.endedAt) open.progress = Number(l[2]) || 0;
+                else if (l[1] === "result" && open) {
+                  open.result = parse<{ right?: boolean; late?: boolean; outcome?: string | null }>(l[2]);
+                  if (open.result?.right || open.result?.late) open.endedAt = l[0];
+                }
+              }
+              // Shown while it's open, and a few seconds after it ends
+              if (open && (!open.endedAt || T - open.endedAt < 5000)) {
+                card = {
+                  kind: "puzzle",
+                  who: h.name,
+                  n: open.n,
+                  puzzleKind: open.kind,
+                  puzzle: open.puzzle,
+                  left: Math.max(0, Math.ceil(open.seconds - ((open.endedAt ?? T) - open.at) / 1000)),
+                  progress: open.result?.right ? 1 : open.progress,
+                  result: open.result,
+                };
+              }
+            }
             const cardNow = JSON.stringify(card);
             if (cardNow !== cardKey) {
               cardKey = cardNow;
@@ -838,6 +901,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           }
           dropSceneView();
           clearTraffic();
+          if (worldShown) {
+            worldShown = null;
+            setKeyWorld(null);
+          }
           if (lastWhy !== 0) {
             lastWhy = 0;
             setSlowWhy(0);
@@ -912,6 +979,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
+      {/* The key's place the followed hunter is at: their own arrangement of it, them walking where they walked (step 3) */}
+      {keyWorld && (
+        <div className="absolute inset-0 z-10" aria-label="The key's place">
+          <KeyWorldView key={keyWorld.id} data={keyWorld.data} look={keyWorld.look} playback={keyWorld.playback} />
+        </div>
+      )}
       {/* Why the hunter followed is slow just now (owner, 9 Nov 2026) */}
       {slowWhy > 0 && view.kind === "follow" && (
         <div className="pointer-events-none absolute left-1/2 top-16 z-20 -translate-x-1/2" role="status" aria-label="Why they're slow">
@@ -922,9 +995,38 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       )}
       {/* The question or game in the scene, as the hunter has it: the replies on offer and the one picked, or the board */}
       {sceneCard && caption && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-[150px] z-20 flex justify-center px-4" role="status" aria-label="Scene card">
-          <div className="w-full max-w-xl rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70">
-            {sceneCard.kind === "ask" ? (
+        <div
+          className={
+            sceneCard.kind === "puzzle"
+              ? "pointer-events-none absolute bottom-[110px] right-4 top-4 z-20 flex items-start justify-end" // beside the hunter, not over them
+              : "pointer-events-none absolute inset-x-0 bottom-[150px] z-20 flex justify-center px-4"
+          }
+          role="status"
+          aria-label="Scene card"
+        >
+          <div className={`rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70 ${sceneCard.kind === "puzzle" ? "max-h-full w-[20rem] overflow-hidden" : "w-full max-w-xl"}`}>
+            {sceneCard.kind === "puzzle" ? (
+              <>
+                <div className="mb-2 flex items-center gap-2">
+                  <p className="min-w-0 flex-1 text-xs font-extrabold uppercase tracking-widest text-gold">
+                    {sceneCard.result?.right
+                      ? `✓ ${sceneCard.who} opened Box ${sceneCard.n}${sceneCard.result.outcome ? `: ${sceneCard.result.outcome === "key" ? "the key!" : sceneCard.result.outcome}` : ""}`
+                      : sceneCard.result?.late
+                        ? `⏳ ${sceneCard.who}: too slow, the lock jams`
+                        : `${sceneCard.who} · Box ${sceneCard.n} · ${PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.name ?? "A puzzle"}`}
+                  </p>
+                  {!sceneCard.result?.right && !sceneCard.result?.late && <span className="rounded-full bg-ink-2 px-2 py-0.5 font-mono text-sm font-extrabold text-gold">⏱ {sceneCard.left}s</span>}
+                </div>
+                <div className="h-2 overflow-hidden rounded bg-ink-2" aria-label="How far they've got">
+                  <div className={`h-full transition-[width] duration-500 ${sceneCard.result?.right ? "bg-[#3DD68C]" : "bg-gold"}`} style={{ width: `${Math.round(sceneCard.progress * 100)}%` }} />
+                </div>
+                {sceneCard.result && !sceneCard.result.right && !sceneCard.result.late && <p className="mt-1 text-xs font-bold text-danger">✗ Not quite: they look again</p>}
+                <p className="my-2 text-xs text-paper/75">{PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.rule}</p>
+                <div style={{ zoom: 0.62 }}>
+                  <PuzzleBoard kind={sceneCard.puzzleKind} puzzle={sceneCard.puzzle} disabled onDone={() => {}} />
+                </div>
+              </>
+            ) : sceneCard.kind === "ask" ? (
               <>
                 <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">{sceneCard.pick ? `${sceneCard.who} chose` : `${sceneCard.who} is choosing…`}</p>
                 <div className="grid gap-2 sm:grid-cols-2">

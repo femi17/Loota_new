@@ -8,7 +8,7 @@ import { daylight } from "@/game/clock";
 import { WEATHER_CREDIT, weatherDim, weatherIcon, weatherWords, type Weather } from "@/game/weather";
 import { ordinal } from "@/game/hunt";
 import { baseSpeed, type Mode } from "@/game/movement";
-import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
+import { alongPath, busZoom, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 import { nextAutoView } from "@/game/autocam";
 import { RoadGameBoard, type RoadGame, type RoadGameResult } from "@/components/game/RoadGames";
@@ -944,6 +944,19 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               const dep = Date.parse(r.trip.departsAt);
               const f = Math.max(0, Math.min(1, (serverNow - dep) / Math.max(1, secs * 1000)));
               zoom = trainZoom(total, secs, trainAlong(f) * total, p.lat, 16);
+            }
+            if (r && (ride === "bus" || ride === "taxi")) {
+              // As far back as its speed between stops needs, as on the hunter's screen (owner, 9 Nov 2026: "the bus was
+              // just moving too fast"): its fastest so far from its motion (a city bus or taxi stops and starts), else about
+              // half again its average (a long-distance bus runs at an even speed: its average)
+              const total = r.cum[r.cum.length - 1] ?? 0;
+              const dep = Date.parse(r.trip.departsAt), arr = Date.parse(r.trip.arrivesAt);
+              const avg = total / Math.max(1, (arr - dep) / 1000);
+              const keys = motions.get(h.id)?.keys ?? [];
+              const fastest = keys.reduce((m, k) => Math.max(m, k[2] ?? 0), 0);
+              const cruise = Math.max(fastest, avg * (total > 40_000 ? 1 : 1.5));
+              const at = motionSkew !== null ? drawnWall + motionSkew - motionDelay : serverNow;
+              zoom = busZoom(cruise, at - dep, arr - at, p.lat, 17);
             }
             if (r && ride === "plane") {
               const total = r.cum[r.cum.length - 1] ?? 0;

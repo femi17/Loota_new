@@ -78,7 +78,7 @@ import {
   transitSpeedFor,
   transitWaitS,
   type TransitStop,
-  type Trip as TransitTrip, trainAlong, trainZoom, reachOf as stopReach, hasOffice, ticketed } from "@/game/transit";
+  type Trip as TransitTrip, trainAlong, trainZoom, busZoom, reachOf as stopReach, hasOffice, ticketed } from "@/game/transit";
 
 type Hud = {
   energy: number;
@@ -3937,9 +3937,16 @@ export function GameMap({
 
       /** How close the camera is during a trip: as in play for a bus, further back for a train, high above for a flight. */
       function rideZoom() {
+        if (ride && (ride.trip.mode === "bus" || ride.trip.mode === "taxi")) {
+          // Pulled back as far as its speed between stops needs: a steady pace on the screen (owner, 9 Nov 2026)
+          const rideMs = ride.arrives - ride.departs;
+          const plan = ride.way?.plan;
+          // (a long-distance bus runs express, at an even speed; a city bus or taxi not yet planned: about half again its average)
+          const cruise = plan ? plan.perMs * 1000 : ((ride.cum[ride.cum.length - 1] ?? 0) / Math.max(1, rideMs / 1000)) * (ride.trip.metres > BUS_RANGE_M ? 1 : 1.5);
+          const elapsed = Date.now() - (ride.departs - ride.offset);
+          return busZoom(cruise, elapsed, (plan?.ends ?? rideMs) - elapsed, traveller.pos.lat, GAME_ZOOM);
+        }
         if (!ride || ride.s === 0) return GAME_ZOOM;
-        if (ride.trip.mode === "bus") return ride.trip.metres > BUS_RANGE_M ? GAME_ZOOM - 1 : GAME_ZOOM;
-        if (ride.trip.mode === "taxi") return GAME_ZOOM;
         // Pulled back as far as its speed needs, a steady pace on the screen (owner, 8 Nov 2026: "It moves too fast").
         if (ride.trip.mode === "train") return trainZoom(ride.cum[ride.cum.length - 1], (ride.arrives - ride.departs) / 1000, ride.s, traveller.pos.lat, GAME_ZOOM - 1);
         const total = ride.cum[ride.cum.length - 1];

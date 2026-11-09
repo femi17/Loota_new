@@ -274,14 +274,37 @@ export function trainAlong(f: number) {
 }
 
 /**
- * The camera's zoom on a train (owner, 8 Nov 2026): pulled back as far as its top speed needs to cross the screen at
- * about 120 pixels a second (zoom 11 at the least), and close in (`near`) within 2 km of either station. `totalM`: the
- * trip's length; `seconds`: its time; `along`: how far it has gone.
+ * How far back the camera must be for something moving at `speed` (m/s) to cross the screen at a steady, easy pace,
+ * about 120 pixels a second (as the plane's: owner, 9 Nov 2026: "the km of the plane is running fast but the plane move
+ * is not too fast. Same thing should apply to the buses and trains"): no closer than `near`, no further than zoom 11.
+ */
+export function paceZoom(speed: number, lat: number, near: number) {
+  const far = Math.log2((120 * 40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * Math.max(1, speed)));
+  return Math.max(11, Math.min(near, far));
+}
+
+/**
+ * The camera's zoom on a train (owner, 8 Nov 2026; 9 Nov 2026): as far back as its speed at that moment needs, so it
+ * keeps a steady pace on the screen all the way, coming in as it brakes into the station (close in, `near`, when it's
+ * standing). `totalM`: the trip's length; `seconds`: its time; `along`: how far it has gone.
  */
 export function trainZoom(totalM: number, seconds: number, along: number, lat: number, near: number) {
-  const top = totalM / Math.max(1, seconds) / (1 - TRAIN_EASE);
-  const far = Math.log2((120 * 40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * Math.max(1, top)));
-  const z = Math.max(11, Math.min(near, far));
-  const k = Math.min(1, Math.max(0, Math.min(along, totalM - along)) / 2000);
+  // The share of the time gone (trainAlong, turned round), and the speed then
+  const a = TRAIN_EASE, v = 1 / (1 - a);
+  const u = Math.max(0, Math.min(1, along / Math.max(1, totalM)));
+  const f = u < 0.5 * v * a ? Math.sqrt((2 * u * a) / v) : u > 1 - 0.5 * v * a ? 1 - Math.sqrt((2 * (1 - u) * a) / v) : u / v + a / 2;
+  const rate = f < a ? (v * f) / a : f > 1 - a ? (v * (1 - f)) / a : v; // trainAlong's slope
+  return paceZoom((rate * totalM) / Math.max(1, seconds), lat, near);
+}
+
+/**
+ * The camera's zoom on a bus or taxi (owner, 9 Nov 2026: "the bus was just moving too fast"): as far back as its speed
+ * between stops (`cruise`, m/s) needs, held through its stops and red lights (not in and out at each). A bus pulls away
+ * at its speed and stops dead, so the camera goes up over the last 4 seconds at the stop before it leaves, and comes
+ * down over the 2 seconds after it's in. `elapsedMs`: since it left (negative before); `leftMs`: to its arrival.
+ */
+export function busZoom(cruise: number, elapsedMs: number, leftMs: number, lat: number, near: number) {
+  const z = paceZoom(cruise, lat, near);
+  const k = Math.max(0, Math.min(1, (elapsedMs + 4000) / 4000, (leftMs + 2000) / 2000));
   return near - (near - z) * k * k * (3 - 2 * k);
 }

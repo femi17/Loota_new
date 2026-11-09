@@ -37,12 +37,26 @@ type Dome = { id: string; lng: number; lat: number; radiusM: number; endsAt: str
 type ShowEvent = { at: string; kind: string; who: string | null; whoId: string | null; text: string };
 /** A hunter's bus, train, taxi or plane under way: where it goes and when (its path thinned by the server). */
 type Trip = { userId: string; mode: string; from: string; to: string; departsAt: string; arrivesAt: string; path: [number, number][] };
+/** A hunter's hospital visit (call_ambulance): the ambulance's way to them and on to the hospital, and its times. */
+type Visit = {
+  userId: string;
+  hospital: string;
+  lng: number;
+  lat: number;
+  calledAt: string;
+  pickedAt: string;
+  arrivesAt: string;
+  dischargedAt: string;
+  approach: [number, number][] | null;
+  route: [number, number][] | null;
+};
 type State = {
   hunt: { id: string; title: string; prize: string; winners: number; startsAt: string; endsAt: string; phase: string; keys: number };
   hunters: Hunter[];
   domes: Dome[];
   events: ShowEvent[];
   trips?: Trip[];
+  visits?: Visit[];
   now?: string;
 };
 /** What the camera shows: the whole field, or one hunter up close. */
@@ -116,6 +130,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [keyWorld, setKeyWorld] = useState<{ id: number; data: KeyWorldData; look: unknown; playback: { current: { T: number; track: WorldTrack; inner: InnerRoomView[] | null; dug: string | null } } } | null>(null);
   /** Why the followed hunter is slow just now: 1 a red light, 2 slow traffic, 3 a go-slow (from their motion). */
   const [slowWhy, setSlowWhy] = useState(0);
+  /** The followed hunter fainted: the ambulance coming, the ride to hospital, the ward (owner, 9 Nov 2026). */
+  const [careNote, setCareNote] = useState<string | null>(null);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
   const viewRef = useRef(view);
   const autoRef = useRef(auto);
@@ -432,7 +448,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -450,6 +466,37 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const a = r.path[Math.max(0, segment - 1)], b = r.path[Math.min(r.path.length - 1, Math.max(1, segment))];
         return { lng: pos[0], lat: pos[1], heading: a && b && (a[0] !== b[0] || a[1] !== b[1]) ? geo.headingOf(a, b) : 0, f, flying: f > 0 && f < 1 };
       };
+      // ---- Fainted (owner, 9 Nov 2026: "fix the ambulance pickup, it is not showing, user had to walk to hospital"): the
+      // visit played by the clock as the game plays it: lying where they fell while the ambulance drives up its way; then
+      // in the ambulance along the road to the hospital; then inside, the ambulance parked, until discharged.
+      type Way = { path: [number, number][]; cum: number[] };
+      const visits = new Map<string, { key: string; v: Visit; approach: Way | null; route: Way | null }>();
+      type Care = { phase: "waiting" | "riding" | "treated"; lng: number; lat: number; heading: number | null; van: { lng: number; lat: number; heading: number } | null; ward: boolean; hospital: string };
+      const onWay = (w: Way, f: number) => {
+        const total = w.cum[w.cum.length - 1] ?? 0;
+        const { pos, segment } = alongPath(w.path, w.cum, Math.max(0, Math.min(1, f)) * total);
+        const a = w.path[Math.max(0, segment - 1)], b = w.path[Math.min(w.path.length - 1, Math.max(1, segment))];
+        return { lng: pos[0], lat: pos[1], heading: a && b && (a[0] !== b[0] || a[1] !== b[1]) ? geo.headingOf(a, b) : 0 };
+      };
+      const careAt = (id: string, T: number): Care | null => {
+        const c = visits.get(id);
+        if (!c) return null;
+        const called = Date.parse(c.v.calledAt), picked = Date.parse(c.v.pickedAt), arrives = Date.parse(c.v.arrivesAt), discharged = Date.parse(c.v.dischargedAt);
+        if (T < called || T >= discharged) return null;
+        if (tripOf(id)) return null; // on a bus, train or plane (fainting is on foot or a bicycle): the trip
+        const ward = !!c.route;
+        const fell = c.route ? { lng: c.route.path[0][0], lat: c.route.path[0][1] } : { lng: c.v.lng, lat: c.v.lat };
+        if (T < picked) return { phase: "waiting", ...fell, heading: null, van: c.approach ? onWay(c.approach, (T - called) / Math.max(1, picked - called)) : null, ward, hospital: c.v.hospital };
+        if (c.route && T < arrives) {
+          const at = onWay(c.route, (T - picked) / Math.max(1, arrives - picked));
+          return { phase: "riding", ...at, van: at, ward, hospital: c.v.hospital };
+        }
+        const parked = c.route ? onWay(c.route, 1) : null;
+        return { phase: "treated", ...(parked ?? fell), heading: parked?.heading ?? null, van: parked, ward, hospital: c.v.hospital };
+      };
+      let careT = 0; // this frame's moment for visits (the server's clock, MOTION_DELAY_MS behind)
+      let careVan: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
+      let careKey = "";
       const freshLive = (id: string) => {
         const l = live.get(id);
         return !!l && Date.now() - l.at < LIVE_FRESH_MS;
@@ -479,8 +526,23 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           }
         }
         for (const id of [...routes.keys()]) if (!going.has(id)) routes.delete(id);
+        const visiting = new Set<string>();
+        for (const v of latest.visits ?? []) {
+          visiting.add(v.userId);
+          const key = `${v.calledAt}|${v.dischargedAt}`;
+          if (visits.get(v.userId)?.key === key) continue;
+          const way = (pts: [number, number][] | null) => {
+            if (!Array.isArray(pts) || pts.length < 2) return null;
+            const path = unwrap(pts);
+            return { path, cum: cumulativeOf(path) };
+          };
+          visits.set(v.userId, { key, v, approach: way(v.approach), route: way(v.route) });
+        }
+        // Gone from the list once they're out (kept a moment longer here: played 6 s behind)
+        const careNow = Date.now() + skew - MOTION_DELAY_MS;
+        for (const [id, c] of visits) if (!visiting.has(id) && careNow > Date.parse(c.v.dischargedAt) + 5000) visits.delete(id);
         // Saved spots, for hunters not heard live just now (and not on a trip: their saved spot is where it began).
-        for (const h of latest.hunters) if (h.lng != null && h.lat != null && !freshLive(h.id) && !going.has(h.id)) heard(h.id, h.lng, h.lat);
+        for (const h of latest.hunters) if (h.lng != null && h.lat != null && !freshLive(h.id) && !going.has(h.id) && !careAt(h.id, careNow)) heard(h.id, h.lng, h.lat);
         const fresh = latest.events.filter((e) => !seen.has(eventKey(e)));
         fresh.forEach((e) => seen.add(eventKey(e)));
         if (first) {
@@ -545,6 +607,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         id: string;
         avatar: ReturnType<typeof models.buildAvatar> | null;
         plane: ReturnType<typeof models.makePlane> | null;
+        light: import("three").Object3D | null; // an ambulance's flashing light
         pace: number; // metres a second it moves on screen, smoothed (its stride)
         entity: import("@/game/ThreeMapLayer").MapEntity;
       } | null = null;
@@ -576,7 +639,18 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         builtThisFrame = false;
         // Every hunter where they were a moment ago, between the positions heard; on a trip, where the trip is.
         const serverNow = drawnWall + skew;
+        careT = (motionSkew !== null ? drawnWall + motionSkew : serverNow) - MOTION_DELAY_MS;
         for (const h of s.hunters) {
+          // Fainted: where the ambulance visit has them (never walked there)
+          const care = careAt(h.id, careT);
+          if (care) {
+            const cur = shown.get(h.id);
+            const at = { lng: care.lng, lat: care.lat, heading: care.heading ?? cur?.heading ?? 0 };
+            if (!cur) shown.set(h.id, at);
+            else Object.assign(cur, at);
+            follows.delete(h.id); // their saved spots start afresh after
+            continue;
+          }
           // On a trip: where the game says the bus, train or plane is (it sends that live, by its own timetable of
           // stops, lights and jams); only without that, along the route by the clock.
           const r = tripOf(h.id);
@@ -646,7 +720,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const icon = r && !inThreeD ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
           const inScene = motionSkew !== null ? sceneAt(h.id, drawnWall + motionSkew - MOTION_DELAY_MS) : null;
           const slow = motionSkew !== null ? whySlow(h.id, drawnWall + motionSkew - MOTION_DELAY_MS) : 0;
-          const label = r
+          const care = careAt(h.id, careT);
+          const label = care
+            ? care.phase === "treated"
+              ? `${care.ward ? "🏥" : "🚑"} ${h.name} · ${care.ward ? care.hospital : "paramedics"}`
+              : `🚑 ${h.name}${care.ward ? ` → ${care.hospital}` : " · fainted"}`
+            : r
             ? `${icon} ${h.name} → ${r.trip.to}`
             : inScene
               ? `${sceneLabel(inScene).icon} ${h.name} · ${sceneLabel(inScene).what}`
@@ -690,14 +769,17 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             followPos = { lng: p.lng, lat: p.lat };
             // As the hunter's own laptop shows them: walking or on their own bicycle, motorbike or car, the hunter in
             // 3D; on a bus, train, taxi or plane, that vehicle as the game draws it.
-            const key = ride ? `${h.id}:${ride}` : h.id;
+            const care = careAt(h.id, careT);
+            const inAmbulance = care?.phase === "riding";
+            const key = ride ? `${h.id}:${ride}` : inAmbulance ? `${h.id}:ambulance` : h.id;
             if (!followed || followed.id !== key) {
               if (followed) layer.remove(followed.entity);
-              const avatar = ride ? null : models.buildAvatar(normalizeLook(h.look));
+              const avatar = ride || inAmbulance ? null : models.buildAvatar(normalizeLook(h.look));
               const plane = ride === "plane" ? models.makePlane() : null;
-              const object = plane ? plane.group : ride === "taxi" ? models.makeTaxi() : ride === "train" ? models.makeTrainCar(true) : ride ? models.makeBus() : avatar!.root;
+              const amb = inAmbulance ? models.makeAmbulance() : null;
+              const object = amb ? amb.group : plane ? plane.group : ride === "taxi" ? models.makeTaxi() : ride === "train" ? models.makeTrainCar(true) : ride ? models.makeBus() : avatar!.root;
               object.add(layer.billboard(models.makeNameplate(h.name, "#F4B41A")));
-              followed = { id: key, avatar, plane, pace: 0, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading, scaleBy: ride === "train" ? 0.8 : plane ? 0.45 : undefined }) };
+              followed = { id: key, avatar, plane, light: amb?.light ?? null, pace: 0, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading, scaleBy: ride === "train" ? 0.8 : plane ? 0.45 : undefined }) };
             }
             const before = { lng: followed.entity.lng, lat: followed.entity.lat };
             followed.entity.lng = p.lng;
@@ -709,7 +791,39 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             // turning back); it comes to a stand only once they've really stopped.
             followed.pace += ((dt > 0 ? stepM / dt : 0) - followed.pace) * Math.min(1, 4 * dt);
             const moving = followed.pace < 0.4 ? 0 : Math.min(1, followed.pace / baseSpeed(mode as Mode));
-            if (followed.avatar) models.animateAvatar(followed.avatar, { mode, phase: "idle", moving, distance: stepM / layer.enlargement() }, dt, t / 1000);
+            // Fainted: lying where they fell (and by the road while paramedics treat them); in the ward, unseen inside
+            const lying = !!care && (care.phase === "waiting" || (care.phase === "treated" && !care.ward));
+            if (followed.avatar) models.animateAvatar(followed.avatar, { mode: lying ? "walk" : mode, phase: lying ? "fainted" : "idle", moving: lying ? 0 : moving, distance: stepM / layer.enlargement() }, dt, t / 1000);
+            followed.entity.object.visible = !(care?.phase === "treated" && care.ward);
+            if (followed.light) followed.light.visible = Math.floor(t / 250) % 2 === 0;
+            // The ambulance on its way to them, and parked at the hospital after
+            const van = care && care.phase !== "riding" ? care.van : null;
+            if (van) {
+              if (!careVan) {
+                const amb = models.makeAmbulance();
+                careVan = { entity: layer.add({ object: amb.group, lng: van.lng, lat: van.lat, heading: van.heading }), light: amb.light };
+              }
+              careVan.entity.lng = van.lng;
+              careVan.entity.lat = van.lat;
+              careVan.entity.heading = geo.turnTowards(careVan.entity.heading ?? van.heading, van.heading, Math.min(1, 6 * dt));
+              careVan.light.visible = Math.floor(t / 250) % 2 === 0;
+            } else if (careVan) {
+              layer.remove(careVan.entity);
+              careVan = null;
+            }
+            const note = !care
+              ? null
+              : care.phase === "waiting"
+                ? `🚑 ${h.name} fainted: ${care.ward ? "an ambulance" : "paramedics"} on the way`
+                : care.phase === "riding"
+                  ? `🚑 Rushing ${h.name} to ${care.hospital}`
+                  : care.ward
+                    ? `🏥 ${h.name} is being treated at ${care.hospital}`
+                    : `🚑 Paramedics are treating ${h.name}`;
+            if ((note ?? "") !== careKey) {
+              careKey = note ?? "";
+              setCareNote(note);
+            }
             // The laptop's zoom (GameMap's GAME_ZOOM and rideZoom): 17; a train or a long-distance bus 16; a plane pulls
             // back to 10 at cruising height (40 km from either end) and comes in again to land, climbing as the game's does.
             let zoom = ride === "train" || (ride === "bus" && (r?.cum[r.cum.length - 1] ?? 0) > 40_000) ? 16 : 17;
@@ -816,7 +930,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             }
             // The traffic around them, and why they're slow
             trafficTick(t, motionSkew !== null ? T : Date.now(), p, netFor(h.id, p));
-            const why = motionSkew !== null && !sc ? whySlow(h.id, T) : 0;
+            const why = motionSkew !== null && !sc && !care ? whySlow(h.id, T) : 0;
             if (why !== lastWhy) {
               lastWhy = why;
               setSlowWhy(why);
@@ -901,6 +1015,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           }
           dropSceneView();
           clearTraffic();
+          if (careVan) {
+            layer.remove(careVan.entity);
+            careVan = null;
+          }
+          if (careKey) {
+            careKey = "";
+            setCareNote(null);
+          }
           if (worldShown) {
             worldShown = null;
             setKeyWorld(null);
@@ -983,6 +1105,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       {keyWorld && (
         <div className="absolute inset-0 z-10" aria-label="The key's place">
           <KeyWorldView key={keyWorld.id} data={keyWorld.data} look={keyWorld.look} playback={keyWorld.playback} />
+        </div>
+      )}
+      {/* The followed hunter fainted: the ambulance, the ride, the ward (owner, 9 Nov 2026) */}
+      {careNote && view.kind === "follow" && (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-20 -translate-x-1/2" role="status" aria-label="Fainted">
+          <span className="flex items-center gap-2 rounded-full bg-danger px-4 py-2 text-base font-extrabold text-white shadow-xl">{careNote}</span>
         </div>
       )}
       {/* Why the hunter followed is slow just now (owner, 9 Nov 2026) */}

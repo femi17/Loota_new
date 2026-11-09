@@ -61,6 +61,7 @@ import { NIGHT_BUS_WAIT, NIGHT_TAXI_FARE, clockText, daylight, isNight, jamOn, j
 import { jamLines } from "@/game/traffic";
 import { TransitPanel, type TaxiQuote, type TransitActions, type TransitNear, type TransitQuote } from "./TransitPanel";
 import { foldAttribution } from "@/game/attribution";
+import { WEATHER_CREDIT, weatherCell, weatherDim, weatherIcon, weatherWords, type Weather } from "@/game/weather";
 import {
   BUS_RANGE_M,
   COACH_RANGE_M,
@@ -104,8 +105,10 @@ type Hud = {
   hunters: number;
   /** Radar (while active): seconds left, and which way to the nearest relic and, on a Final Approach, the key. */
   radar: { secondsLeft: number; relic: Pointer | null; key: Pointer | null } | null;
-  /** It's raining where the hunter is (a Rain Charm); `slowed` if it slows them. */
-  rain: { slowed: boolean } | null;
+  /** It's raining where the hunter is (a Rain Charm, or the real weather); `slowed` if it slows them; `storm` 30%. */
+  rain: { slowed: boolean; storm: boolean } | null;
+  /** The real weather where the hunter is (MET Norway, owner, 9 Nov 2026). */
+  weather: Weather | null;
   /**
    * The Lockdown dome nearest the hunter, if any: minutes left, whether they're
    * inside (free to move), and, when they're at its edge outside, the siege.
@@ -442,6 +445,7 @@ export function GameMap({
     hunters: 0,
     radar: null,
     rain: null,
+    weather: null,
     dome: null,
     ride: null,
     stopHere: null,
@@ -775,7 +779,7 @@ export function GameMap({
         minZoom: GAME_ZOOM,
         maxZoom: GAME_ZOOM,
         keyboard: false, // the keyboard drives the hunter instead
-        attributionControl: { compact: true },
+        attributionControl: { compact: true, customAttribution: WEATHER_CREDIT },
       });
       foldAttribution(map);
       // For the browser tests (development only): the map, to read what it draws.
@@ -837,6 +841,8 @@ export function GameMap({
           __lootaPos: () => ({ ...traveller.pos, v: traveller.v, mode: traveller.mode }),
           // The other hunters drawn, and their names (scripts/tests/security-attack-test.mjs)
           __lootaOthers: () => [...others.keys()],
+          // Ask for the weather now (scripts/tests/weather-browser-test.mjs)
+          __lootaWeather: () => checkWeather(performance.now()),
           // Put the hunter somewhere (scripts/tests/stop-on-the-way-browser-test.mjs).
           __lootaJump: (lng: number, lat: number) => placeAt(lng, lat),
           // A ride under way: the vehicle's parts (a train's carriages), how far along, the zoom (scripts/tests/train-ride-browser-test.mjs).
@@ -2569,6 +2575,31 @@ export function GameMap({
       let radarSeen: { relic: Pointer | null; key: Pointer | null } = { relic: null, key: null };
       let lastRadarPing = 0;
       let lastEffects = 0;
+      // The real weather where the hunter is (owner, 9 Nov 2026): asked every 5 minutes, and on reaching another ~10 km
+      // square (at most every 20 s); rain or a storm starting is checked as an effect straight away.
+      let weather: Weather | null = null;
+      let weatherAt = 0;
+      let weatherCellAt = "";
+      let askingWeather = false;
+      async function checkWeather(now: number) {
+        if (askingWeather) return;
+        askingWeather = true;
+        weatherAt = now;
+        weatherCellAt = weatherCell(traveller.pos.lng, traveller.pos.lat);
+        try {
+          await savePosition(); // the server looks where it last saw the hunter
+          const res = await fetch("/api/world/weather", { method: "POST" });
+          const w = res.ok ? ((await res.json()) as { weather: Weather | null }).weather : weather;
+          if (disposed) return;
+          const wasWet = weather?.kind === "rain" || weather?.kind === "storm";
+          weather = w;
+          setHud((h) => (JSON.stringify(h.weather) === JSON.stringify(w) ? h : { ...h, weather: w }));
+          if ((w?.kind === "rain" || w?.kind === "storm") !== wasWet || w?.kind === "storm") lastEffects = 0;
+          if (w?.kind === "fog" && !wasWet) say("🌫️ Fog here: it's hard to see far.");
+        } finally {
+          askingWeather = false;
+        }
+      }
       const effectsSeen = new Set<string>(); // effects already explained to the player
 
       const spendRelic = useRelic; // the same, by a plain name ("use…" reads as a React hook to the linter)
@@ -2666,19 +2697,30 @@ export function GameMap({
       async function checkEffects() {
         await savePosition();
         const { data } = await supabase.rpc("my_effects");
-        const effects = (data ?? []) as { id: string; kind: "rain"; endsAt: string; outcome: "slowed" | "shielded" | "limit" | "exempt"; mine: boolean }[];
+        const effects = (data ?? []) as { id: string; kind: "rain"; endsAt: string; outcome: "slowed" | "shielded" | "limit" | "exempt"; mine: boolean; weather?: "rain" | "storm" | null }[];
         if (disposed) return;
         const rain = effects.filter((e) => e.kind === "rain");
         if (rain.some((e) => e.outcome === "shielded" && !effectsSeen.has(e.id))) countRelics(); // a Shield was used up
         const slowed = rain.some((e) => e.outcome === "slowed");
-        weatherFactor = slowed ? 0.8 : 1;
+        const storm = rain.some((e) => e.weather === "storm");
+        // A real storm slows walkers and bikes by 30%; rain (real, or a Rain Charm's) by 20%
+        weatherFactor = slowed ? (rain.some((e) => e.outcome === "slowed" && e.weather === "storm") ? 0.7 : 0.8) : 1;
         applySpeed();
-        setHud((h) => ({ ...h, rain: rain.length ? { slowed } : null }));
+        setHud((h) => ({ ...h, rain: rain.length ? { slowed, storm } : null }));
         const effectsChecked = effectsReady; // rain already falling when the game opened is no news
         effectsReady = true;
         for (const e of rain) {
           if (effectsSeen.has(e.id)) continue;
           effectsSeen.add(e.id);
+          if (e.weather) {
+            // The real weather (MET Norway)
+            const what = e.weather === "storm" ? "⛈️ A storm here" : "🌧️ It's raining here";
+            if (e.outcome === "slowed") say(`${what}. Walkers and bikes are ${e.weather === "storm" ? 30 : 20}% slower in it: a car, bus or taxi isn't.`, true);
+            else if (e.outcome === "shielded") say(`${what}, but your Shield kept you at full speed (it's used up).`, true);
+            else if (e.outcome === "limit") say(`${what}, but you've been slowed enough this hour: full speed for you.`);
+            else say(`${what}, but effects don't apply near a hunt key: full speed.`);
+            continue;
+          }
           if (!e.mine && effectsChecked) strike(RELIC_ICON.rain_charm, RELICS.rain_charm.colour, false);
           const minutes = Math.max(1, Math.round((new Date(e.endsAt).getTime() - Date.now()) / 60000));
           const who = e.mine ? "Your Rain Charm" : "Someone's Rain Charm";
@@ -2807,6 +2849,7 @@ export function GameMap({
           lastEffects = now;
           void checkEffects();
         }
+        if (now - weatherAt > 5 * 60_000 || (now - weatherAt > 20_000 && weatherCell(traveller.pos.lng, traveller.pos.lat) !== weatherCellAt)) void checkWeather(now);
       }
       void pingRadar(); // a radar used earlier may still be running
 
@@ -5729,7 +5772,7 @@ export function GameMap({
       /** Light and dark: the map darkens at dusk (lit roads stay bright), the 3D figures too. */
       function updateSky(now: number) {
         const { lng, lat } = traveller.pos;
-        const light = daylight(now, lng, lat);
+        const light = daylight(now, lng, lat) * weatherDim(weather);
         const dark = 1 - light;
         if (map.getLayer("night-ground")) {
           // Dusk and dawn are a deep purple; full night a dark blue.
@@ -8971,6 +9014,7 @@ export function GameMap({
               hud.radar ||
               hud.dome ||
               hud.rain ||
+              hud.weather ||
               hud.hunters > 0 ||
               hud.turn !== 0 ||
               hud.wonders.frozen ||
@@ -9144,11 +9188,23 @@ export function GameMap({
                     Key {hud.dome.key} · {hud.dome.minutesLeft} min
                   </div>
                 )}
-                {hud.rain && (
-                  <div className={`${chip} bg-[#173B5C]`} aria-label="Rain" title={hud.rain.slowed ? "Rain: 20% slower on foot or bike" : "Rain"}>
-                    <span aria-hidden="true">🌧</span>
-                    {hud.rain.slowed ? "−20%" : "Rain"}
+                {hud.rain ? (
+                  <div
+                    className={`${chip} ${hud.rain.storm ? "bg-[#2A1F4A]" : "bg-[#173B5C]"}`}
+                    aria-label={hud.rain.storm ? "Storm" : "Rain"}
+                    title={hud.rain.slowed ? `${hud.rain.storm ? "A storm" : "Rain"}: ${hud.rain.storm ? 30 : 20}% slower on foot or bike` : hud.rain.storm ? "A storm" : "Rain"}
+                  >
+                    <span aria-hidden="true">{hud.rain.storm ? "⛈️" : "🌧"}</span>
+                    {hud.rain.slowed ? (hud.rain.storm ? "−30%" : "−20%") : hud.rain.storm ? "Storm" : "Rain"}
+                    {hud.weather?.temp != null && <span className="text-paper/70">{Math.round(hud.weather.temp)}°</span>}
                   </div>
+                ) : (
+                  hud.weather && (
+                    <div className={`${chip} bg-ink`} aria-label={`Weather: ${weatherWords(hud.weather)}`} title={`${weatherWords(hud.weather)} (MET Norway)`} data-weather={hud.weather.kind}>
+                      <span aria-hidden="true">{weatherIcon(hud.weather, !!hud.clock?.night)}</span>
+                      {hud.weather.temp != null ? `${Math.round(hud.weather.temp)}°` : weatherWords(hud.weather)}
+                    </div>
+                  )
                 )}
                 {hud.hunters > 0 && (
                   <div className={`${chip} bg-ink`} aria-label={`${hud.hunters} other hunters nearby`} title="Hunters nearby">
@@ -9819,7 +9875,15 @@ export function GameMap({
       )}
 
       {/* Rain from a Rain Charm: falling streaks over the map, a little darker. */}
-      {hud.rain && <div className="loota-rain pointer-events-none absolute inset-0" aria-hidden="true" />}
+      {(hud.rain || hud.weather?.kind === "rain" || hud.weather?.kind === "storm") && (
+        <div
+          className={`loota-rain pointer-events-none absolute inset-0 ${hud.rain?.storm || hud.weather?.kind === "storm" ? "loota-storm" : hud.weather?.heavy ? "loota-rain-heavy" : ""}`}
+          aria-hidden="true"
+        />
+      )}
+      {hud.weather?.kind === "fog" && <div className="loota-fog pointer-events-none absolute inset-0" aria-hidden="true" />}
+      {hud.weather?.kind === "cloudy" && <div className="loota-cloud pointer-events-none absolute inset-0" aria-hidden="true" />}
+      {hud.weather?.kind === "snow" && <div className="loota-snow pointer-events-none absolute inset-0" aria-hidden="true" />}
 
       {bagOpen && (
         <BagPanel

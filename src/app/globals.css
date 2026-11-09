@@ -40,8 +40,42 @@ body {
   from { background-position: 0 0, 0 0; }
   to { background-position: -30px 140px, -40px 220px; }
 }
+/* Heavy rain: denser, darker. A storm: that, and now and then lightning. */
+.loota-rain-heavy { background-color: rgba(20, 35, 60, 0.28); }
+.loota-storm { background-color: rgba(15, 20, 45, 0.34); }
+.loota-storm::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(235, 240, 255, 0.85);
+  opacity: 0;
+  animation: loota-lightning 9s linear infinite;
+}
+@keyframes loota-lightning {
+  0%, 61%, 63.5%, 65%, 100% { opacity: 0; }
+  62% { opacity: 0.75; }
+  64% { opacity: 0.45; }
+}
+/* Fog: the distance greys out, the middle (where the hunter is) stays clearer. */
+.loota-fog {
+  background: radial-gradient(ellipse at 50% 58%, rgba(215, 222, 230, 0.12) 0%, rgba(215, 222, 230, 0.55) 55%, rgba(215, 222, 230, 0.8) 100%);
+}
+/* Cloud: a grey veil. */
+.loota-cloud { background-color: rgba(70, 80, 95, 0.14); }
+/* Snow: slow flakes. */
+.loota-snow {
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.9) 1.5px, transparent 2px),
+    radial-gradient(circle, rgba(255, 255, 255, 0.7) 1px, transparent 1.5px);
+  background-size: 90px 90px, 60px 60px;
+  animation: loota-snow-fall 6s linear infinite;
+}
+@keyframes loota-snow-fall {
+  from { background-position: 0 0, 30px 0; }
+  to { background-position: 40px 90px, 0 60px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .loota-rain { animation: none; }
+  .loota-rain, .loota-snow, .loota-storm::after { animation: none; }
 }
 
 /* The lamp glows while it holds something new (design doc 7.4). */

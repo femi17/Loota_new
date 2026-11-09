@@ -4,6 +4,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { LootaLogo } from "@/components/Logo";
 import { keeperLook, normalizeLook } from "@/lib/avatar";
+import { daylight } from "@/game/clock";
+import { WEATHER_CREDIT, weatherDim, weatherIcon, weatherWords, type Weather } from "@/game/weather";
 import { ordinal } from "@/game/hunt";
 import { baseSpeed, type Mode } from "@/game/movement";
 import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
@@ -32,6 +34,8 @@ type Hunter = {
   inTrial: boolean;
   /** The vulcanizer walking back with them to change a flat (their name). */
   helper?: string | null;
+  /** The real weather where they are (their ~10 km square's, MET Norway). */
+  weather?: Weather | null;
   /** The device they play on now (claim_session): positions from any other are ignored. */
   session?: string | null;
 };
@@ -134,6 +138,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [slowWhy, setSlowWhy] = useState(0);
   /** The followed hunter fainted: the ambulance coming, the ride to hospital, the ward (owner, 9 Nov 2026). */
   const [careNote, setCareNote] = useState<string | null>(null);
+  /** The weather where the followed hunter is, drawn over the picture (owner, 9 Nov 2026). */
+  const [weatherShown, setWeatherShown] = useState<(Weather & { who: string; night: boolean; slowed: boolean }) | null>(null);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
   const viewRef = useRef(view);
   const autoRef = useRef(auto);
@@ -180,7 +186,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         center: [3.38, 6.52],
         zoom: 11,
         pitch: 45,
-        attributionControl: { compact: true },
+        attributionControl: { compact: true, customAttribution: WEATHER_CREDIT },
       });
       foldAttribution(map);
 
@@ -480,7 +486,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -529,6 +535,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       let careT = 0; // this frame's moment for visits (the server's clock, motionDelay behind)
       let careVan: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
       let careKey = "";
+      let skyAt = -Infinity;
+      let nightNow = false;
+      let weatherKey = "";
+      const serverNowFor = () => Date.now() + skew;
       // ---- The vulcanizer brought back to a flat (owner, 9 Nov 2026: "The vulcanizer, following you back to the vehicle,
       // should be implemented too"): walking a body length or two behind the hunter, along the way the hunter went, as
       // the game draws them (helperTick). When they joined and left is noted by the server's clock as each poll sees it,
@@ -711,6 +721,21 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         // Toward the measured delay: catching up at 10% fast, falling back at up to 25% slow (never a jump)
         const toGoal = delayGoal - motionDelay;
         motionDelay += Math.max(-100 * dt, Math.min(250 * dt, toGoal));
+        if (t - skyAt > 1000) {
+          skyAt = t;
+          const here = followPos ?? { lng: map.getCenter().lng, lat: map.getCenter().lat };
+          const followedWeather = viewRef.current.kind === "follow" ? (s.hunters.find((x) => viewRef.current.kind === "follow" && x.id === viewRef.current.id)?.weather ?? null) : null;
+          const light = daylight(serverNowFor(), here.lng, here.lat) * weatherDim(followedWeather);
+          const dark = 1 - light;
+          if (map.getLayer("b-night-ground")) {
+            // Dusk and dawn a deep purple; full night a dark blue (as the game's)
+            map.setPaintProperty("b-night-ground", "fill-color", light > 0.15 ? "#2B2450" : "#0B1630");
+            map.setPaintProperty("b-night-ground", "fill-opacity", 0.62 * dark);
+            map.setPaintProperty("b-night-dim", "fill-opacity", 0.22 * dark);
+          }
+          layer.setDaylight(light);
+          nightNow = light < 0.35;
+        }
         builtThisFrame = false;
         // Every hunter where they were a moment ago, between the positions heard; on a trip, where the trip is.
         const serverNow = drawnWall + skew;
@@ -845,6 +870,15 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             // As the hunter's own laptop shows them: walking or on their own bicycle, motorbike or car, the hunter in
             // 3D; on a bus, train, taxi or plane, that vehicle as the game draws it.
             const care = careAt(h.id, careT);
+            {
+              const w = h.weather ?? null;
+              const onFoot = !ride && (live.get(h.id)?.mode ?? h.mode ?? "walk") !== "car" && (live.get(h.id)?.mode ?? h.mode) !== "motorbike";
+              const key = w ? `${h.id}|${w.kind}|${w.heavy}|${w.temp}|${nightNow}|${onFoot}` : "";
+              if (key !== weatherKey) {
+                weatherKey = key;
+                setWeatherShown(w ? { ...w, who: h.name, night: nightNow, slowed: onFoot && (w.kind === "rain" || w.kind === "storm") } : null);
+              }
+            }
             const inAmbulance = care?.phase === "riding";
             const key = ride ? `${h.id}:${ride}` : inAmbulance ? `${h.id}:ambulance` : h.id;
             if (!followed || followed.id !== key) {
@@ -1134,6 +1168,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             careVan = null;
           }
           dropHelper();
+          if (weatherKey) {
+            weatherKey = "";
+            setWeatherShown(null);
+          }
           trail = null;
           if (careKey) {
             careKey = "";
@@ -1173,6 +1211,19 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
 
       map.on("load", () => {
         styleMapForGame(map);
+        {
+          const styleLayers = map.getStyle().layers;
+          let lastRoad = -1;
+          styleLayers.forEach((l, i) => {
+            if (l.type === "line" && /^(road|bridge|tunnel)_/.test(l.id)) lastRoad = i;
+          });
+          const firstSymbol = styleLayers.slice(lastRoad + 1).find((l) => l.type === "symbol")?.id;
+          const firstRoad = styleLayers.find((l) => l.type === "line" && /^(road|bridge|tunnel)_/.test(l.id))?.id;
+          if (firstRoad && map.getLayer("building")) map.moveLayer("building", firstRoad);
+          map.addSource("b-night", { type: "geojson", data: { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] } } });
+          map.addLayer({ id: "b-night-ground", type: "fill", source: "b-night", paint: { "fill-color": "#0B1630", "fill-opacity": 0 } }, firstRoad);
+          map.addLayer({ id: "b-night-dim", type: "fill", source: "b-night", paint: { "fill-color": "#0B1630", "fill-opacity": 0 } }, firstSymbol);
+        }
         map.addSource("b-traffic", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
         map.addLayer({
           id: "b-traffic",
@@ -1222,6 +1273,24 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         <div className="absolute inset-0 z-10" aria-label="The key's place">
           <KeyWorldView key={keyWorld.id} data={keyWorld.data} look={keyWorld.look} playback={keyWorld.playback} />
         </div>
+      )}
+      {/* The weather where the followed hunter is (owner, 9 Nov 2026): drawn as on their screen, and a chip */}
+      {weatherShown && view.kind === "follow" && (
+        <>
+          {(weatherShown.kind === "rain" || weatherShown.kind === "storm") && (
+            <div className={`loota-rain pointer-events-none absolute inset-0 z-[5] ${weatherShown.kind === "storm" ? "loota-storm" : weatherShown.heavy ? "loota-rain-heavy" : ""}`} aria-hidden="true" />
+          )}
+          {weatherShown.kind === "fog" && <div className="loota-fog pointer-events-none absolute inset-0 z-[5]" aria-hidden="true" />}
+          {weatherShown.kind === "cloudy" && <div className="loota-cloud pointer-events-none absolute inset-0 z-[5]" aria-hidden="true" />}
+          {weatherShown.kind === "snow" && <div className="loota-snow pointer-events-none absolute inset-0 z-[5]" aria-hidden="true" />}
+          <div className="pointer-events-none absolute left-4 top-28 z-20" role="status" aria-label="Weather">
+            <span className="flex items-center gap-2 rounded-full bg-ink/85 px-3 py-1.5 text-sm font-bold text-paper shadow-xl">
+              <span aria-hidden="true">{weatherIcon(weatherShown, weatherShown.night)}</span>
+              {weatherWords(weatherShown)} where {weatherShown.who} is{weatherShown.temp != null ? ` · ${Math.round(weatherShown.temp)}°C` : ""}
+              {weatherShown.slowed && <span className="text-gold">· {weatherShown.kind === "storm" ? "30" : "20"}% slower on foot or bike</span>}
+            </span>
+          </div>
+        </>
       )}
       {/* The followed hunter fainted: the ambulance, the ride, the ward (owner, 9 Nov 2026) */}
       {careNote && view.kind === "follow" && (

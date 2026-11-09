@@ -218,10 +218,6 @@ type HunterUpdate = {
   sid?: string;
   /** When it was sent, by the sender's clock (the broadcast measures speed between two). */
   t?: number;
-  /** Going along a drawn way (the live show only): which (sent as "way"), metres along it, and the speed (m/s). */
-  way?: number;
-  s?: number;
-  v?: number;
 };
 
 /** The Lamp's messenger (in purple, like the lamp's glow). */
@@ -2931,29 +2927,20 @@ export function GameMap({
        * hears it (owner, 3 Nov 2026: the broadcast's bus should be where the rider's own screen shows it); the hunters
        * around just see the hunter leave and arrive.
        */
-      // ---- The way, for the live show (owner, 9 Nov 2026: "since the users moves on auto now, we should looke for users
-      // actions, so we can really align the avatar on the correct path"). The hunter goes along the drawn way by
-      // themselves, so the show is sent that way (thinned; again every 15 s, for a broadcast opened later) and each
-      // position says how far along it they are and how fast: the broadcast draws them on that very line, measured the
-      // same way, instead of guessing the roads between positions.
-      let shownWay: { trip: Trip; id: number; route: import("@/game/geo").Route; seg: number; sentAt: number } | null = null;
-      function wayForShow(now: number): { way: number; s: number; v: number } | null {
-        if (!huntChannel || !trip || trip.straight) {
-          shownWay = null;
-          return null;
-        }
-        if (!shownWay || shownWay.trip !== trip) {
-          const pts = thinPath(trip.route.coords, 0.5).map(([x, y]) => [Math.round(x * 1e6) / 1e6, Math.round(y * 1e6) / 1e6] as [number, number]);
-          shownWay = { trip, id: Math.floor(Math.random() * 1e9), route: geo.buildRoute(pts), seg: 0, sentAt: -Infinity };
-        }
-        if (now - shownWay.sentAt > 15_000) {
-          shownWay.sentAt = now;
-          toShow("way", { id: playerId, way: shownWay.id, pts: shownWay.route.coords });
-        }
-        const at = directions.progressOn(shownWay.route, traveller.pos, shownWay.seg);
-        shownWay.seg = at.segment;
-        // Off it (a stop on the way, a scene): the broadcast follows the positions as before.
-        return at.off < 12 ? { way: shownWay.id, s: Math.round(at.s * 10) / 10, v: Math.round(traveller.v * 10) / 10 } : null;
+      // ---- The mirror (owner, 9 Nov 2026: "Can't we directly mirror what the user is doing on the screen, like user is
+      // controlling to screens but only one is shown to them… the movement should synchronize"): the hunter as their own
+      // screen draws them, 20 times a second (where, and which way they face), sent to the live show with each position
+      // (twice a second while moving). The broadcast plays it back a moment later between the very points drawn here:
+      // nothing to work out or guess, walking, riding, corners and stops as they were.
+      let mirror: [number, number, number, number][] = []; // [ms, lng, lat, heading]
+      let mirrorAt = 0;
+      function mirrorTick() {
+        if (!huntChannel) return;
+        const ms = Date.now();
+        if (ms - mirrorAt < 50) return;
+        mirrorAt = ms;
+        mirror.push([ms, Math.round(me.lng * 1e6) / 1e6, Math.round(me.lat * 1e6) / 1e6, Math.round((me.heading ?? traveller.heading) * 1000) / 1000]);
+        if (mirror.length > 40) mirror = mirror.slice(-40);
       }
 
       function announce(now: number, aboard = false) {
@@ -2984,7 +2971,11 @@ export function GameMap({
           sid: device.current ?? undefined,
           t: Date.now(),
         };
-        if (toLive) toShow("pos", { ...update, ...(aboard ? null : wayForShow(now)) });
+        if (toLive) {
+          // The recording since the last one, its times counted back from this position's
+          toShow("pos", { ...update, trail: mirror.map(([ms, x, y, h]) => [ms - update.t!, x, y, h]) });
+          mirror = mirror.slice(-1);
+        }
         if (!toArea) return;
         // Only over the open connection: a channel still joining would send each update as a web request of its own
         const area = areaChannels.get(key);
@@ -8292,6 +8283,7 @@ export function GameMap({
           t,
         );
         placeMe();
+        mirrorTick();
         marker.halo.scale.setScalar(1 + Math.sin(t * 4) * 0.1);
 
         // Spin the finds, and pick up anything within reach.

@@ -170,23 +170,21 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         nets.set(id, { net, centre: { ...pos }, mode, at: performance.now() });
         return net;
       };
-      // The way each hunter goes along by themselves (owner, 9 Nov 2026: "since the users moves on auto now, we should
-      // looke for users actions, so we can really align the avatar on the correct path"): sent by their game with how far
-      // along it they are and how fast; drawn on that very line, carried on at their speed between positions, never
-      // back a few metres for a late one. Without it (standing, off it, an older game): follow.ts as before.
-      const ways = new Map<string, { id: number; pts: [number, number][]; cum: number[] }>();
-      // Glided, not stepped (owner, 9 Nov 2026: "it looks back, then move, looks back, then move… just have a smooth
-      // gliding"): where they are is worked out by the time on the hunter's own device (when each position was sent, less
-      // the least delay seen), so a position that arrives late changes nothing; the drawn spot moves on at their speed
-      // and leans gently toward that, never back.
-      const onWay = new Map<string, { way: number; s: number; v: number; t: number; at: number; offset: number; drawnS: number | null; heading: number }>();
+      // The mirror (owner, 9 Nov 2026: "Can't we directly mirror what the user is doing on the screen, like user is
+      // controlling to screens but only one is shown to them"): each hunter's game records its own avatar as drawn, 20
+      // times a second, and sends the recording with each position. It's played back here MIRROR_DELAY_MS behind (by
+      // the hunter's own clock: when sent, less the least delay seen), between the very points their screen drew: no
+      // roads to work out, nothing to guess. A late batch only means a moment's hold on the last point drawn. Hunters
+      // without it (an older game): follow.ts as before.
+      const MIRROR_DELAY_MS = 700;
+      const mirrors = new Map<string, { pts: { t: number; lng: number; lat: number; heading: number }[]; offset: number; heard: number }>();
       const heard = (id: string, lng: number, lat: number) => {
         const at = { lng, lat };
         follows.set(id, follow.heard(follows.get(id) ?? null, at, performance.now(), netFor(id, at)));
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], onWay: [...onWay.keys()], zoom: map.getZoom() }), __broadcastMap: map, __broadcastWay: (id: string) => ways.get(id)?.pts ?? null });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], mirrored: [...mirrors.keys()], zoom: map.getZoom() }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       // Trips under way, by hunter: the route (continuous) and its length along the way, measured once.
@@ -208,29 +206,24 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         return !!l && Date.now() - l.at < LIVE_FRESH_MS;
       };
       const channel = supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
-      channel.on("broadcast", { event: "way" }, ({ payload }) => {
-        const p = payload as { id: string; way: number; pts: [number, number][] };
-        if (typeof p.way !== "number" || !Array.isArray(p.pts) || p.pts.length < 2) return;
-        if (ways.get(p.id)?.id === p.way) return; // sent again for a show opened later
-        ways.set(p.id, { id: p.way, pts: p.pts, cum: cumulativeOf(p.pts) });
-      });
       channel.on("broadcast", { event: "pos" }, ({ payload }) => {
-        const p = payload as { id: string; lng: number; lat: number; heading?: number; mode: Mode; sid?: string; t?: number; way?: number; s?: number; v?: number };
+        const p = payload as { id: string; lng: number; lat: number; heading?: number; mode: Mode; sid?: string; t?: number; trail?: [number, number, number, number][] };
         if (typeof p.lng !== "number" || typeof p.lat !== "number") return;
         const now = latest?.hunters.find((h) => h.id === p.id)?.session;
         if (p.sid && now && p.sid !== now) return;
         live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
         heard(p.id, p.lng, p.lat);
-        const w = ways.get(p.id);
-        if (w && typeof p.way === "number" && p.way === w.id && typeof p.s === "number") {
-          const o = onWay.get(p.id);
-          const same = o && o.way === p.way;
-          const sent = typeof p.t === "number" ? p.t : Date.now();
+        if (Array.isArray(p.trail) && typeof p.t === "number") {
+          const m = mirrors.get(p.id) ?? { pts: [], offset: Infinity, heard: 0 };
           // The hunter's clock against this one: the least delay seen (allowed to creep up, for clocks that drift)
-          const offset = o ? Math.min(o.offset + 5, Date.now() - sent) : Date.now() - sent;
-          if (same && sent < o.t) return; // older than one already heard (they can arrive out of order)
-          onWay.set(p.id, { way: p.way, s: p.s, v: p.v ?? 0, t: sent, at: performance.now(), offset, drawnS: same ? o.drawnS : null, heading: o?.heading ?? p.heading ?? 0 });
-        } else onWay.delete(p.id);
+          m.offset = Math.min(m.offset + 5, Date.now() - p.t);
+          for (const [d, lng, lat, heading] of p.trail) {
+            const ms = p.t + d;
+            if (!m.pts.length || ms > m.pts[m.pts.length - 1].t) m.pts.push({ t: ms, lng, lat, heading });
+          }
+          m.heard = performance.now();
+          mirrors.set(p.id, m);
+        }
       });
       channel.subscribe();
 
@@ -367,30 +360,25 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
             continue;
           }
-          // Going along their way: on it, where they are now (at their speed since the last position, at most 1.5 s on)
-          const ow = onWay.get(h.id);
-          const w = ways.get(h.id);
-          if (ow && w && w.id === ow.way && t - ow.at < (ow.v > 0.3 ? 4000 : 10_000)) {
-            const total = w.cum[w.cum.length - 1] ?? 0;
-            // Where they are now, by their own clock (at most 2 s on from the last position)
-            const since = Math.max(0, Math.min(2, (Date.now() - ow.offset - ow.t) / 1000));
-            const target = Math.min(total, ow.s + ow.v * since);
-            if (ow.drawnS === null || Math.abs(target - ow.drawnS) > 120) ow.drawnS = target;
+          // Mirrored: where their own screen drew them MIRROR_DELAY_MS ago, between the two points recorded either side
+          const mr = mirrors.get(h.id);
+          if (mr && mr.pts.length && t - mr.heard < 12_000) {
+            const T = Date.now() - mr.offset - MIRROR_DELAY_MS;
+            const pts = mr.pts;
+            while (pts.length > 2 && pts[1].t < T - 1000) pts.shift(); // played: let it go
+            let at: { lng: number; lat: number; heading: number };
+            const i = pts.findIndex((q) => q.t >= T);
+            if (i === 0) at = pts[0];
+            else if (i === -1) at = pts[pts.length - 1]; // the next batch is late: a moment on the last point drawn
             else {
-              // On at their speed, a little faster or slower to meet where they are: while they move, never under half
-              // their speed (a few metres ahead eases off, it doesn't stand and wait); stopped, it comes to a stop. Never back.
-              const v = ow.s >= total ? 0 : ow.v;
-              const pace = Math.max(v > 0.3 ? v * 0.5 : 0, Math.min(v * 1.6 + 2, v + (target - ow.drawnS) * 1.5));
-              ow.drawnS = Math.min(total, ow.drawnS + pace * dt);
+              const a = pts[i - 1], c = pts[i];
+              const k = (T - a.t) / Math.max(1, c.t - a.t);
+              const turn = ((c.heading - a.heading + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+              at = { lng: a.lng + (c.lng - a.lng) * k, lat: a.lat + (c.lat - a.lat) * k, heading: a.heading + turn * k };
             }
-            const { pos } = alongPath(w.pts, w.cum, ow.drawnS);
-            // Facing the way a few metres on: bends turn them smoothly, not in a snap at each corner
-            const a = alongPath(w.pts, w.cum, Math.max(0, ow.drawnS - 3)).pos, b = alongPath(w.pts, w.cum, Math.min(total, ow.drawnS + 4)).pos;
-            if (a[0] !== b[0] || a[1] !== b[1]) ow.heading = geo.turnTowards(ow.heading, geo.headingOf(a, b), Math.min(1, 5 * dt));
             const cur = shown.get(h.id);
-            const at = { lng: pos[0], lat: pos[1], heading: ow.heading };
-            if (!cur) shown.set(h.id, at);
-            else Object.assign(cur, at);
+            if (!cur) shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
+            else Object.assign(cur, { lng: at.lng, lat: at.lat, heading: at.heading });
             continue;
           }
           const fw = follows.get(h.id);

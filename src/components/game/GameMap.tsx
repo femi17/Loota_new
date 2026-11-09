@@ -2857,13 +2857,6 @@ export function GameMap({
       let myArea = "";
       let lastAnnounce = 0;
       const MAX_SHOWN = 25;
-      // Hunters in a hunt also announce on the hunt's own channel, which the live
-      // show's broadcast screen listens to (a hunt covers a whole city: too many areas).
-      // Sent without joining it (httpSend): only the broadcast screen listens, so the hunters in a hunt don't all
-      // receive each other's positions.
-      const huntChannel = huntId ? supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } }) : null;
-      const toShow = (event: string, payload: object) => void huntChannel?.httpSend(event, payload).catch(() => {});
-      let lastShown = 0;
 
       function joinAreas(ax: number, ay: number) {
         const want = new Set<string>();
@@ -2927,32 +2920,129 @@ export function GameMap({
        * hears it (owner, 3 Nov 2026: the broadcast's bus should be where the rider's own screen shows it); the hunters
        * around just see the hunter leave and arrive.
        */
-      // ---- The mirror (owner, 9 Nov 2026: "Can't we directly mirror what the user is doing on the screen, like user is
-      // controlling to screens but only one is shown to them… the movement should synchronize"): the hunter as their own
-      // screen draws them, 20 times a second (where, and which way they face), sent to the live show with each position
-      // (twice a second while moving). The broadcast plays it back a moment later between the very points drawn here:
-      // nothing to work out or guess, walking, riding, corners and stops as they were.
-      let mirror: [number, number, number, number][] = []; // [ms, lng, lat, heading]
-      let mirrorAt = 0;
-      function mirrorTick() {
-        if (!huntChannel) return;
+      // ---- Motion for the broadcast (owner, 9 Nov 2026: "If a user picks a end location, we store that, and then travel
+      // there on the broadcast… it is the action of the user on the frontend we use in the broadcast"; "We don't need frame
+      // by frame, that makes it glitch"; "make sure this is not eating the supabase realtime usage"). As the original Loota
+      // did (the route, when they set off, how long it takes, played by the same function on both screens): the way they
+      // go along, stored once, and motion keyframes (when, by the server's clock; how far along it; the speed), written
+      // only when going on at the last keyframe's speed would put them more than a metre off where they really are (as
+      // multiplayer games do: setting off, a red light, a jam, sprint, slowing when tired) and every 10 s, saved in a
+      // batch at most once a second by motion_put (no Realtime). The broadcast plays them a few seconds behind, between
+      // keyframes it already has: smooth, and where they really were.
+      // On a bus, train or plane, the way is the vehicle's own line and the keyframes how far along it the vehicle is (its
+      // stops, lights and jams as on this screen: owner, 3 Nov 2026: "the bus on the broadcast is not like the bus in the
+      // users"); `scale`: that line thinned for saving, against the full one the ride measures along.
+      type MotionWay = { src: object; id: number; route: import("@/game/geo").Route; seg: number; sent: boolean; scale: number };
+      let rideProgress: { s: number; at: number; v: number } | null = null; // the vehicle's speed, from its progress
+      let motionWay: MotionWay | null = null;
+      let motionKeys: [number, number, number][] = []; // [device ms, metres along, m/s], waiting to be saved
+      let lastKey: { at: number; s: number; v: number } | null = null; // device ms
+      let motionSaving = false;
+      let motionSavedAt = 0;
+      let motionOff = false; // the server has been told they're not on a way
+      let motionAt = 0;
+      // The server's ms − this device's ms: from the quickest of the first replies, then only nudged (2 ms a reply), so the
+      // keyframes' times never jump (at a motorbike's pace on screen, 100 ms is 8 m)
+      let serverSkew: number | null = null;
+      let skewRtt = Infinity;
+      let skewReplies = 0;
+      async function motionSave(way: number | null, pts: [number, number][] | null, keys: [number, number, number][]) {
+        motionSaving = true;
+        const t0 = Date.now();
+        const sent = serverSkew === null ? keys : keys.map(([t, m, v]) => [t + serverSkew!, m, v] as [number, number, number]);
+        const { data } = await supabase.rpc("motion_put", { p_way: way, p_pts: pts, p_keys: sent, p_mode: traveller.mode });
+        const t1 = Date.now();
+        const r = data as { ok?: boolean; reason?: string; now?: number } | null;
+        if (typeof r?.now === "number") {
+          const sample = r.now - (t0 + t1) / 2;
+          skewReplies++;
+          if (serverSkew === null || (skewReplies <= 5 && t1 - t0 < skewRtt)) serverSkew = sample;
+          else if (t1 - t0 < skewRtt * 1.5) serverSkew += Math.max(-2, Math.min(2, sample - serverSkew));
+          skewRtt = Math.min(skewRtt, t1 - t0);
+        }
+        motionSaving = false;
+        motionSavedAt = performance.now();
+        return r;
+      }
+      // The clock first (and any way left from before cleared)
+      if (huntId) void motionSave(null, null, []).then(() => (motionOff = true));
+      function motionTick(now: number) {
+        if (!huntId || now - motionAt < 100 || serverSkew === null) return;
+        motionAt = now;
+        const src: object | null = ride ?? (trip && !trip.straight ? trip : null);
+        if (!src) {
+          if (!motionOff && !motionSaving) {
+            motionOff = true;
+            motionWay = null;
+            lastKey = null;
+            motionKeys = [];
+            void motionSave(null, null, []);
+          }
+          return;
+        }
+        if (!motionWay || motionWay.src !== src) {
+          const full = ride ? (ride.trip.path as [number, number][]) : trip!.route.coords;
+          // Thinned to keep it light (a long-distance bus's line is hundreds of km)
+          let pts = thinPath(full, ride ? 2 : 0.5);
+          for (let tol = 5; pts.length > 3500; tol *= 2) pts = thinPath(full, tol);
+          pts = pts.map(([x, y]) => [Math.round(x * 1e6) / 1e6, Math.round(y * 1e6) / 1e6] as [number, number]);
+          const route = geo.buildRoute(pts);
+          const fullM = ride ? (ride.cum[ride.cum.length - 1] ?? 0) : 0;
+          motionWay = { src, id: Math.floor(Math.random() * 1e15), route, seg: 0, sent: false, scale: ride && fullM > 0 ? route.total / fullM : 1 };
+          lastKey = null;
+          motionKeys = [];
+          rideProgress = null;
+        }
         const ms = Date.now();
-        if (ms - mirrorAt < 50) return;
-        mirrorAt = ms;
-        mirror.push([ms, Math.round(me.lng * 1e6) / 1e6, Math.round(me.lat * 1e6) / 1e6, Math.round((me.heading ?? traveller.heading) * 1000) / 1000]);
-        if (mirror.length > 40) mirror = mirror.slice(-40);
+        let along: number;
+        let v: number;
+        if (ride) {
+          along = ride.s * motionWay.scale;
+          // Its speed from its progress, smoothed (the ride moves it by its own timetable)
+          const inst = rideProgress && ms > rideProgress.at ? (along - rideProgress.s) / ((ms - rideProgress.at) / 1000) : 0;
+          v = rideProgress ? rideProgress.v + (inst - rideProgress.v) * 0.5 : 0;
+          rideProgress = { s: along, at: ms, v };
+        } else {
+          const at = directions.progressOn(motionWay.route, traveller.pos, motionWay.seg);
+          motionWay.seg = at.segment;
+          if (at.off > 15) return; // off it for a moment (a new way comes when it's planned again)
+          along = at.s;
+          v = traveller.v;
+        }
+        // Where the broadcast will have them (on at the last keyframe's speed): a new one once that's a metre out
+        const guess = lastKey ? lastKey.s + lastKey.v * ((ms - lastKey.at) / 1000) : 0;
+        const changed =
+          !lastKey ||
+          (v < 0.3) !== (lastKey.v < 0.3) || // stopped, or moving again
+          Math.abs(along - guess) > 1 ||
+          ms - lastKey.at > 10_000;
+        // Stopping or moving on is saved at once (the broadcast must have it before it plays that moment); the rest at
+        // most once a second
+        const urgent = !!lastKey && (v < 0.3) !== (lastKey.v < 0.3);
+        if (changed) {
+          motionKeys.push([ms, Math.round(along * 10) / 10, Math.round(v * 10) / 10]);
+          lastKey = { at: ms, s: along, v };
+        }
+        if (motionSaving || !motionKeys.length) return;
+        if (!motionWay.sent || urgent || now - motionSavedAt > 1000) {
+          const way = motionWay;
+          const keys = motionKeys;
+          motionKeys = [];
+          motionOff = false;
+          void motionSave(way.id, way.sent ? null : (way.route.coords as [number, number][]), keys).then((r) => {
+            if (r?.ok) way.sent = true;
+            else if (r?.reason === "way") way.sent = false; // the server lost it: the way again with the next ones
+          });
+        }
       }
 
       function announce(now: number, aboard = false) {
         if (Date.now() < cloakedUntil) return;
         const moving = aboard || traveller.v > 0.5;
-        // The hunters around: once a second while moving. The live show: twice a second, stamped with this device's
-        // clock, so it can draw the hunter where they are now, at their speed.
+        // The hunters around: once a second while moving (the live show reads the hunter's motion instead: motionTick).
         const toArea = !aboard && now - lastAnnounce >= (moving ? 1000 : 8000);
-        const toLive = !!huntChannel && now - lastShown >= (moving ? 500 : 8000);
-        if (!toArea && !toLive) return;
-        if (toArea) lastAnnounce = now;
-        if (toLive) lastShown = now;
+        if (!toArea) return;
+        lastAnnounce = now;
         const { ax, ay } = liveArea(traveller.pos.lng, traveller.pos.lat);
         const key = `${ax}_${ay}`;
         if (key !== myArea) {
@@ -2971,12 +3061,6 @@ export function GameMap({
           sid: device.current ?? undefined,
           t: Date.now(),
         };
-        if (toLive) {
-          // The recording since the last one, its times counted back from this position's
-          toShow("pos", { ...update, trail: mirror.map(([ms, x, y, h]) => [ms - update.t!, x, y, h]) });
-          mirror = mirror.slice(-1);
-        }
-        if (!toArea) return;
         // Only over the open connection: a channel still joining would send each update as a web request of its own
         const area = areaChannels.get(key);
         if (area?.state !== "joined") return;
@@ -2993,7 +3077,6 @@ export function GameMap({
               lat: update.lat + (metres * Math.cos(angle)) / 110574,
             };
             void area.send({ type: "broadcast", event: "pos", payload: copy });
-            toShow("pos", copy);
           }
         }
       }
@@ -7485,7 +7568,6 @@ export function GameMap({
         if (!wasCloaked && Date.now() < cloakedUntil) {
           // Vanish from everyone's map straight away.
           sayBye();
-          toShow("bye", { id: playerId });
         }
         if (Date.now() < mirroredUntil) lastAnnounce = 0;
         showWonders();
@@ -8283,7 +8365,7 @@ export function GameMap({
           t,
         );
         placeMe();
-        mirrorTick();
+        motionTick(now);
         marker.halo.scale.setScalar(1 + Math.sin(t * 4) * 0.1);
 
         // Spin the finds, and pick up anything within reach.
@@ -8505,7 +8587,6 @@ export function GameMap({
         document.removeEventListener("visibilitychange", leaving);
         window.clearInterval(clanTimer);
         for (const channel of areaChannels.values()) void supabase.removeChannel(channel);
-        if (huntChannel) void supabase.removeChannel(huntChannel);
         areaChannels.clear();
         window.removeEventListener("loota:hunt-changed", pulseSoon);
         window.removeEventListener("loota:key-earned", keyWon);

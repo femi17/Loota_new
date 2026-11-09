@@ -130,23 +130,17 @@ try {
   if (corner.error) throw new Error(corner.error);
   console.log(`a corner: the straight line between the two spots passes ${corner.across} m from any road`);
 
-  // The hunter's positions, as their game sends them on the hunt's channel.
-  const h = await signedIn(hunter);
-  sender = h.c.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
-  await new Promise((resolve) => sender.subscribe((st) => st === "SUBSCRIBED" && resolve()));
-  const send = (p) => sender.send({ type: "broadcast", event: "pos", payload: { id: hunter.id, lng: p[0], lat: p[1], mode: "walk", t: Date.now() } });
-  for (let i = 0; i < 6; i++) {
-    await send(corner.a);
-    await wait(500);
-  }
-  await wait(1500);
+  // The hunter's saved spots (a hunter off any way: standing, or at a key's place): the broadcast reads them every few
+  // seconds and follows them along the roads.
+  const save = (p) => admin.from("player_positions").update({ lng: p[0], lat: p[1], updated_at: new Date().toISOString() }).eq("user_id", hunter.id);
+  await save(corner.a);
+  await wait(9000);
   // Round the corner, after a gap: the broadcast catches up.
-  await send(corner.b);
+  await save(corner.b);
   const samples = [];
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 100; i++) {
     samples.push(await page.evaluate((id) => window.__broadcastShown?.()[id] ?? null, hunter.id));
-    if (i % 10 === 9) await send(corner.b);
-    await wait(50);
+    await wait(80);
   }
   const off = await page.evaluate((list) => {
     const map = window.__broadcastMap;

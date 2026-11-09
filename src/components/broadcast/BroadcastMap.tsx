@@ -170,23 +170,81 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         nets.set(id, { net, centre: { ...pos }, mode, at: performance.now() });
         return net;
       };
-      // The mirror (owner, 9 Nov 2026: "Can't we directly mirror what the user is doing on the screen, like user is
-      // controlling to screens but only one is shown to them"): each hunter's game records its own avatar as drawn, 20
-      // times a second, and sends the recording with each position. It's played back here MIRROR_DELAY_MS behind (by
-      // the hunter's own clock: when sent, less the least delay seen), between the very points their screen drew: no
-      // roads to work out, nothing to guess. A late batch only means a moment's hold on the last point drawn. Hunters
-      // without it (an older game): follow.ts as before.
-      const MIRROR_DELAY_MS = 700;
-      const mirrors = new Map<string, { pts: { t: number; lng: number; lat: number; heading: number }[]; offset: number; heard: number }>();
+      // Motion (owner, 9 Nov 2026: "If a user picks a end location, we store that, and then travel there on the broadcast,
+      // it is the action of the user on the frontend we use… It should have a smooth movement for viewers"; "make sure this
+      // is not eating the supabase realtime usage"). Each hunter's game saves the way they go along (once) and motion
+      // keyframes (when, by the server's clock; how far along it; the speed) only when their speed changes and every 10 s.
+      // Read here by a light poll (no Realtime) and played MOTION_DELAY_MS behind, like live TV: by then the keyframes on
+      // either side are already here, so they glide between them, exactly where they were, never corrected. Hunters
+      // without a way (standing, the key's place): their saved spots, along the roads (follow.ts).
+      const MOTION_DELAY_MS = 6000;
+      const MOTION_POLL_MS = 1500;
+      type Key = [number, number, number]; // [server ms, metres along, m/s]
+      const motions = new Map<string, { way: number; keys: Key[]; ended: boolean; drawnS: number | null; heading: number }>();
+      const ways = new Map<string, { id: number; pts: [number, number][]; cum: number[] }>();
+      const wayAsked = new Set<string>();
+      // The server's ms − this page's ms: from the quickest of the first replies, then only nudged (2 ms a reply), so the
+      // playback never jumps
+      let motionSkew: number | null = null;
+      let motionRtt = Infinity;
+      let motionReplies = 0;
+      async function pollMotion() {
+        const t0 = Date.now();
+        const { data } = await supabase.rpc("broadcast_motion", { p_hunt: huntId });
+        const t1 = Date.now();
+        const r = data as { now: number; hunters: { id: string; way: number; keys: Key[]; mode: Mode }[] } | null;
+        if (disposed || !r) return;
+        const sample = r.now - (t0 + t1) / 2;
+        motionReplies++;
+        if (motionSkew === null || (motionReplies <= 5 && t1 - t0 < motionRtt)) motionSkew = sample;
+        else if (t1 - t0 < motionRtt * 1.5) motionSkew += Math.max(-2, Math.min(2, sample - motionSkew));
+        motionRtt = Math.min(motionRtt, t1 - t0);
+        const seen = new Set<string>();
+        for (const m of r.hunters) {
+          seen.add(m.id);
+          const known = motions.get(m.id);
+          if (!known || known.way !== m.way) motions.set(m.id, { way: m.way, keys: m.keys, ended: false, drawnS: null, heading: known?.heading ?? 0 });
+          else Object.assign(known, { keys: m.keys, ended: false });
+          if (ways.get(m.id)?.id !== m.way && !wayAsked.has(`${m.id}:${m.way}`)) {
+            wayAsked.add(`${m.id}:${m.way}`);
+            void supabase.rpc("broadcast_way", { p_hunt: huntId, p_user: m.id }).then(({ data: w }) => {
+              const way = w as { way: number; pts: [number, number][] } | null;
+              if (!disposed && way?.pts && way.pts.length > 1) ways.set(m.id, { id: way.way, pts: way.pts, cum: cumulativeOf(way.pts) });
+            });
+          }
+        }
+        // A way done: played on to its end (it's a few seconds behind), then let go
+        for (const [id, m] of motions) if (!seen.has(id)) m.ended = true;
+      }
+      void pollMotion();
+      const motionTimer = window.setInterval(() => void pollMotion(), MOTION_POLL_MS);
+      /**
+       * Where a hunter is along their way at server time `T` (metres), and their speed then (m/s): between the keyframes
+       * either side; beyond the last, on at its speed (the hunter's game saves a new one before that's a metre out).
+       */
+      const alongAt = (keys: Key[], T: number): { s: number; v: number } | null => {
+        if (!keys.length) return null;
+        if (T <= keys[0][0]) return { s: keys[0][1], v: 0 };
+        const i = keys.findIndex((k) => k[0] >= T);
+        if (i === -1) {
+          const last = keys[keys.length - 1];
+          const on = Math.min(12, (T - last[0]) / 1000);
+          return { s: last[1] + last[2] * on, v: on < 12 ? last[2] : 0 };
+        }
+        const a = keys[i - 1], b = keys[i];
+        const v = (b[1] - a[1]) / Math.max(0.001, (b[0] - a[0]) / 1000);
+        return { s: a[1] + (v * (T - a[0])) / 1000, v };
+      };
       const heard = (id: string, lng: number, lat: number) => {
         const at = { lng, lat };
         follows.set(id, follow.heard(follows.get(id) ?? null, at, performance.now(), netFor(id, at)));
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, trips: [...routes.keys()], mirrored: [...mirrors.keys()], zoom: map.getZoom() }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
+      let drawnWall = Date.now(); // …by the wall clock
       // Trips under way, by hunter: the route (continuous) and its length along the way, measured once.
       let skew = 0; // the server's clock minus this one
       const routes = new Map<string, { key: string; trip: Trip; path: [number, number][]; cum: number[] }>();
@@ -205,28 +263,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const l = live.get(id);
         return !!l && Date.now() - l.at < LIVE_FRESH_MS;
       };
-      const channel = supabase.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
-      channel.on("broadcast", { event: "pos" }, ({ payload }) => {
-        const p = payload as { id: string; lng: number; lat: number; heading?: number; mode: Mode; sid?: string; t?: number; trail?: [number, number, number, number][] };
-        if (typeof p.lng !== "number" || typeof p.lat !== "number") return;
-        const now = latest?.hunters.find((h) => h.id === p.id)?.session;
-        if (p.sid && now && p.sid !== now) return;
-        live.set(p.id, { lng: p.lng, lat: p.lat, mode: p.mode, at: Date.now() });
-        heard(p.id, p.lng, p.lat);
-        if (Array.isArray(p.trail) && typeof p.t === "number") {
-          const m = mirrors.get(p.id) ?? { pts: [], offset: Infinity, heard: 0 };
-          // The hunter's clock against this one: the least delay seen (allowed to creep up, for clocks that drift)
-          m.offset = Math.min(m.offset + 5, Date.now() - p.t);
-          for (const [d, lng, lat, heading] of p.trail) {
-            const ms = p.t + d;
-            if (!m.pts.length || ms > m.pts[m.pts.length - 1].t) m.pts.push({ t: ms, lng, lat, heading });
-          }
-          m.heard = performance.now();
-          mirrors.set(p.id, m);
-        }
-      });
-      channel.subscribe();
-
       // ---- The show's state, every few seconds; new events make a banner.
       const seen = new Set<string>();
       let first = true;
@@ -347,39 +383,52 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (!s) return;
 
         drawnAt = t;
+        drawnWall = Date.now(); // one clock for the whole frame: everyone's spot is for this moment
         builtThisFrame = false;
         // Every hunter where they were a moment ago, between the positions heard; on a trip, where the trip is.
-        const serverNow = Date.now() + skew;
+        const serverNow = drawnWall + skew;
         for (const h of s.hunters) {
           // On a trip: where the game says the bus, train or plane is (it sends that live, by its own timetable of
           // stops, lights and jams); only without that, along the route by the clock.
           const r = tripOf(h.id);
           const l = live.get(h.id);
-          if (r && !(l && Date.now() - l.at < 4000)) {
+          // (with their motion, the vehicle as on their screen, below; without it, along its line by the clock)
+          if (r && !motions.has(h.id)) {
             const at = tripAt(r, serverNow);
             shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
             continue;
           }
-          // Mirrored: where their own screen drew them MIRROR_DELAY_MS ago, between the two points recorded either side
-          const mr = mirrors.get(h.id);
-          if (mr && mr.pts.length && t - mr.heard < 12_000) {
-            const T = Date.now() - mr.offset - MIRROR_DELAY_MS;
-            const pts = mr.pts;
-            while (pts.length > 2 && pts[1].t < T - 1000) pts.shift(); // played: let it go
-            let at: { lng: number; lat: number; heading: number };
-            const i = pts.findIndex((q) => q.t >= T);
-            if (i === 0) at = pts[0];
-            else if (i === -1) at = pts[pts.length - 1]; // the next batch is late: a moment on the last point drawn
-            else {
-              const a = pts[i - 1], c = pts[i];
-              const k = (T - a.t) / Math.max(1, c.t - a.t);
-              const turn = ((c.heading - a.heading + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
-              at = { lng: a.lng + (c.lng - a.lng) * k, lat: a.lat + (c.lat - a.lat) * k, heading: a.heading + turn * k };
+          // Going along their way: where they were MOTION_DELAY_MS ago, between the keyframes either side
+          const mo = motions.get(h.id);
+          const mw = ways.get(h.id);
+          if (mo && mw && mw.id === mo.way && motionSkew !== null) {
+            const T = drawnWall + motionSkew - MOTION_DELAY_MS;
+            const last = mo.keys[mo.keys.length - 1];
+            if (mo.ended && (!last || T > last[0] + 3000)) {
+              motions.delete(h.id); // played to its end: their saved spot from here
+            } else {
+              const total = mw.cum[mw.cum.length - 1] ?? 0;
+              // Where they were by time alone (as the original Loota's simulateTravelTick), never by adding up frames: the
+              // same at any frame rate. Smoothed over a quarter of a second either side (it's played seconds behind, so
+              // that's already here): a phone that draws in uneven steps glides here; a real stop is still a stop.
+              let sum = 0, weight = 0;
+              for (const [dtMs, w] of [[-250, 1], [-125, 2], [0, 3], [125, 2], [250, 1]] as const) {
+                sum += w * Math.min(total, Math.max(0, alongAt(mo.keys, T + dtMs)?.s ?? 0));
+                weight += w;
+              }
+              const want = sum / weight;
+              // Never back (a new start, or far out: there at once)
+              mo.drawnS = mo.drawnS === null || want > mo.drawnS || mo.drawnS - want > 30 ? want : mo.drawnS;
+              const { pos } = alongPath(mw.pts, mw.cum, mo.drawnS);
+              const a = alongPath(mw.pts, mw.cum, Math.max(0, mo.drawnS - 3)).pos, b = alongPath(mw.pts, mw.cum, Math.min(total, mo.drawnS + 4)).pos;
+              if (a[0] !== b[0] || a[1] !== b[1]) mo.heading = geo.turnTowards(mo.heading, geo.headingOf(a, b), Math.min(1, 5 * dt));
+              const at = { lng: pos[0], lat: pos[1], heading: mo.heading };
+              const cur = shown.get(h.id);
+              if (!cur) shown.set(h.id, at);
+              else Object.assign(cur, at);
+              follows.delete(h.id); // its saved spots start afresh after
+              continue;
             }
-            const cur = shown.get(h.id);
-            if (!cur) shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
-            else Object.assign(cur, { lng: at.lng, lat: at.lat, heading: at.heading });
-            continue;
           }
           const fw = follows.get(h.id);
           if (!fw) continue;
@@ -536,7 +585,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         window.clearInterval(pollTimer);
         window.clearInterval(autoTimer);
         window.clearTimeout(bannerTimer);
-        void supabase.removeChannel(channel);
+        window.clearInterval(motionTimer);
         map.remove();
       };
     })().catch(() => setFailed(true));

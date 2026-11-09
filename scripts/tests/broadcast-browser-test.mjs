@@ -98,44 +98,45 @@ try {
   check("a Lamp prize", all.includes(`${names[b.id]} won the Lamp's prize at Tejuosho Market!`));
   if (lamp) await admin.from("detours").delete().eq("id", lamp.id);
 
-  // ---- Smooth movement (owner, 3 Nov 2026: "the movement on there leaps like a frog"): a hunter riding east, their
-  // position heard once a second like the game sends it (about 50 m apart at the game's speed), glides on the screen:
-  // it moves in almost every tenth of a second, at an even pace, instead of leaping and waiting.
-  const live = c.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
-  await new Promise((resolve) => live.subscribe((status) => status === "SUBSCRIBED" && resolve()));
-  // As the game sends it now: twice a second, stamped with the sender's clock.
-  const rideFrom = Date.now();
+  // ---- Smooth movement (owner, 3 Nov 2026: "the movement on there leaps like a frog"; 9 Nov: "IT should have a smooth
+  // movement for viewers"): a hunter riding east at 50 m/s, their game saving the way and motion keyframes as it does
+  // (motion_put, by the server's clock), glides on the screen a few seconds behind: moving in almost every frame, at an
+  // even pace, exactly where they were then.
+  const bc = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { auth: { persistSession: false } });
+  await bc.auth.signInWithPassword({ email: b.email, password: b.password });
+  const t0 = Date.now();
+  const clock = (await bc.rpc("motion_put", { p_way: null, p_pts: null, p_keys: [], p_mode: "bicycle" })).data;
+  const skew = clock.now - (t0 + Date.now()) / 2; // the server's ms − this computer's
   const kx = 111320 * Math.cos((6.502 * Math.PI) / 180);
-  const truth = (at) => 3.3950 + (50 * (at - rideFrom)) / 1000 / kx; // where the rider really is at a moment
+  const lineAt = (m) => [3.3950 + m / kx, 6.502];
+  const line = Array.from({ length: 41 }, (_, i) => lineAt(i * 100)); // 4 km east
+  const rideFrom = Date.now() + skew;
+  const truth = (serverMs) => 50 * Math.max(0, (serverMs - rideFrom) / 1000); // metres along, at a moment (server's clock)
+  await bc.rpc("motion_put", { p_way: 4242, p_pts: line, p_keys: [[Math.round(rideFrom), 0, 50]], p_mode: "bicycle" });
   const ride = setInterval(() => {
-    const now = Date.now();
-    void live.send({ type: "broadcast", event: "pos", payload: { id: b.id, lng: truth(now), lat: 6.502, mode: "bicycle", t: now } });
-  }, 500);
-  await wait(4000); // a few positions heard first
+    const at = Date.now() + skew;
+    void bc.rpc("motion_put", { p_way: 4242, p_pts: null, p_keys: [[Math.round(at), Math.round(truth(at) * 10) / 10, 50]], p_mode: "bicycle" });
+  }, 2000);
+  await wait(10000); // past its few seconds behind
   const track = [];
-  for (let i = 0; i < 50; i++) {
-    const p = await page.evaluate((id) => { const all = window.__broadcastShown?.(); return all?.[id] ? { ...all[id], t: all.drawnAt, wall: Date.now() } : null; }, b.id);
-    if (p) track.push(p);
-    await wait(100);
+  let drawn = null;
+  for (let i = 0; i < 120 && track.length < 60; i++) {
+    const p = await page.evaluate((id) => { const all = window.__broadcastShown?.(); return all?.[id] ? { ...all[id], wall: all.drawnWall, delay: all.delay } : null; }, b.id);
+    if (p && p.wall !== drawn) { track.push(p); drawn = p.wall; }
+    await wait(60);
   }
   clearInterval(ride);
-  await c.removeChannel(live);
-  const steps = track.slice(1).map((p, i) => Math.hypot((p.lng - track[i].lng) * 111320 * Math.cos((6.502 * Math.PI) / 180), (p.lat - track[i].lat) * 110574));
-  const speedsInOrder = track.slice(1).map((p, i) => (p.t > track[i].t ? steps[i] / ((p.t - track[i].t) / 1000) : null)).filter((v) => v !== null);
-  if (process.env.SHOW_SPEEDS) console.log(speedsInOrder.map((v) => Math.round(v)).join(" "));
-  const speeds = [...speedsInOrder].sort((x, y) => x - y);
-  // Only samples a new frame was drawn between (a busy computer can read the same frame twice).
-  const framed = steps.filter((_, i) => track[i + 1].t > track[i].t);
-  const moving = framed.filter((m) => m > 0.5).length / Math.max(1, framed.length);
+  const steps = track.slice(1).map((p, i) => ({ m: (p.lng - track[i].lng) * kx, s: (p.wall - track[i].wall) / 1000 }));
+  const speeds = steps.filter((x) => x.s > 0).map((x) => x.m / x.s).sort((x, y) => x - y);
+  const moving = steps.filter((x) => x.m > 0.3).length / Math.max(1, steps.length);
   const median = speeds[Math.floor(speeds.length / 2)] ?? 0;
   const fastest = speeds[speeds.length - 1] ?? 0;
-  check("a riding hunter glides: moving in almost every tenth of a second", framed.length > 25 && moving >= 0.85, `${Math.round(moving * 100)}% of ${framed.length} frames`);
-  check("…at an even pace, no leaps", median > 20 && fastest <= median * 2, `median ${median.toFixed(0)} m/s, fastest ${fastest.toFixed(0)} m/s (sent: 50 m/s)`);
-  // In step (owner, 3 Nov 2026: "Same exact spot, same movement speed"): where the broadcast draws them against where
-  // the rider really is at that moment (the same computer's clock).
-  const behindM = track.map((p) => (truth(p.wall) - p.lng) * kx).sort((x, y) => x - y);
-  const typical = behindM[Math.floor(behindM.length / 2)] ?? Infinity;
-  check("…in step with the rider: the same spot (within a few metres), the same speed", Math.abs(typical) < 12 && median > 42 && median < 58, `${typical.toFixed(1)} m behind, ${median.toFixed(0)} m/s`);
+  check("a riding hunter glides: moving in almost every frame", steps.length > 25 && moving >= 0.85, `${Math.round(moving * 100)}% of ${steps.length} frames`);
+  check("…at an even pace, no leaps", median > 40 && fastest <= median * 1.6, `median ${median.toFixed(0)} m/s, fastest ${fastest.toFixed(0)} m/s (saved: 50 m/s)`);
+  // In step: where the broadcast draws them against where they were its few seconds before (the server's clock)
+  const offM = track.map((p) => Math.abs((p.lng - 3.3950) * kx - truth(p.wall + skew - p.delay))).sort((x, y) => x - y);
+  const typical = offM[Math.floor(offM.length / 2)] ?? Infinity;
+  check("…in step: where they were a fixed few seconds before (within a few metres), at their speed", typical < 5 && median > 45 && median < 55, `${typical.toFixed(1)} m out, ${median.toFixed(0)} m/s`);
 
   // ---- On a plane (owner, 3 Nov 2026: "The broadcast is not following the users. Fenzy is on a plane to tokyo now.
   // Also, we should have a direction drawn for planes"): a hunter flying Lagos to London, a minute into a 5-minute
@@ -175,16 +176,16 @@ try {
   const busPath = Array.from({ length: 11 }, (_, i) => east(i * 300));
   await admin.from("transit_trips").insert({ user_id: b.id, mode: "bus", from_name: "Test stop A", to_name: "Test stop B", to_lng: busPath[10][0], to_lat: busPath[10][1],
     path: busPath, path_m: 3000, fare: 5, booked_at: ago(60), departs_at: ago(30), arrives_at: new Date(Date.now() + 270e3).toISOString() });
-  const aboard = c.channel(`hunt:${huntId}`, { config: { broadcast: { self: false } } });
-  await new Promise((resolve) => aboard.subscribe((status) => status === "SUBSCRIBED" && resolve()));
-  const busAt = east(1500); // held up nowhere: further on than the clock says (about 10% of the way: 300 m)
-  const sendBus = setInterval(() => void aboard.send({ type: "broadcast", event: "pos", payload: { id: b.id, lng: busAt[0], lat: busAt[1], mode: "walk" } }), 1000);
-  await wait(9000);
+  // Their game saves where the bus is along its line (here: held up nowhere, 1,500 m on, further than the clock says)
+  const busAt = east(1500);
+  const busKeys = () => { const at = Date.now() + skew; return [[Math.round(at - 1500), 1500, 0], [Math.round(at), 1500, 0]]; };
+  await bc.rpc("motion_put", { p_way: 4243, p_pts: busPath, p_keys: busKeys(), p_mode: "walk" });
+  const sendBus = setInterval(() => void bc.rpc("motion_put", { p_way: 4243, p_pts: null, p_keys: busKeys(), p_mode: "walk" }), 1000);
+  await wait(12000);
   const seen = await page.evaluate((id) => window.__broadcastShown?.()[id] ?? null, b.id);
   clearInterval(sendBus);
-  await c.removeChannel(aboard);
-  const offM = seen ? Math.hypot((seen.lng - busAt[0]) * 111320 * Math.cos((6.502 * Math.PI) / 180), (seen.lat - busAt[1]) * 110574) : Infinity;
-  check("on a bus: shown where the rider's game says it is", offM < 60, `${Math.round(offM)} m from it`);
+  const busOff = seen ? Math.hypot((seen.lng - busAt[0]) * 111320 * Math.cos((6.502 * Math.PI) / 180), (seen.lat - busAt[1]) * 110574) : Infinity;
+  check("on a bus: shown where the rider's game says it is", busOff < 60, `${Math.round(busOff)} m from it`);
 
   // ---- Auto camera (owner, 3 Nov 2026: "We should show each user 1 min before moving"): each hunter it follows stays
   // on screen a full minute before it moves on.
@@ -232,6 +233,7 @@ try {
     await admin.from("hunts").delete().eq("id", huntId);
   }
   for (const id of ids) await admin.from("hospital_visits").delete().eq("user_id", id);
+  for (const id of ids) await admin.from("hunter_motion").delete().eq("user_id", id);
   for (const id of ids) await admin.auth.admin.deleteUser(id);
   console.log(`hunt and test accounts deleted; ${fails ? `${fails} FAILED` : "all passed"}`);
   process.exit(fails ? 1 : 0);

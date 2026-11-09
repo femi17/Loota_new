@@ -127,7 +127,18 @@ try {
   let playing = false;
   for (let i = 0; i < 30 && !playing; i++) { await wait(500); playing = await show.evaluate((id) => (window.__broadcastShown?.().moving ?? []).includes(id), hunter.id); }
   check("the broadcast, opened later, plays their way from their motion", playing);
-  await wait(8000); // past its few seconds behind
+  // Played as far behind as the arrivals need (owner, 9 Nov 2026: "the small deley on the broadcast, is there a way we
+  // can fasten it"): measured, then glided to (a tenth fast); recorded once it's there
+  let settled = null;
+  for (let i = 0; i < 90; i++) {
+    await wait(1000);
+    settled = await show.evaluate(() => { const b = window.__broadcastShown?.(); return b ? { delay: b.delay, goal: b.delayGoal, timed: b.timed, late: b.lateness } : null; });
+    if (settled && settled.timed >= 12 && Math.abs(settled.delay - settled.goal) < 60) break;
+  }
+  const need = settled ? Math.max(2500, Math.min(6000, Math.max(...settled.late) + 400)) : null;
+  check("…as far behind as the arrivals need (the latest of them, and a little): measured, not a fixed 6 s", !!settled && settled.timed >= 12 && Math.abs(settled.delay - need) < 60,
+    settled && `${Math.round(settled.delay)} ms behind; the latest of ${settled.timed} arrivals ${Math.round(Math.max(...settled.late))} ms`);
+  console.log("   (arrivals, ms late:", [...(settled?.late ?? [])].sort((a, b) => a - b).map(Math.round).join(" "), ")");
 
   // Both screens, every frame
   // (their own screen from 5 s earlier and longer: the broadcast shows each moment a few seconds after it)
@@ -186,7 +197,7 @@ try {
     return { n: e.length, p95: e[Math.floor(e.length * 0.95)] ?? Infinity, max: e[e.length - 1] ?? Infinity };
   };
   let best = { lag: 0, n: 0, p95: Infinity, max: Infinity };
-  for (let lag = 3000; lag <= 9000; lag += 10) {
+  for (let lag = 1000; lag <= 9000; lag += 10) {
     const e = fit(lag);
     if (e.n > 100 && e.p95 < best.p95) best = { lag, ...e };
   }

@@ -216,11 +216,29 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // it is the action of the user on the frontend we use… It should have a smooth movement for viewers"; "make sure this
       // is not eating the supabase realtime usage"). Each hunter's game saves the way they go along (once) and motion
       // keyframes (when, by the server's clock; how far along it; the speed) only when their speed changes and every 10 s.
-      // Read here by a light poll (no Realtime) and played MOTION_DELAY_MS behind, like live TV: by then the keyframes on
+      // Read here by a light poll (no Realtime) and played motionDelay behind, like live TV: by then the keyframes on
       // either side are already here, so they glide between them, exactly where they were, never corrected. Hunters
       // without a way (standing, the key's place): their saved spots, along the roads (follow.ts).
-      const MOTION_DELAY_MS = 6000;
-      const MOTION_POLL_MS = 1500;
+      // How far behind (owner, 9 Nov 2026: "the small deley on the broadcast, is there a way we can fasten it"): measured,
+      // not guessed. Each keyframe and each point of a key's-place track is timed as it arrives here (by the server's
+      // clock, less when it happened); played just far enough behind for even the latest of the last hundred to have been
+      // here in time (and the smoothing's quarter second, and a little to spare), 2.5 to 6 s: smooth before quick (one
+      // arriving after its moment is a halt on screen). It starts at 6 s and glides there: the clock runs a tenth fast to
+      // catch up, or up to a quarter slow when the network gets worse; never a jump.
+      const DELAY_MIN_MS = 2500;
+      const DELAY_MAX_MS = 6000;
+      let motionDelay = DELAY_MAX_MS;
+      let delayGoal = DELAY_MAX_MS;
+      const lateness: number[] = []; // the last 100 arrivals: how long after they happened (ms)
+      const newestKey = new Map<string, number>(); // by hunter: the latest keyframe already timed
+      const newestTrack = new Map<number, number>(); // by scene: the latest track point already timed
+      const timed = (late: number) => {
+        lateness.push(late);
+        if (lateness.length > 100) lateness.shift();
+        if (lateness.length < 12) return;
+        delayGoal = Math.max(DELAY_MIN_MS, Math.min(DELAY_MAX_MS, Math.max(...lateness) + 400));
+      };
+      const MOTION_POLL_MS = 1000;
       type Key = [number, number, number, number?]; // [server ms, metres along, m/s, why slow: 1 a red light, 2 slow traffic, 3 a go-slow]
       const motions = new Map<string, { way: number; keys: Key[]; ended: boolean; drawnS: number | null; heading: number }>();
       const ways = new Map<string, { id: number; pts: [number, number][]; cum: number[] }>();
@@ -403,9 +421,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (motionSkew === null || (motionReplies <= 5 && t1 - t0 < motionRtt)) motionSkew = sample;
         else if (t1 - t0 < motionRtt * 1.5) motionSkew += Math.max(-2, Math.min(2, sample - motionSkew));
         motionRtt = Math.min(motionRtt, t1 - t0);
+        const arrived = t1 + motionSkew;
         const seen = new Set<string>();
         for (const m of r.hunters) {
           seen.add(m.id);
+          const newest = m.keys.length ? m.keys[m.keys.length - 1][0] : null;
+          const before = newestKey.get(m.id);
+          if (before !== undefined) for (const k of m.keys) if (k[0] > before) timed(arrived - k[0]);
+          if (newest !== null && (before === undefined || newest > before)) newestKey.set(m.id, newest);
           const known = motions.get(m.id);
           if (!known || known.way !== m.way) motions.set(m.id, { way: m.way, keys: m.keys, ended: false, drawnS: null, heading: known?.heading ?? 0 });
           else Object.assign(known, { keys: m.keys, ended: false });
@@ -419,7 +442,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         }
         // A way done: played on to its end (it's a few seconds behind), then let go
         for (const [id, m] of motions) if (!seen.has(id)) m.ended = true;
-        for (const sc of r.scenes ?? []) scenes.set(sc.id, sc);
+        for (const sc of r.scenes ?? []) {
+          scenes.set(sc.id, sc);
+          const track = sc.track ?? [];
+          if (!track.length) continue;
+          const before = newestTrack.get(sc.id);
+          if (before !== undefined) for (const p of track) if (p[0] > before) timed(arrived - p[0]);
+          newestTrack.set(sc.id, Math.max(before ?? -Infinity, track[track.length - 1][0]));
+        }
         const listed = new Set((r.scenes ?? []).map((sc) => sc.id));
         for (const id of [...scenes.keys()]) if (!listed.has(id)) scenes.delete(id);
       }
@@ -448,7 +478,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -494,7 +524,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const parked = c.route ? onWay(c.route, 1) : null;
         return { phase: "treated", ...(parked ?? fell), heading: parked?.heading ?? null, van: parked, ward, hospital: c.v.hospital };
       };
-      let careT = 0; // this frame's moment for visits (the server's clock, MOTION_DELAY_MS behind)
+      let careT = 0; // this frame's moment for visits (the server's clock, motionDelay behind)
       let careVan: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
       let careKey = "";
       const freshLive = (id: string) => {
@@ -539,7 +569,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           visits.set(v.userId, { key, v, approach: way(v.approach), route: way(v.route) });
         }
         // Gone from the list once they're out (kept a moment longer here: played 6 s behind)
-        const careNow = Date.now() + skew - MOTION_DELAY_MS;
+        const careNow = Date.now() + skew - motionDelay;
         for (const [id, c] of visits) if (!visiting.has(id) && careNow > Date.parse(c.v.dischargedAt) + 5000) visits.delete(id);
         // Saved spots, for hunters not heard live just now (and not on a trip: their saved spot is where it began).
         for (const h of latest.hunters) if (h.lng != null && h.lat != null && !freshLive(h.id) && !going.has(h.id) && !careAt(h.id, careNow)) heard(h.id, h.lng, h.lat);
@@ -636,10 +666,13 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
 
         drawnAt = t;
         drawnWall = Date.now(); // one clock for the whole frame: everyone's spot is for this moment
+        // Toward the measured delay: catching up at 10% fast, falling back at up to 25% slow (never a jump)
+        const toGoal = delayGoal - motionDelay;
+        motionDelay += Math.max(-100 * dt, Math.min(250 * dt, toGoal));
         builtThisFrame = false;
         // Every hunter where they were a moment ago, between the positions heard; on a trip, where the trip is.
         const serverNow = drawnWall + skew;
-        careT = (motionSkew !== null ? drawnWall + motionSkew : serverNow) - MOTION_DELAY_MS;
+        careT = (motionSkew !== null ? drawnWall + motionSkew : serverNow) - motionDelay;
         for (const h of s.hunters) {
           // Fainted: where the ambulance visit has them (never walked there)
           const care = careAt(h.id, careT);
@@ -660,11 +693,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             shown.set(h.id, { lng: at.lng, lat: at.lat, heading: at.heading });
             continue;
           }
-          // Going along their way: where they were MOTION_DELAY_MS ago, between the keyframes either side
+          // Going along their way: where they were motionDelay ago, between the keyframes either side
           const mo = motions.get(h.id);
           const mw = ways.get(h.id);
           if (mo && mw && mw.id === mo.way && motionSkew !== null) {
-            const T = drawnWall + motionSkew - MOTION_DELAY_MS;
+            const T = drawnWall + motionSkew - motionDelay;
             const last = mo.keys[mo.keys.length - 1];
             if (mo.ended && (!last || T > last[0] + 3000)) {
               motions.delete(h.id); // played to its end: their saved spot from here
@@ -718,8 +751,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const r = tripOf(h.id);
           const inThreeD = !!r && h.id === following; // the 3D vehicle is drawn instead
           const icon = r && !inThreeD ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
-          const inScene = motionSkew !== null ? sceneAt(h.id, drawnWall + motionSkew - MOTION_DELAY_MS) : null;
-          const slow = motionSkew !== null ? whySlow(h.id, drawnWall + motionSkew - MOTION_DELAY_MS) : 0;
+          const inScene = motionSkew !== null ? sceneAt(h.id, drawnWall + motionSkew - motionDelay) : null;
+          const slow = motionSkew !== null ? whySlow(h.id, drawnWall + motionSkew - motionDelay) : 0;
           const care = careAt(h.id, careT);
           const label = care
             ? care.phase === "treated"
@@ -846,7 +879,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               followed.entity.scaleBy = 0.45 + (1.4 - 0.45) * climb * climb * (3 - 2 * climb);
             }
             // In a scene: the same place at the kerb, the keeper and the hunter in it, looked into as on their screen
-            const T = motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : 0;
+            const T = motionSkew !== null ? drawnWall + motionSkew - motionDelay : 0;
             const anyScene = motionSkew !== null && !ride ? sceneAt(h.id, T) : null;
             const world = anyScene?.data.kind === "keyworld" ? anyScene : null;
             const sc = world ? null : anyScene; // a scene built at the kerb

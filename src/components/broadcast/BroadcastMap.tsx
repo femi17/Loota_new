@@ -3,7 +3,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { LootaLogo } from "@/components/Logo";
-import { normalizeLook } from "@/lib/avatar";
+import { keeperLook, normalizeLook } from "@/lib/avatar";
 import { ordinal } from "@/game/hunt";
 import { baseSpeed, type Mode } from "@/game/movement";
 import { alongPath, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
@@ -30,6 +30,8 @@ type Hunter = {
   mode: Mode | null;
   seenAt: string | null;
   inTrial: boolean;
+  /** The vulcanizer walking back with them to change a flat (their name). */
+  helper?: string | null;
   /** The device they play on now (claim_session): positions from any other are ignored. */
   session?: string | null;
 };
@@ -478,7 +480,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -527,6 +529,36 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       let careT = 0; // this frame's moment for visits (the server's clock, motionDelay behind)
       let careVan: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
       let careKey = "";
+      // ---- The vulcanizer brought back to a flat (owner, 9 Nov 2026: "The vulcanizer, following you back to the vehicle,
+      // should be implemented too"): walking a body length or two behind the hunter, along the way the hunter went, as
+      // the game draws them (helperTick). When they joined and left is noted by the server's clock as each poll sees it,
+      // so they're shown at the same moment as the hunter (motionDelay behind); not while a scene plays (the flat's own).
+      const helperLog = new Map<string, [number, string | null][]>();
+      const helperAt = (id: string, T: number) => {
+        const log = helperLog.get(id);
+        if (!log) return null;
+        let name: string | null = null;
+        for (const [at, n] of log) if (at <= T) name = n;
+        return name;
+      };
+      let helperWalker: { id: string; name: string; avatar: ReturnType<typeof models.buildAvatar>; entity: import("@/game/ThreeMapLayer").MapEntity; d: number } | null = null;
+      /** The followed hunter's way as drawn (metres along it), for the vulcanizer to walk behind them. */
+      let trail: { id: string; pts: { lng: number; lat: number; d: number }[] } | null = null;
+      const trailAt = (pts: { lng: number; lat: number; d: number }[], d: number) => {
+        if (d <= pts[0].d) return pts[0];
+        for (let i = 1; i < pts.length; i++) {
+          if (pts[i].d >= d) {
+            const a = pts[i - 1], b = pts[i], k = (d - a.d) / Math.max(1e-6, b.d - a.d);
+            return { lng: a.lng + (b.lng - a.lng) * k, lat: a.lat + (b.lat - a.lat) * k, d };
+          }
+        }
+        return pts[pts.length - 1];
+      };
+      const dropHelper = () => {
+        if (!helperWalker) return;
+        layer.remove(helperWalker.entity);
+        helperWalker = null;
+      };
       const freshLive = (id: string) => {
         const l = live.get(id);
         return !!l && Date.now() - l.at < LIVE_FRESH_MS;
@@ -544,6 +576,16 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         latest = data as State;
         setState(latest);
         if (latest.now) skew = Date.parse(latest.now) - Date.now();
+        const polledAt = latest.now ? Date.parse(latest.now) : Date.now() + skew;
+        for (const h of latest.hunters) {
+          const name = h.helper ?? null;
+          const log = helperLog.get(h.id);
+          if (!log) helperLog.set(h.id, [[0, name]]); // as it was when the broadcast opened
+          else if (log[log.length - 1][1] !== name) {
+            log.push([polledAt, name]);
+            if (log.length > 8) log.shift();
+          }
+        }
         // Trips under way: placed along their route by the clock (a trip saves no positions).
         const going = new Set<string>();
         for (const trip of latest.trips ?? []) {
@@ -762,7 +804,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             ? `${icon} ${h.name} → ${r.trip.to}`
             : inScene
               ? `${sceneLabel(inScene).icon} ${h.name} · ${sceneLabel(inScene).what}`
-              : `${h.name} · ${h.keysHeld}/${s.hunt.keys}${slow === 1 ? " · 🚦" : slow ? " · 🚗" : ""}`;
+              : `${h.name} · ${h.keysHeld}/${s.hunt.keys}${slow === 1 ? " · 🚦" : slow ? " · 🚗" : ""}${helperAt(h.id, careT) ? " · 🧰" : ""}`;
           if (m.label !== label) {
             m.label = label;
             m.el.querySelector(".name")!.textContent = label;
@@ -883,6 +925,45 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             const anyScene = motionSkew !== null && !ride ? sceneAt(h.id, T) : null;
             const world = anyScene?.data.kind === "keyworld" ? anyScene : null;
             const sc = world ? null : anyScene; // a scene built at the kerb
+            // Their way as drawn, for the vulcanizer to walk behind them
+            if (!trail || trail.id !== h.id) {
+              // Begun a few metres behind them, the way they face (followed from here on), so no one starts on top of them
+              const back = 2.5 * layer.enlargement(); // where the vulcanizer walks (helperTick's gap)
+              const behind = { lng: p.lng - (Math.sin(p.heading) * back) / (111320 * Math.cos((p.lat * Math.PI) / 180)), lat: p.lat + (Math.cos(p.heading) * back) / 110574 };
+              trail = { id: h.id, pts: [{ ...behind, d: 0 }, { lng: p.lng, lat: p.lat, d: back }] };
+            }
+            const end = trail.pts[trail.pts.length - 1];
+            const stepped = geo.distanceM([end.lng, end.lat], [p.lng, p.lat]);
+            if (stepped > 0.3) {
+              trail.pts.push({ lng: p.lng, lat: p.lat, d: end.d + stepped });
+              if (trail.pts.length > 400) trail.pts.shift();
+            }
+            const helper = ride || care || anyScene ? null : helperAt(h.id, careT);
+            if (helperWalker && (helperWalker.name !== helper || helperWalker.id !== h.id)) dropHelper();
+            if (helper) {
+              const pts = trail.pts;
+              const playerD = pts[pts.length - 1].d;
+              const gap = 2.5 * layer.enlargement(); // people are drawn enlarged: a body length or two behind, as seen
+              if (!helperWalker) {
+                const avatar = models.buildAvatar({ ...keeperLook(helper), topColour: "#5B4636", extra: "cap" });
+                const tag = layer.billboard(models.makeNameplate(helper, "#5B4636"));
+                tag.position.y = 2.9;
+                avatar.root.add(tag);
+                const at = trailAt(pts, playerD - gap);
+                helperWalker = { id: h.id, name: helper, avatar, entity: layer.add({ object: avatar.root, lng: at.lng, lat: at.lat, heading: p.heading }), d: playerD - gap };
+              }
+              const hw = helperWalker;
+              const before = trailAt(pts, hw.d);
+              // Just behind; quicker when left further back (as the game's)
+              hw.d = Math.max(pts[0].d, Math.min(playerD - gap, hw.d + Math.max(2, (playerD - gap - hw.d) * 4) * dt));
+              const at = trailAt(pts, hw.d);
+              const ahead = trailAt(pts, hw.d + 2);
+              hw.entity.lng = at.lng;
+              hw.entity.lat = at.lat;
+              if (ahead.lng !== at.lng || ahead.lat !== at.lat) hw.entity.heading = geo.headingOf([at.lng, at.lat], [ahead.lng, ahead.lat]);
+              const moved = geo.distanceM([before.lng, before.lat], [at.lng, at.lat]);
+              models.animateAvatar(hw.avatar, { mode: "walk", phase: "idle", moving: moved > 0.01 ? 1 : 0, distance: moved / layer.enlargement() }, dt, t / 1000);
+            }
             // At a key's place: their own arrangement of it, them walking where they walked (step 3)
             if (world && worldShown?.id !== world.id) {
               worldShown = { id: world.id, playback: { current: { T, track: [], inner: null, dug: null } } };
@@ -1052,6 +1133,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             layer.remove(careVan.entity);
             careVan = null;
           }
+          dropHelper();
+          trail = null;
           if (careKey) {
             careKey = "";
             setCareNote(null);

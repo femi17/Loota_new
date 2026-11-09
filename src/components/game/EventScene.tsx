@@ -81,6 +81,11 @@ export function EventScene({
   game?: ReactNode;
   onClose: () => void;
 }) {
+  // What's said, for the broadcast (the map saves it with the scene: owner, 9 Nov 2026)
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("loota:scene-talk", { detail: { title, sign, them: them.name, lines } }));
+  }, [title, sign, them.name, lines]);
+
   const last = lines.at(-1);
   const typing = last?.who === "them" ? last.text : null;
   const [typed, setTyped] = useState({ text: "", shown: 0 });

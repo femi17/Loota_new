@@ -91,6 +91,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [board, setBoard] = useState(true);
   const [now, setNow] = useState(() => Date.now());
   const [failed, setFailed] = useState(false);
+  /** A scene the followed hunter is in: what it is, and what was last said (a TV caption). */
+  const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
   const viewRef = useRef(view);
   const autoRef = useRef(auto);
   useEffect(() => {
@@ -188,11 +190,66 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       let motionSkew: number | null = null;
       let motionRtt = Infinity;
       let motionReplies = 0;
+      // Scenes (owner, 9 Nov 2026: step 2): each scene a hunter goes into, as their game saved it (how it's built, where,
+      // when, what's said), played at the same moment as their motion: the same place built at the kerb, the keeper and
+      // the hunter in it, the camera looking in as on their screen, the words as captions.
+      type SceneData = {
+        kind: string;
+        model: { make: string; args: unknown[] };
+        origin: { lng: number; lat: number };
+        facing: number;
+        spots: { depth: number; keeper: { x: number; z: number }; customer: { x: number; z: number } };
+        keeper: { look: unknown; at: { x: number; z: number } };
+        you: { from: { x: number; z: number }; to: { x: number; z: number }; lying?: boolean };
+        title?: string;
+        keeperName?: string;
+      };
+      type Scene = { id: number; user: string; start: number; end: number | null; data: SceneData; lines: [number, "them" | "you", string][] };
+      const scenes = new Map<number, Scene>();
+      /** The scene a hunter is in at server time `T`, if any. */
+      const sceneAt = (user: string, T: number) => {
+        let best: Scene | null = null;
+        for (const sc of scenes.values()) if (sc.user === user && sc.start <= T && (sc.end === null || T < sc.end) && (!best || sc.start > best.start)) best = sc;
+        return best;
+      };
+      /** What a scene is, as an icon and a few words. */
+      const sceneLabel = (sc: Scene): { icon: string; what: string } => {
+        const m = sc.data.model.make;
+        if (m === "makeCheckpointScene") return { icon: "🚓", what: "at a police checkpoint" };
+        if (m === "makeTravellerScene") return { icon: "🧳", what: "with a stranded traveller" };
+        if (m === "makeGameTable") return { icon: "🎲", what: "playing a roadside game" };
+        if (m === "makeStallScene") return { icon: "🛒", what: "at a roadside stall" };
+        if (m === "makeOpenBuka") return { icon: "🍲", what: "eating at a buka" };
+        if (m === "makeOpenPetrol") return { icon: "⛽", what: "at the petrol station" };
+        if (m === "makeVulcanizer" || m === "makeFlatScene") return { icon: "🛞", what: "fixing a tyre" };
+        if (m === "makeOpenShop") return { icon: "🔧", what: "at the mechanic" };
+        if (m === "makeOpenWard" || m === "makeRoadsideCare") return { icon: "🏥", what: "being treated" };
+        if (m === "makeHireStand") return { icon: "🚲", what: "hiring a ride" };
+        if (m === "makeTicketHall") return { icon: "🎫", what: "buying a ticket" };
+        if (m === "makeTerminal") return { icon: "🛫", what: "checking in" };
+        if (m === "makeKeyScene") return { icon: "🗝", what: "at the Key Trial" };
+        if (m === "makeLandmarkPlaza") return { icon: "🏛", what: "checking in at a landmark" };
+        if (m === "makeLampShrine") return { icon: "🪔", what: "at the Lamp's spot" };
+        if (m === "makeDjinnVault") return { icon: "🧞", what: "in the Djinn's chamber" };
+        return { icon: "💬", what: "in a scene" };
+      };
+      const SCENE_SCALE = 1.7, SCENE_ZOOM = 19.3, SCENE_PITCH = 48; // as the game's (GameMap)
+      let sceneView: {
+        id: number;
+        entity: import("@/game/ThreeMapLayer").MapEntity;
+        you: ReturnType<typeof models.buildAvatar>;
+        keeper: ReturnType<typeof models.buildAvatar>;
+      } | null = null;
+      const dropSceneView = () => {
+        if (sceneView) layer.remove(sceneView.entity);
+        sceneView = null;
+      };
+      let captionKey = "";
       async function pollMotion() {
         const t0 = Date.now();
         const { data } = await supabase.rpc("broadcast_motion", { p_hunt: huntId });
         const t1 = Date.now();
-        const r = data as { now: number; hunters: { id: string; way: number; keys: Key[]; mode: Mode }[] } | null;
+        const r = data as { now: number; hunters: { id: string; way: number; keys: Key[]; mode: Mode }[]; scenes?: Scene[] } | null;
         if (disposed || !r) return;
         const sample = r.now - (t0 + t1) / 2;
         motionReplies++;
@@ -215,6 +272,9 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         }
         // A way done: played on to its end (it's a few seconds behind), then let go
         for (const [id, m] of motions) if (!seen.has(id)) m.ended = true;
+        for (const sc of r.scenes ?? []) scenes.set(sc.id, sc);
+        const listed = new Set((r.scenes ?? []).map((sc) => sc.id));
+        for (const id of [...scenes.keys()]) if (!listed.has(id)) scenes.delete(id);
       }
       void pollMotion();
       const motionTimer = window.setInterval(() => void pollMotion(), MOTION_POLL_MS);
@@ -241,7 +301,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: MOTION_DELAY_MS, scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -391,7 +451,6 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           // On a trip: where the game says the bus, train or plane is (it sends that live, by its own timetable of
           // stops, lights and jams); only without that, along the route by the clock.
           const r = tripOf(h.id);
-          const l = live.get(h.id);
           // (with their motion, the vehicle as on their screen, below; without it, along its line by the clock)
           if (r && !motions.has(h.id)) {
             const at = tripAt(r, serverNow);
@@ -456,7 +515,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const r = tripOf(h.id);
           const inThreeD = !!r && h.id === following; // the 3D vehicle is drawn instead
           const icon = r && !inThreeD ? (TRIP_ICON[r.trip.mode] ?? "🚌") : "";
-          const label = r ? `${icon} ${h.name} → ${r.trip.to}` : `${h.name} · ${h.keysHeld}/${s.hunt.keys}`;
+          const inScene = motionSkew !== null ? sceneAt(h.id, drawnWall + motionSkew - MOTION_DELAY_MS) : null;
+          const label = r ? `${icon} ${h.name} → ${r.trip.to}` : inScene ? `${sceneLabel(inScene).icon} ${h.name} · ${sceneLabel(inScene).what}` : `${h.name} · ${h.keysHeld}/${s.hunt.keys}`;
           if (m.label !== label) {
             m.label = label;
             m.el.querySelector(".name")!.textContent = label;
@@ -537,22 +597,95 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               if (followed.plane) followed.plane.body.position.y = 1.6 + 8 * height * height * (3 - 2 * height);
               followed.entity.scaleBy = 0.45 + (1.4 - 0.45) * climb * climb * (3 - 2 * climb);
             }
-            // Behind them, turning with them (the laptop's chase camera), tilted like the laptop: 60°.
-            const behind = geo.compassFromHeading(p.heading);
-            const turn = ((behind - map.getBearing()) % 360 + 540) % 360 - 180;
-            const k = Math.min(1, 2.5 * dt);
-            map.jumpTo({
-              center: [p.lng, p.lat],
-              zoom: viewKey !== lastView ? map.getZoom() + (zoom - map.getZoom()) * 0.08 : map.getZoom() + (zoom - map.getZoom()) * Math.min(1, 2 * dt),
-              pitch: map.getPitch() + (60 - map.getPitch()) * k,
-              bearing: map.getBearing() + turn * k,
-            });
+            // In a scene: the same place at the kerb, the keeper and the hunter in it, looked into as on their screen
+            const T = motionSkew !== null ? drawnWall + motionSkew - MOTION_DELAY_MS : 0;
+            const sc = motionSkew !== null && !ride ? sceneAt(h.id, T) : null;
+            if (sc && (!sceneView || sceneView.id !== sc.id)) {
+              dropSceneView();
+              try {
+                const make = (models as unknown as Record<string, (...args: unknown[]) => unknown>)[sc.data.model.make];
+                const made = make(...sc.data.model.args) as { isObject3D?: boolean; group?: import("three").Object3D };
+                const group = (made.isObject3D ? made : made.group) as import("three").Object3D;
+                const keeper = models.buildAvatar(normalizeLook(sc.data.keeper.look));
+                keeper.root.position.set(sc.data.keeper.at.x, 0.14, sc.data.keeper.at.z);
+                const you = models.buildAvatar(normalizeLook(h.look));
+                you.root.position.set(sc.data.you.from.x, 0.14, sc.data.you.from.z);
+                you.root.rotation.y = Math.PI;
+                group.add(keeper.root, you.root);
+                const entity = layer.add({ object: group, lng: sc.data.origin.lng, lat: sc.data.origin.lat, heading: sc.data.facing, scaleBy: 0.01 });
+                sceneView = { id: sc.id, entity, you, keeper };
+              } catch {
+                sceneView = null; // a model this broadcast can't build: just the caption
+              }
+            } else if (!sc && sceneView) dropSceneView();
+            followed.entity.object.visible = !sceneView;
+            if (sc && sceneView) {
+              const grow = Math.min(1, (T - sc.start) / 700), shrink = sc.end !== null ? Math.min(1, Math.max(0, (sc.end - T) / 500)) : 1;
+              const ease = (x: number) => x * x * (3 - 2 * x);
+              sceneView.entity.scaleBy = SCENE_SCALE * Math.max(0.01, ease(grow) * ease(shrink));
+              // The hunter walks in from the door to their place
+              const w = Math.min(1, Math.max(0, (T - sc.start - 300) / 1500));
+              const { from, to } = sc.data.you;
+              sceneView.you.root.position.set(from.x + (to.x - from.x) * w, 0.14, from.z + (to.z - from.z) * w);
+              models.animateAvatar(sceneView.you, { mode: "walk", phase: "idle", moving: w > 0 && w < 1 ? 1 : 0, distance: 0.02 }, dt, t / 1000);
+              models.animateAvatar(sceneView.keeper, { mode: "walk", phase: "idle", moving: 0, distance: 0 }, dt, t / 1000);
+              // The camera looks in (as the game's: a little past the middle of the place, from the street)
+              const sz = layer.enlargement() * SCENE_SCALE;
+              const z = -sc.data.spots.depth * 0.62, f = sc.data.facing;
+              const east = z * Math.sin(f) * sz, south = z * Math.cos(f) * sz;
+              const centre = { lng: sc.data.origin.lng + east / (111320 * Math.cos((sc.data.origin.lat * Math.PI) / 180)), lat: sc.data.origin.lat - south / 110574 };
+              const k = Math.min(1, 2 * dt);
+              const turn = ((geo.compassFromHeading(f + Math.PI) - map.getBearing()) % 360 + 540) % 360 - 180;
+              if (map.getMaxZoom() < 20) map.setMaxZoom(20);
+              map.jumpTo({
+                center: [map.getCenter().lng + (centre.lng - map.getCenter().lng) * k, map.getCenter().lat + (centre.lat - map.getCenter().lat) * k],
+                zoom: map.getZoom() + (SCENE_ZOOM - map.getZoom()) * k,
+                pitch: map.getPitch() + (SCENE_PITCH - map.getPitch()) * k,
+                bearing: map.getBearing() + turn * k,
+                padding: { top: 0, left: 0, right: 0, bottom: 170 },
+              });
+            } else {
+              // Behind them, turning with them (the laptop's chase camera), tilted like the laptop: 60°.
+              const behind = geo.compassFromHeading(p.heading);
+              const turn = ((behind - map.getBearing()) % 360 + 540) % 360 - 180;
+              const k = Math.min(1, 2.5 * dt);
+              map.jumpTo({
+                center: [p.lng, p.lat],
+                zoom: viewKey !== lastView ? map.getZoom() + (zoom - map.getZoom()) * 0.08 : map.getZoom() + (zoom - map.getZoom()) * Math.min(1, 2 * dt),
+                pitch: map.getPitch() + (60 - map.getPitch()) * k,
+                bearing: map.getBearing() + turn * k,
+                padding: { top: 0, left: 0, right: 0, bottom: 0 },
+              });
+            }
+            // The caption: the last two lines said, in the order they were said, and by whom
+            let next: typeof caption = null;
+            if (sc) {
+              const { icon, what } = sceneLabel(sc);
+              next = {
+                icon,
+                title: sc.data.title ?? `${h.name} ${what}`,
+                lines: sc.lines
+                  .filter((l) => l[0] <= T)
+                  .slice(-2)
+                  .map((l) => ({ who: l[1] === "you" ? h.name : (sc.data.keeperName ?? ""), text: l[2], you: l[1] === "you" })),
+              };
+            }
+            const said = JSON.stringify(next);
+            if (said !== captionKey) {
+              captionKey = said;
+              setCaption(next);
+            }
           }
         } else {
           followPos = null;
           if (followed) {
             layer.remove(followed.entity);
             followed = null;
+          }
+          dropSceneView();
+          if (captionKey !== "null") {
+            captionKey = "null";
+            setCaption(null);
           }
           // Keep everyone in shot.
           if (viewKey !== lastView || t - lastFit > 8000) {
@@ -604,6 +737,22 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
+      {/* A scene's caption, like TV's lower third: what it is, what was last said and by whom */}
+      {caption && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center px-4" role="status" aria-label="Scene caption">
+          <div className="w-full max-w-2xl rounded-2xl bg-ink/92 px-5 py-3 text-paper shadow-2xl ring-1 ring-gold/60">
+            <p className="text-xs font-extrabold uppercase tracking-widest text-gold">
+              {caption.icon} {caption.title}
+            </p>
+            {caption.lines.map((l, i) => (
+              <p key={i} className={`mt-1 leading-snug ${l.you ? "text-base text-paper/85" : "text-lg"}`}>
+                {l.who && <b className={l.you ? "" : "text-gold"}>{l.who}: </b>}
+                {l.text}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="absolute inset-0">
         <div ref={container} className="h-full w-full" />
       </div>

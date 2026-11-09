@@ -18,7 +18,7 @@ import { RepairScene, type RepairActions, type RepairJob } from "./RepairScene";
 import { RentalScene, type RentalActions, type RentalOffer } from "./RentalScene";
 import { FuelScene, type FuelActions, type FuelOffer } from "./FuelScene";
 import { MealScene, todaysMenu, type MealActions, type MealOffer } from "./MealScene";
-import type { SceneMoment } from "./EventScene";
+import type { SceneLine, SceneMoment } from "./EventScene";
 import { NurseScene, TreatmentScene, type Discharge, type Treatment } from "./NurseScene";
 import { TicketScene, type TicketActions, type TicketOffer } from "./TicketScene";
 import { QuizScene, type QuizActions, type QuizOffer } from "./QuizScene";
@@ -3034,6 +3034,63 @@ export function GameMap({
             else if (r?.reason === "way") way.sent = false; // the server lost it: the way again with the next ones
           });
         }
+      }
+
+      // ---- Scenes for the broadcast (owner, 9 Nov 2026: "how do we handle the road side event, like the police, or random
+      // user stopping users… do we display the scene if user agrees either pumping a flat, refueling etc"). Each scene
+      // gone into is saved (scene_start, scene_update; no Realtime): when it starts and ends, by the server's clock; how
+      // it's built (the model maker and what it was given, where it stands and faces, who stands where); and what's
+      // said, line by line, as EventScene says it. The broadcast builds the same scene a few seconds behind, the words as
+      // captions.
+      let sceneModel: { make: string; args: unknown[] } | null = null;
+      /** A scene's model, built and noted (the broadcast builds the same one). */
+      function built<A extends unknown[], R>(make: string, fn: (...args: A) => R, ...args: A): R {
+        sceneModel = { make, args };
+        return fn(...args);
+      }
+      type SceneRec = { id: number | null; queue: [number, "them" | "you", string][]; said: number; meta: object | null; ended: number | null; saving: boolean };
+      let sceneRec: SceneRec | null = null;
+      const serverMs = () => Math.round(Date.now() + (serverSkew ?? 0));
+      function sceneStarted(data: object) {
+        if (!huntId || serverSkew === null) return;
+        const rec: SceneRec = { id: null, queue: [], said: 0, meta: null, ended: null, saving: true };
+        sceneRec = rec;
+        void supabase.rpc("scene_start", { p_ms: serverMs(), p_data: data }).then(({ data: r }) => {
+          rec.saving = false;
+          rec.id = (r as { id?: number } | null)?.id ?? null;
+          sceneFlush(rec);
+        });
+      }
+      function sceneFlush(rec: SceneRec) {
+        if (rec.id === null || rec.saving || (!rec.queue.length && !rec.meta && rec.ended === null)) return;
+        rec.saving = true;
+        const lines = rec.queue.splice(0, 50);
+        const meta = rec.meta;
+        rec.meta = null;
+        const ended = rec.queue.length ? null : rec.ended; // the end after the last lines
+        void supabase.rpc("scene_update", { p_id: rec.id, p_lines: lines.length ? lines : null, p_meta: meta, p_end: ended }).then(() => {
+          rec.saving = false;
+          if (ended === null) sceneFlush(rec);
+          else rec.ended = null;
+        });
+      }
+      const sceneTalk = (ev: Event) => {
+        const rec = sceneRec;
+        if (!rec) return;
+        const d = (ev as CustomEvent<{ title: string; sign: string; them: string; lines: SceneLine[] }>).detail;
+        if (d.lines.length < rec.said) rec.said = 0; // a new conversation in the same place
+        for (const l of d.lines.slice(rec.said)) rec.queue.push([serverMs(), l.who, l.text]);
+        rec.said = d.lines.length;
+        rec.meta = { title: d.title, sign: d.sign, keeperName: d.them };
+        sceneFlush(rec);
+      };
+      window.addEventListener("loota:scene-talk", sceneTalk);
+      function sceneEnded() {
+        const rec = sceneRec;
+        if (!rec) return;
+        sceneRec = null;
+        rec.ended = serverMs();
+        sceneFlush(rec);
       }
 
       function announce(now: number, aboard = false) {
@@ -6294,12 +6351,25 @@ export function GameMap({
         controls.current.go = false;
         map.setMaxZoom(20);
         setInside(o.kind);
+        // Saved for the broadcast: how it's built and where everyone stands
+        if (sceneModel) {
+          sceneStarted({
+            kind: o.kind,
+            model: sceneModel,
+            origin,
+            facing,
+            spots: o.spots,
+            keeper: { look: o.keeper.look, at: o.keeper.at },
+            you: { from: o.you.from, to: o.you.to, lying: !!o.you.lying },
+          });
+        }
+        sceneModel = null;
         return true;
       }
 
       function openShopScene(job: RepairJob) {
         if (inWorld || ride || visit) return;
-        const group = models.makeOpenShop(job.kind === "bicycle" ? "bicycle" : "workshop", job.shop); // the people go in it too
+        const group = built("makeOpenShop", models.makeOpenShop, job.kind === "bicycle" ? "bicycle" : "workshop", job.shop); // the people go in it too
         const S = models.SHOP_SPOTS;
         const returning = !!job.readyAt;
         const vehicle = models.makeVehicleModel(job.kind);
@@ -6328,7 +6398,7 @@ export function GameMap({
       /** Sitting down at a buka: the cook at the pots, the menu on the wall; you go to the bench. */
       function openMealPlace(offer: MealOffer, menu: string[], at: LngLat) {
         const S = models.BUKA_SPOTS;
-        const buka = models.makeOpenBuka(offer.place === "Place to eat" ? "Buka" : offer.place, menu);
+        const buka = built("makeOpenBuka", models.makeOpenBuka, offer.place === "Place to eat" ? "Buka" : offer.place, menu);
         return openPlace({
           kind: "meal",
           key: `meal:${offer.id}`,
@@ -6345,7 +6415,7 @@ export function GameMap({
       /** At the pump: your vehicle alongside it, the attendant by the kiosk; you step out to talk. */
       function openFuelPlace(offer: FuelOffer, at: LngLat, id: number) {
         const S = models.FUEL_SPOTS;
-        const petrol = models.makeOpenPetrol(offer.station === "Petrol station" ? "Petrol" : offer.station);
+        const petrol = built("makeOpenPetrol", models.makeOpenPetrol, offer.station === "Petrol station" ? "Petrol" : offer.station);
         // The vehicle at the pump; or, when it stands at the roadside out of fuel, the jerry can the attendant fills.
         const vehicle = offer.stranded ? models.makeJerryCan() : models.makeVehicleModel(offer.kind);
         if (offer.stranded) vehicle.scale.setScalar(2.2);
@@ -6379,7 +6449,7 @@ export function GameMap({
           kind: ward ? "ward" : "roadside",
           key: `ward:${at.lng.toFixed(5)},${at.lat.toFixed(5)}`,
           at,
-          group: ward ? models.makeOpenWard(d.hospital === "Hospital" ? "Hospital" : d.hospital!) : models.makeRoadsideCare(),
+          group: ward ? built("makeOpenWard", models.makeOpenWard, d.hospital === "Hospital" ? "Hospital" : d.hospital!) : built("makeRoadsideCare", models.makeRoadsideCare),
           spots: S,
           kerbM: ward ? 8 : 5,
           keeper: { look, at: S.keeper },
@@ -6394,7 +6464,7 @@ export function GameMap({
       /** The renter's spot in the side street: the renter under the umbrella, your ride on its stand. */
       function openHirePlace(offer: RentalOffer, at: LngLat, hidden: import("@/game/ThreeMapLayer").MapEntity[]) {
         const S = models.HIRE_SPOTS;
-        const group = models.makeHireStand(offer.kind);
+        const group = built("makeHireStand", models.makeHireStand, offer.kind);
         const vehicle = models.makeVehicleModel(offer.kind);
         vehicle.userData.kind = offer.kind; // what you ride off on
         vehicle.rotation.y = Math.PI / 2;
@@ -6424,12 +6494,12 @@ export function GameMap({
         let group: import("three").Object3D;
         let lights: import("three").Object3D[] | undefined;
         if (e.kind === "checkpoint") {
-          const c = models.makeCheckpointScene();
+          const c = built("makeCheckpointScene", models.makeCheckpointScene);
           group = c.group;
           lights = c.lights;
-        } else if (e.kind === "seller" && e.game) group = models.makeGameTable(e.game.type);
-        else if (e.kind === "seller") group = models.makeStallScene(`${e.npc}'s snacks`);
-        else group = models.makeTravellerScene();
+        } else if (e.kind === "seller" && e.game) group = built("makeGameTable", models.makeGameTable, e.game.type);
+        else if (e.kind === "seller") group = built("makeStallScene", models.makeStallScene, `${e.npc}'s snacks`);
+        else group = built("makeTravellerScene", models.makeTravellerScene);
         const riding = traveller.mode === "walk" ? null : (traveller.mode as VehicleKind);
         if (riding) {
           const vehicle = models.makeVehicleModel(riding);
@@ -6485,8 +6555,8 @@ export function GameMap({
         const clerk = nameFor("clerk", String(st.id));
         // The departures board: the trip chosen, then where else the line or airport goes (looked up as you approach).
         const board = [...(quote ? [quote.label] : []), ...(boards.get(st.id) ?? []).filter((r) => r !== quote?.label)].slice(0, 5);
-        const hall = plane ? null : models.makeTicketHall(st.name, board, st.kind === "bus");
-        const terminal = plane ? models.makeTerminal(`${st.name}${st.code ? ` (${st.code})` : ""}`, board) : null;
+        const hall = plane ? null : built("makeTicketHall", models.makeTicketHall, st.name, board, st.kind === "bus");
+        const terminal = plane ? built("makeTerminal", models.makeTerminal, `${st.name}${st.code ? ` (${st.code})` : ""}`, board) : null;
         const opened = openPlace({
           kind: "ticket",
           key: `ticket:${st.id}`,
@@ -6621,8 +6691,8 @@ export function GameMap({
       function openQuizPlace(kind: "landmark" | "detour", name: string, host: AvatarLook) {
         if (!network) return false;
         const S = models.PLAZA_SPOTS;
-        const plaza = kind === "landmark" ? models.makeLandmarkPlaza(name) : null;
-        const shrine = kind === "detour" ? models.makeLampShrine() : null;
+        const plaza = kind === "landmark" ? built("makeLandmarkPlaza", models.makeLandmarkPlaza, name) : null;
+        const shrine = kind === "detour" ? built("makeLampShrine", models.makeLampShrine) : null;
         return openPlace({
           kind: "quiz",
           key: `quiz:${kind}:${traveller.pos.lng.toFixed(5)},${traveller.pos.lat.toFixed(5)}`,
@@ -6647,7 +6717,7 @@ export function GameMap({
         const S = models.TRIAL_SPOTS;
         const scene: KeyScene = chest?.scene ?? "circle";
         const info = KEY_SCENE_INFO[scene];
-        const circle = models.makeKeyScene(scene, info.sign);
+        const circle = built("makeKeyScene", models.makeKeyScene, scene, info.sign);
         setTrialKeeper(info.keeper.name);
         openPlace({
           kind: "trial",
@@ -6689,7 +6759,7 @@ export function GameMap({
       function openVault(chamber: DjinnChamber) {
         if (inWorld || !network) return;
         const S = models.VAULT_SPOTS;
-        const vault = models.makeDjinnVault(chamber.place, chamber.cipher, chamber.floor.grid.length, chamber.floor.grid[0]?.length ?? 3);
+        const vault = built("makeDjinnVault", models.makeDjinnVault, chamber.place, chamber.cipher, chamber.floor.grid.length, chamber.floor.grid[0]?.length ?? 3);
         const opened = openPlace({
           kind: "vault",
           key: `vault:${chamber.id}`,
@@ -6709,7 +6779,7 @@ export function GameMap({
       /** A flat by the roadside: your motorbike or car where it stopped, the spare and toolbox on the kerb, the vulcanizer you brought (or a passer-by). */
       function openFlatPlace(offer: FlatOffer, v: VehicleRow) {
         const S = models.ROAD_EVENT_SPOTS;
-        const group = models.makeFlatScene();
+        const group = built("makeFlatScene", models.makeFlatScene);
         const vehicle = models.makeVehicleModel(offer.kind);
         vehicle.rotation.y = Math.PI / 2; // along the road
         vehicle.position.set(S.stand.x, 0, S.stand.z);
@@ -6730,7 +6800,7 @@ export function GameMap({
       /** At the vulcanizer's: your bicycle on the stand, the compressor, the vulcanizer. */
       function openPumpPlace(offer: PumpOffer, spot: LngLat & { id: number }) {
         const S = models.VULCANIZER_SPOTS;
-        const v = models.makeVulcanizer(offer.place.length > 22 ? local("Vulcanizer", "Tyre shop") : offer.place);
+        const v = built("makeVulcanizer", models.makeVulcanizer, offer.place.length > 22 ? local("Vulcanizer", "Tyre shop") : offer.place);
         const bike = offer.wheel ? models.makeRolledWheel() : models.makeVehicleModel("bicycle");
         bike.rotation.y = Math.PI / 2;
         bike.position.set(S.stand.x, offer.wheel ? 0.5 : 0.1, S.stand.z);
@@ -6753,7 +6823,7 @@ export function GameMap({
       /** At the mechanic's: the open workshop, your motorbike or car on the stand, the mechanic at the engine. */
       function openServicePlace(offer: ServiceOffer, spot: LngLat & { id: number }) {
         const S = models.SHOP_SPOTS;
-        const group = models.makeOpenShop("workshop", offer.place.length > 22 ? "Mechanic" : offer.place);
+        const group = built("makeOpenShop", models.makeOpenShop, "workshop", offer.place.length > 22 ? "Mechanic" : offer.place);
         const vehicle = models.makeVehicleModel(offer.kind);
         vehicle.rotation.y = Math.PI / 2;
         vehicle.position.set(S.stand.x, 0.14, S.stand.z);
@@ -6785,6 +6855,7 @@ export function GameMap({
         w.you.tx = w.spots.outside.x;
         w.you.tz = w.spots.outside.z;
         w.closeScene();
+        sceneEnded();
       }
 
       function endPlace() {
@@ -8574,6 +8645,7 @@ export function GameMap({
         window.clearTimeout(hintTimer);
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);
+        window.removeEventListener("loota:scene-talk", sceneTalk);
         lookArea.removeEventListener("pointerdown", lookStart);
         window.removeEventListener("pointermove", lookMove);
         window.removeEventListener("pointerup", lookEnd);

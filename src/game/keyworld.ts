@@ -218,6 +218,12 @@ function content(outcome: InnerRoomView["outcome"]) {
       }
     });
     g.add(fake, ball(0.15, "#EDE6D6", 0, 0.95, 0));
+  } else if (outcome === "lock") {
+    const shackle = cyl(0.12, 0.05, "#C8A45C", 0.18, 0.2, 0);
+    shackle.rotation.x = Math.PI / 2;
+    const note = box(0.34, 0.02, 0.24, "#F2E6C8", -0.12, 0.03, 0, false);
+    note.rotation.y = 0.3;
+    g.add(box(0.22, 0.24, 0.1, "#C8A45C", 0.18, 0.12, 0, false), shackle, note);
   } else if (outcome === "trap") {
     g.add(cyl(0.6, 0.02, "#0A0A0A", 0, 0.03, 0));
     for (const a of [0.3, 1.8, 3.6]) {
@@ -279,7 +285,8 @@ export type WorldPlace = {
 };
 /** A small house of the town, walked into by its door (its roof lifts off inside). */
 type Home = { centre: Point; facing: number; area: Rect; front: Point; inside: Point; frame: THREE.Group; walls: THREE.Group; roof: THREE.Group; shade: THREE.Object3D; open: number; ghost: number; mats: THREE.Material[]; ld: number };
-/** A locked box (rooms 2 to 5, in small houses) or the key's chest (room 1, at the right place). */
+/** A locked box (rooms 2 to 5, in small houses), the key's chest (room 1, at the right place: the first lock of the chain),
+ * or the chain's second and third locks (rooms 6 and 7, in small houses, shown once the lock before is open). */
 type Box = { n: number; spot: Point; group: THREE.Group; lock: THREE.Object3D; content: THREE.Group; home: number };
 
 export type KeyWorld = {
@@ -300,8 +307,10 @@ export type KeyWorld = {
   setLocked(i: number, locked: boolean): void;
   /** The key's chest (room 1) at the right place, once it's found (null: not found). */
   setKey(i: number | null): void;
-  /** Each box shut, or opened with what it held. */
+  /** Each box shut, or opened with what it held; the chain's next lock shown, its house lit with a gold light. */
   setBoxes(list: InnerRoomView[] | null): void;
+  /** The chain's lock whose house is lit (6 or 7), or 0. */
+  guide(): number;
   /** Where to stand to open each box that's showing (by room number). */
   boxSpots(): Record<number, Point>;
   /** The small house the hunter is in (its index), or −1; and the box in it (its room number), or 0. */
@@ -925,6 +934,27 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
     if (!hm) continue;
     makeBox(n, hm.frame, 0, -hm.ld / 2 + 0.75, at(hm.centre, hm.facing, 0, -hm.ld / 2 + 1.75), k, false);
   }
+  // The chain's second and third locks (owner, 12 Nov 2026: "from 1 to another, another to look for the next puzzle to
+  // another house"): in two more of the hunter's own houses, hidden until the lock before is open
+  for (const [n, slot] of [[6, 4], [7, 5]] as const) {
+    if (!homes.length) break;
+    const k = homeOrder[slot] ?? homeOrder[(n - 6) % homes.length];
+    const hm = homes[k];
+    const own = homeOrder[slot] !== undefined; // a house of its own: at the back; sharing one: by the door
+    const [lx, lz] = own ? [0, -hm.ld / 2 + 0.75] : [1.2, 0.6];
+    makeBox(n, hm.frame, lx, lz, at(hm.centre, hm.facing, lx, lz + 1.0), k, false);
+    boxes.get(n)!.group.visible = false;
+  }
+  // The gold light over the house of the chain's next lock
+  const beacon = new THREE.Group();
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, 16, 16, 1, true), new THREE.MeshBasicMaterial({ color: "#F4B41A", transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false, fog: false }));
+  beam.position.y = 8; // up over the roofs, seen from across the town
+  const beaconLight = new THREE.PointLight("#FFD27A", 2.2, 9, 1.5);
+  beaconLight.position.y = 3.2;
+  beacon.add(beam, beaconLight);
+  beacon.visible = false;
+  group.add(beacon);
+  let guided = 0;
 
   const blocked = (p: Point, r = BODY) => Math.abs(p.x) > REACH - r || Math.abs(p.z) > REACH - r || solids.some((s) => s.on && inside(p, s.r, r));
   const placeAt = (p: Point) => places.findIndex((pl) => inside(p, pl.area, -0.3));
@@ -1063,16 +1093,29 @@ export function buildKeyWorld(rooms: HouseRoomView[], objects: HouseObjectView[]
       makeBox(1, views[i!].frame, lx, lz, at(p.centre, p.facing, lx, lz + 1.15), -1, true);
     },
     setBoxes(list) {
+      const opened = (n: number) => !!list?.find((c) => c.n === n)?.open;
       for (const cell of list ?? []) {
         const b = boxes.get(cell.n);
         if (!b) continue;
         b.lock.visible = !cell.open;
         b.content.clear();
         if (cell.open && cell.outcome) b.content.add(content(cell.outcome));
+        // The chain's second and third locks: shown once the lock before is open
+        if (cell.n === 6) b.group.visible = opened(1);
+        if (cell.n === 7) b.group.visible = opened(6);
       }
+      // The next lock's house, lit
+      guided = opened(1) && !opened(6) ? 6 : opened(6) && !opened(7) ? 7 : 0;
+      const b = guided ? boxes.get(guided) : null;
+      const hm = b ? homes[b.home] : null;
+      beacon.visible = !!hm;
+      if (hm) beacon.position.set(hm.centre.x, 0, hm.centre.z);
+    },
+    guide() {
+      return guided;
     },
     boxSpots() {
-      return Object.fromEntries([...boxes.values()].map((b) => [b.n, b.spot]));
+      return Object.fromEntries([...boxes.values()].filter((b) => b.group.visible).map((b) => [b.n, b.spot]));
     },
     homeAt,
     homeBox(i) {

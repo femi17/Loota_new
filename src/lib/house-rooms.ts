@@ -27,8 +27,12 @@ export function roomKind(_uid: string, hunt: string, key: number, room: number):
   let n = roomSeed("", hunt, key, room) ^ 0x9e3779b9;
   n = Math.imul(n ^ (n >>> 16), 0x85ebca6b) >>> 0;
   const kinds = kindsAt(key);
-  const k = kinds[n % kinds.length];
-  return key > 1 && k === roomKind("", hunt, key - 1, room) ? kinds[(kinds.indexOf(k) + 1) % kinds.length] : k;
+  let k = kinds[n % kinds.length];
+  if (key > 1 && k === roomKind("", hunt, key - 1, room)) k = kinds[(kinds.indexOf(k) + 1) % kinds.length];
+  // The chain's three locks (rooms 1, 6, 7: owner, 12 Nov 2026) each of another kind
+  const before = room === 6 ? [roomKind("", hunt, key, 1)] : room === 7 ? [roomKind("", hunt, key, 1), roomKind("", hunt, key, 6)] : [];
+  while (before.includes(k)) k = kinds[(kinds.indexOf(k) + 1) % kinds.length];
+  return k;
 }
 
 /** How hard: never the easiest (owner, 8 Nov 2026: "the questions are cheap not tasking"), the hardest from the third key. */

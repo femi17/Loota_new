@@ -16,7 +16,7 @@ export async function POST(request: Request) {
   if (!uid) return Response.json({ error: "Not signed in" }, { status: 401 });
   const body = (await request.json().catch(() => null)) as { hunt?: string; room?: number } | null;
   const room = Number(body?.room);
-  if (!body?.hunt || !Number.isInteger(room) || room < 1 || room > 5) return Response.json({ ok: false, reason: "no_room" }, { status: 400 });
+  if (!body?.hunt || !Number.isInteger(room) || room < 1 || room > 7) return Response.json({ ok: false, reason: "no_room" }, { status: 400 });
 
   const admin = createAdminClient();
   const { data: at } = await admin.rpc("house_room_try", { p_user: uid, p_hunt: body.hunt, p_room: room });

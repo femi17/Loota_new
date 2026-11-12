@@ -49,6 +49,9 @@ const DETECT_M = 12;
 type Opened = {
   ok?: boolean;
   right?: boolean;
+  /** A lock of the chain opened: which (1 or 2 of 3), and the room of the next. */
+  lock?: number;
+  next?: number;
   /** A wrong answer to a puzzle of questions: how many are right. */
   rightOf?: { right: number; of: number } | null;
   reason?: string;
@@ -83,6 +86,7 @@ const REFUSED: Record<string, string> = {
   not_hunting: "You're not in this hunt.",
   dodge: "Answer the challenge first!",
   late: "⏳ Too slow: the lock has jammed. Try again in a moment.",
+  chain: "This lock won't turn yet: open the one before it first.",
 };
 
 /** What a room held, said once it's open. */
@@ -90,13 +94,15 @@ const OUTCOME_SAID: Record<string, string> = {
   coins: "the coins are yours.",
   chapter: "the page of the story is on your scroll.",
   key: "the key.",
+  lock: "open. Its note points to the next lock: follow the gold light.",
   decoy: "a fake chest. Nothing more here.",
   trap: "a trap, sprung. Nothing more here.",
 };
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
 /** What a locked find is called: the key's chest (room 1, at the right place), or a box in a house (rooms 2 to 5). */
-const boxName = (n: number) => (n === 1 ? "The key's chest" : "The box");
+/** The key's chest is the first of three locks (owner, 12 Nov 2026); 6 and 7 are the second and third. */
+const boxName = (n: number) => (n === 1 ? "The key's chest" : n === 6 ? "The second lock" : n === 7 ? "The third lock" : "The box");
 
 /** The tools of the key's world (owner, 3 Nov 2026: "torch light, metal detector, digger"), bought once and kept. */
 type Tool = "detector" | "spade" | "torch";
@@ -157,6 +163,8 @@ export function QuarterScene({
   const [standing, setStanding] = useState(-1); // the place the hunter is in (-1: out in the town)
   const [near, setNear] = useState(-1); // the place the detector reads: the one stood in, or the nearest way in
   const [wide, setWide] = useState(false); // the whole town asked for
+  /** The way to the chain's next lock (owner, 12 Nov 2026): which way on the screen (degrees, 0 up), and how far. */
+  const [toLock, setToLock] = useState<{ n: number; turn: number; metres: number } | null>(null);
   // The joystick on phones and tablets (Joystick.tsx): where the thumb is, read by the walking every frame.
   const joy = useRef({ x: 0, y: 0 });
   const handheld = useHandheld();
@@ -536,6 +544,7 @@ export function QuarterScene({
     tellTime();
     const clock = window.setInterval(tellTime, 30_000);
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
+    let lockArrowAt = 0;
     const fit = () => {
       const w = el.clientWidth, h = el.clientHeight;
       if (!w || !h) return;
@@ -855,7 +864,10 @@ export function QuarterScene({
       // What's at hand for the action button: a box or the key's chest (its lock), a thing in this place (to look at,
       // or pick up), a locked door (to open with what it needs). Nothing happens by walking up: the button does it.
       const spots = kw.boxSpots();
-      if (now - lastShown < 1) el.parentElement?.setAttribute("data-boxes", JSON.stringify(spots)); // tests read it
+      if (now - lastShown < 1) {
+        el.parentElement?.setAttribute("data-boxes", JSON.stringify(spots)); // tests read it
+        el.parentElement?.setAttribute("data-guide", String(kw.guide())); // the chain lock whose house is lit
+      }
       let hand: Action | null = null;
       let handD = Infinity;
       for (const [key, spot] of Object.entries(spots)) {
@@ -863,7 +875,7 @@ export function QuarterScene({
         const d = dist(at, spot);
         if (d < 1.5 && d < handD && !v?.inner?.[n - 1]?.open) {
           handD = d;
-          hand = { kind: "box", n, label: n === 1 ? "🔓 Open the key's chest" : "🔓 Try the box's lock" };
+          hand = { kind: "box", n, label: n === 1 ? "🔓 Open the key's chest" : n >= 6 ? "🔓 Try the lock" : "🔓 Try the box's lock" };
         }
       }
       if (v && here >= 0) {
@@ -997,6 +1009,20 @@ export function QuarterScene({
       camera.position.copy(eye);
       if (now < shakeUntil) camera.position.x += (Math.random() - 0.5) * 0.4;
       camera.lookAt(aim);
+      // Which way on the screen to the chain's next lock (its house lit gold): where it falls on the screen, from the
+      // middle (behind the camera, the other way)
+      if (now - lockArrowAt > 150) {
+        lockArrowAt = now;
+        const g = kw.guide();
+        const spot = g ? kw.boxSpots()[g] : null;
+        if (spot) {
+          const p = new THREE.Vector3(spot.x, 1, spot.z).project(camera);
+          const back = p.z > 1 ? -1 : 1;
+          const turn = Math.round((Math.atan2(p.x * back, p.y * back) * 180) / Math.PI);
+          const metres = Math.round(dist(at, spot));
+          setToLock((o) => (o && o.n === g && Math.abs(o.turn - turn) < 4 && o.metres === metres ? o : { n: g, turn, metres }));
+        } else setToLock((o) => (o ? null : o));
+      }
       kw.tick(dt, at, { x: eye.x, y: eye.y, z: eye.z });
       renderer.render(world, camera);
       raf = requestAnimationFrame(frame);
@@ -1216,6 +1242,10 @@ export function QuarterScene({
       } else if (r.outcome === "chapter") {
         setSay(`📜 ${boxName(rp.n)}: a page of the story! Chapter ${r.chapter ?? ""} is open on your scroll.`);
         window.dispatchEvent(new Event("loota:story-open"));
+      } else if (r.outcome === "lock") {
+        // A lock of the chain: its note sends the hunter on to the next (owner, 12 Nov 2026: "from 1 to another, another
+        // to look for the next puzzle to another house, then they get the key")
+        setSay(`🔓 Lock ${r.lock ?? (rp.n === 1 ? 1 : 2)} of 3 opens! Inside, a note: "The next lock is in a small house of this town." Its house is lit with a gold light: follow it.`);
       } else if (r.outcome === "key") {
         setSay(`🗝 ${boxName(rp.n)}: the key!`);
         window.setTimeout(() => onKey?.(r.award), 1500);
@@ -1381,6 +1411,12 @@ export function QuarterScene({
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">Key {view?.key ?? ""}</p>
             <h2 className="truncate font-display text-xl font-extrabold">{view?.title ?? "The key's place"}</h2>
           </div>
+          {toLock && !roomPuzzle && (
+            <span className="flex shrink-0 items-center gap-1 rounded-full bg-gold px-2.5 py-1 text-xs font-extrabold text-ink" aria-label={`To the next lock: ${toLock.metres} m`} data-to-lock={toLock.n}>
+              <span aria-hidden="true" className="inline-block" style={{ transform: `rotate(${toLock.turn}deg)` }}>⬆</span>
+              Lock {toLock.n === 6 ? 2 : 3} · {toLock.metres} m
+            </span>
+          )}
           {reading && (
             <span
               className={`max-w-[45%] truncate rounded-full px-2.5 py-1 text-xs font-extrabold ${reading.style}`}

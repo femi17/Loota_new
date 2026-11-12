@@ -78,6 +78,8 @@ const DWELL_MS = 60_000;
 const FIELD_MS = 15_000;
 
 const eventKey = (e: ShowEvent) => `${e.at}|${e.text}`;
+/** A box at a key's place, as the viewers know it: the chain's locks (1, 6, 7: owner, 12 Nov 2026), the other boxes. */
+const boxLabel = (n: number) => (n === 1 ? "Lock 1 of 3" : n === 6 ? "Lock 2 of 3" : n === 7 ? "Lock 3 of 3" : `Box ${n}`);
 const TRIP_ICON: Record<string, string> = { plane: "✈️", train: "🚆", bus: "🚌", taxi: "🚕" };
 /** A route as drawn: longitudes kept continuous across the date line (a flight over the Pacific doesn't streak back). */
 function unwrap(path: [number, number][]): [number, number][] {
@@ -1350,10 +1352,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 <div className="mb-2 flex items-center gap-2">
                   <p className="min-w-0 flex-1 text-xs font-extrabold uppercase tracking-widest text-gold">
                     {sceneCard.result?.right
-                      ? `✓ ${sceneCard.who} opened Box ${sceneCard.n}${sceneCard.result.outcome ? `: ${sceneCard.result.outcome === "key" ? "the key!" : sceneCard.result.outcome}` : ""}`
+                      ? `✓ ${sceneCard.who} opened ${boxLabel(sceneCard.n)}${sceneCard.result.outcome ? `: ${sceneCard.result.outcome === "key" ? "the key!" : sceneCard.result.outcome === "lock" ? "on to the next lock" : sceneCard.result.outcome}` : ""}`
                       : sceneCard.result?.late
                         ? `⏳ ${sceneCard.who}: too slow, the lock jams`
-                        : `${sceneCard.who} · Box ${sceneCard.n} · ${PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.name ?? "A puzzle"}`}
+                        : `${sceneCard.who} · ${boxLabel(sceneCard.n)} · ${PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.name ?? "A puzzle"}`}
                   </p>
                   {!sceneCard.result?.right && !sceneCard.result?.late && <span className="rounded-full bg-ink-2 px-2 py-0.5 font-mono text-sm font-extrabold text-gold">⏱ {sceneCard.left}s</span>}
                 </div>

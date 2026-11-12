@@ -11,7 +11,8 @@
 //      house be able to enter"): four locked boxes in four small houses, walked into; into the noodle stall (the right
 //      one): the key's chest;
 //      key's room;
-//   6. walking up to the key's room door: its puzzle opens; solved: the key.
+//   6. walking up to the key's chest: its puzzle opens; solved: the first of three locks (owner, 12 Nov 2026), no key yet
+//      (the chain to the key: key-chain-browser-test).
 // The hunt and the test player are deleted.   SHOTS=<folder> node scripts/tests/key-world-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -250,9 +251,9 @@ try {
   const stored = (await admin.from("house_room_puzzles").select("kind, solution").eq("user_id", id).eq("hunt_id", huntId).eq("room", keyRoom).single()).data;
   const answer = stored.kind === "sentries" ? stored.solution.map((col, row) => [row, col]) : stored.solution;
   await page.evaluate((a) => window.__lootaRoomSolve?.(a), answer);
-  const card = await until(() => page.evaluate(() => /Key 1 earned/.test(document.body.innerText)), 20000);
+  const card = await until(async () => /Lock 1 of 3/.test(await say()), 20000);
   const held = (await admin.from("hunt_players").select("keys_held").eq("hunt_id", huntId).eq("user_id", id).single()).data.keys_held;
-  check("solved: the key (Key 1 held)", !!card && held === 1, `card ${!!card}, keys_held ${held}`);
+  check("solved: the first of three locks (no key yet)", !!card && held === 0, `${await say()}; keys_held ${held}`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

@@ -443,7 +443,8 @@ export type Built = {
   tick?(dt: number): void;
 };
 /** A room of the treasure building: shut, or opened with what it held. */
-export type InnerRoomView = { n: number; open: boolean; outcome: "coins" | "chapter" | "key" | "decoy" | "trap" | null };
+/** A box, the key's chest or a lock of the chain (1: the first lock, the chest; 6, 7: the second and third). */
+export type InnerRoomView = { n: number; open: boolean; outcome: "coins" | "chapter" | "key" | "decoy" | "trap" | "lock" | null };
 
 /** A straight wall from a to b (along x or z), its height, with doorways cut where asked. */
 function wallRun(group: THREE.Group, a: Point, b: Point, height: number, color: string, trim: string, gaps: Point[], windows: boolean) {

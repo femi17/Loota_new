@@ -742,6 +742,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const serverNow = drawnWall + skew;
         careT = (motionSkew !== null ? drawnWall + motionSkew : serverNow) - motionDelay;
         for (const h of s.hunters) {
+          // Finished (every key won): free to roam, but not on the show any more (owner, 12 Nov 2026: "if a user get all
+          // key in the hunt there is no need broadcasting them again, they can free roam, but not broadcast"). Not drawn,
+          // so not on the map nor in the auto camera's rounds; still on the leaderboard with their place.
+          if (h.place != null) {
+            shown.delete(h.id);
+            follows.delete(h.id);
+            continue;
+          }
           // Fainted: where the ambulance visit has them (never walked there)
           const care = careAt(h.id, careT);
           if (care) {
@@ -861,6 +869,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         // The camera.
         const v = viewRef.current;
         const viewKey = v.kind === "follow" ? `follow:${v.id}` : "field";
+        if (v.kind === "follow" && s.hunters.find((x) => x.id === v.id)?.place != null) setView({ kind: "field" });
         if (v.kind === "follow") {
           const h = s.hunters.find((x) => x.id === v.id);
           const p = h ? shown.get(h.id) : null;
@@ -1455,6 +1464,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 <li key={h.id}>
                   <button
                     type="button"
+                    disabled={h.place != null}
+                    title={h.place != null ? "Finished: roaming freely, off the show" : undefined}
                     onClick={() => {
                       setAuto(false);
                       setView({ kind: "follow", id: h.id });

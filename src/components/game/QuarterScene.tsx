@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { createClient } from "@/lib/supabase/client";
 import type { AvatarLook } from "@/lib/avatar";
@@ -18,7 +18,9 @@ import { Joystick, useHandheld } from "./Joystick";
 
 type Item = { id: string; name: string; icon: string };
 /** What happens at the key's place, for the map to save for the broadcast (GameMap: worldTalk). */
-const tellShow = (type: string, data?: unknown) => window.dispatchEvent(new CustomEvent("loota:world", { detail: { type, data } }));
+// (Quiet in the Djinn's world: the broadcast is a hunt's.)
+let quietShow = false;
+const tellShow = (type: string, data?: unknown) => !quietShow && window.dispatchEvent(new CustomEvent("loota:world", { detail: { type, data } }));
 type QuarterView = {
   ok: boolean;
   reason?: string;
@@ -60,6 +62,10 @@ type Opened = {
   balance?: number;
   chapter?: number;
   award?: unknown;
+  /** The Djinn's vault: where, and the Wonder won there. */
+  place?: string;
+  wonder?: string;
+  extraWonder?: string | null;
   penalty?: Penalty & { balance: number | null; energy: number | null; moveTo?: { lng: number; lat: number } | null };
 };
 const HEAT: Record<string, { text: string; style: string }> = {
@@ -85,6 +91,10 @@ const REFUSED: Record<string, string> = {
   not_live: "The hunt isn't on right now.",
   not_hunting: "You're not in this hunt.",
   dodge: "Answer the challenge first!",
+  far: "You're too far from the place now: go back within 300 m of it.",
+  none: "The Djinn's Wager is over for you here.",
+  hunting: "The Djinn waits while you race in a hunt: come back in free roam.",
+  out: "Catch your breath first.",
   late: "⏳ Too slow: the lock has jammed. Try again in a moment.",
   chain: "This lock won't turn yet: open the one before it first.",
 };
@@ -97,12 +107,19 @@ const OUTCOME_SAID: Record<string, string> = {
   lock: "open. Its note points to the next lock: follow the gold light.",
   decoy: "a fake chest. Nothing more here.",
   trap: "a trap, sprung. Nothing more here.",
+  dust: "only sand. Nothing more here.",
+  wonder: "the Djinn's Wonder, yours.",
+  empty: "the vault is empty.",
+  too_late: "emptied by another before you.",
 };
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
 /** What a locked find is called: the key's chest (room 1, at the right place), or a box in a house (rooms 2 to 5). */
 /** The key's chest is the first of three locks (owner, 12 Nov 2026); 6 and 7 are the second and third. */
-const boxName = (n: number) => (n === 1 ? "The key's chest" : n === 6 ? "The second lock" : n === 7 ? "The third lock" : "The box");
+const boxNameOf = (n: number, djinn = false) =>
+  djinn
+    ? n === 1 ? "The vault's first lock" : n === 6 ? "The second lock" : n === 7 ? "The last lock" : "The box" // the Djinn's three locks
+    : n === 1 ? "The key's chest" : n === 6 ? "The second lock" : n === 7 ? "The third lock" : "The box";
 
 /** The tools of the key's world (owner, 3 Nov 2026: "torch light, metal detector, digger"), bought once and kept. */
 type Tool = "detector" | "spade" | "torch";
@@ -135,6 +152,7 @@ export function QuarterScene({
   onKey,
   onScroll,
   onBought,
+  djinn,
 }: {
   huntId: string;
   look: AvatarLook;
@@ -155,11 +173,37 @@ export function QuarterScene({
   onScroll?: () => void;
   /** A tool bought here (the map's own record of it: the detector beeps there too). */
   onBought?: (tool: Tool) => void;
+  /** The Djinn's world (owner, 12 Nov 2026: "we make it like the key location… 3 puzzles to solve"): the same town at the
+   * place chosen from the seals, on the server's djinn_world_* calls (no hunt). Behind its third lock, the vault: the
+   * Wonder at the real place, empty at a false one (said, then the world closes). */
+  djinn?: { onVault: (r: { outcome: string; place?: string; wonder?: string; extraWonder?: string | null }) => void };
 }) {
   const [supabase] = useState(createClient);
+  // The server's calls: a key's place (house_*), or the Djinn's world (djinn_world_*)
+  const call = (fn: "view" | "step" | "enter" | "dodge", args: { room?: string | null; choice?: number } = {}) =>
+    djinn
+      ? fn === "view"
+        ? supabase.rpc("djinn_world_view")
+        : fn === "dodge"
+          ? supabase.rpc("djinn_world_dodge", { p_choice: args.choice })
+          : supabase.rpc(`djinn_world_${fn}`, { p_room: args.room ?? null })
+      : fn === "view"
+        ? supabase.rpc("house_view", { p_hunt: huntId })
+        : fn === "dodge"
+          ? supabase.rpc("house_dodge", { p_hunt: huntId, p_choice: args.choice })
+          : supabase.rpc(`house_${fn}`, { p_hunt: huntId, p_room: args.room ?? null });
+  const isDjinn = !!djinn;
+  useLayoutEffect(() => {
+    quietShow = isDjinn;
+  }, [isDjinn]);
+  const boxName = (n: number) => boxNameOf(n, isDjinn);
   const host = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<QuarterView | null>(null);
-  const [say, setSay] = useState<string>("Walk about the place (the joystick, the arrow keys, or tap where to go). Go into the place you think it is: a wrong one bites. Out in the open, dig.");
+  const [say, setSay] = useState<string>(
+    djinn
+      ? "🧞 The Djinn's ground. Walk about (the joystick, the arrow keys, or tap where to go) and go into the place you think hides his vault: the wrong ones are trapped. Three locks stand between you and what's inside."
+      : "Walk about the place (the joystick, the arrow keys, or tap where to go). Go into the place you think it is: a wrong one bites. Out in the open, dig.",
+  );
   const [standing, setStanding] = useState(-1); // the place the hunter is in (-1: out in the town)
   const [near, setNear] = useState(-1); // the place the detector reads: the one stood in, or the nearest way in
   const [wide, setWide] = useState(false); // the whole town asked for
@@ -300,7 +344,7 @@ export function QuarterScene({
       try {
         // The place it's in, told to the server first (it hands nothing over unless it knows the hunter is there)
         const room = viewRef.current?.objects.find((o) => o.id === id)?.room;
-        if (room) await supabase.rpc("house_step", { p_hunt: huntId, p_room: room });
+        if (room) await call("step", { room });
         const { data } = await supabase.rpc("house_touch", { p_hunt: huntId, p_object: id });
         const t = data as (Partial<QuarterView> & { text?: string; gained?: Item | null }) | null;
         if (!t?.ok) return setSay("You can't reach that from here.");
@@ -338,7 +382,7 @@ export function QuarterScene({
       const { data: p } = await supabase.from("profiles").select("coins, detector, spade, torch").eq("id", id).maybeSingle();
       if (live && p) setMe({ coins: Number(p.coins ?? 0), detector: !!p.detector, spade: !!p.spade, torch: !!p.torch });
     });
-    void supabase.rpc("house_view", { p_hunt: huntId }).then(({ data }) => {
+    void call("view").then(({ data }) => {
       if (!live) return;
       const v = data as QuarterView | null;
       if (!v?.ok) {
@@ -364,7 +408,7 @@ export function QuarterScene({
   // 10"): everyone here is counted (presence, with their look); where each one walks comes a few times a second.
   const worldKey = view?.key;
   useEffect(() => {
-    if (!uid || worldKey == null) return;
+    if (!uid || worldKey == null || isDjinn) return;
     const others = othersRef.current, looks = looksRef.current;
     const ch = supabase.channel(`keyworld:${huntId}:${worldKey}`, { config: { private: true, presence: { key: uid }, broadcast: { self: false } } });
     ch.on("presence", { event: "sync" }, () => {
@@ -394,7 +438,7 @@ export function QuarterScene({
       others.clear();
       void supabase.removeChannel(ch);
     };
-  }, [uid, worldKey, huntId, supabase, look]);
+  }, [uid, worldKey, huntId, supabase, look, isDjinn]);
 
   /** Buy a tool here (owner, 3 Nov 2026: "user should be able to buy thing"). */
   async function buy(tool: Tool) {
@@ -470,7 +514,7 @@ export function QuarterScene({
     stepRef.current = async (i: number) => {
       const v = viewRef.current;
       if (!v) return false;
-      const { data } = await supabase.rpc("house_step", { p_hunt: huntId, p_room: i >= 0 ? v.rooms[i].id : null });
+      const { data } = await call("step", { room: i >= 0 ? v.rooms[i].id : null });
       const r = data as (Partial<QuarterView> & { locked?: boolean; text?: string; used?: { name: string } | null; reason?: string }) | null;
       if (!r?.ok) {
         setSay(REFUSED[r?.reason ?? ""] ?? "You can't go there right now.");
@@ -875,7 +919,7 @@ export function QuarterScene({
         const d = dist(at, spot);
         if (d < 1.5 && d < handD && !v?.inner?.[n - 1]?.open) {
           handD = d;
-          hand = { kind: "box", n, label: n === 1 ? "🔓 Open the key's chest" : n >= 6 ? "🔓 Try the lock" : "🔓 Try the box's lock" };
+          hand = { kind: "box", n, label: n === 1 ? (isDjinn ? "🔓 Try the vault's lock" : "🔓 Open the key's chest") : n === 7 && isDjinn ? "🔓 Try the last lock" : n >= 6 ? "🔓 Try the lock" : "🔓 Try the box's lock" };
         }
       }
       if (v && here >= 0) {
@@ -1102,7 +1146,7 @@ export function QuarterScene({
       renderer.domElement.remove();
       scene.current = null;
     };
-  }, [built, look]);
+  }, [built, look, isDjinn]);
 
   // A tap: walk there (round the walls); into a place, a room's door, a thing to touch, or the chest.
   useEffect(() => {
@@ -1170,9 +1214,10 @@ export function QuarterScene({
     opening.current = true;
     setBusy(true);
     try {
-      const res = await fetch("/api/house/room", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: n }) });
+      const res = await fetch(djinn ? "/api/djinn/room" : "/api/house/room", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(djinn ? { room: n } : { hunt: huntId, room: n }) });
       const r = (await res.json().catch(() => null)) as { ok?: boolean; reason?: string; kind?: string; puzzle?: unknown; open?: boolean; seconds?: number; secondsLeft?: number } | null;
       if (r?.reason === "jammed") return setSay(`⏳ ${boxName(n)}'s lock is jammed: try again in ${Math.max(1, Math.ceil(r.seconds ?? 30))} s.`);
+      if (r?.reason === "not_inside") return setSay("Go back into the place with the vault first.");
       if (!r?.ok || !r.kind) return setSay(REFUSED[r?.reason ?? ""] ?? "The door won't budge right now.");
       setRoomNote(null);
       // Each puzzle's own time (owner, 8 Nov 2026: "add the right time to solving this if 60 secs is not right").
@@ -1212,7 +1257,7 @@ export function QuarterScene({
     setBusy(true);
     setRoomNote(null); // the last try's word goes as this one is checked
     try {
-      const res = await fetch("/api/house/room/solve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId, room: rp.n, answer }) });
+      const res = await fetch(djinn ? "/api/djinn/room/solve" : "/api/house/room/solve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(djinn ? { room: rp.n, answer } : { hunt: huntId, room: rp.n, answer }) });
       const r = (await res.json().catch(() => null)) as Opened | null;
       if (r?.reason === "late") {
         tellShow("result", { n: rp.n, late: true });
@@ -1246,6 +1291,18 @@ export function QuarterScene({
         // A lock of the chain: its note sends the hunter on to the next (owner, 12 Nov 2026: "from 1 to another, another
         // to look for the next puzzle to another house, then they get the key")
         setSay(`🔓 Lock ${r.lock ?? (rp.n === 1 ? 1 : 2)} of 3 opens! Inside, a note: "The next lock is in a small house of this town." Its house is lit with a gold light: follow it.`);
+      } else if (r.outcome === "wonder") {
+        setSay(`🧞 The last lock turns and the vault opens: the Djinn bows. This was the true place! The Wonder is yours.`);
+        window.setTimeout(() => djinn?.onVault({ outcome: "wonder", place: r.place, wonder: r.wonder, extraWonder: r.extraWonder }), 2200);
+      } else if (r.outcome === "empty" || r.outcome === "too_late") {
+        setSay(
+          r.outcome === "empty"
+            ? `🧞 The last lock turns… and the vault is empty. The Djinn laughs: this was a false place. The Wonder was never here.`
+            : `🧞 The vault is open… and empty: another hunter took the Wonder first.`,
+        );
+        window.setTimeout(() => djinn?.onVault({ outcome: r.outcome!, place: r.place }), 2600);
+      } else if (r.outcome === "dust") {
+        setSay(`🏜 ${boxName(rp.n)}: only sand. The Djinn's joke.`);
       } else if (r.outcome === "key") {
         setSay(`🗝 ${boxName(rp.n)}: the key!`);
         window.setTimeout(() => onKey?.(r.award), 1500);
@@ -1271,28 +1328,28 @@ export function QuarterScene({
       window.clearInterval(t);
       tellShow("result", { n, late: true });
       setRoomPuzzle((p) => (p?.n === n ? null : p));
-      setSay(`⏳ Too slow: ${boxName(n)}'s lock jams for 30 s. Then it has a new puzzle.`);
+      setSay(`⏳ Too slow: ${boxNameOf(n, isDjinn)}'s lock jams for 30 s. Then it has a new puzzle.`);
     }, 250);
     return () => window.clearInterval(t);
-  }, [roomPuzzle]);
+  }, [roomPuzzle, isDjinn]);
 
   // The detector: once at each place, how hot it is (only with one; the server never says which is right). It reads
   // the place stood in, or from the street the one whose way in is close.
   useEffect(() => {
     const v = viewRef.current;
     const room = near >= 0 ? v?.rooms[near]?.id : null;
-    if (!room || heatAsked.current.has(room)) return;
+    if (!room || heatAsked.current.has(room) || isDjinn) return;
     heatAsked.current.add(room);
     void supabase.rpc("house_detect", { p_hunt: huntId, p_room: room }).then(({ data }) => {
       const d = data as { ok: boolean; reason?: string; heat?: string } | null;
       setHeat((h) => ({ ...h, [room]: d?.ok && d.heat ? d.heat : d?.reason === "no_detector" ? "none" : "" }));
     });
-  }, [near, huntId, supabase, heard]);
+  }, [near, huntId, supabase, heard, isDjinn]);
   // …and with a detector, each place as the hunter comes near it (within DETECT_M): it beeps as they near the hot one
   // (owner, 4 Nov 2026), but only once they've walked close enough to read it (8 Nov 2026: "walk around before seeing it")
   useEffect(() => {
     const v = viewRef.current;
-    if (!me?.detector || !v || !inRange) return;
+    if (!me?.detector || !v || !inRange || isDjinn) return;
     for (const r of inRange.split(",").map((k) => v.rooms[Number(k)]).filter(Boolean)) {
       if (heatAsked.current.has(r.id)) continue;
       heatAsked.current.add(r.id);
@@ -1302,7 +1359,7 @@ export function QuarterScene({
         else heatAsked.current.delete(r.id); // ask again later (not at the place yet)
       });
     }
-  }, [inRange, me?.detector, view?.key, huntId, supabase, heard]);
+  }, [inRange, me?.detector, view?.key, huntId, supabase, heard, isDjinn]);
 
   /** Searching a place (a building, as the hunter walks in; open ground, with ⛏ Dig here): the server decides (a
    * trap's challenge, nothing, the treasure building's rooms, or a buried chest). */
@@ -1312,7 +1369,7 @@ export function QuarterScene({
     if (!s || !v || i < 0) return;
     setBusy(true);
     try {
-      const { data } = await supabase.rpc("house_enter", { p_hunt: huntId, p_room: v.rooms[i].id });
+      const { data } = await call("enter", { room: v.rooms[i].id });
       const r = data as Dug | null;
       if (!r?.ok) {
         if (r?.reason === "digging") {
@@ -1329,7 +1386,8 @@ export function QuarterScene({
       const open = v.rooms[i].outdoor === true;
       if (r.trap && r.dodge) {
         s.shake();
-        setSay(open ? `⚠️ Your spade hits something that clicks… a trap! The key isn't here.` : `⚠️ Something clicks under your foot… a trap! The key isn't here.`);
+        const what = djinn ? "The Djinn's vault" : "The key";
+        setSay(open ? `⚠️ Your spade hits something that clicks… a trap! ${what} isn't here.` : `⚠️ Something clicks under your foot… a trap! ${what} isn't here.`);
         setDodge({ room: i, ...r.dodge });
         return;
       }
@@ -1347,7 +1405,13 @@ export function QuarterScene({
         // The right place: the key's chest, locked by a puzzle (room 1)
         s.world.setKey(found);
         s.world.setBoxes(next.inner ?? null);
-        setSay(next.rooms[found].outdoor ? "⛏ Your spade hits wood: the key's chest! Go up to it and open it: its lock is a timed puzzle." : "🔍 This is it! The key's chest is here, locked by a timed puzzle. Go up to it and open it.");
+        setSay(
+          djinn
+            ? "🧞 This is it: the Djinn's vault! Its first lock is a timed puzzle. Go up to it and open it (three locks in all)."
+            : next.rooms[found].outdoor
+              ? "⛏ Your spade hits wood: the key's chest! Go up to it and open it: its lock is a timed puzzle."
+              : "🔍 This is it! The key's chest is here, locked by a timed puzzle. Go up to it and open it.",
+        );
       } else setSay(open ? `⛏ You dig at ${v.rooms[i].name}… only earth. It isn't here.` : `🏠 Inside ${v.rooms[i].name}… nothing here. It's empty.`);
     } finally {
       setBusy(false);
@@ -1363,11 +1427,11 @@ export function QuarterScene({
     answering.current = true;
     setDodge(null);
     try {
-      const { data } = await supabase.rpc("house_dodge", { p_hunt: huntId, p_choice: choice });
+      const { data } = await call("dodge", { choice });
       const r = data as { ok: boolean; dodged?: boolean; penalty?: Penalty & { balance: number | null; energy: number | null } } | null;
       const name = viewRef.current?.rooms[d.room]?.name ?? "this place";
       if (r?.dodged) {
-        setSay(`💨 You dodged it! You jump clear of ${name}. It's a trap, though: not there.`);
+        setSay(`💨 You dodged it! You jump clear of ${name}. It's a trap, though: ${djinn ? "the vault" : "the key"}'s not there.`);
         if (s) await s.walkTo(s.world.route(s.at(), s.world.places[d.room].front));
       } else if (r?.penalty) {
         const pen = r.penalty;
@@ -1402,13 +1466,13 @@ export function QuarterScene({
   }, [wandHeat]);
   const readingOf = read && standing < 0 ? read.name : "";
   return (
-    <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label="The key's place" data-busy={busy} data-inside={on?.id ?? ""} data-me={uid ?? ""}>
+    <div className="pointer-events-auto fixed inset-0 z-50 bg-[#1B2230] text-paper" role="dialog" aria-modal="true" aria-label={djinn ? "The Djinn's ground" : "The key's place"} data-djinn={djinn ? "true" : undefined} data-busy={busy} data-inside={on?.id ?? ""} data-me={uid ?? ""}>
       {/* The world fills the screen; the bars float over it. */}
       <div ref={host} className="absolute inset-0 touch-none" data-house />
       <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-[#1B2230]/85 via-[#1B2230]/50 to-transparent pb-3" data-house-head>
         <div className="flex items-center gap-3 px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">Key {view?.key ?? ""}</p>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-gold">{djinn ? "🧞 The Djinn's Wager" : `Key ${view?.key ?? ""}`}</p>
             <h2 className="truncate font-display text-xl font-extrabold">{view?.title ?? "The key's place"}</h2>
           </div>
           {toLock && !roomPuzzle && (

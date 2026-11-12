@@ -224,6 +224,22 @@ function content(outcome: InnerRoomView["outcome"]) {
     const note = box(0.34, 0.02, 0.24, "#F2E6C8", -0.12, 0.03, 0, false);
     note.rotation.y = 0.3;
     g.add(box(0.22, 0.24, 0.1, "#C8A45C", 0.18, 0.12, 0, false), shackle, note);
+  } else if (outcome === "dust") {
+    // The Djinn's boxes: only sand
+    const heap = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.2, 10), new THREE.MeshLambertMaterial({ color: "#D9B98A" }));
+    heap.position.y = 0.1;
+    g.add(heap);
+  } else if (outcome === "wonder") {
+    // The Djinn's vault, won: the Wonder glowing over the open chest
+    g.add(makeChest());
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 14), new THREE.MeshBasicMaterial({ color: "#C9A7FF" }));
+    orb.position.y = 1.25;
+    const halo = new THREE.PointLight("#B48CFF", 2.5, 6, 1.5);
+    halo.position.y = 1.3;
+    g.add(orb, halo);
+  } else if (outcome === "empty" || outcome === "too_late") {
+    // The Djinn's vault at a false place (or emptied by another): an open chest, nothing in it but dust
+    g.add(makeChest(), cyl(0.3, 0.02, "#BFAF94", 0, 0.62, 0));
   } else if (outcome === "trap") {
     g.add(cyl(0.6, 0.02, "#0A0A0A", 0, 0.03, 0));
     for (const a of [0.3, 1.8, 3.6]) {

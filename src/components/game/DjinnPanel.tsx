@@ -615,7 +615,7 @@ export function DjinnPanel({
             </p>
             <p className="text-sm italic">{state.chosen.verse}</p>
             <p className="text-xs">
-              Reach it before the Wager ends. Only one seal is true, and only the first to master its chamber takes {wonder?.name ?? "the treasure"}.
+              Reach it before the Wager ends. Within 300 m of it, Explore the place: find the Djinn&apos;s vault among its houses (the wrong ones are trapped) and open its three locks. Only one seal is true, and only the first to open its vault takes {wonder?.name ?? "the treasure"}.
             </p>
             <button
               type="button"

@@ -533,10 +533,13 @@ export function GameMap({
   // While the key's world is open the map stands still: its keys are the world's (owner, 4 Nov 2026: "my viehicle
   // move away from the key location")
   const houseOpenRef = useRef(false);
+  // The Djinn's world at the place chosen from the seals (owner, 12 Nov 2026: "we make it like the key location"): the
+  // same 3D town, opened within 300 m of it
+  const [djinnWorld, setDjinnWorld] = useState(false);
   useEffect(() => {
-    houseOpenRef.current = houseOpen;
-    if (houseOpen) controls.current = { go: false, sprint: false };
-  }, [houseOpen]);
+    houseOpenRef.current = houseOpen || djinnWorld;
+    if (houseOpen || djinnWorld) controls.current = { go: false, sprint: false };
+  }, [houseOpen, djinnWorld]);
   const huntStory = useHuntStory(huntId);
   const radio = useRadio();
   const [sound, setSoundState] = useState(() => soundOn()); // sounds and buzzes (owner, 24 Oct 2026), kept on this device
@@ -679,15 +682,6 @@ export function GameMap({
   /** Something on the road (a hunt): the officer, the traveller, the seller. */
   const [roadEvent, setRoadEvent] = useState<RoadEvent | null>(null);
   const [roadActions, setRoadActions] = useState<RoadEventActions | null>(null);
-  /** "Enter the chamber" at the chosen place: ask for the rooms (once), then open the Djinn on them. */
-  const enterChamber = async () => {
-    if (!djinnActions || checkingIn) return;
-    setCheckingIn(true);
-    const chamber = await djinnActions.enterChamber();
-    setCheckingIn(false);
-    if (typeof chamber === "object") actions.current?.openVault(chamber); // the vault on the map (the panel as a sheet)
-    setDjinnOpen({ chamber });
-  };
   /** The Claim button at a Detour's place: the Lamp's messenger on the map (the lamp's panel if it can't be shown). */
   const claimDetour = async (detour: LampDetour) => {
     if (!lampActions || checkingIn) return;
@@ -7514,7 +7508,7 @@ export function GameMap({
       function djinnApproachTick(now: number) {
         const site = djinn?.stage === "chosen" && !djinnOff && !ride && !visit ? djinn.chosen : null;
         const d = site ? geo.distanceM([traveller.pos.lng, traveller.pos.lat], [site.lng, site.lat]) : Infinity;
-        const here = site && d <= 55 ? { place: site.name } : null;
+        const here = site && d <= 300 ? { place: site.name } : null;
         setHud((h) => (h.djinnHere?.place === here?.place ? h : { ...h, djinnHere: here }));
         if (!site) return;
         if (d < 1300 && now - approachAt > 3000) {
@@ -9709,6 +9703,39 @@ export function GameMap({
                 }}
               />
             )}
+            {djinnWorld && (
+              <QuarterScene
+                huntId=""
+                look={look}
+                onClose={() => setDjinnWorld(false)}
+                onPenalty={(p) => {
+                  setDjinnWorld(false);
+                  if (p.balance != null) setHud((h) => ({ ...h, coins: Number(p.balance) }));
+                  setPenalty(p);
+                }}
+                onCoins={(balance) => setHud((h) => ({ ...h, coins: balance }))}
+                onRefused={(text) => {
+                  setDjinnWorld(false);
+                  huntActions.current?.say(text, true);
+                }}
+                onMoved={(at) => huntActions.current?.placeAt(at.lng, at.lat)}
+                djinn={{
+                  onVault: (r) => {
+                    // The vault opened: the world closes and the map says right or wrong
+                    setDjinnWorld(false);
+                    void djinnActions?.state();
+                    huntActions.current?.say(
+                      r.outcome === "wonder"
+                        ? `🧞 The Djinn bows: ${r.place ?? "this"} was the true place. The Wonder is yours: find it in your bag.`
+                        : r.outcome === "empty"
+                          ? `🧞 ${r.place ?? "This place"} was a false place: the vault was empty and the Djinn laughs. Your part in this Wager is over.`
+                          : "🧞 The vault was already emptied: another hunter took the Wonder first.",
+                      true,
+                    );
+                  },
+                }}
+              />
+            )}
             {storyOpen && huntId && huntStory.story && !inside && <StoryScroll huntId={huntId} story={huntStory.story} reload={huntStory.reload} onClose={() => {
               setStoryOpen(false);
               huntStory.seen();
@@ -10309,15 +10336,15 @@ export function GameMap({
               🧭 Explore the place
             </button>
           )}
-          {hud.djinnHere && (
+          {hud.djinnHere && !djinnWorld && (
             <button
               type="button"
-              disabled={checkingIn}
-              onClick={() => void enterChamber()}
-              aria-label={`Enter the chamber at ${hud.djinnHere.place}`}
-              className="pointer-events-auto flex h-10 items-center gap-1.5 rounded-full bg-[#9B5DE5] px-3.5 text-sm font-bold text-paper shadow-lg disabled:opacity-50"
+              onClick={() => setDjinnWorld(true)}
+              aria-label={`Explore the Djinn's ground at ${hud.djinnHere.place}`}
+              data-djinn-explore
+              className="pointer-events-auto flex w-full max-w-xs flex-col items-center rounded-2xl bg-[#9B5DE5] px-6 py-3 font-display text-lg font-extrabold text-paper shadow-lg active:scale-95"
             >
-              🧞 Enter the chamber
+              🧞 Explore the place
             </button>
           )}
           {(hud.heat?.chest || hud.heat?.trap) && (

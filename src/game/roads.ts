@@ -88,6 +88,8 @@ type RoadEdge = {
   urban?: number;
   /** No public access (an airport's airside, a private yard): walkable, but nobody should be put down there. */
   closed?: boolean;
+  /** A main road (the map's own roads, which have no cls: motorway, trunk, primary, secondary). */
+  main?: boolean;
 };
 
 /** How built-up a road square is, 0 (countryside) to 1 (a city), from how many roads it has. */
@@ -128,6 +130,8 @@ export type RoadNetwork = { nodes: RoadNode[]; edges: RoadEdge[]; centre: LngLat
 /** Where a player is on the network: an edge, how far along it (0 = node a, 1 = node b), and which way they face. */
 export type RoadPosition = { edge: number; t: number; dir: 1 | -1 };
 
+/** The map's main road classes (its tiles name them so). */
+const TILE_MAIN = new Set(["motorway", "trunk", "primary", "secondary"]);
 const NOT_ROADS = new Set(["rail", "transit", "ferry", "raceway", "bus_guideway", "aerialway"]);
 const FOOT_ONLY = new Set(["path", "pedestrian"]);
 
@@ -177,7 +181,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     return id;
   };
 
-  const addLine = (line: Coord[], level: number, closed: boolean) => {
+  const addLine = (line: Coord[], level: number, closed: boolean, main: boolean) => {
     for (let i = 1; i < line.length; i++) {
       const p = local({ lng: line[i - 1][0], lat: line[i - 1][1] });
       const q = local({ lng: line[i][0], lat: line[i][1] });
@@ -189,7 +193,7 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
       if (seen.has(key)) continue; // the same road from two overlapping tiles
       seen.add(key);
       const id = edges.length;
-      edges.push({ a, b, length: Math.hypot(q.x - p.x, q.y - p.y), level, ...(closed && { closed }) });
+      edges.push({ a, b, length: Math.hypot(q.x - p.x, q.y - p.y), level, ...(closed && { closed }), ...(main && { main }) });
       nodes[a].edges.push(id);
       nodes[b].edges.push(id);
     }
@@ -206,9 +210,10 @@ export function buildNetwork(features: RoadFeature[], mode: Mode, centre: LngLat
     const brunnel = f.properties?.brunnel;
     const level = brunnel === "bridge" ? 1 : brunnel === "tunnel" ? -1 : 0;
     const closed = f.properties?.access === "no" || f.properties?.access === "private";
+    const main = TILE_MAIN.has(String(f.properties?.class ?? ""));
     const box = f._z !== undefined && f._x !== undefined && f._y !== undefined ? tileBox(f._z, f._x, f._y) : null;
     const lines = f.geometry.type === "LineString" ? [f.geometry.coordinates as Coord[]] : f.geometry.type === "MultiLineString" ? (f.geometry.coordinates as Coord[][]) : [];
-    for (const line of lines) for (const piece of box ? clipLine(line, box) : [line]) addLine(piece, level, closed);
+    for (const line of lines) for (const piece of box ? clipLine(line, box) : [line]) addLine(piece, level, closed, main);
   }
 
   joinCrossings(nodes, edges, local);
@@ -336,7 +341,7 @@ function joinCrossings(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: n
     const piece = (from: number, to: number) => Math.max(0.01, Math.hypot(xy[to].x - xy[from].x, xy[to].y - xy[from].y));
     e.b = chain[1];
     e.length = piece(chain[0], chain[1]);
-    for (let k = 1; k < chain.length - 1; k++) edges.push({ a: chain[k], b: chain[k + 1], length: piece(chain[k], chain[k + 1]), level: e.level, closed: e.closed });
+    for (let k = 1; k < chain.length - 1; k++) edges.push({ a: chain[k], b: chain[k + 1], length: piece(chain[k], chain[k + 1]), level: e.level, closed: e.closed, main: e.main });
   }
   for (const n of nodes) n.edges = [];
   edges.forEach((e, id) => {
@@ -428,7 +433,7 @@ function joinLooseEnds(nodes: RoadNode[], edges: RoadEdge[], local: (p: { lng: n
       xy.push(local(nodes[target]));
       const oldB = e.b;
       const tail = edges.length;
-      edges.push({ a: target, b: oldB, length: e.length * (1 - bestT), level: e.level, closed: e.closed });
+      edges.push({ a: target, b: oldB, length: e.length * (1 - bestT), level: e.level, closed: e.closed, main: e.main });
       e.b = target;
       e.length *= bestT;
       nodes[target].edges.push(bestEdge, tail);
@@ -935,6 +940,12 @@ export function buildNetworkFromCells(cells: RoadCellData[], mode: Mode, centre:
 }
 
 /** The road the player is on, for traffic: its kind, stretch and how built-up the area is (our own roads only). */
+/** On a main road (a motorway, trunk, primary or secondary road: owner, 12 Nov 2026, idling there is against the law)? */
+export function onMainRoad(net: RoadNetwork, rp: RoadPosition) {
+  const e = net.edges[rp.edge];
+  return !!e && (e.main ?? (e.cls !== undefined && MAIN_ROADS.has(e.cls)));
+}
+
 export function roadHere(net: RoadNetwork, rp: RoadPosition) {
   const e = net.edges[rp.edge];
   return e?.cls !== undefined ? { cls: e.cls, stretch: e.stretch ?? 0, urban: e.urban ?? 0 } : null;

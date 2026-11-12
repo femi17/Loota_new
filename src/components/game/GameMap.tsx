@@ -54,6 +54,7 @@ import { local, peopleOf, setCountry, words, type Role } from "@/game/locale";
 import { RadioPanel, useRadio } from "./RadioPanel";
 import { PenaltyCard, type Penalty } from "./PenaltyCard";
 import { QuarterScene } from "./QuarterScene";
+import { JailCard } from "./JailCard";
 import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -160,6 +161,10 @@ type Hud = {
   } | null;
   /** At the chosen seal's place: the "Enter the chamber" button. */
   djinnHere: { place: string } | null;
+  /** Locked in a cell (the idling law, owner, 12 Nov 2026): until when (this device's clock), the bail, what was impounded. */
+  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null } | null;
+  /** Vehicles in the pound: released for the fee (gone after 7 days). */
+  impounded: { id: string; kind: VehicleKind; fee: number; goneAt: number }[];
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
   /** lost: this step's way isn't drawn (ended, or a tap on the map replaced it): "Show the way" draws it again. */
   journey: { place: string; step: number; total: number; text: string; board: string | null; lost: boolean } | null;
@@ -388,6 +393,10 @@ export function GameMap({
     attackDome: () => void;
     /** Stop, or go on along the drawn way. */
     toggleDrive: () => void;
+    /** Out of the cell at once, for the bail (the idling law). */
+    payBail: () => void;
+    /** A vehicle out of the pound, for the fee. */
+    releaseVehicle: (id: string) => void;
     /** A scene that held the hunter (the pour) is over. */
     endHold: () => void;
     /** Open the chest where the hunter stands when it's the Masquerade's decoy. */
@@ -465,6 +474,8 @@ export function GameMap({
     journey: null,
     djinn: null,
     djinnHere: null,
+    jail: null,
+    impounded: [],
     wonders: { frozen: null, sand: null, eye: null, cloaked: false, mirrored: false },
     repairHere: null,
     rush: null,
@@ -850,6 +861,10 @@ export function GameMap({
           },
           // The other hunters drawn, and their names (scripts/tests/security-attack-test.mjs)
           __lootaOthers: () => [...others.keys()],
+          // Ask the idling law now, and whether the hunter is on a main road (scripts/tests/idle-law-browser-test.mjs)
+          __lootaLaw: () => checkLaw(),
+          __lootaMainRoad: () => (network && onRoad ? roads.onMainRoad(network, onRoad) : null),
+          __lootaRoadClass: () => (network && onRoad ? (roads.roadHere(network, onRoad)?.cls ?? (network.edges[onRoad.edge] as { main?: boolean })?.main ?? null) : null),
           // Ask for the weather now (scripts/tests/weather-browser-test.mjs)
           __lootaWeather: () => checkWeather(performance.now()),
           // Put the hunter somewhere (scripts/tests/stop-on-the-way-browser-test.mjs).
@@ -1512,6 +1527,8 @@ export function GameMap({
           return;
         } else if (result.reason === "dome") {
           say("A Lockdown dome keeps you out of this key area. Attack it with other hunters at its edge to break it.", true);
+        } else if (result.reason === "jailed") {
+          void checkLaw(); // the cell, on screen
         } else if (result.reason === "frozen") {
           freeze(result.until ? Date.parse(result.until) : Date.now() + 10_000);
           say("⌛ The Hourglass of Ages holds you fast: you can't move until its sand runs out.", true);
@@ -1672,7 +1689,7 @@ export function GameMap({
 
       async function refreshVehicles() {
         const [{ data: vehicles }, { data: rentals }, { data: papers }] = await Promise.all([
-          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured, jack, flat_wheel, flat_helper, recovery_ready_at"),
+          supabase.from("player_vehicles").select("kind, fuel, tyre, engine, broken_at, repair_ready_at, stranded_at, lng, lat, in_use, light, helmet, registered, insured, jack, flat_wheel, flat_helper, recovery_ready_at").is("impounded_at", null), // (the pound's aren't yours to ride)
           supabase.from("vehicle_rentals").select("kind, started_at").is("ended_at", null),
           supabase.from("profiles").select("rider_licence, driver_licence").maybeSingle(),
         ]);
@@ -2008,6 +2025,8 @@ export function GameMap({
             else if (started?.reason === "taxi") say("Cars come as taxis: call one from Taxi, bus, train or plane.", true);
             else if (started?.reason === "broken") say(`Your ${vehicleName(kind)} has broken down. Call a mechanic (the gold 🔧 button, or in Vehicles): they come to you.`, true);
             else if (started?.reason === "repairing") say(`The mechanic is still working on your ${vehicleName(kind)}. Try again in a moment.`, true);
+            else if (started?.reason === "impounded") say(`Your ${vehicleName(kind)} is in the pound (you were locked up for idling on a main road). Release it for ${(started as { fee?: number }).fee ?? 200} coins: the 🚓 Pound button.`, true);
+            else if (started?.reason === "impound_gone") say(`Your ${vehicleName(kind)} was left in the pound for 7 days and is gone. Buy or rent another.`, true);
             else if (started?.reason === "recovering") say(`Your ${vehicleName(kind)} is still on the recovery truck: it's back in your pocket by ${new Date((started as { readyAt?: string }).readyAt ?? Date.now()).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`, true);
             else say("Couldn't get on. Please try again.", true);
             afterModeChange();
@@ -2422,6 +2441,8 @@ export function GameMap({
         sceneMoment: (m) => sceneMoment(m),
         getOff: () => void getOff(),
         getOut: () => void getOut(),
+        payBail: () => void payBail(),
+        releaseVehicle: (id) => void releaseVehicle(id),
         notStuck: () => offerWayOut(false),
         refuel: () => void refuelHere(),
         eat() {
@@ -4196,7 +4217,7 @@ export function GameMap({
             if (c && !disposed) {
               setCountry(c.code ?? (inNigeria(here) ? "NG" : "ZZ")); // the open sea: no country's in particular
               // …and the server, for the lamp's Detours: told and asked as this country would (owner, 12 Nov 2026)
-              if (c.code) void supabase.rpc("note_country", { p_code: c.code });
+              if (c.code) void supabase.rpc("note_country", { p_code: c.code }).then(() => undefined); // (a query only goes when awaited)
               void refreshNear(); // its words (a motor park or a bus station)
             }
           })
@@ -5610,7 +5631,7 @@ export function GameMap({
         const pk = pickup!;
         const serverNow = Date.now() + pk.offset;
         if (serverNow > pk.expires) {
-          void supabase.rpc("cancel_pickup");
+          void supabase.rpc("cancel_pickup").then(() => undefined); // (a query only goes when awaited)
           const who = pk.p.kind === "taxi" ? "The taxi driver" : "The renter";
           endPickup();
           say(`${who} waited 15 minutes and left.`, true);
@@ -7821,6 +7842,108 @@ export function GameMap({
         bannerTimer = b ? window.setTimeout(nextBanner, 6000) : 0;
       }
 
+      // ---- The idling law (owner, 12 Nov 2026: "if user knows, they want to be idle, they need to be at a relex joint. If
+      // a user stays on the major road for 1hr+ … locked in a cell, and then their vehicle impounded") ----------------
+      // The game tells the server when the hunter is on a main road; the server knows how long they've stood still
+      // (even with the game closed). Asked every minute: fine, an officer's warning at 45 min, or the cell at an hour.
+      type Law = {
+        state: "ok" | "warn" | "jailed";
+        now?: string;
+        until?: string;
+        bail?: number;
+        vehicle?: VehicleKind | null;
+        rentalEnded?: boolean;
+        arrested?: boolean;
+        minutes?: number;
+        left?: number;
+        impounded?: { id: string; kind: VehicleKind; fee: number; goneAt: string }[];
+      };
+      let lawAt = -Infinity;
+      let lawAsking = false;
+      let lawAgain = false; // asked again while asking (bail just paid): that answer, not the one on its way
+      let jailUntil = 0;
+      let warnedAt = -Infinity;
+      let mainNoted: boolean | null = null;
+      let mainAt = 0;
+      async function checkLaw(): Promise<void> {
+        if (lawAsking) {
+          lawAgain = true;
+          return;
+        }
+        lawAsking = true;
+        lawAt = performance.now();
+        const { data } = await supabase.rpc("idle_law");
+        lawAsking = false;
+        if (lawAgain) {
+          lawAgain = false;
+          return checkLaw();
+        }
+        const r = data as Law | null;
+        if (disposed || !r) return;
+        const skew = r.now ? Date.now() - Date.parse(r.now) : 0;
+        const pound = (r.impounded ?? []).map((v) => ({ id: v.id, kind: v.kind, fee: v.fee, goneAt: Date.parse(v.goneAt) }));
+        setHud((h) => (JSON.stringify(h.impounded) === JSON.stringify(pound) ? h : { ...h, impounded: pound }));
+        if (r.state === "jailed" && r.until) {
+          jailUntil = Date.parse(r.until) + skew;
+          traveller.v = 0; // held where they stand until it's served (or bailed): the loop's canMove
+          if (r.arrested) {
+            // On foot now: the vehicle went to the pound (a rental back to its renter)
+            traveller.mode = "walk";
+            void refreshVehicles();
+            afterModeChange();
+            say(`🚔 Locked up! You stood still on a main road for ${r.minutes ?? 60} minutes.${r.vehicle ? ` Your ${vehicleName(r.vehicle)} has been impounded.` : r.rentalEnded ? " Your rental has gone back to its renter." : ""}`, true);
+          }
+          const jail = { until: jailUntil, bail: r.bail ?? 150, vehicle: r.vehicle ?? null, rentalEnded: !!r.rentalEnded, minutes: r.minutes ?? null };
+          setHud((h) => (h.jail && Math.abs(h.jail.until - jail.until) < 2000 && h.jail.bail === jail.bail ? h : { ...h, jail }));
+          return;
+        }
+        if (jailUntil) {
+          // Out (served, or bailed): free to go
+          jailUntil = 0;
+          setHud((h) => ({ ...h, jail: null }));
+          say("🔓 You're out of the cell. Keep moving, or rest at a chill spot: standing an hour on a main road gets you locked up again.", true);
+        }
+        if (r.state === "warn" && performance.now() - warnedAt > 5 * 60_000) {
+          warnedAt = performance.now();
+          const what = traveller.mode === "walk" ? "" : ` and your ${vehicleName(traveller.mode as VehicleKind)} impounded`;
+          say(`👮 An officer: "You've been standing on this main road for ${r.minutes} minutes. Move along, or rest at a chill spot (a park, a mall or a place to eat). In ${r.left} min you'll be locked up${what}."`, true);
+        }
+      }
+      /** Each frame: tell the server when the hunter gets on or off a main road; ask the law every minute (and when the
+       * cell's time is up). */
+      function lawTick(now: number) {
+        const main = !!network && !!onRoad && !ride && !visit && roads.onMainRoad(network, onRoad);
+        if (main !== mainNoted && now - mainAt > 2000) {
+          mainNoted = main;
+          mainAt = now;
+          void supabase.rpc("note_main_road", { p_on: main }).then(() => undefined); // (a query only goes when awaited)
+        }
+        if (now - lawAt > 60_000 || (jailUntil && Date.now() > jailUntil + 1000 && now - lawAt > 3000)) void checkLaw();
+      }
+      async function payBail() {
+        const { data } = await supabase.rpc("pay_bail");
+        const r = data as { ok: boolean; reason?: string; balance?: number; bail?: number } | null;
+        if (disposed) return;
+        if (r?.ok) {
+          if (r.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
+          await checkLaw();
+        } else if (r?.reason === "coins") say(`Not enough coins for the bail (${r.bail ?? 150}). Wait out your time.`, true);
+        else await checkLaw();
+      }
+      async function releaseVehicle(id: string) {
+        const { data } = await supabase.rpc("release_vehicle", { p_vehicle: id });
+        const r = data as { ok: boolean; reason?: string; balance?: number; fee?: number; kind?: VehicleKind } | null;
+        if (disposed) return;
+        if (r?.ok) {
+          if (r.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
+          await refreshVehicles();
+          say(`🚓 Your ${r.kind ? vehicleName(r.kind) : "vehicle"} is out of the pound and back with you: get on it from Vehicles.`, true);
+        } else if (r?.reason === "coins") say(`Not enough coins: the pound wants ${r.fee ?? 200}.`, true);
+        else if (r?.reason === "jailed") say("Not from the cell: release it once you're out.", true);
+        else if (r?.reason === "gone") say("Too late: it was in the pound 7 days and is gone.", true);
+        await checkLaw();
+      }
+
       /** Frozen by the Hourglass of Ages until then (the server says when; the loop holds the player till then). */
       function freeze(until: number) {
         frozenUntil = until;
@@ -8629,9 +8752,10 @@ export function GameMap({
         }
         if (!riding) mapTheRestOfTheWay(now);
         if (!riding) keepOnOurRoads();
+        lawTick(now);
 
         // The hunter moves by themselves along the drawn way (not steered: owner, 8 Nov 2026).
-        const canMove = !frozen && !huntHold && !sceneHold && !inWorld && !houseOpenRef.current && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;
+        const canMove = !frozen && !huntHold && !sceneHold && !inWorld && !houseOpenRef.current && now >= stuckUntil && Date.now() >= frozenUntil && Date.now() >= jailUntil && !ride && !visit && !!onRoad;
         const driven = driving && !!trip && !trip.straight;
         // On the dev server only, a held ↑ walks straight on (the automated tests move the hunter so; never on the site)
         const go = driven || (DEV_WALK && c.go);
@@ -9770,6 +9894,7 @@ export function GameMap({
               </div>
             )}
             {penalty && <PenaltyCard penalty={penalty} onClose={() => setPenalty(null)} />}
+            {hud.jail && <JailCard jail={hud.jail} coins={hud.coins} onBail={() => actions.current?.payBail()} />}
             {houseOpen && huntId && (
               <QuarterScene
                 huntId={huntId}
@@ -10408,7 +10533,7 @@ export function GameMap({
       )}
 
       {/* What can be done right here: check in, eat, rest, refuel, kegs, tyres, repairs; and the siege at a dome's edge. */}
-      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || hud.heat?.house) && (
+      {!inside && (hud.dome?.siege || hud.actions.length > 0 || hud.detourHere || hud.djinnHere || (hud.impounded.length > 0 && !hud.jail) || hud.repairHere || hud.ticketHere || hud.heat?.chest || hud.heat?.trap || hud.heat?.house) && (
         <div
           className={`pointer-events-none absolute inset-x-3 ${
             phoneRow && hinting
@@ -10440,6 +10565,19 @@ export function GameMap({
               🧭 Explore the place
             </button>
           )}
+          {!hud.jail &&
+            hud.impounded.map((v) => (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => actions.current?.releaseVehicle(v.id)}
+                aria-label={`Release your ${VEHICLES[v.kind].name.toLowerCase()} from the pound for ${v.fee} coins`}
+                data-pound={v.kind}
+                className="pointer-events-auto flex h-10 items-center gap-1.5 rounded-full bg-[#2F6FEB] px-3.5 text-sm font-bold text-paper shadow-lg active:scale-95"
+              >
+                🚓 Pound: {VEHICLES[v.kind].name.toLowerCase()} · Release {v.fee}
+              </button>
+            ))}
           {hud.djinnHere && !djinnWorld && (
             <button
               type="button"

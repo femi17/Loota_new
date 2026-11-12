@@ -839,6 +839,21 @@ export function GameMap({
           __lootaRoad: () => (network && onRoad ? { pocket: roads.cutOffEdges(network)[onRoad.edge], ...traveller.pos } : null),
           // Where the hunter is on their own screen (scripts/tests/broadcast-sync-browser-test.mjs).
           __lootaPos: () => ({ ...traveller.pos, v: traveller.v, mode: traveller.mode }),
+          // The way drawn, and how far each of its points is from a road the hunter can walk (scripts/tests/agra-landing-browser-test.mjs)
+          __lootaTrip: () => {
+            if (!trip) return null;
+            const pockets = network ? roads.cutOffEdges(network) : null;
+            const off = network
+              ? trip.route.coords.map(([lng, lat]) => {
+                  // (only within the roads loaded around the hunter: beyond them every point looks off-road)
+                  if (geo.distanceM([network!.centre.lng, network!.centre.lat], [lng, lat]) > network!.radius - 150) return null;
+                  const rp = roads.snapToNetwork(network!, { lng, lat }, 0, pockets ?? undefined);
+                  const p = rp ? roads.positionOf(network!, rp) : null;
+                  return p ? Math.round(geo.distanceM([lng, lat], [p.lng, p.lat])) : -1;
+                })
+              : [];
+            return { coords: trip.route.coords, total: trip.route.total, straight: trip.straight, off, here: { ...traveller.pos } };
+          },
           // The other hunters drawn, and their names (scripts/tests/security-attack-test.mjs)
           __lootaOthers: () => [...others.keys()],
           // Ask for the weather now (scripts/tests/weather-browser-test.mjs)
@@ -1142,7 +1157,12 @@ export function GameMap({
         }
         // Very far, or outside the areas we host: the routing service. Never a straight line across the map (owner, 19 Oct
         // 2026: "a line drawn in the middle of nowhere" can't be travelled): no road route, no line; try again shortly.
-        if (!route) ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
+        if (!route) {
+          ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
+          // The service puts its start on its own nearest road, which can be one the hunter can't walk from here (an
+          // airfield's, behind a fence: owner, 11 Nov 2026): joined along the roads they can walk instead.
+          if (!fallback) route = joinedToHunter(route);
+        }
         if (disposed || id !== planId) return;
         if (fallback) {
           endDirections();
@@ -1201,6 +1221,31 @@ export function GameMap({
           );
         }
         updateGuide();
+      }
+
+      /**
+       * A way from the routing service, starting from the hunter along the roads they can walk: from its first point on
+       * such a road (one that leads somewhere, not an airfield's or a fenced yard's) that the hunter can get to, by the
+       * way they'd go; what came before it (from where the service started, across a fence, a straight line to it) is
+       * left out. As it came when it never touches the loaded roads (it starts beyond them).
+       */
+      function joinedToHunter(route: import("@/game/geo").Route): import("@/game/geo").Route {
+        if (!network || !onRoad) return route;
+        const net = network;
+        const pockets = roads.cutOffEdges(net);
+        const coords = route.coords;
+        let tried = 0;
+        for (let k = 1; k < coords.length && tried < 25; k++) {
+          const [lng, lat] = coords[k];
+          if (geo.distanceM([net.centre.lng, net.centre.lat], [lng, lat]) > net.radius - 150) break; // beyond the loaded roads
+          const rp = roads.snapToNetwork(net, { lng, lat }, 0, pockets);
+          const p = rp ? roads.positionOf(net, rp) : null;
+          if (!p || geo.distanceM([lng, lat], [p.lng, p.lat]) > 15) continue; // not on a road the hunter can walk
+          tried++;
+          const join = roads.findPath(net, onRoad, { lng, lat }, 20);
+          if (join && join.length > 1) return geo.buildRoute([...join, ...coords.slice(k + 1)]);
+        }
+        return route;
       }
 
       /**
@@ -3990,12 +4035,26 @@ export function GameMap({
         const getOff = `${mode === "plane" ? "Landed" : mode === "bus" ? "Off the bus" : "You've arrived"} at ${name}.`;
         const onFoot = then ? geo.distanceM([lng, lat], [then.lng, then.lat]) : 0;
         if (then && onFoot > 30) {
-          // The rest of the way, on foot: mapped again from here.
+          // The rest of the way, on foot: mapped once the hunter is on a road that leads somewhere (owner, 11 Nov 2026,
+          // landed at Agra: "a random line was drawn that the avatar cannot even pass… use the path around the airport
+          // that leads to the main road"). Mapped from where they were set down (a plane's: the middle of the airfield),
+          // it began across the runways, then they were put out on the public road, off it, and paced to and fro.
           say(`${getOff} ${then.name} is ${geo.formatDistance(onFoot)} away on foot: follow the blue line.`);
-          void planDirections({ lng: then.lng, lat: then.lat }, then.name, true);
+          restOfTheWay = { to: { lng: then.lng, lat: then.lat }, name: then.name, since: performance.now() };
         } else {
           say(`${getOff} You're on foot again.`);
         }
+      }
+
+      /** The rest of the way after getting off, waiting for the hunter to be on a road that leads somewhere (or 30 s). */
+      let restOfTheWay: { to: LngLat; name: string; since: number } | null = null;
+      function mapTheRestOfTheWay(now: number) {
+        const r = restOfTheWay;
+        if (!r) return;
+        const out = !!network && !!onRoad && !roads.cutOffEdges(network)[onRoad.edge];
+        if (!out && now - r.since < 30_000) return;
+        restOfTheWay = null;
+        void planDirections(r.to, r.name, true);
       }
 
       async function resumeTrip() {
@@ -8473,6 +8532,7 @@ export function GameMap({
           lastNetworkCheck = now;
           buildRoads(true);
         }
+        if (!riding) mapTheRestOfTheWay(now);
 
         // The hunter moves by themselves along the drawn way (not steered: owner, 8 Nov 2026).
         const canMove = !frozen && !huntHold && !sceneHold && !inWorld && !houseOpenRef.current && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;

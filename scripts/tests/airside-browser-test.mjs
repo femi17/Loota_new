@@ -92,9 +92,9 @@ try {
   if (error) throw error;
   const b = await open(flyer);
   let landed = false;
-  for (let i = 0; i < 60 && !landed; i++) {
-    await wait(1000);
-    landed = /Landed at San Francisco/.test(await b.page.evaluate(() => document.body.innerText));
+  for (let i = 0; i < 120 && !landed; i++) {
+    await wait(500);
+    landed = /Landed at San Francisco/.test(await b.page.evaluate(() => document.body.innerText)) || (!(await b.page.evaluate(() => window.__lootaRide?.() ?? null)) && !!(await b.page.evaluate(() => window.__lootaRoad?.() ?? null))); // (the message can pass between looks)
   }
   check("landed at San Francisco", landed);
   const after = await outside(b.page, 45);

@@ -105,6 +105,13 @@ try {
   const card = () => show.evaluate((nl) => document.querySelector('[aria-label="Scene card"]')?.innerText.split(nl).join(" | ") ?? null, NL);
   const offered = await card();
   check("…a card: the answers on offer", /Go faster/.test(offered ?? "") && /Stop/.test(offered ?? "") && /Turn left only/.test(offered ?? ""), offered);
+  // One after the other, never on top of each other (owner, 12 Nov 2026): the card ends above the caption
+  const boxes = () => show.evaluate(() => {
+    const at = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) }; };
+    return { card: at('[aria-label="Scene card"] > div, [aria-label="Scene card"]'), caption: at('[aria-label="Scene caption"]'), side: !!document.querySelector("[data-card-side]"), w: innerWidth };
+  });
+  const laid = await boxes();
+  check("…the card sits above the caption, not over it", !!laid.card && !!laid.caption && laid.card.bottom <= laid.caption.top, JSON.stringify(laid));
   check("…the caption: a police checkpoint, the officer's question", /police checkpoint/i.test(first ?? "") && /red traffic light/.test(first ?? ""), first);
   await show.screenshot({ path: `${OUT}/broadcast-scene-1-question.png` });
   let answered = null;
@@ -151,6 +158,8 @@ try {
     board = await show.evaluate(() => ({ cups: document.querySelectorAll('[aria-label="Scene card"] [data-cup-slot]').length, text: document.querySelector('[aria-label="Scene card"]')?.textContent ?? "" }));
   }
   check("on the broadcast: the same three cups while they play", board?.cups === 3 && /is playing/i.test(board.text), JSON.stringify(board));
+  const laidGame = await boxes();
+  check("…the game on one side, as the 3D world's puzzles, clear of the caption", laidGame.side && laidGame.card && laidGame.card.left > laidGame.w / 2 - 40 && (!laidGame.caption || laidGame.card.bottom <= laidGame.caption.top), JSON.stringify(laidGame));
   await show.screenshot({ path: `${OUT}/broadcast-scene-3-cups.png` });
   let won = null;
   for (let i = 0; i < 30 && !/wins it/i.test(won ?? ""); i++) { await wait(500); won = await card(); }

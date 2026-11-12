@@ -144,6 +144,17 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   /** The weather where the followed hunter is, drawn over the picture (owner, 9 Nov 2026). */
   const [weatherShown, setWeatherShown] = useState<(Weather & { who: string; night: boolean; slowed: boolean }) | null>(null);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
+  // The caption's height: the side panel (a puzzle, a game) ends above it, never over it
+  const captionBox = useRef<HTMLDivElement>(null);
+  const [captionH, setCaptionH] = useState(90);
+  const hasCaption = !!caption;
+  useEffect(() => {
+    const el = captionBox.current;
+    if (!el) return;
+    const sized = new ResizeObserver(() => setCaptionH(el.offsetHeight));
+    sized.observe(el);
+    return () => sized.disconnect();
+  }, [hasCaption]);
   const viewRef = useRef(view);
   const autoRef = useRef(auto);
   useEffect(() => {
@@ -1335,18 +1346,17 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           </span>
         </div>
       )}
-      {/* The question or game in the scene, as the hunter has it: the replies on offer and the one picked, or the board */}
-      {sceneCard && caption && (
+      {/* A box's puzzle or a road game, as the hunter has it: on one side, beside the hunter (owner, 12 Nov 2026: "If it is
+          a game, can it show one side like the 3d world"); the caption stays below, clear of it */}
+      {sceneCard && caption && sceneCard.kind !== "ask" && (
         <div
-          className={
-            sceneCard.kind === "puzzle"
-              ? "pointer-events-none absolute bottom-[110px] right-4 top-4 z-20 flex items-start justify-end" // beside the hunter, not over them
-              : "pointer-events-none absolute inset-x-0 bottom-[150px] z-20 flex justify-center px-4"
-          }
+          className="pointer-events-none absolute right-4 top-[104px] z-20 flex items-start justify-end" // under the leaderboard
+          style={{ bottom: `calc(${captionH}px + 2rem)` }}
           role="status"
           aria-label="Scene card"
+          data-card-side
         >
-          <div className={`rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70 ${sceneCard.kind === "puzzle" ? "max-h-full w-[20rem] overflow-hidden" : "w-full max-w-xl"}`}>
+          <div className="max-h-full w-[20rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70">
             {sceneCard.kind === "puzzle" ? (
               <>
                 <div className="mb-2 flex items-center gap-2">
@@ -1370,36 +1380,40 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                   </AnswerMirror.Provider>
                 </div>
               </>
-            ) : sceneCard.kind === "ask" ? (
-              <>
-                <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">{sceneCard.pick ? `${sceneCard.who} chose` : `${sceneCard.who} is choosing…`}</p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {sceneCard.options.map((o) => (
-                    <span
-                      key={o}
-                      className={`rounded-xl px-3 py-2 text-sm font-bold ${o === sceneCard.pick ? "bg-gold text-ink ring-2 ring-paper" : sceneCard.pick ? "bg-ink-2 text-paper/45" : "bg-ink-2 text-paper"}`}
-                    >
-                      {o === sceneCard.pick ? "👉 " : ""}
-                      {o}
-                    </span>
-                  ))}
-                </div>
-              </>
-            ) : (
+            ) : sceneCard.kind === "game" ? (
               <>
                 <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">
                   {sceneCard.result ? (sceneCard.result.won && !sceneCard.result.late ? `✓ ${sceneCard.who} wins it` : `✗ ${sceneCard.who} loses this one`) : `🎲 ${sceneCard.who} is playing…`}
                 </p>
-                <RoadGameBoard game={sceneCard.game} result={sceneCard.result} locked={false} onMove={() => {}} />
+                <div style={{ zoom: 0.85 }}>
+                  <RoadGameBoard game={sceneCard.game} result={sceneCard.result} locked={false} onMove={() => {}} />
+                </div>
               </>
-            )}
+            ) : null}
           </div>
         </div>
       )}
-      {/* A scene's caption, like TV's lower third: what it is, what was last said and by whom */}
+      {/* At the bottom, one after the other (owner, 12 Nov 2026: "the conversation box, plus the interaction box, is mixed
+          up together"): the replies on offer and the one picked, then the caption below it, like TV's lower third */}
       {caption && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center px-4" role="status" aria-label="Scene caption">
-          <div className="w-full max-w-2xl rounded-2xl bg-ink/92 px-5 py-3 text-paper shadow-2xl ring-1 ring-gold/60">
+        <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex flex-col items-center gap-3 px-4" data-lower-third>
+          {sceneCard?.kind === "ask" && (
+            <div className="w-full max-w-2xl rounded-2xl bg-ink/92 px-4 py-3 text-paper shadow-2xl ring-2 ring-gold/70" role="status" aria-label="Scene card">
+              <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">{sceneCard.pick ? `${sceneCard.who} chose` : `${sceneCard.who} is choosing…`}</p>
+              <div className="grid gap-1.5 sm:grid-cols-3">
+                {sceneCard.options.map((o) => (
+                  <span
+                    key={o}
+                    className={`rounded-xl px-3 py-1.5 text-sm font-bold ${o === sceneCard.pick ? "bg-gold text-ink ring-2 ring-paper" : sceneCard.pick ? "bg-ink-2 text-paper/45" : "bg-ink-2 text-paper"}`}
+                  >
+                    {o === sceneCard.pick ? "👉 " : ""}
+                    {o}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div ref={captionBox} className="w-full max-w-2xl rounded-2xl bg-ink/92 px-5 py-3 text-paper shadow-2xl ring-1 ring-gold/60" role="status" aria-label="Scene caption">
             <p className="text-xs font-extrabold uppercase tracking-widest text-gold">
               {caption.icon} {caption.title}
             </p>

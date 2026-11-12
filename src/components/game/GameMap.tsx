@@ -4195,6 +4195,8 @@ export function GameMap({
           .then((c) => {
             if (c && !disposed) {
               setCountry(c.code ?? (inNigeria(here) ? "NG" : "ZZ")); // the open sea: no country's in particular
+              // …and the server, for the lamp's Detours: told and asked as this country would (owner, 12 Nov 2026)
+              if (c.code) void supabase.rpc("note_country", { p_code: c.code });
               void refreshNear(); // its words (a motor park or a bus station)
             }
           })

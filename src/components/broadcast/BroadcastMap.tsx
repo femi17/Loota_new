@@ -64,6 +64,8 @@ type State = {
   events: ShowEvent[];
   trips?: Trip[];
   visits?: Visit[];
+  /** Hunters in a cell (the idling law): when they went in and come out (served or bailed), what was impounded. */
+  jails?: { userId: string; at: string; until: string; bailed: boolean; vehicle: string | null; minutes: number; lng: number; lat: number }[];
   now?: string;
 };
 /** What the camera shows: the whole field, or one hunter up close. */
@@ -500,7 +502,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -547,6 +549,19 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         return { phase: "treated", ...(parked ?? fell), heading: parked?.heading ?? null, van: parked, ward, hospital: c.v.hospital };
       };
       let careT = 0; // this frame's moment for visits (the server's clock, motionDelay behind)
+      // Locked in a cell (the idling law, owner, 12 Nov 2026: "The lockup should happen on the broadcast page too"): by the
+      // same clock, from when they went in until they're out (served, or bailed)
+      const jails = new Map<string, { at: number; until: number; bailed: boolean; vehicle: string | null }>();
+      const jailAt = (id: string, T: number) => {
+        const j = jails.get(id);
+        return j && T >= j.at && T < j.until ? j : null;
+      };
+      let jailCell: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
+      const dropJailCell = () => {
+        if (!jailCell) return;
+        layer.remove(jailCell.entity);
+        jailCell = null;
+      };
       let careVan: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
       let careKey = "";
       let skyAt = -Infinity;
@@ -634,6 +649,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           };
           visits.set(v.userId, { key, v, approach: way(v.approach), route: way(v.route) });
         }
+        jails.clear();
+        for (const j of latest.jails ?? []) jails.set(j.userId, { at: Date.parse(j.at), until: Date.parse(j.until), bailed: j.bailed, vehicle: j.vehicle });
         // Gone from the list once they're out (kept a moment longer here: played 6 s behind)
         const careNow = Date.now() + skew - motionDelay;
         for (const [id, c] of visits) if (!visiting.has(id) && careNow > Date.parse(c.v.dischargedAt) + 5000) visits.delete(id);
@@ -843,7 +860,9 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const inScene = motionSkew !== null ? sceneAt(h.id, drawnWall + motionSkew - motionDelay) : null;
           const slow = motionSkew !== null ? whySlow(h.id, drawnWall + motionSkew - motionDelay) : 0;
           const care = careAt(h.id, careT);
-          const label = care
+          const label = jailAt(h.id, careT)
+            ? `🚔 ${h.name} · locked up`
+            : care
             ? care.phase === "treated"
               ? `${care.ward ? "🏥" : "🚑"} ${h.name} · ${care.ward ? care.hospital : "paramedics"}`
               : `🚑 ${h.name}${care.ward ? ` → ${care.hospital}` : " · fainted"}`
@@ -943,7 +962,21 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               layer.remove(careVan.entity);
               careVan = null;
             }
-            const note = !care
+            // In a cell: the cell round them where they were caught, its light flashing
+            const jail = jailAt(h.id, careT);
+            if (jail) {
+              if (!jailCell) {
+                const cell = models.makeJailCell();
+                jailCell = { entity: layer.add({ object: cell.group, lng: p.lng, lat: p.lat, heading: p.heading }), light: cell.light };
+              }
+              jailCell.entity.lng = p.lng;
+              jailCell.entity.lat = p.lat;
+              jailCell.light.visible = Math.floor(t / 300) % 2 === 0;
+            } else dropJailCell();
+            const jailLeft = jail ? Math.max(1, Math.ceil((jail.until - careT) / 60_000)) : 0;
+            const note = jail
+              ? `🚔 ${h.name} is locked in a cell for idling on a main road · ${jailLeft} min left${jail.vehicle ? ` · their ${jail.vehicle} impounded` : ""}`
+              : !care
               ? null
               : care.phase === "waiting"
                 ? `🚑 ${h.name} fainted: ${care.ward ? "an ambulance" : "paramedics"} on the way`
@@ -1207,6 +1240,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             layer.remove(careVan.entity);
             careVan = null;
           }
+          dropJailCell();
           dropHelper();
           if (weatherKey) {
             weatherKey = "";
@@ -1491,6 +1525,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                     <span className="w-4 shrink-0 font-bold opacity-70">{i + 1}</span>
                     <span className="min-w-0 flex-1 truncate font-bold">{h.name}</span>
                     {h.inTrial && <span className="shrink-0 rounded bg-[#9B5DE5] px-1 text-[9px] font-extrabold text-white">TRIAL</span>}
+                    {state.jails?.some((j) => j.userId === h.id && Date.parse(j.until) > Date.parse(state.now ?? "")) && <span className="shrink-0 rounded bg-[#2F6FEB] px-1 text-[9px] font-extrabold text-white" data-cell-tag>🚔 CELL</span>}
                     <span className="shrink-0 font-mono text-[11px] tracking-tighter">{h.place ? `🏁 ${ordinal(h.place)}` : `🗝 ${h.keysHeld}/${state.hunt.keys}`}</span>
                   </button>
                 </li>

@@ -740,6 +740,37 @@ export function makeAmbulance() {
   return { group, light };
 }
 
+/**
+ * A police cell (the idling law, owner, 12 Nov 2026: "The lockup should happen on the broadcast page too"): a concrete
+ * floor, bars on every side and across the top (the camera sees the hunter inside), a bench, and a blue light flashing on
+ * a post by its door. About 3 m square: the hunter stands in the middle.
+ */
+export function makeJailCell() {
+  const group = new THREE.Group();
+  const W = 3, H = 2.6, BAR = 0.07, STEEL = "#5E6670";
+  group.add(mesh(new THREE.BoxGeometry(W + 0.4, 0.16, W + 0.4), "#8E8B84", 0, 0.08, 0));
+  for (const side of [-1, 1]) {
+    for (let k = 0; k <= 10; k++) {
+      const u = -W / 2 + (k * W) / 10;
+      group.add(mesh(new THREE.BoxGeometry(BAR, H, BAR), STEEL, u, 0.16 + H / 2, (side * W) / 2)); // front and back
+      group.add(mesh(new THREE.BoxGeometry(BAR, H, BAR), STEEL, (side * W) / 2, 0.16 + H / 2, u)); // the sides
+    }
+    // The frame: rails at the bottom, the middle and the top of each side
+    for (const y of [0.25, H / 2, H + 0.12]) {
+      group.add(mesh(new THREE.BoxGeometry(W + BAR, 0.1, 0.1), STEEL, 0, y, (side * W) / 2));
+      group.add(mesh(new THREE.BoxGeometry(0.1, 0.1, W + BAR), STEEL, (side * W) / 2, y, 0));
+    }
+  }
+  for (let k = 1; k < 8; k++) group.add(mesh(new THREE.BoxGeometry(W, BAR, BAR), STEEL, 0, H + 0.16, -W / 2 + (k * W) / 8)); // across the top
+  group.add(mesh(new THREE.BoxGeometry(W - 0.4, 0.12, 0.5), "#6B4A2B", 0, 0.6, -W / 2 + 0.4)); // the bench
+  group.add(mesh(new THREE.BoxGeometry(0.12, 3.4, 0.12), "#2B2F36", W / 2 + 0.5, 1.7, W / 2 + 0.5)); // the light's post
+  const light = new THREE.Mesh(V_G.lamp, glow("#3D7BFF"));
+  light.position.set(W / 2 + 0.5, 3.5, W / 2 + 0.5);
+  light.scale.setScalar(1.8);
+  group.add(light);
+  return { group, light };
+}
+
 /** A taxi: a yellow car with a black stripe and a sign on the roof. */
 export function makeTaxi() {
   const group = new THREE.Group();

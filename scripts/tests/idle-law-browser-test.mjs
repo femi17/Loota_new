@@ -59,20 +59,42 @@ try {
   const warned = await until(async () => /An officer/.test(await text()), 15000);
   check("2. 50 minutes still on it: an officer's warning", !!warned, (await text()).match(/👮[^\n]*/)?.[0]?.slice(0, 160));
 
-  // 3. 65 minutes: the cell, the motorbike impounded
+  // 3. 65 minutes: arrested, the motorbike impounded; the patrol car to the police station; the cell there
   await admin.from("player_positions").update({ still_since: ago(65 * 60) }).eq("user_id", id);
   await page.evaluate(() => window.__lootaLaw?.());
-  const jailed = await until(() => page.evaluate(() => !!document.querySelector("[data-jail]")), 15000);
-  const left = Number(await page.evaluate(() => document.querySelector("[data-jail-left]")?.getAttribute("data-jail-left")));
-  const v1 = (await admin.from("player_vehicles").select("in_use, impounded_at").eq("id", bike.id).single()).data;
+  const riding = await until(async () => { const t = await text(); return /🚓/.test(t) && (/Arrested/.test(t) || /To .*station|To /.test(t)) ? t.split(String.fromCharCode(10)).filter((l) => /🚓|To |Arrives|Arrested/.test(l)).join(" | ") : null; }, 60000);
+  check("3. 65 minutes: arrested, the police take them away in the patrol car", !!riding, (riding ?? "").slice(0, 160));
+  await page.screenshot({ path: `${OUT}/idle-law-0-ride.png` });
+  if (process.env.TIMELINE) for (let k = 0; k < 30; k++) { const row = (await admin.from("idle_arrests").select("station, arrives_at, taken_at").eq("user_id", id)).data; const g = await page.evaluate(() => ({ jail: !!document.querySelector("[data-jail]"), care: [...document.querySelectorAll("*")].map((e) => e.children.length === 0 ? e.textContent : "").filter((x) => /^To |Arrives|Arrested$|putting you/.test(x ?? "")).join(" / ") })); console.log(`  t+${k * 2}s`, JSON.stringify(row), JSON.stringify(g)); await wait(2000); }
+  const jailed = await until(() => page.evaluate(() => !!document.querySelector("[data-jail]")), 90000);
+  const arrest = (await admin.from("idle_arrests").select("station, station_lng, station_lat, route, remaining_s").eq("user_id", id).single()).data;
   const p1 = await pos();
-  check("3. 65 minutes: locked in a cell (30 minutes on its clock)", !!jailed && left > 1780 && left <= 1800, `${left} s left`);
-  check("…the motorbike impounded, and on foot", !!v1.impounded_at && !v1.in_use && p1.mode === "walk", JSON.stringify({ v1, mode: p1.mode }));
+  const card = await page.evaluate(() => document.querySelector("[data-jail]")?.textContent ?? "");
+  const atStation = arrest?.station_lng != null && Math.hypot((p1.lng - arrest.station_lng) * 110000, (p1.lat - arrest.station_lat) * 110000) < 60;
+  check("…to a police station (from OpenStreetMap) along the road: the cell there, its name on the card", !!jailed && !!arrest?.route && atStation && card.includes(arrest.station),
+    `${arrest?.station}; ${arrest?.route?.length ?? 0} route points; at it: ${atStation}; ${Math.round(Math.hypot((start.lng - arrest?.station_lng) * 110000, (start.lat - arrest?.station_lat) * 110000))} m from where they were caught`);
+  const v1 = (await admin.from("player_vehicles").select("in_use, impounded_at").eq("id", bike.id).single()).data;
+  check("…the motorbike impounded, and on foot, off the main road", !!v1.impounded_at && !v1.in_use && p1.mode === "walk" && p1.on_main_road === false, JSON.stringify({ v1, mode: p1.mode, main: p1.on_main_road }));
   await page.screenshot({ path: `${OUT}/idle-law-1-cell.png` });
 
   // 4. In the cell: no moving
   const { data: tried } = await c.rpc("save_position", { p_lng: p1.lng + 0.0004, p_lat: p1.lat, p_mode: "walk" });
   check("4. in the cell they can't move (the server refuses it)", tried?.ok === false && tried.reason === "jailed", JSON.stringify(tried));
+
+  // 4b. The clock runs only while they're playing: away (another tab in front) it waits; back, it runs again
+  const left = async () => (await admin.from("idle_arrests").select("remaining_s").eq("user_id", id).single()).data.remaining_s;
+  await wait(12000);
+  const r0 = await left();
+  const other = await browser.newPage();
+  await other.goto("about:blank");
+  await other.bringToFront();
+  await wait(30000);
+  const r1 = await left();
+  await page.bringToFront();
+  await wait(25000);
+  const r2 = await left();
+  check("4b. away for 30 s, the cell's clock waits", r0 - r1 <= 12, `${r0} → ${r1} s left`);
+  check("…back, it runs again", r1 - r2 >= 12, `${r1} → ${r2} s left`);
 
   // 5. Bail, then the pound
   await page.evaluate(() => document.querySelector("[data-bail]")?.click());

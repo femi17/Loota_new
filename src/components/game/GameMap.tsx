@@ -162,7 +162,7 @@ type Hud = {
   /** At the chosen seal's place: the "Enter the chamber" button. */
   djinnHere: { place: string } | null;
   /** Locked in a cell (the idling law, owner, 12 Nov 2026): until when (this device's clock), the bail, what was impounded. */
-  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null } | null;
+  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null } | null;
   /** Vehicles in the pound: released for the fee (gone after 7 days). */
   impounded: { id: string; kind: VehicleKind; fee: number; goneAt: number }[];
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
@@ -7843,17 +7843,37 @@ export function GameMap({
       }
 
       // ---- The idling law (owner, 12 Nov 2026: "if user knows, they want to be idle, they need to be at a relex joint. If
-      // a user stays on the major road for 1hr+ … locked in a cell, and then their vehicle impounded") ----------------
-      // The game tells the server when the hunter is on a main road; the server knows how long they've stood still
-      // (even with the game closed). Asked every minute: fine, an officer's warning at 45 min, or the cell at an hour.
+      // a user stays on the major road for 1hr+ … locked in a cell, and then their vehicle impounded"; then "They should be
+      // driving to the police station. That is where the lock up should happen… the countdown timer should not start but
+      // only for active users") ---------------------------------------------------------------------------------------
+      // The game tells the server when the hunter is on a main road; the server knows how long they've stood still (even
+      // with the game closed). Asked every minute: fine, an officer's warning at 45 min, or at an hour arrested: the police
+      // drive them to the nearest police station (a patrol car along the roads), where the cell is. Its 30 minutes count
+      // only while the game is open in front of them (each ask says so); away, the clock waits.
+      type Arrest = {
+        id: string;
+        at: string;
+        lng: number;
+        lat: number;
+        station: string | null;
+        stationLng: number | null;
+        stationLat: number | null;
+        route: import("@/game/geo").Coord[] | null;
+        takenAt: string | null;
+        arrivesAt: string | null;
+        remaining: number;
+        bail: number;
+        vehicle: VehicleKind | null;
+        rentalEnded: boolean;
+        minutes: number;
+        now: string;
+      };
       type Law = {
-        state: "ok" | "warn" | "jailed";
-        now?: string;
-        until?: string;
-        bail?: number;
-        vehicle?: VehicleKind | null;
-        rentalEnded?: boolean;
+        state: "ok" | "warn" | "taking" | "jailed";
+        arrest?: Arrest;
         arrested?: boolean;
+        released?: boolean;
+        station?: string | null;
         minutes?: number;
         left?: number;
         impounded?: { id: string; kind: VehicleKind; fee: number; goneAt: string }[];
@@ -7861,10 +7881,20 @@ export function GameMap({
       let lawAt = -Infinity;
       let lawAsking = false;
       let lawAgain = false; // asked again while asking (bail just paid): that answer, not the one on its way
-      let jailUntil = 0;
+      let arrestId = ""; // the arrest under way (taken, riding, or in the cell)
+      let inCell = false; // in the cell at the station: held there (the loop's canMove)
+      let taking = false;
       let warnedAt = -Infinity;
       let mainNoted: boolean | null = null;
       let mainAt = 0;
+      /** The patrol car taking them to the station, along the road, by the server's clock. */
+      let arrestRide: { a: Arrest; offset: number; taken: number; arrives: number; cum: number[] | null; car: import("@/game/ThreeMapLayer").MapEntity; flash: (on: boolean) => void } | null = null;
+      /** The cell round them at the station. */
+      let cellModel: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
+      const dropCell = () => {
+        if (cellModel) layer.remove(cellModel.entity);
+        cellModel = null;
+      };
       async function checkLaw(): Promise<void> {
         if (lawAsking) {
           lawAgain = true;
@@ -7872,7 +7902,7 @@ export function GameMap({
         }
         lawAsking = true;
         lawAt = performance.now();
-        const { data } = await supabase.rpc("idle_law");
+        const { data } = await supabase.rpc("idle_law", { p_visible: document.visibilityState === "visible" });
         lawAsking = false;
         if (lawAgain) {
           lawAgain = false;
@@ -7880,46 +7910,180 @@ export function GameMap({
         }
         const r = data as Law | null;
         if (disposed || !r) return;
-        const skew = r.now ? Date.now() - Date.parse(r.now) : 0;
         const pound = (r.impounded ?? []).map((v) => ({ id: v.id, kind: v.kind, fee: v.fee, goneAt: Date.parse(v.goneAt) }));
         setHud((h) => (JSON.stringify(h.impounded) === JSON.stringify(pound) ? h : { ...h, impounded: pound }));
-        if (r.state === "jailed" && r.until) {
-          jailUntil = Date.parse(r.until) + skew;
-          traveller.v = 0; // held where they stand until it's served (or bailed): the loop's canMove
-          if (r.arrested) {
-            // On foot now: the vehicle went to the pound (a rental back to its renter)
+        if ((r.state === "taking" || r.state === "jailed") && r.arrest) {
+          const a = r.arrest;
+          traveller.v = 0;
+          driving = false;
+          if (arrestId !== a.id) {
+            // Arrested: on foot (the vehicle to the pound, a rental back to its renter); the police are here
+            arrestId = a.id;
             traveller.mode = "walk";
             void refreshVehicles();
             afterModeChange();
-            say(`🚔 Locked up! You stood still on a main road for ${r.minutes ?? 60} minutes.${r.vehicle ? ` Your ${vehicleName(r.vehicle)} has been impounded.` : r.rentalEnded ? " Your rental has gone back to its renter." : ""}`, true);
+            endDirections();
+            say(`🚔 Arrested! You stood still on a main road for ${a.minutes} minutes.${a.vehicle ? ` Your ${vehicleName(a.vehicle)} has been impounded.` : a.rentalEnded ? " Your rental has gone back to its renter." : ""} The police are taking you to the station.`, true);
           }
-          const jail = { until: jailUntil, bail: r.bail ?? 150, vehicle: r.vehicle ?? null, rentalEnded: !!r.rentalEnded, minutes: r.minutes ?? null };
-          setHud((h) => (h.jail && Math.abs(h.jail.until - jail.until) < 2000 && h.jail.bail === jail.bail ? h : { ...h, jail }));
+          if (r.state === "taking") return void takeToStation(a);
+          const offset = Date.parse(a.now) - Date.now();
+          const arrives = Date.parse(a.arrivesAt ?? a.now);
+          if (Date.now() + offset < arrives && a.route) {
+            if (!arrestRide || arrestRide.a.id !== a.id) startArrestRide(a, offset);
+            return;
+          }
+          if (arrestRide) endArrestRide();
+          intoCell(a);
           return;
         }
-        if (jailUntil) {
-          // Out (served, or bailed): free to go
-          jailUntil = 0;
+        if (arrestId) {
+          // Out (served, or bailed), at the station: free to go
+          const station = hudStation;
+          arrestId = "";
+          inCell = false;
+          if (arrestRide) endArrestRide();
+          dropCell();
           setHud((h) => ({ ...h, jail: null }));
-          say("🔓 You're out of the cell. Keep moving, or rest at a chill spot: standing an hour on a main road gets you locked up again.", true);
+          say(`🔓 You're out of the cell${station ? ` at ${station}` : ""}. Keep moving, or rest at a chill spot: standing an hour on a main road gets you arrested again.`, true);
         }
         if (r.state === "warn" && performance.now() - warnedAt > 5 * 60_000) {
           warnedAt = performance.now();
           const what = traveller.mode === "walk" ? "" : ` and your ${vehicleName(traveller.mode as VehicleKind)} impounded`;
-          say(`👮 An officer: "You've been standing on this main road for ${r.minutes} minutes. Move along, or rest at a chill spot (a park, a mall or a place to eat). In ${r.left} min you'll be locked up${what}."`, true);
+          say(`👮 An officer: "You've been standing on this main road for ${r.minutes} minutes. Move along, or rest at a chill spot (a park, a mall or a place to eat). In ${r.left} min you'll be taken to the station and locked up${what}."`, true);
         }
       }
-      /** Each frame: tell the server when the hunter gets on or off a main road; ask the law every minute (and when the
-       * cell's time is up). */
+      let hudStation: string | null = null;
+
+      /** The nearest police station and the road there (our own roads, or the routing service abroad), as the ambulance. */
+      async function takeToStation(a: Arrest) {
+        if (taking) return;
+        taking = true;
+        try {
+          const at = { lng: a.lng, lat: a.lat };
+          type Station = { name: string; lng: number; lat: number };
+          let station = null as Station | null;
+          try {
+            const res = await fetch(`/api/world/police?lng=${at.lng}&lat=${at.lat}`);
+            station = res.ok ? ((await res.json()) as { station: Station | null }).station : null;
+          } catch {
+            station = null;
+          }
+          let route: import("@/game/geo").Coord[] | null = null;
+          if (station) {
+            let way = (await routeOnOwnRoads(at, station, "car"))?.path ?? null;
+            if (!way) {
+              const { route: r, fallback } = await fetchRoute(at, station, "car");
+              way = fallback ? null : r.coords;
+            }
+            if (way) route = thinPath([[at.lng, at.lat], ...way, [station.lng, station.lat]]);
+          }
+          let { data } = await supabase.rpc("take_to_station", { p_station: route ? station!.name : null, p_lng: route ? station!.lng : null, p_lat: route ? station!.lat : null, p_route: route });
+          if ((data as { reason?: string } | null)?.reason === "route") ({ data } = await supabase.rpc("take_to_station", { p_station: null, p_lng: null, p_lat: null, p_route: null }));
+        } finally {
+          taking = false;
+        }
+        await checkLaw();
+      }
+
+      function startArrestRide(a: Arrest, offset: number) {
+        if (arrestRide) endArrestRide();
+        const police = models.makePoliceCar();
+        const first = a.route?.[0] ?? [a.lng, a.lat];
+        const car = layer.add({ object: police.group, lng: first[0], lat: first[1], heading: 0 });
+        arrestRide = { a, offset, taken: Date.parse(a.takenAt ?? a.now), arrives: Date.parse(a.arrivesAt ?? a.now), cum: a.route ? cumulativeOf(a.route) : null, car, flash: police.flash };
+        hudStation = a.station;
+      }
+      function endArrestRide() {
+        if (!arrestRide) return;
+        layer.remove(arrestRide.car);
+        arrestRide = null;
+        me.object.visible = true;
+        setHud((h) => (h.care ? { ...h, care: null } : h));
+      }
+      /** One frame of the ride to the station: true while they're in the patrol car (the map holds still otherwise). */
+      function arrestStep(now: number, dt: number) {
+        const ar = arrestRide!;
+        const serverNow = Date.now() + ar.offset;
+        ar.flash(Math.floor(now / 250) % 2 === 0);
+        const left = Math.max(0, Math.ceil((ar.arrives - serverNow) / 1000));
+        if (serverNow < ar.taken || !ar.a.route || !ar.cum) {
+          showCare("🚓", "Arrested", "The police are putting you in the patrol car");
+          return false;
+        }
+        if (serverNow < ar.arrives) {
+          const f = (serverNow - ar.taken) / Math.max(1, ar.arrives - ar.taken);
+          const { pos, segment } = alongPath(ar.a.route, ar.cum, f * ar.cum[ar.cum.length - 1]);
+          const heading = geo.headingOf(ar.a.route[Math.max(0, segment - 1)], ar.a.route[Math.max(1, segment)]);
+          ar.car.lng = pos[0];
+          ar.car.lat = pos[1];
+          ar.car.heading = ar.car.heading === undefined ? heading : geo.turnTowards(ar.car.heading, heading, Math.min(1, 6 * dt));
+          me.object.visible = false; // in the back of the car
+          traveller.pos = { lng: pos[0], lat: pos[1] };
+          traveller.heading = ar.car.heading ?? traveller.heading;
+          setHud((h) => (h.street ? { ...h, street: null } : h));
+          showCare("🚓", `To ${ar.a.station ?? "the police station"}`, `Arrives in ${clock(left)}`);
+          return true;
+        }
+        endArrestRide();
+        void checkLaw(); // at the station: the cell
+        return false;
+      }
+
+      /** In the cell at the station: set down there, the cell round them, the card with the time left (served only while
+       * they're here). */
+      function intoCell(a: Arrest) {
+        const at = { lng: a.stationLng ?? a.lng, lat: a.stationLat ?? a.lat };
+        hudStation = a.station;
+        if (!inCell) {
+          inCell = true;
+          traveller.pos = { ...at };
+          traveller.v = 0;
+          saved = { ...at };
+          lastSave = performance.now() + 6000;
+          network = null;
+          onRoad = null;
+          builtFrom = "";
+          lastNetworkCheck = 0;
+          snapReachM = 1500;
+          buildRoads();
+          actions.current?.follow();
+          say(`🚔 Locked in the cell at ${a.station ?? "the police station"}. Your 30 minutes count down while you're playing: leave, and the clock waits for you.`, true);
+        }
+        if (!cellModel) {
+          const cell = models.makeJailCell();
+          cellModel = { entity: layer.add({ object: cell.group, lng: at.lng, lat: at.lat, heading: 0 }), light: cell.light };
+        }
+        const jail = {
+          until: Date.now() + a.remaining * 1000,
+          bail: a.bail,
+          vehicle: a.vehicle ?? null,
+          rentalEnded: !!a.rentalEnded,
+          minutes: a.minutes ?? null,
+          station: a.station ?? null,
+        };
+        setHud((h) => (h.jail && Math.abs(h.jail.until - jail.until) < 3000 && h.jail.bail === jail.bail && h.jail.station === jail.station ? h : { ...h, jail }));
+      }
+
+      /** Each frame: tell the server when the hunter gets on or off a main road; ask the law every minute (every 10 s
+       * while arrested: the cell's clock only runs while they're asking, the game in front of them). */
       function lawTick(now: number) {
-        const main = !!network && !!onRoad && !ride && !visit && roads.onMainRoad(network, onRoad);
+        const main = !!network && !!onRoad && !ride && !visit && !arrestId && roads.onMainRoad(network, onRoad);
         if (main !== mainNoted && now - mainAt > 2000) {
           mainNoted = main;
           mainAt = now;
           void supabase.rpc("note_main_road", { p_on: main }).then(() => undefined); // (a query only goes when awaited)
         }
-        if (now - lawAt > 60_000 || (jailUntil && Date.now() > jailUntil + 1000 && now - lawAt > 3000)) void checkLaw();
+        if (now - lawAt > (arrestId ? 10_000 : 60_000)) void checkLaw();
+        if (cellModel) {
+          cellModel.light.visible = Math.floor(now / 300) % 2 === 0;
+          traveller.v = 0;
+        }
       }
+      // Back in front of them: the cell's clock runs again at once
+      const lawOnShow = () => {
+        if (document.visibilityState === "visible" && arrestId) void checkLaw();
+      };
+      document.addEventListener("visibilitychange", lawOnShow);
       async function payBail() {
         const { data } = await supabase.rpc("pay_bail");
         const r = data as { ok: boolean; reason?: string; balance?: number; bail?: number } | null;
@@ -7928,6 +8092,7 @@ export function GameMap({
           if (r.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
           await checkLaw();
         } else if (r?.reason === "coins") say(`Not enough coins for the bail (${r.bail ?? 150}). Wait out your time.`, true);
+        else if (r?.reason === "not_yet") say("Bail is paid at the station: wait till you're there.", true);
         else await checkLaw();
       }
       async function releaseVehicle(id: string) {
@@ -8738,7 +8903,7 @@ export function GameMap({
         const t = now / 1000;
         const c = controls.current;
         // On a bus, train or plane, the vehicle moves the hunter (and the player can't).
-        const riding = ride ? rideStep(now, dt) : visit ? visitStep(now, dt) : false;
+        const riding = ride ? rideStep(now, dt) : visit ? visitStep(now, dt) : arrestRide ? arrestStep(now, dt) : false;
 
         // Keep a road network around the player as they travel, and refresh it
         // as more map tiles load (the first build may only see one tile).
@@ -8755,7 +8920,7 @@ export function GameMap({
         lawTick(now);
 
         // The hunter moves by themselves along the drawn way (not steered: owner, 8 Nov 2026).
-        const canMove = !frozen && !huntHold && !sceneHold && !inWorld && !houseOpenRef.current && now >= stuckUntil && Date.now() >= frozenUntil && Date.now() >= jailUntil && !ride && !visit && !!onRoad;
+        const canMove = !frozen && !huntHold && !sceneHold && !inWorld && !houseOpenRef.current && now >= stuckUntil && Date.now() >= frozenUntil && !inCell && !arrestRide && !ride && !visit && !!onRoad;
         const driven = driving && !!trip && !trip.straight;
         // On the dev server only, a held ↑ walks straight on (the automated tests move the hunter so; never on the site)
         const go = driven || (DEV_WALK && c.go);
@@ -9051,6 +9216,7 @@ export function GameMap({
         cancelAnimationFrame(frame);
         stopBackTicker();
         document.removeEventListener("visibilitychange", tabShownOrHidden);
+        document.removeEventListener("visibilitychange", lawOnShow);
         window.clearTimeout(hintTimer);
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);

@@ -125,7 +125,7 @@ export async function fillArea(admin: SupabaseClient, lng: number, lat: number, 
 }
 
 /** Asks OpenStreetMap. The public servers are often busy (502, 429, 504): the next one, then round again after a pause. */
-async function overpass(query: string, { rounds = 2, seconds = 120 } = {}): Promise<Element[]> {
+export async function overpass(query: string, { rounds = 2, seconds = 120 } = {}): Promise<Element[]> {
   let last = "";
   for (let round = 0; round < rounds; round++) {
     if (round) await new Promise((r) => setTimeout(r, 5000));

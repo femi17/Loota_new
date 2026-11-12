@@ -73,30 +73,37 @@ try {
   await show.evaluate((n) => [...document.querySelectorAll("button")].find((x) => x.textContent?.includes(n))?.click(), name);
   await wait(4000);
 
-  // 1. An hour still on the main road: locked up
+  // 1. An hour still on the main road: arrested
   await admin.from("player_positions").update({ still_since: ago(65 * 60) }).eq("user_id", hunter.id);
   await game.evaluate(() => window.__lootaLaw?.());
-  const jailed = await until(() => game.evaluate(() => !!document.querySelector("[data-jail]")), 15000);
-  check("1. an hour still on a main road: locked up (their screen)", !!jailed);
-
-  // 2. On the broadcast
   const text = () => show.evaluate(() => document.body.innerText).catch(() => "");
-  const label = await until(async () => { const t = await text(); return new RegExp(`🚔 ${name} · locked up`).test(t) && t; }, 30000);
-  check("2. on the broadcast: their marker says they're locked up", !!label);
-  const cell = await until(() => show.evaluate(() => window.__broadcastShown?.().jailCell ?? null), 15000);
-  check("…the cell drawn round them", !!cell, JSON.stringify(cell));
-  const note = await until(async () => (await text()).match(/🚔 [^\n]*locked in a cell[^\n]*/)?.[0] ?? null, 15000);
-  check("…the note: in a cell, the time left, the motorbike impounded", !!note && /min left/.test(note) && /motorbike impounded/.test(note), note);
+
+  // 2. On the broadcast: the patrol car taking them along the road, then the cell at the station
+  const car = await until(async () => { const b = await show.evaluate(() => window.__broadcastShown?.() ?? null); return b?.policeCar && new RegExp(`🚓 ${name} · arrested`).test(await text()) ? b.policeCar : null; }, 60000);
+  check("1. arrested: on the broadcast the patrol car with them, their marker says so", !!car, JSON.stringify(car));
+  const taking = await until(async () => (await text()).split("\n").find((l) => /🚓 .*taking them to/.test(l)) ?? null, 20000);
+  check("…the note: the police are taking them to the station", !!taking, taking);
+  await show.screenshot({ path: `${OUT}/broadcast-jail-0-ride.png` });
+  const jailed = await until(() => game.evaluate(() => !!document.querySelector("[data-jail]")), 90000);
+  check("2. in the cell at the station (their screen)", !!jailed);
+  const arrest = (await admin.from("idle_arrests").select("station, station_lng, station_lat").eq("user_id", hunter.id).single()).data;
+  const cell = await until(() => show.evaluate(() => window.__broadcastShown?.().jailCell ?? null), 20000);
+  const atStation = cell && Math.hypot((cell.lng - arrest.station_lng) * 110000, (cell.lat - arrest.station_lat) * 110000) < 40;
+  check("…on the broadcast: the cell drawn at the station (not where they were caught)", !!atStation, `${arrest.station}; cell ${JSON.stringify(cell)}`);
+  const label = await until(async () => new RegExp(`🚔 ${name} · in the cell`).test(await text()), 15000);
+  check("…their marker: in the cell", !!label);
+  const note = await until(async () => (await text()).split("\n").find((l) => /🚔 .*in the cell at/.test(l)) ?? null, 15000);
+  check("…the note: in the cell at the station, the time left, the motorbike impounded", !!note && note.includes(arrest.station) && /min left/.test(note) && /motorbike impounded/.test(note), note);
   const tag = await show.evaluate(() => !!document.querySelector("[data-cell-tag]"));
   check("…🚔 CELL on the leaderboard", tag);
-  const news = await until(async () => /was locked up for idling on a main road/.test(await text()), 20000);
-  check("…and the news: locked up for idling on a main road", !!news);
+  const news = await until(async () => new RegExp(`was arrested for idling on a main road and taken to ${arrest.station}`).test(await text()), 30000);
+  check("…and the news: arrested and taken to the station", !!news);
   await show.screenshot({ path: `${OUT}/broadcast-jail-1.png` });
 
   // 3. Bail: out on the broadcast too
   await game.evaluate(() => document.querySelector("[data-bail]")?.click());
   await until(() => game.evaluate(() => !document.querySelector("[data-jail]")), 15000);
-  const gone = await until(async () => !(await show.evaluate(() => window.__broadcastShown?.().jailCell ?? null)) && !/· locked up/.test(await text()), 30000);
+  const gone = await until(async () => !(await show.evaluate(() => window.__broadcastShown?.().jailCell ?? null)) && !/· in the cell/.test(await text()), 30000);
   check("3. bail paid: on the broadcast the cell goes", !!gone);
   const bailNews = await until(async () => /paid bail and walked out of the cell/.test(await text()), 20000);
   check("…and the news: they paid bail and walked out", !!bailNews);

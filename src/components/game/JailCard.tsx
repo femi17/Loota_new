@@ -18,7 +18,7 @@ export function JailCard({
   coins,
   onBail,
 }: {
-  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null };
+  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null };
   coins: number;
   onBail: () => Promise<void> | void;
 }) {
@@ -40,7 +40,7 @@ export function JailCard({
         </div>
         <div className="relative flex flex-col items-center gap-3 text-center">
           <span className="text-5xl" aria-hidden="true">🚔</span>
-          <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-danger-text">Locked up</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-danger-text">Locked up{jail.station ? ` · ${jail.station}` : ""}</p>
           <h2 className="font-display text-2xl font-extrabold">Idling on a main road</h2>
           <p className="text-sm text-paper/80">
             You stood still on a main road for {jail.minutes && jail.minutes >= 60 ? `${Math.floor(jail.minutes / 60)} h${jail.minutes % 60 ? ` ${jail.minutes % 60} min` : ""}` : "an hour"}. Next time, rest at a chill spot: a park, a mall or a place to eat.
@@ -69,6 +69,7 @@ export function JailCard({
           >
             {paying ? "…" : `Pay bail · ${jail.bail} coins`}
           </button>
+          <p className="text-xs font-bold text-gold/90">⏸ The clock only runs while you&apos;re playing: leave, and it waits for you.</p>
           <p className="text-xs text-paper/60">{coins < jail.bail ? `You have ${coins} coins: not enough for the bail. Wait out your time.` : "Or wait out your time: you walk free when it's up."}</p>
         </div>
       </div>

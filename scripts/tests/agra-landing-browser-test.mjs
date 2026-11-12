@@ -24,8 +24,15 @@ let id = null, browser;
 let fails = 0;
 const check = (label, ok, extra = "") => { if (!ok) fails++; console.log(`${ok ? "PASS" : "FAIL"}  ${label}${extra ? `  (${extra})` : ""}`); };
 const lagos = { lng: 3.321139, lat: 6.579119 };
-const agra = { lng: 77.961025, lat: 27.157975 }; // the airport's point, as the owner's flight had it
-const taj = { lng: 78.0421, lat: 27.1751 };
+// The airports the owner has landed at (CASE=abusimbel: 12 Nov 2026, "it happens mostly on airport, when landed")
+const CASES = {
+  agra: { airport: "Agra Airport / Agra Air Force Station", short: "Agra", at: { lng: 77.961025, lat: 27.157975 }, to: { name: "the Taj Mahal", lng: 78.0421, lat: 27.1751 } },
+  abusimbel: { airport: "Abu Simbel Airport", short: "Abu Simbel", at: { lng: 31.611734, lat: 22.375924 }, to: { name: "Abu Simbel", lng: 31.625573, lat: 22.337125 } },
+  ilorin: { airport: "Ilorin International Airport", short: "Ilorin", at: { lng: 4.494811, lat: 8.435395 }, to: { name: "the town", lng: 4.5521, lat: 8.4966 } },
+};
+const CASE = CASES[process.env.CASE ?? "agra"];
+const agra = CASE.at; // the airport's point, as the owner's flight had it
+const taj = CASE.to;
 
 try {
   const email = `agra-${Date.now()}@example.com`, password = `T3st-${Math.random().toString(36).slice(2)}!`;
@@ -35,7 +42,7 @@ try {
   await admin.from("player_positions").upsert({ user_id: id, lng: lagos.lng, lat: lagos.lat, mode: "walk", energy: 100, updated_at: ago(30) });
   await admin.from("road_events").insert({ user_id: id, kind: "traveller", npc: "Probe", resolved_at: soon(3600), created_at: soon(3600) });
   const { data: trip, error } = await admin.from("transit_trips").insert({
-    user_id: id, mode: "plane", from_name: "Murtala Mohammed International Airport", to_name: "Agra Airport / Agra Air Force Station",
+    user_id: id, mode: "plane", from_name: "Murtala Mohammed International Airport", to_name: CASE.airport,
     to_lng: agra.lng, to_lat: agra.lat, path: [[lagos.lng, lagos.lat], [agra.lng, agra.lat]], path_m: 8_700_000, fare: 0,
     departs_at: ago(3600), arrives_at: soon(12), ride_s: 3612,
   }).select("id").single();
@@ -52,15 +59,15 @@ try {
   page.on("pageerror", (e) => problems.push(e.message));
   await page.setCookie(...[...jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
   // Where they were headed after landing, as their game keeps it for the flight
-  await page.evaluateOnNewDocument((uid, tripId, then) => { try { localStorage.setItem(`loota:welcome:${uid}`, "1"); localStorage.setItem(`loota:ride:${tripId}`, JSON.stringify({ label: "Agra", then })); } catch {} }, id, trip.id, { id: "taj", name: "the Taj Mahal", lng: taj.lng, lat: taj.lat, kind: "landmark" });
+  await page.evaluateOnNewDocument((uid, tripId, then) => { try { localStorage.setItem(`loota:welcome:${uid}`, "1"); localStorage.setItem(`loota:ride:${tripId}`, JSON.stringify({ label: "Landing", then })); } catch {} }, id, trip.id, { id: "taj", name: taj.name, lng: taj.lng, lat: taj.lat, kind: "landmark" });
   await page.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
   const text = () => page.evaluate(() => document.body.innerText).catch(() => ""); // (the dev server may reload the page once while it builds)
   const road = () => page.evaluate(() => window.__lootaRoad?.() ?? null).catch(() => null);
   const pos = () => page.evaluate(() => window.__lootaPos?.() ?? null).catch(() => null);
 
   let landed = false;
-  for (let i = 0; i < 120 && !landed; i++) { await wait(500); landed = /Landed at Agra/.test(await text()) || (!(await page.evaluate(() => window.__lootaRide?.() ?? null).catch(() => 1)) && !!(await road())); } // (the message can pass between looks: off the plane and on a road is landed)
-  check("landed at Agra", landed);
+  for (let i = 0; i < 120 && !landed; i++) { await wait(500); landed = new RegExp(`Landed at ${CASE.short}`).test(await text()) || (!(await page.evaluate(() => window.__lootaRide?.() ?? null).catch(() => 1)) && !!(await road())); } // (the message can pass between looks: off the plane and on a road is landed)
+  check(`landed at ${CASE.short}`, landed);
   let r = null;
   for (let i = 0; i < 45; i++) { await wait(1000); r = await road(); if (r && r.pocket === 0) break; }
   check("1. put onto a road that leads somewhere, not the airfield", r?.pocket === 0, JSON.stringify(r));
@@ -84,14 +91,14 @@ try {
   }
   const at0 = await pos();
   const startOff = drawn && at0 ? metres({ lng: drawn.first[0], lat: drawn.first[1] }, at0) : null;
-  check("2. the way to the Taj Mahal is drawn", !!drawn, drawn ? `${drawn.points} points` : (await text()).match(/[^\n]*(route|way|road)[^\n]*/i)?.[0]);
+  check(`2. the way to ${taj.name} is drawn`, !!drawn, drawn ? `${drawn.points} points` : (await text()).match(/[^\n]*(route|way|road)[^\n]*/i)?.[0]);
   check("…and it starts where the hunter stands", startOff !== null && startOff < 40, startOff === null ? "no line" : `starts ${Math.round(startOff)} m from them`);
 
   // A minute on the way
   const trail = [];
   const said = { back: 0, left: 0 };
   const t0 = Date.now();
-  while (Date.now() - t0 < 60_000) {
+  while (Date.now() - t0 < Number(process.env.SECONDS ?? 60) * 1000) {
     const p = await pos();
     if (p) trail.push({ t: Date.now() - t0, ...p });
     const tx = await text();
@@ -108,9 +115,11 @@ try {
   const pacing = walked > 150 && spreadM < 120;
   check("3. a minute on: further from the airport, not pacing one stretch", gained > 200 && !pacing, `${Math.round(gained)} m further from the airport; walked ${Math.round(walked)} m within a ${Math.round(spreadM)} m circle`);
   check("…never told to head back or that they left the route, over and over", said.back < 5 && said.left < 2, `"Head back" ${said.back}×, "left the route" ${said.left}×`);
+  if (process.env.TRAIL) console.log("  trail:", trail.filter((_, i) => i % 5 === 0).map((p) => `${p.t / 1000 | 0}s ${Math.round(far(p))}m/${Math.round(metres(p, taj))}m`).join(" · "));
+  if (process.env.DUMP) (await import("node:fs")).writeFileSync(process.env.DUMP, JSON.stringify({ way, trail }));
   const last = trail[trail.length - 1];
   const toTaj = last ? metres(last, taj) : null;
-  console.log(`  (after a minute: ${last ? `${Math.round(far(last))} m from the airport, ${Math.round(toTaj)} m from the Taj Mahal, on ${last.mode}` : "no position"})`);
+  console.log(`  (at the end: ${last ? `${Math.round(far(last))} m from the airport, ${Math.round(toTaj)} m from ${taj.name}, on ${last.mode}` : "no position"})`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

@@ -1075,6 +1075,8 @@ export function GameMap({
         straight: boolean; // routing was unavailable: just a straight line to the place
         plannedAt: number;
         streets: Map<number, string | null>; // street names after each turn, looked up once
+        /** From the routing service: its roads may not be ours (kept on ours as they load: keepOnOurRoads). */
+        service?: boolean;
       };
       let trip: Trip | null = null;
       let planId = 0;
@@ -1133,6 +1135,7 @@ export function GameMap({
         let route: import("@/game/geo").Route | null = null;
         let forks: { index: number; side: -1 | 1 }[] = [];
         let fallback = false;
+        let service = false;
         if (network && onRoad) {
           const path = roads.findPath(network, onRoad, to);
           if (path) {
@@ -1155,7 +1158,13 @@ export function GameMap({
           ({ route, fallback } = await fetchRoute(traveller.pos, to, traveller.mode));
           // The service puts its start on its own nearest road, which can be one the hunter can't walk from here (an
           // airfield's, behind a fence: owner, 11 Nov 2026): joined along the roads they can walk instead.
-          if (!fallback) route = joinedToHunter(route);
+          // Its roads can be ones the game doesn't have (owner, 12 Nov 2026, landed at Abu Simbel: "the platform trys to
+          // draw a path to the major road but the path are paths the avatar cannot travel on"): as far as the roads around
+          // the hunter are loaded, the way goes on them instead (and again as more load: keepOnOurRoads).
+          if (!fallback) {
+            service = true;
+            route = onOurRoads(route, 0)?.route ?? joinedToHunter(route);
+          }
         }
         if (disposed || id !== planId) return;
         if (fallback) {
@@ -1185,7 +1194,9 @@ export function GameMap({
           straight: fallback,
           plannedAt: performance.now(),
           streets: new Map(),
+          service,
         };
+        joinedOn = network;
         destination.lng = end[0];
         destination.lat = end[1];
         marker.group.visible = true;
@@ -1223,6 +1234,56 @@ export function GameMap({
        * way they'd go; what came before it (from where the service started, across a fence, a straight line to it) is
        * left out. As it came when it never touches the loaded roads (it starts beyond them).
        */
+      /**
+       * A way from the routing service, on the game's own roads as far as they're loaded round the hunter: the
+       * shortest way along them from where the hunter stands to the farthest point of it that is on a road they can walk
+       * (one that leads somewhere), then the rest as it came. So the hunter never steers for a road that isn't there
+       * (behind a fence, an airfield's, one the map doesn't have) and pace a dead end back and forth. Null when no point
+       * of it can be reached that way (or only by a way far longer than its own).
+       */
+      function onOurRoads(route: import("@/game/geo").Route, segment: number) {
+        if (!network || !onRoad) return null;
+        const net = network, from = onRoad;
+        const pockets = roads.cutOffEdges(net);
+        const here = directions.progressOn(route, traveller.pos, segment);
+        const coords = route.coords;
+        const inside: number[] = [];
+        for (let k = here.segment + 1; k < coords.length; k++) {
+          if (geo.distanceM([net.centre.lng, net.centre.lat], coords[k]) <= net.radius - 150) inside.push(k);
+        }
+        if (!inside.length) return null;
+        // The farthest first, a dozen of them at most
+        const step = Math.max(1, Math.ceil(inside.length / 12));
+        const tries = inside.filter((_, i) => (inside.length - 1 - i) % step === 0).reverse();
+        for (const k of tries) {
+          const [lng, lat] = coords[k];
+          const rp = roads.snapToNetwork(net, { lng, lat }, 0, pockets);
+          const p = rp ? roads.positionOf(net, rp) : null;
+          if (!p || geo.distanceM([lng, lat], [p.lng, p.lat]) > 15) continue; // not on a road the hunter can walk
+          const path = roads.findPath(net, from, { lng, lat }, 20);
+          if (!path || path.length < 2) continue;
+          const joined = geo.buildRoute(path);
+          if (joined.total > 2.5 * Math.max(0, route.cum[k] - here.s) + 300) continue; // a long way round: a nearer one
+          return { route: geo.buildRoute([...path, ...coords.slice(k + 1)]), forks: roads.findForks(net, path) };
+        }
+        return null;
+      }
+
+      /** As the roads load round the hunter on a way from the routing service: its next stretch on them too. */
+      let joinedOn: unknown = null;
+      function keepOnOurRoads() {
+        if (!trip || !trip.service || !network || network === joinedOn) return;
+        joinedOn = network;
+        const r = onOurRoads(trip.route, trip.segment);
+        if (!r) return;
+        trip.route = r.route;
+        trip.turns = directions.findManeuvers(r.route, r.forks);
+        trip.segment = 0;
+        trip.offSince = 0;
+        trip.streets = new Map();
+        showRoute(r.route.coords);
+      }
+
       function joinedToHunter(route: import("@/game/geo").Route): import("@/game/geo").Route {
         if (!network || !onRoad) return route;
         const net = network;
@@ -8527,6 +8588,7 @@ export function GameMap({
           buildRoads(true);
         }
         if (!riding) mapTheRestOfTheWay(now);
+        if (!riding) keepOnOurRoads();
 
         // The hunter moves by themselves along the drawn way (not steered: owner, 8 Nov 2026).
         const canMove = !frozen && !huntHold && !sceneHold && !inWorld && !houseOpenRef.current && now >= stuckUntil && Date.now() >= frozenUntil && !ride && !visit && !!onRoad;

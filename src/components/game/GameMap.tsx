@@ -8570,9 +8570,47 @@ export function GameMap({
       let lastServices = 0;
       let lastGuide = 0;
 
+      // In a hidden tab the browser stops animation frames, and the game with them (owner, 12 Nov 2026: "if user switch
+      // tab, the movement on the broadcast stops"): a little worker's clock keeps it going there (along the way, the
+      // broadcast's motion), ten times a second; back on the tab, the frames again.
+      let looping = false;
+      let backTicker: Worker | null = null;
+      let backTickerUrl = "";
+      const stopBackTicker = () => {
+        backTicker?.terminate();
+        backTicker = null;
+        if (backTickerUrl) URL.revokeObjectURL(backTickerUrl);
+        backTickerUrl = "";
+      };
+      const tabShownOrHidden = () => {
+        if (!looping || disposed) return;
+        if (document.visibilityState === "hidden") {
+          if (backTicker) return;
+          try {
+            backTickerUrl = URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 100);"], { type: "text/javascript" }));
+            backTicker = new Worker(backTickerUrl);
+            backTicker.onmessage = () => {
+              if (!disposed && document.visibilityState === "hidden") step(performance.now());
+            };
+            cancelAnimationFrame(frame);
+          } catch {
+            stopBackTicker(); // (no workers here: it rests while hidden, as before)
+          }
+        } else if (backTicker) {
+          stopBackTicker();
+          cancelAnimationFrame(frame);
+          frame = requestAnimationFrame(loop);
+        }
+      };
+      document.addEventListener("visibilitychange", tabShownOrHidden);
+
       const loop = (now: number) => {
         frame = requestAnimationFrame(loop);
-        const dt = Math.min(0.05, (now - last) / 1000);
+        looping = true;
+        step(now);
+      };
+      const step = (now: number) => {
+        const dt = Math.min(backTicker ? 0.25 : 0.05, (now - last) / 1000); // (the worker's ticks are further apart)
         last = now;
         const t = now / 1000;
         const c = controls.current;
@@ -8887,6 +8925,8 @@ export function GameMap({
       cleanup = () => {
         void savePosition();
         cancelAnimationFrame(frame);
+        stopBackTicker();
+        document.removeEventListener("visibilitychange", tabShownOrHidden);
         window.clearTimeout(hintTimer);
         window.removeEventListener("keydown", keyDown);
         window.removeEventListener("keyup", keyUp);

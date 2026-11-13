@@ -103,26 +103,31 @@ try {
   check("on the broadcast: the checkpoint built at the kerb, the camera looking in", !!built?.scene && built.scene.scale > 1, JSON.stringify(built?.scene));
 
   const card = () => show.evaluate((nl) => document.querySelector('[aria-label="Scene card"]')?.innerText.split(nl).join(" | ") ?? null, NL);
-  const offered = await card();
-  check("…a card: the answers on offer", /Go faster/.test(offered ?? "") && /Stop/.test(offered ?? "") && /Turn left only/.test(offered ?? ""), offered);
-  // One after the other, never on top of each other (owner, 12 Nov 2026): the card ends above the caption
-  const boxes = () => show.evaluate(() => {
-    const at = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) }; };
-    return { card: at('[aria-label="Scene card"] > div, [aria-label="Scene card"]'), caption: at('[aria-label="Scene caption"]'), side: !!document.querySelector("[data-card-side]"), w: innerWidth };
-  });
-  const laid = await boxes();
-  check("…the card sits above the caption, not over it", !!laid.card && !!laid.caption && laid.card.bottom <= laid.caption.top, JSON.stringify(laid));
-  check("…the caption: a police checkpoint, the officer's question", /police checkpoint/i.test(first ?? "") && /red traffic light/.test(first ?? ""), first);
+  // One after the other, as on their own screen (owner, 13 Nov 2026: "Must this 2 show together on the screen, can it be
+  // one after the other, like the user's page"): the officer's question alone first; then the answers on offer in its
+  // place; the one picked; then the caption again with the answer
+  const alone = await card();
+  check("…first the caption alone: a police checkpoint, the officer's question", /police checkpoint/i.test(first ?? "") && /red traffic light/.test(first ?? "") && !alone, `${first} · card: ${alone}`);
   await show.screenshot({ path: `${OUT}/broadcast-scene-1-question.png` });
+  let offered = null;
+  for (let i = 0; i < 30 && !/Go faster/.test(offered ?? ""); i++) { await wait(300); offered = await card(); }
+  const capThen = await caption();
+  check("…then the answers on offer, in its place (the caption gone meanwhile)", /Go faster/.test(offered ?? "") && /Stop/.test(offered ?? "") && /Turn left only/.test(offered ?? "") && !capThen, `${offered} · caption: ${capThen}`);
+  await show.screenshot({ path: `${OUT}/broadcast-scene-1b-choosing.png` });
+  let chose = null;
+  for (let i = 0; i < 30 && !/chose/i.test(chose ?? ""); i++) { await wait(300); chose = await card(); }
+  check("…the answer they chose, picked out", /chose/i.test(chose ?? "") && /👉 Go faster/.test(chose ?? ""), chose);
   let answered = null;
   for (let i = 0; i < 30 && !/Go faster/.test(answered ?? ""); i++) {
     await wait(500);
     answered = await caption();
   }
-  check("…then the hunter's answer, as they said it", /Go faster/.test(answered ?? ""), answered);
-  let chose = null;
-  for (let i = 0; i < 20 && !/chose/i.test(chose ?? ""); i++) { await wait(500); chose = await card(); }
-  check("…the card: the answer they chose, picked out", /chose/i.test(chose ?? "") && /👉 Go faster/.test(chose ?? ""), chose);
+  const cardThen = await card();
+  check("…then the caption again: the hunter's answer, as they said it (the card gone)", /Go faster/.test(answered ?? "") && !cardThen, `${answered} · card: ${cardThen}`);
+  const boxes = () => show.evaluate(() => {
+    const at = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) }; };
+    return { card: at('[aria-label="Scene card"] > div, [aria-label="Scene card"]'), caption: at('[aria-label="Scene caption"]'), side: !!document.querySelector("[data-card-side]"), w: innerWidth };
+  });
   let fined = null;
   for (let i = 0; i < 30 && !/20-coin fine/.test(fined ?? ""); i++) { await wait(500); fined = await caption(); }
   check("…and the officer's fine", /20-coin fine/.test(fined ?? ""), fined);

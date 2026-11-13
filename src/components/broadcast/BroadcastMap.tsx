@@ -201,7 +201,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   // The caption's height: the side panel (a puzzle, a game) ends above it, never over it
   const captionBox = useRef<HTMLDivElement>(null);
   const [captionH, setCaptionH] = useState(90);
-  const hasCaption = !!caption;
+  const hasCaption = caption ? (sceneCard?.kind === "ask" ? "ask" : "caption") : ""; // (whichever box is at the bottom)
   useEffect(() => {
     const el = captionBox.current;
     if (!el) return;
@@ -1303,21 +1303,38 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             // The question on offer and the reply picked, or the game being played, as they were then
             let card: typeof sceneCard = null;
             if (sc) {
-              let ask: { at: number; options: string[]; pick: string | null } | null = null;
+              let ask: { at: number; options: string[]; pick: string | null; pickAt: number | null } | null = null;
               let game: { at: number; game: RoadGame; result: RoadGameResult | null } | null = null;
+              let them: { at: number; len: number } | null = null; // what was last said to them
               for (const l of sc.lines) {
                 if (l[0] > T) break;
+                if (l[1] === "them") them = { at: l[0], len: String(l[2]).length };
                 if (l[1] === "ask") {
                   const options = parse<string[]>(l[2]);
-                  if (options) ask = { at: l[0], options, pick: null };
-                } else if (l[1] === "pick" && ask) ask.pick = l[2];
+                  if (options) ask = { at: l[0], options, pick: null, pickAt: null };
+                } else if (l[1] === "pick" && ask) {
+                  ask.pick = l[2];
+                  ask.pickAt = l[0];
+                }
                 else if (l[1] === "game") {
                   const g = parse<RoadGame>(l[2]);
                   if (g) game = { at: l[0], game: g, result: null };
                 } else if (l[1] === "result" && game) game.result = parse<RoadGameResult>(l[2]);
               }
               if (game && (!ask || game.at >= ask.at)) card = { kind: "game", who: h.name, game: game.game, result: game.result };
-              else if (ask) card = { kind: "ask", who: h.name, options: ask.options, pick: ask.pick };
+              else if (ask) {
+                // One after the other, as on their own screen (owner, 13 Nov 2026: "Must this 2 show together on the
+                // screen, can it be one after the other, like the user's page"): what's said first, long enough to read;
+                // then the replies on offer in its place; the one picked a moment; then the caption again with the reply.
+                // (The pick may already be known: the broadcast plays a few seconds behind.)
+                const a = ask;
+                const picked = a.pickAt ?? sc.lines.find((l) => l[1] === "pick" && l[0] >= a.at)?.[0] ?? null;
+                const readEnd = them ? them.at + Math.min(7000, 1500 + them.len * 45) : a.at;
+                // (a quick reply: the choices come sooner, but the line still has 2.5 s to itself, and the choices 3.5 s)
+                const from = Math.max(a.at, them ? them.at + 2500 : a.at, Math.min(readEnd, picked !== null ? picked - 1500 : Infinity));
+                const till = picked !== null ? Math.max(picked + 2500, from + 3500) : Infinity;
+                if (T >= from && T < till) card = { kind: "ask", who: h.name, options: a.options, pick: a.pickAt !== null ? a.pick : null };
+              }
             }
             if (world) {
               // A box's puzzle, as they have it: the board, the time left, how far they've got, and how it ended
@@ -1562,9 +1579,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           up together"): the replies on offer and the one picked, then the caption below it, like TV's lower third */}
       {caption && (
         <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex flex-col items-center gap-3 px-4" data-lower-third>
-          {sceneCard?.kind === "ask" && (
-            <div className="w-full max-w-2xl rounded-2xl bg-ink/92 px-4 py-3 text-paper shadow-2xl ring-2 ring-gold/70" role="status" aria-label="Scene card">
-              <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">{sceneCard.pick ? `${sceneCard.who} chose` : `${sceneCard.who} is choosing…`}</p>
+          {sceneCard?.kind === "ask" ? (
+            <div ref={captionBox} className="w-full max-w-2xl rounded-2xl bg-ink/92 px-4 py-3 text-paper shadow-2xl ring-2 ring-gold/70" role="status" aria-label="Scene card">
+              <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">
+                {caption.icon} {sceneCard.pick ? `${sceneCard.who} chose` : `${sceneCard.who} is choosing…`}
+              </p>
               <div className="grid gap-1.5 sm:grid-cols-3">
                 {sceneCard.options.map((o) => (
                   <span
@@ -1577,7 +1596,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 ))}
               </div>
             </div>
-          )}
+          ) : (
           <div ref={captionBox} className="w-full max-w-2xl rounded-2xl bg-ink/92 px-5 py-3 text-paper shadow-2xl ring-1 ring-gold/60" role="status" aria-label="Scene caption">
             <p className="text-xs font-extrabold uppercase tracking-widest text-gold">
               {caption.icon} {caption.title}
@@ -1589,6 +1608,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               </p>
             ))}
           </div>
+          )}
         </div>
       )}
       <div className="absolute inset-0">

@@ -19,7 +19,7 @@ export function JailCard({
   onBail,
 }: {
   /** taking: just arrested, the police finding the station (no clock, no bail yet). */
-  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null; taking?: boolean };
+  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null; taking?: boolean; reason?: "idle" | "chase"; stars?: number | null; parked?: string | null };
   coins: number;
   onBail: () => Promise<void> | void;
 }) {
@@ -42,13 +42,28 @@ export function JailCard({
         <div className="relative flex flex-col items-center gap-3 text-center">
           <span className="text-5xl" aria-hidden="true">🚔</span>
           <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-danger-text">{jail.taking ? "Arrested" : "Locked up"}{jail.station ? ` · ${jail.station}` : ""}</p>
-          <h2 className="font-display text-2xl font-extrabold">Idling on a main road</h2>
-          <p className="text-sm text-paper/80">
-            You stood still on a main road for {jail.minutes && jail.minutes >= 60 ? `${Math.floor(jail.minutes / 60)} h${jail.minutes % 60 ? ` ${jail.minutes % 60} min` : ""}` : "an hour"}. Next time, rest at a chill spot: a park, a mall or a place to eat.
-          </p>
-          {(jail.vehicle || jail.rentalEnded) && (
-            <p className="rounded-xl bg-ink/60 px-3 py-2 text-sm">
-              {jail.vehicle ? `🚓 Your ${NAMES[jail.vehicle] ?? jail.vehicle} has been impounded: release it from the pound once you're out (7 days, then it's gone).` : "🚓 Your rental has gone back to its renter."}
+          {jail.reason === "chase" ? (
+            <>
+              <h2 className="font-display text-2xl font-extrabold">Caught after a police chase</h2>
+              <p className="text-sm text-paper/80">
+                You rode through a checkpoint and the police caught you (<span className="text-danger-text">{"★".repeat(jail.stars ?? 1)}</span>): {(jail.stars ?? 1) * 5} min in the cell. Next time, stop at the checkpoint, or lose them out of sight.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="font-display text-2xl font-extrabold">Idling on a main road</h2>
+              <p className="text-sm text-paper/80">
+                You stood still on a main road for {jail.minutes && jail.minutes >= 60 ? `${Math.floor(jail.minutes / 60)} h${jail.minutes % 60 ? ` ${jail.minutes % 60} min` : ""}` : "an hour"}. Next time, rest at a chill spot: a park, a mall or a place to eat.
+              </p>
+            </>
+          )}
+          {(jail.vehicle || jail.rentalEnded || jail.parked) && (
+            <p className="rounded-xl bg-ink/60 px-3 py-2 text-sm" data-jail-parked={jail.parked ?? undefined}>
+              {jail.parked
+                ? `🅿️ Your ${NAMES[jail.parked] ?? jail.parked} is parked at the roadside where you were caught: walk back to it once you're out, or send a recovery truck.`
+                : jail.vehicle
+                  ? `🚓 Your ${NAMES[jail.vehicle] ?? jail.vehicle} has been impounded: release it from the pound once you're out (7 days, then it's gone).`
+                  : "🚓 Your rental has gone back to its renter."}
             </p>
           )}
           {jail.taking ? (

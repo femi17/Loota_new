@@ -37,7 +37,7 @@ type Hunter = {
   /** The vulcanizer walking back with them to change a flat (their name). */
   helper?: string | null;
   /** Their motorbike, car or bicycle left at the roadside: a flat, or out of fuel (13 Nov 2026), and since when. */
-  parked?: { kind: "bicycle" | "motorbike" | "car"; lng: number; lat: number; why: "flat" | "fuel"; wheel: "off" | "fixed" | null; since: string | null } | null;
+  parked?: { kind: "bicycle" | "motorbike" | "car"; lng: number; lat: number; why: "flat" | "fuel" | "left"; wheel: "off" | "fixed" | null; since: string | null } | null;
   /** The real weather where they are (their ~10 km square's, MET Norway). */
   weather?: Weather | null;
   /** The device they play on now (claim_session): positions from any other are ignored. */
@@ -96,6 +96,9 @@ type State = {
     left: number;
     serving: boolean;
     vehicle: string | null;
+    reason?: "idle" | "chase";
+    stars?: number | null;
+    parked?: string | null;
   }[];
   now?: string;
 };
@@ -684,6 +687,9 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         left: number;
         serving: boolean;
         vehicle: string | null;
+        reason: "idle" | "chase";
+        stars: number | null;
+        parked: string | null;
       };
       const jails = new Map<string, Jail>();
       const jailAt = (id: string, T: number) => {
@@ -901,6 +907,9 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             left: j.left,
             serving: j.serving,
             vehicle: j.vehicle,
+            reason: j.reason ?? "idle",
+            stars: j.stars ?? null,
+            parked: j.parked ?? null,
           });
         }
         // Gone from the list once they're out (kept a moment longer here: played 6 s behind)
@@ -1337,7 +1346,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             if (parkedCar && parkedCar.key !== pk) dropParked();
             if (parked && !parkedCar) {
               const object = models.makeVehicleModel(parked.kind);
-              const tag = layer.billboard(models.makeNameplate(parked.why === "flat" ? "FLAT TYRE" : "NO FUEL", "#B23A3A"));
+              const tag = layer.billboard(models.makeNameplate(parked.why === "flat" ? "FLAT TYRE" : parked.why === "left" ? "PARKED" : "NO FUEL", parked.why === "left" ? "#2F6FEB" : "#B23A3A"));
               tag.position.y = parked.kind === "car" ? 2.6 : 2.2;
               object.add(tag);
               // By the kerb on the right, facing along the road (as the game parks it)
@@ -1355,6 +1364,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             const parkedFresh = !!parked && (careT - Date.parse(parked.since ?? "") < 10 * 60_000 || parkedFar < 60 || !!parked.wheel || !!h.helper);
             const parkedNote = !parked || !parkedFresh
               ? null
+              : parked.why === "left"
+                ? `🅿️ ${h.name}'s ${parked.kind} is parked where the police caught them`
               : parked.why === "fuel"
                 ? `⛽ ${h.name}'s ${parked.kind} ran out of fuel${parkedFar < 30 ? " at the roadside" : ": off to get some"}`
                 : h.helper
@@ -1365,13 +1376,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                       ? `🛞 ${h.name} is rolling the patched wheel back to the ${parked.kind}`
                       : `🛞 ${h.name}'s ${parked.kind} has a flat tyre${parkedFar < 30 ? "" : ": off to find a vulcanizer"}`;
             const jailLeft = jail ? Math.max(1, Math.ceil(jail.left / 60)) : 0;
-            const impounded = jail?.vehicle ? ` · their ${jail.vehicle} impounded` : "";
+            const impounded = jail?.vehicle ? ` · their ${jail.vehicle} impounded` : jail?.parked ? ` · their ${jail.parked} left at the roadside` : "";
+            const arrestWhy = jail?.reason === "chase" ? `caught after a police chase (${"★".repeat(jail.stars ?? 1)})` : "arrested for idling on a main road";
             const note = jail && jp
               ? jp.phase === "cell"
                 ? `🚔 ${h.name} is in the cell at ${jail.station ?? "the police station"} · ${jailLeft} min left${jail.serving ? "" : " (the clock waits while they're away)"}${impounded}`
                 : jp.phase === "riding"
-                  ? `🚓 ${h.name} was arrested for idling on a main road: the police are taking them to ${jail.station ?? "the station"}${impounded}`
-                  : `🚓 ${h.name} has been arrested for idling on a main road${impounded}`
+                  ? `🚓 ${h.name} was ${arrestWhy}: the police are taking them to ${jail.station ?? "the station"}${impounded}`
+                  : `🚓 ${h.name} was ${arrestWhy}${impounded}`
               : !care
               ? parkedNote
               : care.phase === "waiting"

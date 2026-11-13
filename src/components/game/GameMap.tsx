@@ -163,7 +163,7 @@ type Hud = {
   /** At the chosen seal's place: the "Enter the chamber" button. */
   djinnHere: { place: string } | null;
   /** Locked in a cell (the idling law, owner, 12 Nov 2026): until when (this device's clock), the bail, what was impounded. */
-  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null; taking?: boolean } | null;
+  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null; taking?: boolean; reason?: "idle" | "chase"; stars?: number | null; parked?: string | null } | null;
   /** Vehicles in the pound: released for the fee (gone after 7 days). */
   impounded: { id: string; kind: VehicleKind; fee: number; goneAt: number }[];
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
@@ -220,7 +220,7 @@ type Hud = {
 };
 
 /** Things a player can do at a place or by their vehicle (see computeActions in GameMap). */
-type LimitAction = "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic" | "jerry_relic" | "tyre_kit" | "flat" | "wheel_off" | "fix_wheel" | "wheel_on" | "bring_vulcanizer";
+type LimitAction = "get_back_on" | "eat" | "rest" | "rest_here" | "refuel" | "buy_keg" | "fill_keg" | "pour_keg" | "pump" | "service" | "mechanic" | "jerry_relic" | "tyre_kit" | "flat" | "wheel_off" | "fix_wheel" | "wheel_on" | "bring_vulcanizer";
 
 /** A direction and rough distance (bearing: compass degrees). */
 type Pointer = { bearing: number; metres: number };
@@ -1608,7 +1608,11 @@ export function GameMap({
       /** A motorbike or car with a flat (it stands at the roadside until the tyre is changed). */
       const isFlat = (v: VehicleRow) => v.kind !== "bicycle" && v.tyre <= 0;
       /** A motorbike or car that ran dry and stands at the roadside where it stopped (not one waiting only for a new tyre). */
-      const strandedVehicle = () => owned.find((v) => !!v.stranded_at && !(isFlat(v) && v.fuel > 0)) ?? null;
+      /** Left parked at the roadside, rideable (the police took them away): get back on beside it. */
+      const isLeft = (v: VehicleRow) => !!v.stranded_at && !isFlat(v) && (v.kind === "bicycle" || v.fuel > 0);
+      const leftVehicle = () => owned.find(isLeft) ?? null;
+      let underArrest = false; // (checkLaw): no getting back on while the police have them
+      const strandedVehicle = () => owned.find((v) => !!v.stranded_at && !isLeft(v) && !(isFlat(v) && v.fuel > 0)) ?? null;
       /** One standing at the roadside with a flat. */
       const flatVehicle = () => owned.find((v) => !!v.stranded_at && isFlat(v)) ?? null;
       const metresTo = (p: LngLat) => geo.distanceM([traveller.pos.lng, traveller.pos.lat], [p.lng, p.lat]);
@@ -1723,6 +1727,7 @@ export function GameMap({
         rental = active ? { kind: active.kind, startedAt: new Date(active.started_at).getTime(), rate: VEHICLES[active.kind].ratePerMinute } : null;
         showVehicle();
         showParked();
+        computeActions(); // (a vehicle left here, or gone: the buttons beside it)
       }
 
       // ---- Out of fuel: the vehicle stays parked at the roadside where it ran dry (owner, 19 Oct 2026) ----
@@ -1741,7 +1746,7 @@ export function GameMap({
         for (const v of want) {
           if (parked.has(v.kind)) continue;
           const object = models.makeVehicleModel(v.kind);
-          const tag = layer.billboard(models.makeNameplate(isFlat(v) ? "FLAT TYRE" : "NO FUEL", "#B23A3A"));
+          const tag = layer.billboard(models.makeNameplate(isFlat(v) ? "FLAT TYRE" : isLeft(v) ? "PARKED" : "NO FUEL", isLeft(v) ? "#2F6FEB" : "#B23A3A"));
           tag.position.y = v.kind === "car" ? 2.6 : 2.2;
           object.add(tag);
           let at = { lng: v.lng, lat: v.lat };
@@ -2015,6 +2020,7 @@ export function GameMap({
             if (missing.length) say(`No ${missing.join(" or ")} yet: police checkpoints fine what's missing. Get them in the vehicle panel.`, true);
           }
 
+          const wasLeft = how === "own" && owned.some((v) => v.kind === kind && isLeft(v)); // parked at the roadside, here
           const { data } = await supabase.rpc("start_vehicle", {
             p_kind: kind,
             p_lng: traveller.pos.lng,
@@ -2030,6 +2036,9 @@ export function GameMap({
               const f = flatVehicle();
               if (f && metresTo(f) <= 25 && f.flat_wheel !== "off" && (f.flat_helper || f.jack || f.flat_wheel === "fixed")) void act(f.flat_wheel === "fixed" ? "wheel_on" : "flat"); // right beside it: change it now
               else say(f ? flatHowTo(f) : `Your ${vehicleName(kind)} has a flat.`, true);
+            } else if (started?.reason === "stranded" && (started as { parked?: boolean }).parked) {
+              const v = leftVehicle();
+              say(`Your ${vehicleName(kind)} is parked at the roadside${v ? ` ${geo.formatDistance(metresTo(v))} away` : ""}, where the police took you. Walk back to it and get on${kind !== "bicycle" ? ", or send a recovery truck for it (🚚 in Vehicles)" : ""}.`, true);
             } else if (started?.reason === "stranded")
               say(
                 (strandedVehicle()?.kind === kind && metresTo(strandedVehicle()!) > STRAND_FAR_M)
@@ -2057,7 +2066,7 @@ export function GameMap({
           if (traveller.mode !== "walk" && !rental && traveller.mode !== kind) pocketAnim(traveller.mode as VehicleKind, false); // swapping vehicles
           traveller.mode = kind;
           saved = { ...traveller.pos };
-          if (started.source === "owned") pocketAnim(kind, true);
+          if (started.source === "owned" && !wasLeft) pocketAnim(kind, true);
           if (started.source === "rented") {
             endPickup();
             endDirections();
@@ -2069,7 +2078,9 @@ export function GameMap({
           say(
             started.source === "rented"
               ? `You've rented a ${vehicleName(kind)}: ${VEHICLES[kind].ratePerMinute} coins a minute until you get off.`
-              : `Out of your pocket: you're ${kind === "car" ? "in" : "on"} your ${vehicleName(kind)}.`,
+              : wasLeft
+                ? `You're back ${kind === "car" ? "in" : "on"} your ${vehicleName(kind)}.`
+                : `Out of your pocket: you're ${kind === "car" ? "in" : "on"} your ${vehicleName(kind)}.`,
           );
           return "ok";
         } finally {
@@ -2392,7 +2403,9 @@ export function GameMap({
               : v.stranded_at
               ? isFlat(v)
                 ? "flat"
-                : "stranded"
+                : isLeft(v)
+                  ? "parked"
+                  : "stranded"
               : v.broken_at
                 ? v.repair_ready_at
                   ? "repairing"
@@ -2442,7 +2455,7 @@ export function GameMap({
               if (v.flat_wheel === "off") adviseVulcanizer(v); // the wheel is off: a vulcanizer is where it goes
               else void act(v.flat_helper ? "flat" : v.flat_wheel === "fixed" ? "wheel_on" : v.jack ? "flat" : "wheel_off");
             }
-            else if (v.fuel > 0) say(`Your ${name} is right here.`);
+            else if (v.fuel > 0 || v.kind === "bicycle") void chooseVehicle(v.kind, "own"); // parked here: back on
             else if (keg && keg.fuel > 0) void act("pour_keg");
             else if (jerryRelicId) void act("jerry_relic");
             else adviseFuelWalk(name);
@@ -4757,6 +4770,8 @@ export function GameMap({
           // A motorbike or car with a flat (on foot, or come back on the bicycle). Beside it: your jack and spare, or
           // the wheel off to roll to a vulcanizer, or (back with it) on again, or (back with them) the vulcanizer
           // changes it. At a vulcanizer: the wheel patched, or the vulcanizer brought back (owner, 3 Nov 2026).
+          const left = leftVehicle();
+          if (left && metresTo(left) <= 25 && !ownInUse() && !underArrest) list.push({ id: "get_back_on", icon: "🅿️", short: "Get on", label: `Get back on your ${vehicleName(left.kind)}` });
           const flat = flatVehicle();
           if (flat) {
             const name = vehicleName(flat.kind);
@@ -4963,6 +4978,11 @@ export function GameMap({
       let lastPour: { tank: number; can: number; usesLeft: number; spoilt: boolean } | null = null;
       async function act(id: LimitAction, direct = false): Promise<boolean> {
         if (busy) return false;
+        if (id === "get_back_on") {
+          const v = underArrest ? null : leftVehicle();
+          if (v) await chooseVehicle(v.kind, "own");
+          return !!v;
+        }
         if (id === "pour_keg" && !direct) {
           // The pour as a scene (owner, 26 Oct 2026): the hunter gets off and tips the can in; both gauges move.
           const v = pourTarget;
@@ -5079,7 +5099,7 @@ export function GameMap({
         setBusy(true);
         try {
           await savePosition(); // the server checks where the player is
-          const rpc: Record<Exclude<LimitAction, "eat" | "refuel" | "jerry_relic" | "tyre_kit" | "flat" | "wheel_off" | "fix_wheel" | "wheel_on" | "bring_vulcanizer">, string> = {
+          const rpc: Record<Exclude<LimitAction, "get_back_on" | "eat" | "refuel" | "jerry_relic" | "tyre_kit" | "flat" | "wheel_off" | "fix_wheel" | "wheel_on" | "bring_vulcanizer">, string> = {
             rest: "start_rest",
             rest_here: "rest_here",
             buy_keg: "buy_keg",
@@ -7905,6 +7925,10 @@ export function GameMap({
         rentalEnded: boolean;
         minutes: number;
         now: string;
+        /** Why: idling on a main road, or caught after a police chase (then the stars, and the vehicle left parked). */
+        reason?: "idle" | "chase";
+        stars?: number | null;
+        parked?: VehicleKind | null;
       };
       type Law = {
         state: "ok" | "warn" | "taking" | "jailed";
@@ -7954,6 +7978,7 @@ export function GameMap({
           const a = r.arrest;
           traveller.v = 0;
           driving = false;
+          underArrest = true;
           if (arrestId !== a.id) {
             // Arrested: on foot (the vehicle to the pound, a rental back to its renter); the police are here
             arrestId = a.id;
@@ -7961,12 +7986,14 @@ export function GameMap({
             void refreshVehicles();
             afterModeChange();
             endDirections();
-            say(`🚔 Arrested! You stood still on a main road for ${a.minutes} minutes.${a.vehicle ? ` Your ${vehicleName(a.vehicle)} has been impounded.` : a.rentalEnded ? " Your rental has gone back to its renter." : ""} The police are taking you to the station.`, true);
+            if (a.reason === "chase")
+              say(`🚔 Arrested after the chase (${"★".repeat(a.stars ?? 1)})!${a.parked ? ` Your ${vehicleName(a.parked)} stays parked at the roadside here.` : a.rentalEnded ? " Your rental has gone back to its renter." : ""} The police are taking you to the station: ${(a.stars ?? 1) * 5} min in the cell.`, true);
+            else say(`🚔 Arrested! You stood still on a main road for ${a.minutes} minutes.${a.vehicle ? ` Your ${vehicleName(a.vehicle)} has been impounded.` : a.rentalEnded ? " Your rental has gone back to its renter." : ""} The police are taking you to the station.`, true);
           }
           if (r.state === "taking") {
             // On screen at once (owner, 13 Nov 2026: "Why is there a delay allowing to do all that before telling me I
             // am in jail"): the arrest card while the station and the road there are found
-            const arresting = { until: 0, bail: a.bail, vehicle: a.vehicle ?? null, rentalEnded: !!a.rentalEnded, minutes: a.minutes ?? null, station: null, taking: true };
+            const arresting = { until: 0, bail: a.bail, vehicle: a.vehicle ?? null, rentalEnded: !!a.rentalEnded, minutes: a.minutes ?? null, station: null, taking: true, reason: a.reason ?? "idle", stars: a.stars ?? null, parked: a.parked ?? null };
             setHud((h) => (h.jail?.taking ? h : { ...h, jail: arresting }));
             setTransitOpen(false);
             return void takeToStation(a);
@@ -7987,6 +8014,8 @@ export function GameMap({
           const station = hudStation;
           arrestId = "";
           inCell = false;
+          underArrest = false;
+          computeActions();
           if (arrestRide) endArrestRide();
           dropCell();
           setHud((h) => ({ ...h, jail: null }));
@@ -8093,7 +8122,7 @@ export function GameMap({
           snapReachM = 1500;
           buildRoads();
           actions.current?.follow();
-          say(`🚔 Locked in the cell at ${a.station ?? "the police station"}. Your 30 minutes count down while you're playing: leave, and the clock waits for you.`, true);
+          say(`🚔 Locked in the cell at ${a.station ?? "the police station"}. Your ${a.reason === "chase" ? (a.stars ?? 1) * 5 : 30} minutes count down while you're playing: leave, and the clock waits for you.`, true);
         }
         if (!cellModel) {
           const cell = models.makeJailCell();
@@ -8106,6 +8135,9 @@ export function GameMap({
           rentalEnded: !!a.rentalEnded,
           minutes: a.minutes ?? null,
           station: a.station ?? null,
+          reason: a.reason ?? "idle",
+          stars: a.stars ?? null,
+          parked: a.parked ?? null,
         };
         setHud((h) => (h.jail && Math.abs(h.jail.until - jail.until) < 3000 && h.jail.bail === jail.bail && h.jail.station === jail.station ? h : { ...h, jail }));
       }
@@ -8703,6 +8735,14 @@ export function GameMap({
       }
 
       /** A point on the roads `m` metres ahead of the hunter: along their way if they have one, else ahead of them. */
+      /** A spot m metres behind the hunter (the way they face), on the roads if they're loaded. */
+      function behindOnRoads(m: number): LngLat {
+        const h = traveller.heading + Math.PI;
+        const p = { lng: traveller.pos.lng + (Math.sin(h) * m) / (111320 * Math.cos((traveller.pos.lat * Math.PI) / 180)), lat: traveller.pos.lat + (Math.cos(h) * m) / 110574 };
+        const rp = network ? roads.snapToNetwork(network, p, 0, roads.cutOffEdges(network)) : null;
+        const on = rp && network ? roads.positionOf(network, rp) : null;
+        return on && geo.distanceM([on.lng, on.lat], [traveller.pos.lng, traveller.pos.lat]) > m * 0.4 ? { lng: on.lng, lat: on.lat } : p;
+      }
       function aheadOnRoads(m: number): LngLat | null {
         if (!network) return null;
         let p: LngLat | null = null;
@@ -8791,7 +8831,9 @@ export function GameMap({
         if (chase) return;
         if (!trail.length) trailTick();
         const playerD = trail[trail.length - 1].d;
-        const at = trailAt(Math.max(trail[0].d, playerD - spec.gapM));
+        // Back along the way they came; with too little of it yet (just set off), back along the road behind them, so the
+        // police never start on top of them
+        const at = playerD - trail[0].d >= spec.gapM * 0.8 ? trailAt(playerD - spec.gapM) : behindOnRoads(spec.gapM);
         const now = performance.now();
         const first = makeCop(spec.chaser, at, traveller.heading);
         chase = {
@@ -9026,10 +9068,17 @@ export function GameMap({
         // The last of the track, then how it ended
         if (c.track.length || c.notes.length) await supabase.rpc("chase_put", { p_event: c.event, p_track: c.track.splice(0, 120), p_notes: c.notes.splice(0, 30), p_level: c.level });
         const { data } = await supabase.rpc("police_chase_end", { p_event: c.event, p_caught: caught, p_outcome: how });
-        const r = data as { ok: boolean; fine?: number; balance?: number; holdS?: number; level?: number } | null;
+        const r = data as { ok: boolean; fine?: number; balance?: number; holdS?: number; level?: number; arrested?: boolean; parked?: VehicleKind | null } | null;
         if (r?.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
         const stars = "★".repeat(r?.level ?? c.level);
-        if (caught) {
+        if (caught && r?.arrested) {
+          // Arrested (owner, 13 Nov 2026: "I should be taking away with my vehicle parked on the road, and the police car"):
+          // the patrol car to the station and the cell, as the idling law's arrest
+          stuckUntil = 0;
+          say(`🚔 Caught${atBlock ? " at the roadblock" : ""}! (${stars}) "Running a checkpoint, eh?" That's ${r.fine ?? 0} coins, and you're coming with us.`, true);
+          void refreshVehicles();
+          void checkLaw();
+        } else if (caught) {
           if (r?.holdS) stuckUntil = Math.max(stuckUntil, performance.now() + r.holdS * 1000);
           say(`🚔 Caught${atBlock ? " at the roadblock" : ""}! (${stars}) "Running a checkpoint, eh?" That's ${r?.fine ?? 0} coins, and you wait ${Math.round((r?.holdS ?? 60) / 60)} min while it's written up.`, true);
         } else if (how === "called_off") say(`🏁 The police called it off. You got away! (${stars})`, true);

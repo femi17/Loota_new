@@ -14,7 +14,7 @@ export type OwnedVehicle = {
   fuel: number;
   inUse: boolean;
   /** `flat`: a motorbike or car with a flat tyre, parked at the roadside until it's changed. */
-  state: "ready" | "empty" | "broken" | "repairing" | "stranded" | "flat" | "recovering";
+  state: "ready" | "empty" | "broken" | "repairing" | "stranded" | "flat" | "parked" | "recovering";
   /** `recovering`: on a recovery truck, back in the pocket at this time. */
   readyAt?: string | null;
   away?: number | null;
@@ -87,7 +87,7 @@ function flatText(v: OwnedVehicle) {
 
 /** Beside it (within 25 m): see to it now; dry with no fuel in hand: a petrol station first; otherwise the way to it. */
 /** Far enough away to send a recovery truck for (a motorbike or car at the roadside). */
-const far = (v: OwnedVehicle) => v.kind !== "bicycle" && (v.state === "stranded" || v.state === "flat") && v.away != null && v.away >= RECOVERY_MIN_M;
+const far = (v: OwnedVehicle) => v.kind !== "bicycle" && (v.state === "stranded" || v.state === "flat" || v.state === "parked") && v.away != null && v.away >= RECOVERY_MIN_M;
 /** Too far to carry fuel or a wheel to (the map says so too): the truck is the main way. */
 const veryFar = (v: OwnedVehicle) => far(v) && v.away! > STRAND_FAR_M;
 const RECOVERY_FUEL_TEXT = "a little fuel to reach a petrol station";
@@ -103,6 +103,7 @@ function parkedButton(v: OwnedVehicle) {
     if (here) return f?.jack ? "🔧 Change it with your jack" : "🛞 Take the wheel off";
     return "🛞 The way to a vulcanizer";
   }
+  if (v.state === "parked") return here ? "🅿️ Get back on" : "🧭 The way to it";
   if (v.carrying) return here ? (v.carrying === "can" ? "🛢 Pour the jerry can in" : "⛽ Use the Jerry Can relic") : "🧭 The way to it";
   return "⛽ The way to a petrol station";
 }
@@ -149,7 +150,7 @@ export function VehiclePanel({
   // With a new vehicle: its gear and papers, ticked to buy along with it.
   const [extras, setExtras] = useState<Record<string, boolean>>({});
   const ticked = (kind: VehicleKind, id: AddonId) => extras[`${kind}:${id}`] ?? true;
-  const parked = owned.find((v) => v.state === "stranded" || v.state === "flat") ?? null;
+  const parked = owned.find((v) => v.state === "stranded" || v.state === "flat" || v.state === "parked") ?? null;
 
   return (
     <div className="absolute inset-0 z-10 flex items-end justify-center bg-ink/60 sm:items-center" onClick={onClose}>
@@ -192,10 +193,10 @@ export function VehiclePanel({
           {parked && (
             <div className="mb-3 flex flex-col gap-3 rounded-2xl bg-danger/15 p-4 ring-1 ring-danger/50" aria-label="Parked at the roadside">
               <div className="flex items-center gap-3">
-                <span className="flex size-11 items-center justify-center rounded-xl bg-danger/25 text-2xl" aria-hidden="true">{parked.state === "flat" ? "🛞" : "⛽"}</span>
+                <span className="flex size-11 items-center justify-center rounded-xl bg-danger/25 text-2xl" aria-hidden="true">{parked.state === "flat" ? "🛞" : parked.state === "parked" ? "🅿️" : "⛽"}</span>
                 <div className="min-w-0 flex-1">
                   <p className="font-bold leading-tight">
-                    Your {VEHICLES[parked.kind].name.toLowerCase()} {parked.state === "flat" ? "has a flat tyre" : "ran dry"}
+                    Your {VEHICLES[parked.kind].name.toLowerCase()} {parked.state === "flat" ? "has a flat tyre" : parked.state === "parked" ? "is parked where you left it" : "ran dry"}
                   </p>
                   <p className="text-xs text-paper/75">
                     Parked at the roadside{parked.away != null ? `, ${formatDistance(parked.away)} from you` : ""}
@@ -205,6 +206,8 @@ export function VehiclePanel({
               <p className="text-xs leading-relaxed text-paper/80">
                 {veryFar(parked)
                   ? "Too far away to carry fuel or a wheel to. Send a recovery truck for it, or travel back to it."
+                  : parked.state === "parked"
+                  ? "Left at the roadside when the police took you away. Walk back to it and get on."
                   : parked.state === "flat"
                   ? flatText(parked)
                   : parked.carrying
@@ -247,6 +250,8 @@ export function VehiclePanel({
                     ? { text: "On a recovery truck", style: "bg-gold/15 text-gold" }
                   : mine.state === "stranded"
                     ? { text: "Parked · no fuel", style: "bg-danger/20 text-[#FF8A8A]" }
+                    : mine.state === "parked"
+                      ? { text: "Parked at the roadside", style: "bg-gold/15 text-gold" }
                     : mine.state === "flat"
                       ? { text: "Parked · flat tyre", style: "bg-danger/20 text-[#FF8A8A]" }
                     : mine.state === "broken"
@@ -327,7 +332,7 @@ export function VehiclePanel({
                   {!onIt && (
                     <div className="flex flex-wrap gap-2">
                       {mine ? (
-                        mine.state === "stranded" || mine.state === "flat" ? (
+                        mine.state === "stranded" || mine.state === "flat" || mine.state === "parked" ? (
                           <>
                             <button type="button" disabled={busy} onClick={() => onWayTo(kind)} className={primary}>
                               {parkedButton(mine)}

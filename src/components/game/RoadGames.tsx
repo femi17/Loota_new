@@ -12,6 +12,13 @@ export type RoadGame =
   | { type: "cups"; start: number; swaps: [number, number][]; ms: number; seconds?: number }
   | { type: "pairs"; cards: string[]; misses: number; seconds?: number };
 
+/**
+ * The game as the player has it, move by move, for the broadcast to show the same (owner, 13 Nov 2026: "I played the card
+ * match game… I did not see the option users is picking"): the chess piece picked up and the move played, the cup
+ * picked, the cards turned over so far.
+ */
+export type RoadGameLive = { from?: string | null; played?: string | null; picked?: number | null; flips?: number[] };
+
 /** `late`: the move came after the clock ran out (owner: "some form of urgency"). */
 export type RoadGameResult = { won: boolean; reward: number; answer: string | null; san: string | null; late?: boolean };
 
@@ -30,17 +37,25 @@ export function RoadGameBoard({
   locked = false,
   onReady,
   onMove,
+  onProgress,
+  mirror,
 }: {
   game: RoadGame;
   result: RoadGameResult | null;
   locked?: boolean;
   onReady?: () => void;
   onMove: (move: string) => void;
+  /** Each change the player makes (for the broadcast). */
+  onProgress?: (live: RoadGameLive) => void;
+  /** The broadcast: shows this, played by the hunter, and can't be played here. */
+  mirror?: RoadGameLive | null;
 }) {
-  if (game.type === "chess") return <ChessGame fen={game.fen} result={result} locked={locked} onReady={onReady} onMove={onMove} />;
-  if (game.type === "cups") return <CupsGame start={game.start} swaps={game.swaps} ms={game.ms} result={result} locked={locked} onReady={onReady} onMove={onMove} />;
-  return <PairsGame cards={game.cards} misses={game.misses} result={result} locked={locked} onReady={onReady} onMove={onMove} />;
+  const shown = { result, locked: locked || !!mirror, onReady, onMove, onProgress, mirror: mirror ?? null };
+  if (game.type === "chess") return <ChessGame fen={game.fen} {...shown} />;
+  if (game.type === "cups") return <CupsGame start={game.start} swaps={game.swaps} ms={game.ms} {...shown} />;
+  return <PairsGame cards={game.cards} misses={game.misses} {...shown} />;
 }
+type Shown = { result: RoadGameResult | null; locked: boolean; onReady?: () => void; onMove: (move: string) => void; onProgress?: (live: RoadGameLive) => void; mirror: RoadGameLive | null };
 
 /** Tell the scene once, when the game can be played. */
 function useReady(onReady: (() => void) | undefined, ready = true) {
@@ -51,6 +66,16 @@ function useReady(onReady: (() => void) | undefined, ready = true) {
       onReady?.();
     }
   }, [ready, onReady]);
+}
+
+/** A board with a move (e.g. "e2e4") made on it. */
+function withMove(board: (string | null)[][], move: string | null) {
+  if (!move || move.length < 4) return board;
+  const next = board.map((row) => [...row]);
+  const [f, t] = [move.slice(0, 2), move.slice(2, 4)];
+  next[8 - Number(t[1])][FILES.indexOf(t[0])] = next[8 - Number(f[1])][FILES.indexOf(f[0])];
+  next[8 - Number(f[1])][FILES.indexOf(f[0])] = null;
+  return next;
 }
 
 /** What each game is, in a few words (the person who offers it says it). */
@@ -82,23 +107,16 @@ function boardOf(fen: string): (string | null)[][] {
     });
 }
 
-function ChessGame({
-  fen,
-  result,
-  locked,
-  onReady,
-  onMove,
-}: {
-  fen: string;
-  result: RoadGameResult | null;
-  locked: boolean;
-  onReady?: () => void;
-  onMove: (move: string) => void;
-}) {
+function ChessGame({ fen, result, locked, onReady, onMove, onProgress, mirror }: Shown & { fen: string }) {
   useReady(onReady);
-  const [board, setBoard] = useState(() => boardOf(fen));
-  const [from, setFrom] = useState<string | null>(null);
-  const [played, setPlayed] = useState<string | null>(null);
+  const [own, setBoard] = useState(() => boardOf(fen));
+  const [ownFrom, setFrom] = useState<string | null>(null);
+  const [ownPlayed, setPlayed] = useState<string | null>(null);
+  useEffect(() => onProgress?.({ from: ownFrom, played: ownPlayed }), [ownFrom, ownPlayed, onProgress]);
+  // On the broadcast: the piece they've picked up, and the move they played, on the board
+  const from = mirror ? (mirror.from ?? null) : ownFrom;
+  const played = mirror ? (mirror.played ?? null) : ownPlayed;
+  const board = mirror ? withMove(boardOf(fen), played) : own;
   const at = (s: string) => board[8 - Number(s[1])][FILES.indexOf(s[0])];
   const isWhite = (p: string | null) => !!p && p === p.toUpperCase();
 
@@ -161,7 +179,7 @@ function ChessGame({
         )}
       </div>
       <p className="text-[11px] text-muted">
-        {result ? (result.won ? `✓ ${result.san}` : `The mate was ${result.san}`) : locked ? "Time!" : played ? "…" : from ? `${from}: now tap where it goes` : "Tap a white piece, then where it goes"}
+        {result ? (result.won ? `✓ ${result.san}` : `The mate was ${result.san}`) : mirror ? (played ? `Played ${played.slice(0, 2)} → ${played.slice(2, 4)}…` : from ? `Picked up the piece on ${from}…` : "Looking for the mate…") : locked ? "Time!" : played ? "…" : from ? `${from}: now tap where it goes` : "Tap a white piece, then where it goes"}
       </p>
     </div>
   );
@@ -169,29 +187,15 @@ function ChessGame({
 
 // ---- The three cups --------------------------------------------------------------------------------------------
 
-function CupsGame({
-  start,
-  swaps,
-  ms,
-  result,
-  locked,
-  onReady,
-  onMove,
-}: {
-  start: number;
-  swaps: [number, number][];
-  ms: number;
-  result: RoadGameResult | null;
-  locked: boolean;
-  onReady?: () => void;
-  onMove: (move: string) => void;
-}) {
+function CupsGame({ start, swaps, ms, result, locked, onReady, onMove, onProgress, mirror }: Shown & { start: number; swaps: [number, number][]; ms: number }) {
   // slotOf[cup] = where that cup stands (0 left, 1 middle, 2 right); the coin is under cup `start`.
-  const [slotOf, setSlotOf] = useState([0, 1, 2]);
-  const [phase, setPhase] = useState<"show" | "shuffle" | "pick" | "picked">("show");
-  const [picked, setPicked] = useState<number | null>(null);
+  const [ownSlotOf, setSlotOf] = useState([0, 1, 2]);
+  const [ownPhase, setPhase] = useState<"show" | "shuffle" | "pick" | "picked">("show");
+  const [ownPicked, setPicked] = useState<number | null>(null);
+  useEffect(() => onProgress?.({ picked: ownPicked }), [ownPicked, onProgress]);
+  const picked = mirror ? (mirror.picked ?? null) : ownPicked; // (on the broadcast: the cup they picked)
   const timer = useRef(0);
-  useReady(onReady, phase === "pick");
+  useReady(onReady, ownPhase === "pick");
   useEffect(() => {
     let i = -1;
     const step = () => {
@@ -214,6 +218,13 @@ function CupsGame({
     return () => window.clearTimeout(timer.current);
   }, [swaps, ms]);
 
+  // On the broadcast: picked already (its own shuffle a beat behind theirs), so the shuffle is done: the cups where they ended
+  const mirrorPicked = mirror?.picked ?? null;
+  useEffect(() => {
+    if (mirrorPicked !== null) window.clearTimeout(timer.current);
+  }, [mirrorPicked]);
+  const slotOf = mirrorPicked !== null ? swaps.reduce((at, [a, b]) => at.map((slot) => (slot === a ? b : slot === b ? a : slot)), [0, 1, 2]) : ownSlotOf;
+  const phase = mirrorPicked !== null ? "picked" : ownPhase;
   const lifted = phase === "show" || !!result;
   const coinSlot = result?.answer != null ? Number(result.answer) : slotOf[start];
   return (
@@ -246,6 +257,11 @@ function CupsGame({
               }}
               aria-label={`Cup ${["on the left", "in the middle", "on the right"][slot]}`}
             >
+              {picked === slot && (
+                <span className="absolute -top-7 left-1/2 -translate-x-1/2 text-xl" aria-hidden="true" data-picked-cup>
+                  👇
+                </span>
+              )}
               <svg viewBox="0 0 56 64" className={`h-full w-full drop-shadow ${picked === slot ? "brightness-125" : ""}`} aria-hidden="true">
                 <path d="M10 6h36l-6 54H16z" fill="#D62828" stroke="#8E1B1B" strokeWidth="2.5" strokeLinejoin="round" />
                 <path d="M12 16h32" stroke="#FFFFFF" strokeOpacity="0.5" strokeWidth="3" />
@@ -262,14 +278,20 @@ function CupsGame({
             : result
               ? result.won
                 ? "✓ Found it"
+                : mirror && picked !== null && !result.late
+                  ? `Picked the cup ${["on the left", "in the middle", "on the right"][picked]}: not that one`
                 : result.late
                   ? "Time!"
                   : "Not that one"
-              : locked
-                ? "Time!"
-                : phase === "pick"
-                  ? "Which cup? Tap it, quick!"
-                  : "…"}
+              : mirror && picked !== null
+                ? `Picked the cup ${["on the left", "in the middle", "on the right"][picked]}…`
+                : locked && !mirror // (the broadcast's board is locked, not out of time)
+                  ? "Time!"
+                  : phase === "pick"
+                    ? mirror
+                      ? "Which cup will they pick?"
+                      : "Which cup? Tap it, quick!"
+                    : "…"}
       </p>
     </div>
   );
@@ -277,27 +299,19 @@ function CupsGame({
 
 // ---- Pairs -------------------------------------------------------------------------------------------------------
 
-function PairsGame({
-  cards,
-  misses,
-  result,
-  locked,
-  onReady,
-  onMove,
-}: {
-  cards: string[];
-  misses: number;
-  result: RoadGameResult | null;
-  locked: boolean;
-  onReady?: () => void;
-  onMove: (move: string) => void;
-}) {
+function PairsGame({ cards, misses, result, locked, onReady, onMove, onProgress, mirror }: Shown & { cards: string[]; misses: number }) {
   useReady(onReady);
   const [flips, setFlips] = useState<number[]>([]);
-  const [open, setOpen] = useState<number[]>([]);
-  const [matched, setMatched] = useState<Set<number>>(new Set());
-  const [wrong, setWrong] = useState(0);
+  const [ownOpen, setOpen] = useState<number[]>([]);
+  const [ownMatched, setMatched] = useState<Set<number>>(new Set());
+  const [ownWrong, setWrong] = useState(0);
   const [over, setOver] = useState(false);
+  useEffect(() => onProgress?.({ flips }), [flips, onProgress]);
+  // On the broadcast: the cards they've turned over, played back (a pair that didn't match stays up until the next card)
+  const replay = mirror ? replayPairs(cards, mirror.flips ?? []) : null;
+  const open = replay ? replay.open : ownOpen;
+  const matched = replay ? replay.matched : ownMatched;
+  const wrong = replay ? replay.wrong : ownWrong;
 
   function flip(i: number) {
     if (over || locked || open.length >= 2 || open.includes(i) || matched.has(i)) return;
@@ -337,8 +351,9 @@ function PairsGame({
               type="button"
               data-card={i}
               onClick={() => flip(i)}
+              data-up={up ? "1" : undefined}
               className={`flex aspect-[3/4] items-center justify-center rounded-lg text-2xl shadow transition-colors ${
-                matched.has(i) ? "bg-[#1E9E62]/30 ring-2 ring-[#3DD68C]" : up ? "bg-paper" : "bg-[#2F6FEB] ring-1 ring-[#5FA8E6]"
+                matched.has(i) ? "bg-[#1E9E62]/30 ring-2 ring-[#3DD68C]" : up ? `bg-paper ${replay?.miss.includes(i) ? "ring-2 ring-danger" : open.includes(i) ? "ring-2 ring-gold" : ""}` : "bg-[#2F6FEB] ring-1 ring-[#5FA8E6]"
               }`}
               aria-label={up ? c : "A card, face down"}
             >
@@ -353,4 +368,30 @@ function PairsGame({
       </p>
     </div>
   );
+}
+
+/** The cards turned over so far, played back: which are matched, which are up now, and how many misses. */
+function replayPairs(cards: string[], flips: number[]) {
+  const matched = new Set<number>();
+  let wrong = 0;
+  let open: number[] = [];
+  let miss: number[] = [];
+  for (let k = 0; k < flips.length; k += 2) {
+    const a = flips[k], b = flips[k + 1];
+    if (b === undefined) {
+      open = [a];
+      miss = [];
+      break;
+    }
+    if (cards[a] === cards[b]) {
+      matched.add(a).add(b);
+      open = [];
+      miss = [];
+    } else {
+      wrong++;
+      open = [a, b];
+      miss = [a, b];
+    }
+  }
+  return { matched, open, wrong, miss };
 }

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
 import { keeperLook, keeperWrap, lookForId, type AvatarLook } from "@/lib/avatar";
 import { PAPER_FINE, PAPER_NAME, type AddonId, type VehicleKind } from "@/game/economy";
-import { RoadGameBoard, gameIntro, gameSeconds, timeoutMove, type RoadGame, type RoadGameResult } from "./RoadGames";
+import { RoadGameBoard, gameIntro, gameSeconds, timeoutMove, type RoadGame, type RoadGameLive, type RoadGameResult } from "./RoadGames";
 import { cue } from "@/game/sound";
 import { local } from "@/game/locale";
 
@@ -82,8 +82,16 @@ export function RoadEventScene({
   const [game, setGame] = useState<"offered" | "playing" | "over" | null>(event.kind === "seller" && event.game ? "offered" : null);
   const [gameResult, setGameResult] = useState<RoadGameResult | null>(null);
   // The game and how it's played, for the broadcast (the map saves it with the scene: owner, 9 Nov 2026)
-  const tellShow = (type: "game" | "move" | "result", data: unknown) => window.dispatchEvent(new CustomEvent("loota:scene-moment", { detail: { type, data } }));
+  const tellShow = (type: "game" | "move" | "result" | "live", data: unknown) => window.dispatchEvent(new CustomEvent("loota:scene-moment", { detail: { type, data } }));
   const gameShown = useRef(false);
+  // Each move as they make it (the cards they turn, the cup, the piece: owner, 13 Nov 2026), once each
+  const lastLive = useRef("");
+  const showLive = useCallback((live: RoadGameLive) => {
+    const said = JSON.stringify(live);
+    if (said === lastLive.current) return;
+    lastLive.current = said;
+    window.dispatchEvent(new CustomEvent("loota:scene-moment", { detail: { type: "live", data: live } }));
+  }, []);
   const reward = event.kind === "seller" ? 25 : 20;
   // The clock (owner: "some form of urgency"): it runs once the game can be played; at nought the board locks.
   const [deadline, setDeadline] = useState<number | null>(null);
@@ -315,7 +323,7 @@ export function RoadEventScene({
       world={world}
       game={
         event.game && (game === "playing" || game === "over") ? (
-          <RoadGameBoard game={event.game} result={gameResult} locked={timeUp} onReady={ready} onMove={(m) => void play(m)} />
+          <RoadGameBoard game={event.game} result={gameResult} locked={timeUp} onReady={ready} onMove={(m) => void play(m)} onProgress={showLive} />
         ) : null
       }
       countdown={game === "playing" && left !== null && event.game ? { left, total: gameSeconds(event.game) } : null}

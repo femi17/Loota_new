@@ -11,7 +11,7 @@ import { baseSpeed, type Mode } from "@/game/movement";
 import { alongPath, busZoom, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 import { nextAutoView } from "@/game/autocam";
-import { RoadGameBoard, type RoadGame, type RoadGameResult } from "@/components/game/RoadGames";
+import { RoadGameBoard, type RoadGame, type RoadGameLive, type RoadGameResult } from "@/components/game/RoadGames";
 import { PuzzleBoard } from "@/components/game/puzzles/PuzzleTrial";
 import { AnswerMirror } from "@/components/game/puzzles/mirror";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
@@ -130,6 +130,33 @@ const timeLeft = (iso: string, now: number) => {
  * whoever just did something, otherwise rotates between the leaders. Key spots
  * are never shown: viewers may be players. Press H to hide the controls.
  */
+/**
+ * A board in the side panel, made smaller to fit when the screen is short (owner, 13 Nov 2026: "I played the card match
+ * game, it has 3 rows, only 2 shows on the broadcast"): never cut off.
+ */
+function FitBox({ children }: { children: React.ReactNode }) {
+  const outer = useRef<HTMLDivElement>(null);
+  const inner = useRef<HTMLDivElement>(null);
+  const [k, setK] = useState(1);
+  useEffect(() => {
+    const o = outer.current, i = inner.current;
+    if (!o || !i) return;
+    const fit = () => setK(Math.min(1, o.clientHeight / Math.max(1, i.scrollHeight), o.clientWidth / Math.max(1, i.scrollWidth)));
+    const sized = new ResizeObserver(fit);
+    sized.observe(o);
+    sized.observe(i);
+    fit();
+    return () => sized.disconnect();
+  }, []);
+  return (
+    <div ref={outer} className="min-h-0 flex-1 overflow-hidden" data-fit={k.toFixed(2)}>
+      <div ref={inner} style={{ transform: `scale(${k})`, transformOrigin: "top center" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function BroadcastMap({ huntId }: { huntId: string }) {
   const container = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<State | null>(null);
@@ -170,7 +197,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
    */
   const [sceneCard, setSceneCard] = useState<
     | { kind: "ask"; who: string; options: string[]; pick: string | null }
-    | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null }
+    | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null; live: RoadGameLive }
     | { kind: "puzzle"; who: string; n: number; puzzleKind: string; puzzle: unknown; left: number; progress: number; result: { right?: boolean; late?: boolean; outcome?: string | null } | null; answers: Record<string, unknown> | null }
     | null
   >(null);
@@ -1304,7 +1331,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             let card: typeof sceneCard = null;
             if (sc) {
               let ask: { at: number; options: string[]; pick: string | null; pickAt: number | null } | null = null;
-              let game: { at: number; game: RoadGame; result: RoadGameResult | null } | null = null;
+              let game: { at: number; game: RoadGame; result: RoadGameResult | null; live: RoadGameLive } | null = null;
               let them: { at: number; len: number } | null = null; // what was last said to them
               for (const l of sc.lines) {
                 if (l[0] > T) break;
@@ -1318,10 +1345,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 }
                 else if (l[1] === "game") {
                   const g = parse<RoadGame>(l[2]);
-                  if (g) game = { at: l[0], game: g, result: null };
+                  if (g) game = { at: l[0], game: g, result: null, live: {} };
                 } else if (l[1] === "result" && game) game.result = parse<RoadGameResult>(l[2]);
+                else if (l[1] === "live" && game) game.live = parse<RoadGameLive>(l[2]) ?? game.live; // their moves, as they made them
               }
-              if (game && (!ask || game.at >= ask.at)) card = { kind: "game", who: h.name, game: game.game, result: game.result };
+              if (game && (!ask || game.at >= ask.at)) card = { kind: "game", who: h.name, game: game.game, result: game.result, live: game.live };
               else if (ask) {
                 // One after the other, as on their own screen (owner, 13 Nov 2026: "Must this 2 show together on the
                 // screen, can it be one after the other, like the user's page"): what's said first, long enough to read;
@@ -1538,7 +1566,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           aria-label="Scene card"
           data-card-side
         >
-          <div className="max-h-full w-[20rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70">
+          <div className="flex max-h-full w-[20rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70">
             {sceneCard.kind === "puzzle" ? (
               <>
                 <div className="mb-2 flex items-center gap-2">
@@ -1556,20 +1584,22 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 </div>
                 {sceneCard.result && !sceneCard.result.right && !sceneCard.result.late && <p className="mt-1 text-xs font-bold text-danger">✗ Not quite: they look again</p>}
                 <p className="my-2 text-xs text-paper/75">{PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.rule}</p>
-                <div style={{ zoom: 0.62 }}>
-                  <AnswerMirror.Provider value={{ shown: sceneCard.answers }}>
-                    <PuzzleBoard key={sceneCard.n} kind={sceneCard.puzzleKind} puzzle={sceneCard.puzzle} disabled onDone={() => {}} />
-                  </AnswerMirror.Provider>
-                </div>
+                <FitBox>
+                  <div style={{ zoom: 0.62 }}>
+                    <AnswerMirror.Provider value={{ shown: sceneCard.answers }}>
+                      <PuzzleBoard key={sceneCard.n} kind={sceneCard.puzzleKind} puzzle={sceneCard.puzzle} disabled onDone={() => {}} />
+                    </AnswerMirror.Provider>
+                  </div>
+                </FitBox>
               </>
             ) : sceneCard.kind === "game" ? (
               <>
                 <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">
                   {sceneCard.result ? (sceneCard.result.won && !sceneCard.result.late ? `✓ ${sceneCard.who} wins it` : `✗ ${sceneCard.who} loses this one`) : `🎲 ${sceneCard.who} is playing…`}
                 </p>
-                <div style={{ zoom: 0.85 }}>
-                  <RoadGameBoard game={sceneCard.game} result={sceneCard.result} locked={false} onMove={() => {}} />
-                </div>
+                <FitBox>
+                  <RoadGameBoard game={sceneCard.game} result={sceneCard.result} mirror={sceneCard.live} onMove={() => {}} />
+                </FitBox>
               </>
             ) : null}
           </div>

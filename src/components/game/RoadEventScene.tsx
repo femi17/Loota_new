@@ -25,7 +25,7 @@ export type RoadEventResult = {
   /** "chase": rode past a checkpoint, and the police come after you (owner, 25 Oct 2026). */
   outcome: "passed" | "fined" | "helped" | "declined" | "won" | "lost" | "chase";
   /** The police chase: who comes after you, how fast, from how far behind, and what it takes to lose them. */
-  chase?: { chaser: "officer" | "patrol"; kmh: number; gapM: number; loseM: number; seconds: number } | null;
+  chase?: { chaser: "officer" | "patrol"; gapM: number; seconds: number } | null;
   correct: string | null;
   fine: number;
   reward: number;

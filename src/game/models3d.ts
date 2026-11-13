@@ -771,6 +771,23 @@ export function makeJailCell() {
   return { group, light };
 }
 
+/**
+ * A police roadblock (the chase's ★★★, owner, 13 Nov 2026): a red-and-white barrier across the road, a patrol car behind
+ * it with its lights flashing (`flash(on)`), and cones. Its local x runs across the road.
+ */
+export function makeRoadblock() {
+  const group = new THREE.Group();
+  const bar = new THREE.Group();
+  for (let i = 0; i < 10; i++) bar.add(mesh(new THREE.BoxGeometry(0.6, 0.22, 0.22), i % 2 ? "#FFFFFF" : "#D62828", -2.7 + i * 0.6, 1, 0));
+  group.add(bar, mesh(new THREE.BoxGeometry(0.15, 1, 0.6), "#5B6475", -3, 0.5, 0), mesh(new THREE.BoxGeometry(0.15, 1, 0.6), "#5B6475", 3, 0.5, 0));
+  for (const x of [-3.6, -1.8, 1.8, 3.6]) group.add(mesh(new THREE.ConeGeometry(0.28, 0.75, 12), "#F07A28", x, 0.38, 0.9));
+  const car = makePoliceCar();
+  car.group.position.set(0, 0, -2.6);
+  car.group.rotation.y = Math.PI / 2;
+  group.add(car.group);
+  return { group, flash: car.flash };
+}
+
 /** A taxi: a yellow car with a black stripe and a sign on the roof. */
 export function makeTaxi() {
   const group = new THREE.Group();

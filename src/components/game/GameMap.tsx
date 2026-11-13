@@ -190,7 +190,18 @@ type Hud = {
   /** In a key's area: its heat, or (exact: a story key) simply "this is the place", with no hot and cold. */
   heat: { level: number; trend: "warmer" | "colder" | "steady"; chest: boolean; trap: boolean; exact?: boolean; house?: boolean } | null;
   /** The police on your tail (owner, 25 Oct 2026): how far behind, and seconds left until you've lost them. */
-  chase: { gap: number; left: number; chaser: "officer" | "patrol" } | null;
+  /** A police chase: the wanted stars, whether they can see you, how near they are, the search, where to hide. */
+  chase: {
+    stars: number;
+    status: "seen" | "unseen" | "hiding";
+    gap: number;
+    search: number | null;
+    hideAt: string | null;
+    hideNear: { name: string; metres: number } | null;
+    hiding: string | null;
+    chaser: "officer" | "patrol";
+    left: number;
+  } | null;
   /** Waiting for a flight in the departure lounge (owner, 26 Oct 2026), until it leaves. */
   lounge: LoungeView | null;
   /** Driving itself along the drawn way (owner, 8 Nov 2026: movement is automatic): a way drawn, and going or stopped. */
@@ -396,6 +407,9 @@ export function GameMap({
     toggleDrive: () => void;
     /** Out of the cell at once, for the bail (the idling law). */
     payBail: () => void;
+    /** A police chase: hide where they are (a market, a buka, a park), or the way to the nearest place to hide. */
+    chaseHide: () => void;
+    chaseToHide: () => void;
     /** A vehicle out of the pound, for the fee. */
     releaseVehicle: (id: string) => void;
     /** A scene that held the hunter (the pour) is over. */
@@ -862,6 +876,12 @@ export function GameMap({
           },
           // The other hunters drawn, and their names (scripts/tests/security-attack-test.mjs)
           __lootaOthers: () => [...others.keys()],
+          // A police chase: how it stands, and a test steering it: the police blind, their time seeing you (scripts/tests/police-chase-browser-test.mjs)
+          __lootaChase: () => (chase ? { event: chase.event, level: chase.level, seen: chase.seen, seenS: chase.seenS, searchLeft: chase.searchLeft, hiding: chase.hiding?.name ?? null, roadblock: chase.roadblock ? { lng: chase.roadblock.lng, lat: chase.roadblock.lat } : null, cops: chase.cops.map((c) => ({ kind: c.kind, lng: c.lng, lat: c.lat })), over: chase.over } : null),
+          __lootaChaseTest: (o: { blind?: boolean; seenS?: number }) => {
+            if (o.blind !== undefined) chaseBlind = o.blind;
+            if (chase && o.seenS !== undefined) chase.seenS = o.seenS;
+          },
           // Ask the idling law now, and whether the hunter is on a main road (scripts/tests/idle-law-browser-test.mjs)
           __lootaLaw: () => checkLaw(),
           __lootaMainRoad: () => (network && onRoad ? roads.onMainRoad(network, onRoad) : null),
@@ -2443,6 +2463,8 @@ export function GameMap({
         getOff: () => void getOff(),
         getOut: () => void getOut(),
         payBail: () => void payBail(),
+        chaseHide: () => chaseHide(),
+        chaseToHide: () => chaseToHide(),
         releaseVehicle: (id) => void releaseVehicle(id),
         notStuck: () => offerWayOut(false),
         refuel: () => void refuelHere(),
@@ -4345,6 +4367,7 @@ export function GameMap({
             route: "Nothing goes there from here.",
             on_trip: "You're already on a trip.",
             arrested: "You've been arrested: the police are taking you to the station.",
+            chased: "Not with the police after you! Lose them first.",
           };
           return why[result.reason ?? ""] ?? "Couldn't board just now. Try again.";
         }
@@ -5789,6 +5812,7 @@ export function GameMap({
             far: "That pickup point is too far from you.",
             path: "Couldn't plan that taxi ride. Try again.",
             arrested: "You've been arrested: the police are taking you to the station.",
+            chased: "Not with the police after you! Lose them first.",
           };
           return why[r?.reason ?? ""] ?? "Couldn't call a taxi just now. Try again.";
         }
@@ -8534,7 +8558,7 @@ export function GameMap({
       let lastRoadRoll = performance.now(); // the first chance comes after ~45 s on the move
       let rolling = false;
       async function roadTick(now: number) {
-        if (rolling || sceneHold || ride || visit || traveller.phase !== "idle" || traveller.v < 1) return;
+        if (rolling || sceneHold || chase || ride || visit || traveller.phase !== "idle" || traveller.v < 1) return; // (nothing else stops them in a chase)
         if (now - lastRoadRoll < 45000) return;
         rolling = true;
         lastRoadRoll = now;
@@ -8559,26 +8583,60 @@ export function GameMap({
         }
       }
 
-      // ---- A police chase (owner, 25 Oct 2026: "if you escape police, they should give you a chase") ----
-      // The police follow the very road the hunter takes (the trail behind them), at their own speed: an officer on
-      // foot after a walker, a patrol car after a rider. Within a few metres: caught. A long enough lead, or holding
-      // out to the end: lost them. The server settles it (police_chase_end).
+      // ---- A police chase, for real (owner, 25 Oct 2026: "if you escape police, they should give you a chase"; 13 Nov 2026:
+      // "Make the police give a real chase but how does user escape"; chose a wanted level, GTA-style, escape by hiding
+      // out of sight, the fine growing with the run, all of it on the broadcast) ----------------------------------------
+      // The police run on the game's clock, as the hunter does (they were at real speed: 40 km/h after a car going 12 times
+      // that, so they only ever caught someone at a red light). They drive the roads to where they last SAW the hunter: up
+      // close, or along the same straight road; round a corner they've lost sight, and go to where they last saw them and
+      // search the streets round it. Out of sight long enough (sooner hidden in a market, a buka or a park): lost them.
+      // ★ at the start; ★★ after 30 s in their sight: a second car from ahead; ★★★ after 60 s: a roadblock on the way.
+      // Caught (within a car's length while seen, or at the roadblock): the fine by the stars. Four minutes: called off.
       type ChaseSpec = NonNullable<RoadEventResult["chase"]>;
       let pendingChase: { event: number; chase: ChaseSpec } | null = null;
-      /** The road behind the hunter: where they've been, with the distance travelled (the police follow it). */
+      let chaseBlind = false; // (tests only: __lootaChaseTest)
+      /** The road behind the hunter: where they've been, with the distance travelled (the vulcanizer follows it). */
       let trail: { lng: number; lat: number; d: number }[] = [];
-      let chase: {
-        event: number;
-        chaser: "officer" | "patrol";
-        speed: number; // m/s
-        loseM: number;
-        until: number; // performance.now() time
-        policeD: number;
+      type Cop = {
+        kind: "officer" | "patrol";
+        lng: number;
+        lat: number;
+        heading: number;
+        path: import("@/game/geo").Coord[] | null;
+        cum: number[] | null;
+        s: number;
+        aim: LngLat | null;
+        aimAt: number;
+        searchTo: LngLat | null;
         entity: import("@/game/ThreeMapLayer").MapEntity;
         avatar: ReturnType<typeof models.buildAvatar> | null;
         car: ReturnType<typeof models.makePoliceCar> | null;
+      };
+      const CHASE_SEE_NEAR_M = 70; // seen this close, whatever's between
+      const CHASE_SEE_FAR_M = 450; // …and this far along the same straight road
+      const CHASE_HIDDEN_SEEN_M = 25; // hidden: only found by passing right by
+      const CHASE_SEARCH_M = 350; // they search the streets this far round where they last saw them
+      const CHASE_SEARCH_S = [0, 20, 30, 40]; // and for this long, by the stars (hidden: 1.7 times as fast)
+      let chase: {
+        event: number;
+        chaser: "officer" | "patrol";
+        started: number; // performance.now()
+        seconds: number;
+        cops: Cop[];
+        level: number;
+        seenS: number;
+        seen: boolean;
+        lastSeen: LngLat;
+        searchLeft: number;
+        hiding: { name: string; lng: number; lat: number } | null;
+        roadblock: { lng: number; lat: number; entity: import("@/game/ThreeMapLayer").MapEntity; flash: (on: boolean) => void } | null;
+        lastSight: number;
         lastSiren: number;
         lastHud: number;
+        lastTrack: number;
+        lastPut: number;
+        track: [number, number, number, number, number][];
+        notes: [number, string, string | number][];
         over: boolean;
       } | null = null;
 
@@ -8596,9 +8654,8 @@ export function GameMap({
           return;
         }
         trail.push({ lng: here.lng, lat: here.lat, d: last.d + step });
-        // Keep the last ~500 m (and never what's still ahead of the police).
-        const keepFrom = Math.min(last.d - 500, chase ? chase.policeD - 20 : Infinity);
-        while (trail.length > 2 && trail[1].d < keepFrom) trail.shift();
+        // Keep the last ~500 m
+        while (trail.length > 2 && trail[1].d < last.d - 500) trail.shift();
       }
 
       /** A point on the trail, `d` metres along it (its start if it's further back). */
@@ -8614,39 +8671,178 @@ export function GameMap({
         return trail[trail.length - 1];
       }
 
-      function startChase(event: number, spec: ChaseSpec) {
-        if (chase) return;
-        if (!trail.length) trailTick();
-        const playerD = trail[trail.length - 1].d;
-        const policeD = Math.max(trail[0].d, playerD - spec.gapM);
-        const at = trailAt(policeD);
-        let avatar: ReturnType<typeof models.buildAvatar> | null = null;
-        let car: ReturnType<typeof models.makePoliceCar> | null = null;
+      /** How fast the police go, on the game's clock: an officer faster than a walker, slower than a sprinting one; a patrol
+       * car a little faster than the hunter on a straight (8%: it slows right down at the corners, so twisting through the
+       * streets gains ground), as fast as a bicycle after someone on foot. */
+      const copSpeed = (kind: Cop["kind"]) =>
+        kind === "officer" ? movement.baseSpeed("walk") * 1.3 : traveller.mode === "walk" ? movement.baseSpeed("bicycle") : movement.maxSpeed(traveller.mode) * 1.08;
+
+      function makeCop(kind: Cop["kind"], at: LngLat, heading: number): Cop {
+        let avatar: Cop["avatar"] = null;
+        let car: Cop["car"] = null;
         let object: import("three").Object3D;
-        if (spec.chaser === "officer") {
+        if (kind === "officer") {
           avatar = models.buildAvatar(OFFICER);
           object = avatar.root;
         } else {
           car = models.makePoliceCar();
           object = car.group;
         }
-        const entity = layer.add({ object, lng: at.lng, lat: at.lat, heading: traveller.heading });
+        return { kind, lng: at.lng, lat: at.lat, heading, path: null, cum: null, s: 0, aim: null, aimAt: 0, searchTo: null, entity: layer.add({ object, lng: at.lng, lat: at.lat, heading }), avatar, car };
+      }
+
+      /** A point on the roads `m` metres ahead of the hunter: along their way if they have one, else ahead of them. */
+      function aheadOnRoads(m: number): LngLat | null {
+        if (!network) return null;
+        let p: LngLat | null = null;
+        if (trip && !trip.straight) {
+          const at = directions.progressOn(trip.route, traveller.pos, trip.segment);
+          if (trip.route.total - at.s > m * 0.6) p = geo.pointAt(trip.route, Math.min(trip.route.total, at.s + m));
+        }
+        if (!p) {
+          const h = traveller.heading;
+          p = { lng: traveller.pos.lng + (Math.sin(h) * m) / (111320 * Math.cos((traveller.pos.lat * Math.PI) / 180)), lat: traveller.pos.lat + (Math.cos(h) * m) / 110574 };
+        }
+        const rp = roads.snapToNetwork(network, p, 0, roads.cutOffEdges(network));
+        return rp ? roads.positionOf(network, rp) : null;
+      }
+
+      /** Plan a cop's way along the roads to where they're going (again when it moves, or every second or so). */
+      function copAim(c: Cop, to: LngLat, now: number) {
+        if (c.aim && geo.distanceM([c.aim.lng, c.aim.lat], [to.lng, to.lat]) < 20 && now - c.aimAt < 1200) return;
+        c.aim = { ...to };
+        c.aimAt = now;
+        const rp = network ? roads.snapToNetwork(network, c, c.heading) : null;
+        const way = network && rp ? roads.findPath(network, rp, to, 120) : null;
+        if (way && way.length > 1) {
+          c.path = [[c.lng, c.lat], ...way, [to.lng, to.lat]];
+          c.cum = cumulativeOf(c.path);
+        } else {
+          c.path = [[c.lng, c.lat], [to.lng, to.lat]]; // (off the loaded roads: straight for it)
+          c.cum = cumulativeOf(c.path);
+        }
+        c.s = 0;
+      }
+
+      /** A cop goes on along their way: full speed on a straight, slowed right down into a turn. */
+      function copMove(c: Cop, dt: number) {
+        if (!c.path || !c.cum) return;
+        const total = c.cum[c.cum.length - 1];
+        if (c.s >= total) return;
+        let k = 1;
+        // The next bend: how sharp, and how near
+        for (let i = 1; i < c.path.length - 1; i++) {
+          if (c.cum[i] < c.s) continue;
+          if (c.cum[i] - c.s > 30) break;
+          const a = geo.headingOf(c.path[i - 1], c.path[i]), b = geo.headingOf(c.path[i], c.path[i + 1]);
+          const turn = Math.abs(Math.atan2(Math.sin(b - a), Math.cos(b - a)));
+          if (turn > 0.7) k = Math.min(k, c.kind === "patrol" ? 0.4 : 0.75);
+        }
+        c.s = Math.min(total, c.s + copSpeed(c.kind) * k * dt);
+        const { pos, segment } = alongPath(c.path, c.cum, c.s);
+        const heading = geo.headingOf(c.path[Math.max(0, segment - 1)], c.path[Math.max(1, segment)]);
+        const moved = geo.distanceM([c.lng, c.lat], pos);
+        c.lng = pos[0];
+        c.lat = pos[1];
+        c.heading = geo.turnTowards(c.heading, heading, Math.min(1, 8 * dt));
+        c.entity.lng = c.lng;
+        c.entity.lat = c.lat;
+        c.entity.heading = c.heading;
+        if (c.avatar) models.animateAvatar(c.avatar, { mode: "walk", phase: "idle", moving: moved > 0.01 ? 1 : 0, distance: moved / layer.enlargement() }, dt, performance.now() / 1000);
+      }
+
+      /** Can this cop see the hunter? Up close, or along the same straight road (the way to them hardly bends). */
+      function copSees(c: Cop, hidden: boolean) {
+        if (chaseBlind) return false; // (a test, on the dev server only)
+        const me: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        const d = geo.distanceM([c.lng, c.lat], me);
+        if (hidden) return d < CHASE_HIDDEN_SEEN_M;
+        if (d < CHASE_SEE_NEAR_M) return true;
+        if (d > CHASE_SEE_FAR_M || !network) return false;
+        const rp = roads.snapToNetwork(network, c, c.heading);
+        const way = rp ? roads.findPath(network, rp, traveller.pos, 60) : null;
+        if (!way || way.length < 2) return false;
+        const length = cumulativeOf(way).at(-1)!;
+        if (length > d * 1.06 + 15) return false; // round a corner, or the long way round
+        // Every point of the way within a few metres of the straight line between them
+        const k = Math.cos((c.lat * Math.PI) / 180);
+        const ax = 0, ay = 0, bx = (me[0] - c.lng) * 111320 * k, by = (me[1] - c.lat) * 110574;
+        const l2 = bx * bx + by * by || 1;
+        for (const [lng, lat] of way) {
+          const px = (lng - c.lng) * 111320 * k, py = (lat - c.lat) * 110574;
+          const q = Math.max(0, Math.min(1, ((px - ax) * bx + (py - ay) * by) / l2));
+          if (Math.hypot(px - bx * q, py - by * q) > 14) return false;
+        }
+        return true;
+      }
+
+      function startChase(event: number, spec: ChaseSpec) {
+        if (chase) return;
+        if (!trail.length) trailTick();
+        const playerD = trail[trail.length - 1].d;
+        const at = trailAt(Math.max(trail[0].d, playerD - spec.gapM));
         const now = performance.now();
+        const first = makeCop(spec.chaser, at, traveller.heading);
         chase = {
           event,
           chaser: spec.chaser,
-          speed: spec.kmh / 3.6,
-          loseM: spec.loseM,
-          until: now + spec.seconds * 1000,
-          policeD,
-          entity,
-          avatar,
-          car,
+          started: now,
+          seconds: spec.seconds ?? 240,
+          cops: [first],
+          level: 1,
+          seenS: 0,
+          seen: true,
+          lastSeen: { ...traveller.pos },
+          searchLeft: CHASE_SEARCH_S[1],
+          hiding: null,
+          roadblock: null,
+          lastSight: 0,
           lastSiren: 0,
           lastHud: 0,
+          lastTrack: 0,
+          lastPut: 0,
+          track: [],
+          notes: [[serverMs(), "seen", 1]],
           over: false,
         };
-        say(spec.chaser === "officer" ? "🚨 An officer is running after you! Sprint, and don't stop!" : "🚨 The police are after you! Keep moving: a red light or a jam and they'll catch you.", true);
+        say(
+          spec.chaser === "officer"
+            ? "🚨 An officer is after you! Get out of his sight: round a corner, down a side street, then hide in a market, a buka or a park."
+            : "🚨 The police are after you! Lose them: round corners and down side streets, out of their sight, then hide in a market, a buka or a park.",
+          true,
+        );
+      }
+
+      /** Hide in the market, buka or park the hunter is at (out of the police's sight). */
+      function chaseHide() {
+        const c = chase;
+        if (!c || c.over || c.seen || c.hiding) return;
+        const spot = spotHere(["eat", "rest"]);
+        if (!spot) return say("Nowhere to hide right here: get to a market, a buka or a park.", true);
+        c.hiding = { name: spot.name, lng: traveller.pos.lng, lat: traveller.pos.lat };
+        stopDriving();
+        traveller.v = 0;
+        me.object.visible = false;
+        c.notes.push([serverMs(), "hide", spot.name]);
+        say(`🫥 You slip into ${spot.name} and keep your head down. Stay put: they're searching the streets.`, true);
+      }
+      /** The way to the nearest hiding place (a market, a buka or a park). */
+      function chaseToHide() {
+        const sp = nearestHide();
+        if (sp) void planDirections({ lng: sp.lng, lat: sp.lat }, sp.name, false, true);
+      }
+      function nearestHide() {
+        let best: Spot | null = null;
+        let bestM = 600;
+        for (const sp of spots) {
+          if (sp.kind !== "eat" && sp.kind !== "rest") continue;
+          const m = geo.distanceM([traveller.pos.lng, traveller.pos.lat], [sp.lng, sp.lat]);
+          if (m < bestM) {
+            bestM = m;
+            best = sp;
+          }
+        }
+        return best ? { ...best, metres: Math.round(bestM) } : null;
       }
 
       /** The vulcanizer brought back to the flat: walks a few metres behind the hunter, along their trail. */
@@ -8686,57 +8882,151 @@ export function GameMap({
         trailTick();
         if (!chase || chase.over) return;
         const c = chase;
-        const playerD = trail[trail.length - 1].d;
-        const before = trailAt(c.policeD);
-        c.policeD = Math.min(playerD, c.policeD + c.speed * dt);
-        const at = trailAt(c.policeD);
-        const ahead = trailAt(c.policeD + 3);
-        c.entity.lng = at.lng;
-        c.entity.lat = at.lat;
-        if (ahead.lng !== at.lng || ahead.lat !== at.lat) c.entity.heading = geo.headingOf([at.lng, at.lat], [ahead.lng, ahead.lat]);
-        if (c.avatar) {
-          const moved = geo.distanceM([before.lng, before.lat], [at.lng, at.lat]);
-          models.animateAvatar(c.avatar, { mode: "walk", phase: "idle", moving: moved > 0.01 ? 1 : 0, distance: moved / layer.enlargement() }, dt, t);
+        const here: [number, number] = [traveller.pos.lng, traveller.pos.lat];
+        // Out of hiding by moving off: seen again on the street
+        if (c.hiding && geo.distanceM([c.hiding.lng, c.hiding.lat], here) > 12) {
+          c.hiding = null;
+          c.notes.push([serverMs(), "unhide", ""]);
         }
-        c.car?.flash(Math.floor(t * 4) % 2 === 0);
-        if (now - c.lastSiren > 900) {
+        if (!c.hiding && !ride && !visit) me.object.visible = true;
+        // Who can see them (a few times a second)
+        if (now - c.lastSight > 300) {
+          const step = (now - c.lastSight) / 1000;
+          c.lastSight = now;
+          const seen = c.cops.some((cop) => copSees(cop, !!c.hiding));
+          if (seen) {
+            if (!c.seen) {
+              c.notes.push([serverMs(), "seen", 1]);
+              if (c.hiding) {
+                say(`🚨 Found! They spotted you in ${c.hiding.name}. Run!`, true);
+                c.hiding = null;
+              } else say("🚨 They've seen you again!", true);
+            }
+            c.seen = true;
+            c.lastSeen = { lng: here[0], lat: here[1] };
+            c.seenS += Math.min(1, step);
+            c.searchLeft = CHASE_SEARCH_S[c.level];
+            for (const cop of c.cops) cop.searchTo = null;
+          } else {
+            if (c.seen) {
+              c.notes.push([serverMs(), "seen", 0]);
+              say("👀 Out of their sight! They'll search where they last saw you. Hide in a market, a buka or a park, or keep out of view.", true);
+            }
+            c.seen = false;
+            c.searchLeft -= Math.min(1, step) * (c.hiding ? 1.7 : 1);
+          }
+          // The stars: ★★ after 30 s in their sight (a second car, from ahead), ★★★ after 60 s (a roadblock on the way)
+          if (c.level < 2 && c.seenS >= 30) {
+            c.level = 2;
+            c.notes.push([serverMs(), "level", 2]);
+            const from = aheadOnRoads(700);
+            if (from) {
+              c.cops.push(makeCop("patrol", from, traveller.heading + Math.PI));
+              say("🚨🚨 ★★ Another patrol car is coming at you from ahead!", true);
+            }
+          }
+          if (c.level < 3 && c.seenS >= 60) {
+            c.level = 3;
+            c.notes.push([serverMs(), "level", 3]);
+            const at = aheadOnRoads(450);
+            if (at) {
+              const block = models.makeRoadblock();
+              c.roadblock = { lng: at.lng, lat: at.lat, entity: layer.add({ object: block.group, lng: at.lng, lat: at.lat, heading: traveller.heading }), flash: block.flash };
+              c.notes.push([serverMs(), "roadblock", JSON.stringify([+at.lng.toFixed(6), +at.lat.toFixed(6), +traveller.heading.toFixed(2)])]);
+              say("🚧 ★★★ A roadblock on the road ahead! Turn off before it, or you're caught.", true);
+            }
+          }
+        }
+        // Where each cop goes: at the hunter when seen; else to where they last saw them, then the streets round it
+        for (const cop of c.cops) {
+          let to: LngLat = { lng: here[0], lat: here[1] };
+          if (!c.seen) {
+            if (!cop.searchTo && geo.distanceM([cop.lng, cop.lat], [c.lastSeen.lng, c.lastSeen.lat]) > 30) to = c.lastSeen;
+            else {
+              if (!cop.searchTo || geo.distanceM([cop.lng, cop.lat], [cop.searchTo.lng, cop.searchTo.lat]) < 25) {
+                const a = Math.random() * Math.PI * 2, r = 80 + Math.random() * (CHASE_SEARCH_M - 80);
+                const p = { lng: c.lastSeen.lng + (Math.sin(a) * r) / (111320 * Math.cos((c.lastSeen.lat * Math.PI) / 180)), lat: c.lastSeen.lat + (Math.cos(a) * r) / 110574 };
+                const rp = network ? roads.snapToNetwork(network, p, 0) : null;
+                cop.searchTo = rp && network ? roads.positionOf(network, rp) : p;
+              }
+              to = cop.searchTo;
+            }
+          }
+          copAim(cop, to, now);
+          copMove(cop, dt);
+          cop.car?.flash(Math.floor(t * 4) % 2 === 0);
+        }
+        c.roadblock?.flash(Math.floor(t * 4) % 2 === 0);
+        if (now - c.lastSiren > (c.seen ? 900 : 2200)) {
           c.lastSiren = now;
           cue("siren");
         }
-        const gap = playerD - c.policeD;
-        const left = Math.max(0, Math.ceil((c.until - now) / 1000));
+        // For the broadcast: where the police are, a few times a second, and what happened (sent each second)
+        if (now - c.lastTrack > 250) {
+          c.lastTrack = now;
+          const ms = serverMs();
+          c.cops.forEach((cop, i) => c.track.push([ms, i, +cop.lng.toFixed(6), +cop.lat.toFixed(6), +cop.heading.toFixed(2)]));
+        }
+        if (now - c.lastPut > 1000 && (c.track.length || c.notes.length)) {
+          c.lastPut = now;
+          const track = c.track.splice(0, 120), notes = c.notes.splice(0, 30);
+          void supabase.rpc("chase_put", { p_event: c.event, p_track: track, p_notes: notes, p_level: c.level }).then(() => undefined);
+        }
+        const near = Math.min(...c.cops.map((cop) => geo.distanceM([cop.lng, cop.lat], here)));
+        const left = Math.max(0, Math.ceil((c.started + c.seconds * 1000 - now) / 1000));
         if (now - c.lastHud > 200) {
           c.lastHud = now;
-          setHud((h) => ({ ...h, chase: { gap: Math.round(gap), left, chaser: c.chaser } }));
+          const hide = !c.seen && !c.hiding ? spotHere(["eat", "rest"]) : null;
+          const toward = !c.seen && !c.hiding && !hide ? nearestHide() : null;
+          const view = {
+            stars: c.level,
+            status: c.hiding ? ("hiding" as const) : c.seen ? ("seen" as const) : ("unseen" as const),
+            gap: Math.round(near),
+            search: c.seen ? null : Math.max(0, Math.ceil(c.searchLeft)),
+            hideAt: hide?.name ?? null,
+            hideNear: toward ? { name: toward.name, metres: toward.metres } : null,
+            hiding: c.hiding?.name ?? null,
+            chaser: c.chaser,
+            left,
+          };
+          setHud((h) => (JSON.stringify(h.chase) === JSON.stringify(view) ? h : { ...h, chase: view }));
         }
-        if (gap <= (c.chaser === "patrol" ? 10 : 4)) void endChase(true);
-        else if (gap >= c.loseM || now >= c.until) void endChase(false);
+        // How it ends
+        const caughtBy = c.seen && c.cops.some((cop) => geo.distanceM([cop.lng, cop.lat], here) <= (cop.kind === "patrol" ? 10 : 4));
+        const atBlock = !!c.roadblock && geo.distanceM([c.roadblock.lng, c.roadblock.lat], here) <= 20;
+        if (caughtBy || atBlock) void endChase("caught", atBlock);
+        else if (!c.seen && c.searchLeft <= 0) void endChase("escaped");
+        else if (now >= c.started + c.seconds * 1000) void endChase("called_off");
       }
 
-      async function endChase(caught: boolean) {
+      async function endChase(how: "caught" | "escaped" | "called_off", atBlock = false) {
         const c = chase;
         if (!c || c.over) return;
         c.over = true;
         setHud((h) => ({ ...h, chase: null }));
+        me.object.visible = true;
+        const caught = how === "caught";
         if (caught) {
           traveller.v = 0;
+          stopDriving();
           stuckUntil = Math.max(stuckUntil, performance.now() + 60_000);
           cue("stop");
-        } else {
-          cue("solved");
-        }
-        const { data } = await supabase.rpc("police_chase_end", { p_event: c.event, p_caught: caught });
-        const r = data as { ok: boolean; fine?: number; balance?: number; holdS?: number } | null;
+        } else cue("solved");
+        // The last of the track, then how it ended
+        if (c.track.length || c.notes.length) await supabase.rpc("chase_put", { p_event: c.event, p_track: c.track.splice(0, 120), p_notes: c.notes.splice(0, 30), p_level: c.level });
+        const { data } = await supabase.rpc("police_chase_end", { p_event: c.event, p_caught: caught, p_outcome: how });
+        const r = data as { ok: boolean; fine?: number; balance?: number; holdS?: number; level?: number } | null;
         if (r?.balance != null) setHud((h) => ({ ...h, coins: Number(r.balance) }));
+        const stars = "★".repeat(r?.level ?? c.level);
         if (caught) {
           if (r?.holdS) stuckUntil = Math.max(stuckUntil, performance.now() + r.holdS * 1000);
-          say(`🚨 Caught! "Running a checkpoint, eh?" That's ${r?.fine ?? 0} coins, and you wait 60 s while it's written up.`, true);
-        } else {
-          say("🏁 You lost them! No fine this time.", true);
-        }
-        // The police stay a moment (beside you if caught), then go.
+          say(`🚔 Caught${atBlock ? " at the roadblock" : ""}! (${stars}) "Running a checkpoint, eh?" That's ${r?.fine ?? 0} coins, and you wait ${Math.round((r?.holdS ?? 60) / 60)} min while it's written up.`, true);
+        } else if (how === "called_off") say(`🏁 The police called it off. You got away! (${stars})`, true);
+        else say(`🏁 You lost them! (${stars}) No fine this time.`, true);
+        // The police stay a moment (beside you if caught), then go
         window.setTimeout(() => {
-          layer.remove(c.entity);
+          for (const cop of c.cops) layer.remove(cop.entity);
+          if (c.roadblock) layer.remove(c.roadblock.entity);
           if (chase === c) chase = null;
         }, caught ? 6000 : 1500);
       }
@@ -10639,11 +10929,35 @@ export function GameMap({
       {hud.chase && (
         <>
           <div className="loota-police pointer-events-none absolute inset-0 z-10" aria-hidden="true" />
-          <div className="pointer-events-none absolute inset-x-0 top-[124px] z-20 flex justify-center" role="status" aria-label="Police chase">
-            <span className="flex items-center gap-2 rounded-full bg-ink/95 px-4 py-1.5 text-sm font-extrabold text-paper ring-2 ring-[#3D7BFF]">
-              🚨 {hud.chase.chaser === "officer" ? "Officer" : "Police"} {hud.chase.gap} m behind
-              <span className="tabular-nums text-gold">· {hud.chase.left}s</span>
-            </span>
+          <div className="pointer-events-none absolute inset-x-0 top-[124px] z-20 flex justify-center px-3" role="status" aria-label="Police chase" data-chase={hud.chase.status} data-stars={hud.chase.stars}>
+            <div className="flex max-w-sm flex-col items-center gap-1.5 rounded-2xl bg-ink/95 px-4 py-2 text-paper shadow-xl ring-2 ring-[#3D7BFF]">
+              <p className="flex items-center gap-2 text-sm font-extrabold">
+                <span className="tracking-widest text-[#FF4D4D]" aria-label={`Wanted: ${hud.chase.stars} of 3 stars`}>
+                  {"★".repeat(hud.chase.stars)}
+                  <span className="text-paper/25">{"★".repeat(3 - hud.chase.stars)}</span>
+                </span>
+                {hud.chase.status === "hiding"
+                  ? `🫥 Hiding in ${hud.chase.hiding}`
+                  : hud.chase.status === "seen"
+                    ? `🚨 ${hud.chase.chaser === "officer" ? "Officer" : "Police"} ${hud.chase.gap} m away: they can see you`
+                    : "👀 Out of their sight"}
+              </p>
+              {hud.chase.search !== null && (
+                <p className="text-xs font-bold text-gold" data-chase-search={hud.chase.search}>
+                  They give up searching in {hud.chase.search}s{hud.chase.status === "hiding" ? " (faster while you hide)" : ""}
+                </p>
+              )}
+              {hud.chase.hideAt && (
+                <button type="button" onClick={() => actions.current?.chaseHide()} className="pointer-events-auto h-10 rounded-xl bg-gold px-4 text-sm font-extrabold text-ink active:scale-95" data-chase-hide>
+                  🫥 Hide in {hud.chase.hideAt}
+                </button>
+              )}
+              {!hud.chase.hideAt && hud.chase.hideNear && (
+                <button type="button" onClick={() => actions.current?.chaseToHide()} className="pointer-events-auto h-9 rounded-xl bg-ink-2 px-3 text-xs font-bold text-paper ring-1 ring-line active:scale-95" data-chase-to-hide>
+                  🫥 Hide at {hud.chase.hideNear.name} · {hud.chase.hideNear.metres} m
+                </button>
+              )}
+            </div>
           </div>
         </>
       )}

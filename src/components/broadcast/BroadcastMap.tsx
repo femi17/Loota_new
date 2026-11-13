@@ -11,6 +11,7 @@ import { baseSpeed, type Mode } from "@/game/movement";
 import { TRAIN_CARS, alongPath, busZoom, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 import { nextAutoView } from "@/game/autocam";
+import { OFFICER } from "@/components/game/RoadEventScene";
 import { RoadGameBoard, gameSeconds, type RoadGame, type RoadGameLive, type RoadGameResult } from "@/components/game/RoadGames";
 import { PuzzleBoard } from "@/components/game/puzzles/PuzzleTrial";
 import { AnswerMirror } from "@/components/game/puzzles/mirror";
@@ -65,6 +66,18 @@ type State = {
   trips?: Trip[];
   visits?: Visit[];
   /** Hunters in a cell (the idling law): when they went in and come out (served or bailed), what was impounded. */
+  /** Police chases (13 Nov 2026): the police's track ([ms, car, lng, lat, heading]) and what happened ([ms, what, detail]). */
+  chases?: {
+    userId: string;
+    event: number;
+    chaser: "officer" | "patrol";
+    startedAt: string;
+    endedAt: string | null;
+    outcome: "caught" | "escaped" | "called_off" | null;
+    level: number;
+    track: [number, number, number, number, number][];
+    notes: [number, string, string | number][];
+  }[];
   jails?: {
     userId: string;
     at: string;
@@ -209,6 +222,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [slowWhy, setSlowWhy] = useState(0);
   /** The followed hunter fainted: the ambulance coming, the ride to hospital, the ward (owner, 9 Nov 2026). */
   const [careNote, setCareNote] = useState<string | null>(null);
+  /** A police chase, as it stands for the hunter followed: the stars, whether they're seen, how near, how it ended. */
+  const [chaseShown, setChaseShown] = useState<{ who: string; stars: number; status: "seen" | "unseen" | "hiding" | "caught" | "escaped" | "called_off"; gap: number | null; hiding: string | null } | null>(null);
   /** The weather where the followed hunter is, drawn over the picture (owner, 9 Nov 2026). */
   const [weatherShown, setWeatherShown] = useState<(Weather & { who: string; night: boolean; slowed: boolean }) | null>(null);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
@@ -690,6 +705,63 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         policeCar = null;
       };
       let jailCell: { entity: import("@/game/ThreeMapLayer").MapEntity; light: import("three").Object3D } | null = null;
+      // A police chase (owner, 13 Nov 2026: "Make the police give a real chase"; shown big): by the same clock as the rest
+      type ChaseRec = NonNullable<State["chases"]>[number] & { start: number; end: number | null };
+      const chases = new Map<string, ChaseRec>();
+      /** A chase under way for this hunter at T (and a few seconds after it ends, to say how). */
+      const chaseAt = (id: string, T: number) => {
+        const c = chases.get(id);
+        return c && T >= c.start && (c.end === null || T < c.end + 5000) ? c : null;
+      };
+      /** Where each police car (or the officer) was at T, from their track. */
+      const copsAt = (c: ChaseRec, T: number) => {
+        const out = new Map<number, { lng: number; lat: number; heading: number }>();
+        const before = new Map<number, (typeof c.track)[number]>(), after = new Map<number, (typeof c.track)[number]>();
+        for (const p of c.track) {
+          if (p[0] <= T) before.set(p[1], p);
+          else if (!after.has(p[1])) after.set(p[1], p);
+        }
+        for (const [i, a] of before) {
+          const b = after.get(i);
+          const k = b ? (T - a[0]) / Math.max(1, b[0] - a[0]) : 0;
+          out.set(i, b ? { lng: a[2] + (b[2] - a[2]) * k, lat: a[3] + (b[3] - a[3]) * k, heading: a[4] } : { lng: a[2], lat: a[3], heading: a[4] });
+        }
+        return out;
+      };
+      /** How it stood at T: the stars, seen or not, hiding where, the roadblock, how it ended. */
+      const chaseState = (c: ChaseRec, T: number) => {
+        let stars = 1, seen = true, hiding: string | null = null, block: [number, number, number] | null = null, ended: string | null = null;
+        for (const n of c.notes) {
+          if (n[0] > T) continue;
+          if (n[1] === "level") stars = Math.max(stars, Number(n[2]) || 1);
+          else if (n[1] === "seen") {
+            seen = Number(n[2]) === 1;
+            if (seen) hiding = null;
+          } else if (n[1] === "hide") hiding = String(n[2]);
+          else if (n[1] === "unhide") hiding = null;
+          else if (n[1] === "roadblock") {
+            try {
+              block = JSON.parse(String(n[2]));
+            } catch {
+              block = null;
+            }
+          } else if (n[1] === "end") ended = String(n[2]);
+        }
+        return { stars, seen, hiding, block, ended };
+      };
+      const chaseCops = new Map<number, { entity: import("@/game/ThreeMapLayer").MapEntity; car: ReturnType<typeof models.makePoliceCar> | null; avatar: ReturnType<typeof models.buildAvatar> | null; last: { lng: number; lat: number } }>();
+      let chaseBlock: { key: string; entity: import("@/game/ThreeMapLayer").MapEntity; flash: (on: boolean) => void } | null = null;
+      let chaseKey = "";
+      const dropChase = () => {
+        for (const cop of chaseCops.values()) layer.remove(cop.entity);
+        chaseCops.clear();
+        if (chaseBlock) layer.remove(chaseBlock.entity);
+        chaseBlock = null;
+        if (chaseKey) {
+          chaseKey = "";
+          setChaseShown(null);
+        }
+      };
       const dropJailCell = () => {
         if (!jailCell) return;
         layer.remove(jailCell.entity);
@@ -781,6 +853,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             return { path, cum: cumulativeOf(path) };
           };
           visits.set(v.userId, { key, v, approach: way(v.approach), route: way(v.route) });
+        }
+        chases.clear();
+        for (const c of latest.chases ?? []) {
+          const start = Date.parse(c.startedAt);
+          chases.set(c.userId, { ...c, start, end: c.endedAt ? Date.parse(c.endedAt) : null, track: [...c.track].sort((a, b) => a[0] - b[0]) });
         }
         jails.clear();
         for (const j of latest.jails ?? []) {
@@ -1021,7 +1098,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           const care = careAt(h.id, careT);
           const arrestNow = jailAt(h.id, careT);
           const arrestPhase = arrestNow ? jailPlace(arrestNow, careT).phase : null;
-          const label = arrestNow
+          const chaseNow = chaseAt(h.id, careT);
+          const label = chaseNow && !chaseNow.outcome
+            ? `🚨 ${h.name} · chased by the police`
+            : arrestNow
             ? arrestPhase === "cell"
               ? `🚔 ${h.name} · in the cell`
               : `🚓 ${h.name} · arrested${arrestPhase === "riding" && arrestNow.station ? ` → ${arrestNow.station}` : ""}`
@@ -1154,6 +1234,53 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               layer.remove(careVan.entity);
               careVan = null;
             }
+            // A police chase: the police where they were, the roadblock, the stars and how it stands
+            const chased = chaseAt(h.id, careT);
+            if (chased) {
+              const st = chaseState(chased, careT);
+              const where = copsAt(chased, careT);
+              for (const [i, at] of where) {
+                let cop = chaseCops.get(i);
+                if (!cop) {
+                  const officer = i === 0 && chased.chaser === "officer";
+                  const avatar = officer ? models.buildAvatar(OFFICER) : null;
+                  const car = officer ? null : models.makePoliceCar();
+                  cop = { entity: layer.add({ object: avatar ? avatar.root : car!.group, lng: at.lng, lat: at.lat, heading: at.heading }), car, avatar, last: { lng: at.lng, lat: at.lat } };
+                  chaseCops.set(i, cop);
+                }
+                const moved = geo.distanceM([cop.last.lng, cop.last.lat], [at.lng, at.lat]);
+                cop.entity.lng = at.lng;
+                cop.entity.lat = at.lat;
+                cop.entity.heading = geo.turnTowards(cop.entity.heading ?? at.heading, at.heading, Math.min(1, 6 * dt));
+                cop.last = { lng: at.lng, lat: at.lat };
+                cop.car?.flash(Math.floor(t / 250) % 2 === 0);
+                if (cop.avatar) models.animateAvatar(cop.avatar, { mode: "walk", phase: "idle", moving: moved > 0.01 ? 1 : 0, distance: moved / layer.enlargement() }, dt, t / 1000);
+              }
+              const bk = st.block ? st.block.join(",") : "";
+              if (chaseBlock && chaseBlock.key !== bk) {
+                layer.remove(chaseBlock.entity);
+                chaseBlock = null;
+              }
+              if (st.block && !chaseBlock) {
+                const rb = models.makeRoadblock();
+                chaseBlock = { key: bk, entity: layer.add({ object: rb.group, lng: st.block[0], lat: st.block[1], heading: st.block[2] }), flash: rb.flash };
+              }
+              chaseBlock?.flash(Math.floor(t / 250) % 2 === 0);
+              if (st.hiding) followed.entity.object.visible = false; // out of sight, inside
+              const gaps = [...where.values()].map((at) => geo.distanceM([at.lng, at.lat], [p.lng, p.lat]));
+              const shownNow = {
+                who: h.name,
+                stars: st.stars,
+                status: (st.ended ?? (st.hiding ? "hiding" : st.seen ? "seen" : "unseen")) as "seen" | "unseen" | "hiding" | "caught" | "escaped" | "called_off",
+                gap: gaps.length ? Math.round(Math.min(...gaps) / 10) * 10 : null,
+                hiding: st.hiding,
+              };
+              const k2 = JSON.stringify(shownNow);
+              if (k2 !== chaseKey) {
+                chaseKey = k2;
+                setChaseShown(shownNow);
+              }
+            } else if (chaseCops.size || chaseBlock || chaseKey) dropChase();
             // Arrested: the patrol car taking them along the road (they're in it), then the cell at the station
             const jail = jailAt(h.id, careT);
             const jp = jail ? jailPlace(jail, careT) : null;
@@ -1488,6 +1615,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           dropJailCell();
           dropPoliceCar();
           dropTrainCars();
+          dropChase();
           dropHelper();
           if (weatherKey) {
             weatherKey = "";
@@ -1614,7 +1742,35 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         </>
       )}
       {/* The followed hunter fainted: the ambulance, the ride, the ward (owner, 9 Nov 2026) */}
-      {careNote && view.kind === "follow" && (
+      {chaseShown && view.kind === "follow" && (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-20 -translate-x-1/2" role="status" aria-label="Police chase" data-chase-shown={chaseShown.status} data-chase-stars={chaseShown.stars}>
+          <div className={`flex flex-col items-center gap-0.5 rounded-2xl px-5 py-2 text-white shadow-xl ring-2 ${chaseShown.status === "caught" ? "bg-danger ring-white/40" : chaseShown.status === "escaped" || chaseShown.status === "called_off" ? "bg-[#1E9E62] ring-white/40" : "bg-ink/95 ring-[#3D7BFF]"}`}>
+            <p className="flex items-center gap-2 text-lg font-extrabold">
+              <span className="tracking-widest text-[#FF4D4D]">
+                {"★".repeat(chaseShown.stars)}
+                <span className="text-white/25">{"★".repeat(3 - chaseShown.stars)}</span>
+              </span>
+              {chaseShown.status === "caught"
+                ? `🚔 ${chaseShown.who} is caught!`
+                : chaseShown.status === "escaped"
+                  ? `🏁 ${chaseShown.who} lost the police!`
+                  : chaseShown.status === "called_off"
+                    ? `🏁 The police gave up: ${chaseShown.who} got away`
+                    : `🚨 The police are after ${chaseShown.who}`}
+            </p>
+            {(chaseShown.status === "seen" || chaseShown.status === "unseen" || chaseShown.status === "hiding") && (
+              <p className="text-sm font-bold text-gold">
+                {chaseShown.status === "hiding"
+                  ? `🫥 Hiding in ${chaseShown.hiding}… they're searching the streets`
+                  : chaseShown.status === "unseen"
+                    ? "👀 Out of their sight: they're searching where they last saw them"
+                    : `They can see them${chaseShown.gap !== null ? ` · ${chaseShown.gap} m behind` : ""}`}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {careNote && !chaseShown && view.kind === "follow" && (
         <div className="pointer-events-none absolute left-1/2 top-16 z-20 -translate-x-1/2" role="status" aria-label="Fainted">
           <span className="flex items-center gap-2 rounded-full bg-danger px-4 py-2 text-base font-extrabold text-white shadow-xl">{careNote}</span>
         </div>

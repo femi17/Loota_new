@@ -84,7 +84,7 @@ try {
   const taking = await until(async () => (await text()).split("\n").find((l) => /🚓 .*taking them to/.test(l)) ?? null, 20000);
   check("…the note: the police are taking them to the station", !!taking, taking);
   await show.screenshot({ path: `${OUT}/broadcast-jail-0-ride.png` });
-  const jailed = await until(() => game.evaluate(() => !!document.querySelector("[data-jail]")), 90000);
+  const jailed = await until(() => game.evaluate(() => !!document.querySelector("[data-jail-left]")), 90000); // (the cell, not the arrest card)
   check("2. in the cell at the station (their screen)", !!jailed);
   const arrest = (await admin.from("idle_arrests").select("station, station_lng, station_lat").eq("user_id", hunter.id).single()).data;
   const cell = await until(() => show.evaluate(() => window.__broadcastShown?.().jailCell ?? null), 20000);

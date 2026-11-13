@@ -135,6 +135,27 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [state, setState] = useState<State | null>(null);
   const [view, setView] = useState<View>({ kind: "field" });
   const [auto, setAuto] = useState(true);
+  // Kept for this tab, so a reload onto a new build carries on with the same hunter followed (and the auto camera as it was)
+  const viewKey = `loota:broadcast-view:${huntId}`;
+  useEffect(() => {
+    try {
+      const kept = JSON.parse(sessionStorage.getItem(viewKey) ?? "null") as { view: View; auto: boolean } | null;
+      if (kept?.view) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- restored once, after the page has loaded
+        setView(kept.view);
+        setAuto(kept.auto);
+      }
+    } catch {
+      // (nothing kept)
+    }
+  }, [viewKey]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(viewKey, JSON.stringify({ view, auto }));
+    } catch {
+      // (not kept: a reload starts on the field)
+    }
+  }, [viewKey, view, auto]);
   const [banner, setBanner] = useState<ShowEvent | null>(null);
   const [controls, setControls] = useState(true);
   // The leaderboard folds to its 🏆 button (folded to start with on a phone).
@@ -162,6 +183,21 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   /** The weather where the followed hunter is, drawn over the picture (owner, 9 Nov 2026). */
   const [weatherShown, setWeatherShown] = useState<(Weather & { who: string; night: boolean; slowed: boolean }) | null>(null);
   const [caption, setCaption] = useState<{ icon: string; title: string; lines: { who: string; text: string; you: boolean }[] } | null>(null);
+  // A newer build live (owner, 13 Nov 2026: "I do not need to always refresh for it to pickup events from the user"): an
+  // open broadcast keeps the code it was opened with, so it reloads itself onto the new one (it picks up where it was)
+  useEffect(() => {
+    const mine = process.env.NEXT_PUBLIC_BUILD_ID ?? "dev";
+    if (mine === "dev") return;
+    const t = window.setInterval(() => {
+      void fetch("/api/version", { cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<{ build?: string }>) : null))
+        .then((v) => {
+          if (v?.build && v.build !== "dev" && v.build !== mine) window.location.reload();
+        })
+        .catch(() => undefined);
+    }, 90_000);
+    return () => window.clearInterval(t);
+  }, []);
   // The caption's height: the side panel (a puzzle, a game) ends above it, never over it
   const captionBox = useRef<HTMLDivElement>(null);
   const [captionH, setCaptionH] = useState(90);

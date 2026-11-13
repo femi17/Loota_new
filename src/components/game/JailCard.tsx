@@ -18,7 +18,8 @@ export function JailCard({
   coins,
   onBail,
 }: {
-  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null };
+  /** taking: just arrested, the police finding the station (no clock, no bail yet). */
+  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null; taking?: boolean };
   coins: number;
   onBail: () => Promise<void> | void;
 }) {
@@ -40,7 +41,7 @@ export function JailCard({
         </div>
         <div className="relative flex flex-col items-center gap-3 text-center">
           <span className="text-5xl" aria-hidden="true">🚔</span>
-          <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-danger-text">Locked up{jail.station ? ` · ${jail.station}` : ""}</p>
+          <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-danger-text">{jail.taking ? "Arrested" : "Locked up"}{jail.station ? ` · ${jail.station}` : ""}</p>
           <h2 className="font-display text-2xl font-extrabold">Idling on a main road</h2>
           <p className="text-sm text-paper/80">
             You stood still on a main road for {jail.minutes && jail.minutes >= 60 ? `${Math.floor(jail.minutes / 60)} h${jail.minutes % 60 ? ` ${jail.minutes % 60} min` : ""}` : "an hour"}. Next time, rest at a chill spot: a park, a mall or a place to eat.
@@ -50,6 +51,12 @@ export function JailCard({
               {jail.vehicle ? `🚓 Your ${NAMES[jail.vehicle] ?? jail.vehicle} has been impounded: release it from the pound once you're out (7 days, then it's gone).` : "🚓 Your rental has gone back to its renter."}
             </p>
           )}
+          {jail.taking ? (
+            <p className="flex items-center gap-2 rounded-xl bg-[#2F6FEB]/25 px-3 py-2 text-sm font-bold" data-arresting>
+              <span className="text-xl" aria-hidden="true">🚓</span> The police are taking you to the station…
+            </p>
+          ) : (
+          <>
           <p className="font-mono text-4xl font-extrabold tabular-nums text-gold" aria-label="Time left in the cell" data-jail-left={Math.max(0, Math.ceil(left / 1000))}>
             {clock(left)}
           </p>
@@ -70,7 +77,9 @@ export function JailCard({
             {paying ? "…" : `Pay bail · ${jail.bail} coins`}
           </button>
           <p className="text-xs font-bold text-gold/90">⏸ The clock only runs while you&apos;re playing: leave, and it waits for you.</p>
-          <p className="text-xs text-paper/60">{coins < jail.bail ? `You have ${coins} coins: not enough for the bail. Wait out your time.` : "Or wait out your time: you walk free when it's up."}</p>
+          </>
+          )}
+          <p className="text-xs text-paper/60" hidden={jail.taking}>{coins < jail.bail ? `You have ${coins} coins: not enough for the bail. Wait out your time.` : "Or wait out your time: you walk free when it's up."}</p>
         </div>
       </div>
     </div>

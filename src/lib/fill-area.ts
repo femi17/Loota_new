@@ -385,3 +385,46 @@ export async function fillTrainLinesAround(admin: SupabaseClient, lng: number, l
     }
   return stations;
 }
+
+/**
+ * Police stations within `radiusM` of a point, from the map's own tiles (OpenMapTiles' poi layer, class "police"): fast
+ * and reliable where OpenStreetMap's query service is often too busy (owner, 13 Nov 2026: arrested in Ilorin, the police
+ * station lookup timed out and they were held at the roadside). Each with its name (or "Police station").
+ */
+export async function policeFromTiles(lng: number, lat: number, radiusM: number) {
+  const n = 2 ** TILE_Z;
+  const tx = (x: number) => Math.floor(((x + 180) / 360) * n);
+  const ty = (y: number) => Math.floor(((1 - Math.log(Math.tan((y * Math.PI) / 180) + 1 / Math.cos((y * Math.PI) / 180)) / Math.PI) / 2) * n);
+  const dLat = radiusM / 110_574, dLng = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
+  const template = await tileTemplate();
+  const jobs: Promise<{ x: number; y: number; tile: VectorTile | null }>[] = [];
+  for (let x = tx(lng - dLng); x <= tx(lng + dLng); x++)
+    for (let y = ty(lat + dLat); y <= ty(lat - dLat); y++) {
+      if (jobs.length >= 144) break; // (12 × 12 tiles at most)
+      const url = template.replace("{z}", String(TILE_Z)).replace("{x}", String(x)).replace("{y}", String(y));
+      jobs.push(
+        fetch(url, { signal: AbortSignal.timeout(15_000) })
+          .then(async (res) => ({ x, y, tile: res.ok && res.status !== 204 ? new VectorTile(new PbfReader(new Uint8Array(await res.arrayBuffer()))) : null }))
+          .catch(() => ({ x, y, tile: null })),
+      );
+    }
+  const found: { name: string; lng: number; lat: number }[] = [];
+  const seen = new Set<string>();
+  for (const { x, y, tile } of await Promise.all(jobs)) {
+    const poi = tile?.layers.poi;
+    for (let i = 0; i < (poi?.length ?? 0); i++) {
+      const f = poi!.feature(i);
+      const p = f.properties as Record<string, string | number | boolean | undefined>;
+      if (p.class !== "police" && p.subclass !== "police") continue;
+      const g = f.toGeoJSON(x, y, TILE_Z).geometry;
+      if (g.type !== "Point") continue;
+      const [plng, plat] = g.coordinates;
+      if (metres({ lat, lon: lng }, { lat: plat, lon: plng }) > radiusM) continue;
+      const key = `${plng.toFixed(4)}:${plat.toFixed(4)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      found.push({ name: typeof p.name === "string" && p.name ? p.name : "Police station", lng: +plng.toFixed(6), lat: +plat.toFixed(6) });
+    }
+  }
+  return found;
+}

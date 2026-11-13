@@ -62,11 +62,23 @@ try {
   // 3. 65 minutes: arrested, the motorbike impounded; the patrol car to the police station; the cell there
   await admin.from("player_positions").update({ still_since: ago(65 * 60) }).eq("user_id", id);
   await page.evaluate(() => window.__lootaLaw?.());
+  // On screen at once (owner, 13 Nov 2026: "Why is there a delay allowing to do all that before telling me I am in jail"),
+  // and no travelling meanwhile
+  const t0 = Date.now();
+  let seenAt = null;
+  for (let k = 0; k < 60 && seenAt === null; k++) {
+    if (await page.evaluate(() => !!document.querySelector("[data-arresting], [data-jail]") || /Arrested|To .*Police|putting you in the patrol car/.test(document.body.innerText))) seenAt = Date.now() - t0;
+    else await wait(100);
+  }
+  check("3a. arrested: on their screen at once", seenAt !== null && seenAt < 3000, seenAt === null ? "never" : `after ${seenAt} ms`);
+  const { data: stops } = await admin.from("transit_stops").select("id").eq("kind", "bus").limit(2);
+  const { data: ticket } = await c.rpc("start_trip", { p_from: stops[0].id, p_to: stops[1].id, p_path: null, p_fast_pass: false });
+  check("3b. arrested: no ticket (the server refuses)", ticket?.ok === false && ticket.reason === "arrested", JSON.stringify(ticket));
   const riding = await until(async () => { const t = await text(); return /🚓/.test(t) && (/Arrested/.test(t) || /To .*station|To /.test(t)) ? t.split(String.fromCharCode(10)).filter((l) => /🚓|To |Arrives|Arrested/.test(l)).join(" | ") : null; }, 60000);
   check("3. 65 minutes: arrested, the police take them away in the patrol car", !!riding, (riding ?? "").slice(0, 160));
   await page.screenshot({ path: `${OUT}/idle-law-0-ride.png` });
   if (process.env.TIMELINE) for (let k = 0; k < 30; k++) { const row = (await admin.from("idle_arrests").select("station, arrives_at, taken_at").eq("user_id", id)).data; const g = await page.evaluate(() => ({ jail: !!document.querySelector("[data-jail]"), care: [...document.querySelectorAll("*")].map((e) => e.children.length === 0 ? e.textContent : "").filter((x) => /^To |Arrives|Arrested$|putting you/.test(x ?? "")).join(" / ") })); console.log(`  t+${k * 2}s`, JSON.stringify(row), JSON.stringify(g)); await wait(2000); }
-  const jailed = await until(() => page.evaluate(() => !!document.querySelector("[data-jail]")), 90000);
+  const jailed = await until(() => page.evaluate(() => !!document.querySelector("[data-jail-left]")), 90000); // (the cell, not the arrest card)
   const arrest = (await admin.from("idle_arrests").select("station, station_lng, station_lat, route, remaining_s").eq("user_id", id).single()).data;
   const p1 = await pos();
   const card = await page.evaluate(() => document.querySelector("[data-jail]")?.textContent ?? "");

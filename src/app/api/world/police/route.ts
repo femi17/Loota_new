@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { overpass } from "@/lib/fill-area";
+import { overpass, policeFromTiles } from "@/lib/fill-area";
 
 /** How far the police take someone (take_to_station allows 15 km). */
 const REACH_M = 15_000;
@@ -34,12 +34,34 @@ export async function GET(request: NextRequest) {
   if (known) return Response.json({ station: { name: known.name, lng: known.lng, lat: known.lat, metres: known.metres } });
 
   const cell = `${Math.floor(lng / 0.1)}_${Math.floor(lat / 0.1)}`;
-  const { data: looked } = await admin.from("police_lookups").select("looked_at").eq("cell", cell).maybeSingle();
-  if (looked && Date.now() - Date.parse(looked.looked_at) < LOOK_AGAIN_MS) return Response.json({ station: null });
+  const { data: looked } = await admin.from("police_lookups").select("looked_at, found").eq("cell", cell).maybeSingle();
+  // (looked up lately and some found, but none within reach: none; none found: the tiles are cheap, look again)
+  if (looked && looked.found > 0 && Date.now() - Date.parse(looked.looked_at) < LOOK_AGAIN_MS) return Response.json({ station: null });
+  // The map's own tiles first (fast; within 4 km, then 10 km); OpenStreetMap's query service only if they have none
+  // (it's often too busy: owner, 13 Nov 2026, Ilorin)
+  const keep = async (rows: { name: string; lng: number; lat: number }[]) => {
+    const named = rows.map((r) => ({ kind: "police", name: /police|station|post|division|precinct|commissariat|polic/i.test(r.name) ? r.name : `${r.name} police station`, lng: r.lng, lat: r.lat }));
+    const { data: had } = await admin.from("places").select("lng, lat").eq("kind", "police").gte("lat", lat - 0.15).lte("lat", lat + 0.15).gte("lng", lng - 0.15).lte("lng", lng + 0.15);
+    const fresh = named.filter((r) => !(had ?? []).some((h) => Math.abs(h.lng - r.lng) < 0.0003 && Math.abs(h.lat - r.lat) < 0.0003));
+    if (fresh.length) await admin.from("places").insert(fresh);
+    await admin.from("police_lookups").upsert({ cell, looked_at: new Date().toISOString(), found: named.length });
+  };
+  for (const radius of [4000, 10_000]) {
+    try {
+      const rows = await policeFromTiles(lng, lat, radius);
+      if (rows.length) {
+        await keep(rows);
+        const got = await nearest();
+        if (got) return Response.json({ station: { name: got.name, lng: got.lng, lat: got.lat, metres: got.metres } });
+      }
+    } catch {
+      // (the tiles unreachable: on to the next)
+    }
+  }
   try {
     const found = await overpass(
       `[out:json][timeout:25];(node["amenity"="police"](around:${REACH_M},${lat},${lng});way["amenity"="police"](around:${REACH_M},${lat},${lng}););out center 60;`,
-      { rounds: 1, seconds: 30 },
+      { rounds: 1, seconds: 12 },
     );
     const rows = found
       .map((e) => {

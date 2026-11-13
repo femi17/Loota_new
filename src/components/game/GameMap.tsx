@@ -162,7 +162,7 @@ type Hud = {
   /** At the chosen seal's place: the "Enter the chamber" button. */
   djinnHere: { place: string } | null;
   /** Locked in a cell (the idling law, owner, 12 Nov 2026): until when (this device's clock), the bail, what was impounded. */
-  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null } | null;
+  jail: { until: number; bail: number; vehicle: string | null; rentalEnded: boolean; minutes: number | null; station: string | null; taking?: boolean } | null;
   /** Vehicles in the pound: released for the fee (gone after 7 days). */
   impounded: { id: string; kind: VehicleKind; fee: number; goneAt: number }[];
   /** A journey under way (design doc 7.8): where to, which step, and the Board button at a stop. */
@@ -4343,6 +4343,7 @@ export function GameMap({
             path: "Couldn't plan that route. Try another stop.",
             route: "Nothing goes there from here.",
             on_trip: "You're already on a trip.",
+            arrested: "You've been arrested: the police are taking you to the station.",
           };
           return why[result.reason ?? ""] ?? "Couldn't board just now. Try again.";
         }
@@ -5697,7 +5698,7 @@ export function GameMap({
         const r = res as { ok: boolean; reason?: string; pickup?: PickupJson } | null;
         if (disposed) return;
         if (!r?.ok || !r.pickup) {
-          say(r?.reason === "vehicle" ? "Return your rental first (vehicle button, then Get off), then ask for another." : "Couldn't arrange a rental just now. Try again.", true);
+          say(r?.reason === "vehicle" ? "Return your rental first (vehicle button, then Get off), then ask for another." : r?.reason === "arrested" ? "You've been arrested: the police are taking you to the station." : "Couldn't arrange a rental just now. Try again.", true);
           return;
         }
         pocketed();
@@ -5786,6 +5787,7 @@ export function GameMap({
             route: "Taxis go up to 40 km.",
             far: "That pickup point is too far from you.",
             path: "Couldn't plan that taxi ride. Try again.",
+            arrested: "You've been arrested: the police are taking you to the station.",
           };
           return why[r?.reason ?? ""] ?? "Couldn't call a taxi just now. Try again.";
         }
@@ -7925,7 +7927,15 @@ export function GameMap({
             endDirections();
             say(`🚔 Arrested! You stood still on a main road for ${a.minutes} minutes.${a.vehicle ? ` Your ${vehicleName(a.vehicle)} has been impounded.` : a.rentalEnded ? " Your rental has gone back to its renter." : ""} The police are taking you to the station.`, true);
           }
-          if (r.state === "taking") return void takeToStation(a);
+          if (r.state === "taking") {
+            // On screen at once (owner, 13 Nov 2026: "Why is there a delay allowing to do all that before telling me I
+            // am in jail"): the arrest card while the station and the road there are found
+            const arresting = { until: 0, bail: a.bail, vehicle: a.vehicle ?? null, rentalEnded: !!a.rentalEnded, minutes: a.minutes ?? null, station: null, taking: true };
+            setHud((h) => (h.jail?.taking ? h : { ...h, jail: arresting }));
+            setTransitOpen(false);
+            return void takeToStation(a);
+          }
+          setHud((h) => (h.jail?.taking ? { ...h, jail: null } : h)); // (the ride shows on the map; then the cell's card)
           const offset = Date.parse(a.now) - Date.now();
           const arrives = Date.parse(a.arrivesAt ?? a.now);
           if (Date.now() + offset < arrives && a.route) {

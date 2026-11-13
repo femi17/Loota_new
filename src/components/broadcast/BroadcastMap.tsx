@@ -8,7 +8,7 @@ import { daylight } from "@/game/clock";
 import { WEATHER_CREDIT, weatherDim, weatherIcon, weatherWords, type Weather } from "@/game/weather";
 import { ordinal } from "@/game/hunt";
 import { baseSpeed, type Mode } from "@/game/movement";
-import { alongPath, busZoom, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
+import { TRAIN_CARS, alongPath, busZoom, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 import { nextAutoView } from "@/game/autocam";
 import { RoadGameBoard, type RoadGame, type RoadGameLive, type RoadGameResult } from "@/components/game/RoadGames";
@@ -581,7 +581,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -589,6 +589,25 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       let skew = 0; // the server's clock minus this one
       const routes = new Map<string, { key: string; trip: Trip; path: [number, number][]; cum: number[] }>();
       const tripOf = (id: string) => routes.get(id) ?? null;
+      /** How far along a path a point is (the nearest place on it). */
+      const alongOn = (path: [number, number][], cum: number[], p: { lng: number; lat: number }) => {
+        const k = Math.cos((p.lat * Math.PI) / 180);
+        let best = { d: Infinity, s: 0 };
+        for (let i = 1; i < path.length; i++) {
+          const ax = (path[i - 1][0] - p.lng) * k, ay = path[i - 1][1] - p.lat, bx = (path[i][0] - p.lng) * k, by = path[i][1] - p.lat;
+          const dx = bx - ax, dy = by - ay;
+          const q = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1e-18)));
+          const d = Math.hypot(ax + dx * q, ay + dy * q);
+          if (d < best.d) best = { d, s: cum[i - 1] + q * (cum[i] - cum[i - 1]) };
+        }
+        return best.s;
+      };
+      // A train's other carriages, behind the first on the track (owner, 13 Nov 2026: "Train on broadcast is just one
+      // coach, on user screen 3"), each lined up with the track under it, as their own screen draws them
+      const trainCars: import("@/game/ThreeMapLayer").MapEntity[] = [];
+      const dropTrainCars = () => {
+        for (const car of trainCars.splice(0)) layer.remove(car);
+      };
       /** Where a trip is now, by the clock: at the start before it leaves, along the route, at the end once there. */
       const tripAt = (r: { trip: Trip; path: [number, number][]; cum: number[] }, now: number) => {
         const dep = Date.parse(r.trip.departsAt), arr = Date.parse(r.trip.arrivesAt);
@@ -1076,6 +1095,35 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             followed.entity.lng = p.lng;
             followed.entity.lat = p.lat;
             followed.entity.heading = p.heading;
+            if (ride === "train" && r && r.path.length > 1) {
+              const spacing = models.TRAIN_CAR_SPACING * layer.enlargement() * 0.8;
+              const total = r.cum[r.cum.length - 1] ?? 0;
+              const s = alongOn(r.path, r.cum, p);
+              const half = Math.min(spacing / 2, total / 2);
+              while (trainCars.length < TRAIN_CARS - 1) trainCars.push(layer.add({ object: models.makeTrainCar(false), lng: p.lng, lat: p.lat, heading: p.heading, scaleBy: 0.8 }));
+              // As their screen does: the whole train on the track from the start (not piled up at the platform), its
+              // front sliding from one train's length along to the end
+              const length = Math.min(total, (TRAIN_CARS - 1) * spacing);
+              const lead = length + (Math.min(total, s) / Math.max(1, total)) * (total - length);
+              const place = (e: import("@/game/ThreeMapLayer").MapEntity, at: number) => {
+                const pos = alongPath(r.path, r.cum, at).pos;
+                const back = alongPath(r.path, r.cum, Math.max(0, at - half)).pos;
+                const front = alongPath(r.path, r.cum, Math.min(total, at + half)).pos;
+                e.lng = pos[0];
+                e.lat = pos[1];
+                if (back[0] !== front[0] || back[1] !== front[1]) e.heading = geo.headingOf(back, front);
+              };
+              place(followed.entity, lead);
+              trainCars.forEach((car, i) => {
+                const at = Math.max(0, lead - (i + 1) * spacing);
+                const pos = alongPath(r.path, r.cum, at).pos;
+                const back = alongPath(r.path, r.cum, Math.max(0, at - half)).pos;
+                const front = alongPath(r.path, r.cum, Math.min(total, at + half)).pos;
+                car.lng = pos[0];
+                car.lat = pos[1];
+                if (back[0] !== front[0] || back[1] !== front[1]) car.heading = geo.headingOf(back, front);
+              });
+            } else if (trainCars.length) dropTrainCars();
             const stepM = geo.distanceM([before.lng, before.lat], [p.lng, p.lat]);
             const mode = live.get(h.id)?.mode ?? h.mode ?? "walk";
             // Its stride by their speed, smoothed: a frame without a step doesn't drop it to standing (which looked like
@@ -1417,6 +1465,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           }
           dropJailCell();
           dropPoliceCar();
+          dropTrainCars();
           dropHelper();
           if (weatherKey) {
             weatherKey = "";

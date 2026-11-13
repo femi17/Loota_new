@@ -55,6 +55,7 @@ import { RadioPanel, useRadio } from "./RadioPanel";
 import { PenaltyCard, type Penalty } from "./PenaltyCard";
 import { QuarterScene } from "./QuarterScene";
 import { JailCard } from "./JailCard";
+import { UpdateBanner } from "./UpdateBanner";
 import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
 import { highwayRoute, loadHighways } from "@/game/highways";
@@ -10069,6 +10070,7 @@ export function GameMap({
                 <ClanChat className="min-h-0 flex-1" />
               </div>
             )}
+            <UpdateBanner />
             {penalty && <PenaltyCard penalty={penalty} onClose={() => setPenalty(null)} />}
             {hud.jail && <JailCard jail={hud.jail} coins={hud.coins} onBail={() => actions.current?.payBail()} />}
             {houseOpen && huntId && (

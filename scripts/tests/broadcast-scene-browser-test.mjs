@@ -162,13 +162,13 @@ try {
     await wait(500);
     board = await show.evaluate(() => ({ cups: document.querySelectorAll('[aria-label="Scene card"] [data-cup-slot]').length, text: document.querySelector('[aria-label="Scene card"]')?.textContent ?? "" }));
   }
-  check("on the broadcast: the same three cups while they play", board?.cups === 3 && /is playing/i.test(board.text), JSON.stringify(board));
+  check("on the broadcast: the same three cups while they play", board?.cups === 3 && /is playing|watching the shuffle/i.test(board.text), JSON.stringify(board));
   const laidGame = await boxes();
   check("…the game on one side, as the 3D world's puzzles, clear of the caption", laidGame.side && laidGame.card && laidGame.card.left > laidGame.w / 2 - 40 && (!laidGame.caption || laidGame.card.bottom <= laidGame.caption.top), JSON.stringify(laidGame));
   await show.screenshot({ path: `${OUT}/broadcast-scene-3-cups.png` });
   let won = null;
-  for (let i = 0; i < 30 && !/wins it/i.test(won ?? ""); i++) { await wait(500); won = await card(); }
-  check("…then that they won it", /wins it/i.test(won ?? ""), won?.slice(0, 80));
+  for (let i = 0; i < 30 && !/wins /i.test(won ?? ""); i++) { await wait(500); won = await card(); }
+  check("…then that they won it", /wins /i.test(won ?? ""), won?.slice(0, 80));
   await show.screenshot({ path: `${OUT}/broadcast-scene-4-won.png` });
 
   const { data: saved } = await admin.from("hunter_scenes").select("data, lines, ended_ms").eq("user_id", hunter.id).order("started_ms", { ascending: true }).limit(1).single();

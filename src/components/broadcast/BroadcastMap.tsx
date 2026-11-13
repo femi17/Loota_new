@@ -11,7 +11,7 @@ import { baseSpeed, type Mode } from "@/game/movement";
 import { TRAIN_CARS, alongPath, busZoom, cumulativeOf, trainAlong, trainZoom } from "@/game/transit";
 import { foldAttribution } from "@/game/attribution";
 import { nextAutoView } from "@/game/autocam";
-import { RoadGameBoard, type RoadGame, type RoadGameLive, type RoadGameResult } from "@/components/game/RoadGames";
+import { RoadGameBoard, gameSeconds, type RoadGame, type RoadGameLive, type RoadGameResult } from "@/components/game/RoadGames";
 import { PuzzleBoard } from "@/components/game/puzzles/PuzzleTrial";
 import { AnswerMirror } from "@/components/game/puzzles/mirror";
 import { PUZZLE_NAMES } from "@/game/puzzles/names";
@@ -130,27 +130,29 @@ const timeLeft = (iso: string, now: number) => {
  * whoever just did something, otherwise rotates between the leaders. Key spots
  * are never shown: viewers may be players. Press H to hide the controls.
  */
+const GAME_NAMES: Record<string, string> = { pairs: "Card match", cups: "Find the coin", chess: "Mate in one" };
+
 /**
  * A board in the side panel, made smaller to fit when the screen is short (owner, 13 Nov 2026: "I played the card match
  * game, it has 3 rows, only 2 shows on the broadcast"): never cut off.
  */
-function FitBox({ children }: { children: React.ReactNode }) {
+function FitBox({ children, grow = 1 }: { children: React.ReactNode; /** As much bigger as it may be made to fill the space. */ grow?: number }) {
   const outer = useRef<HTMLDivElement>(null);
   const inner = useRef<HTMLDivElement>(null);
   const [k, setK] = useState(1);
   useEffect(() => {
     const o = outer.current, i = inner.current;
     if (!o || !i) return;
-    const fit = () => setK(Math.min(1, o.clientHeight / Math.max(1, i.scrollHeight), o.clientWidth / Math.max(1, i.scrollWidth)));
+    const fit = () => setK(Math.min(grow, o.clientHeight / Math.max(1, i.scrollHeight), o.clientWidth / Math.max(1, i.scrollWidth)));
     const sized = new ResizeObserver(fit);
     sized.observe(o);
     sized.observe(i);
     fit();
     return () => sized.disconnect();
-  }, []);
+  }, [grow]);
   return (
     <div ref={outer} className="min-h-0 flex-1 overflow-hidden" data-fit={k.toFixed(2)}>
-      <div ref={inner} style={{ transform: `scale(${k})`, transformOrigin: "top center" }}>
+      <div ref={inner} className={grow > 1 ? "mx-auto w-fit" : undefined} style={{ transform: `scale(${k})`, transformOrigin: "top center" }}>
         {children}
       </div>
     </div>
@@ -197,7 +199,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
    */
   const [sceneCard, setSceneCard] = useState<
     | { kind: "ask"; who: string; options: string[]; pick: string | null }
-    | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null; live: RoadGameLive }
+    | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null; live: RoadGameLive; left: number | null; total: number; shuffling: boolean }
     | { kind: "puzzle"; who: string; n: number; puzzleKind: string; puzzle: unknown; left: number; progress: number; result: { right?: boolean; late?: boolean; outcome?: string | null } | null; answers: Record<string, unknown> | null }
     | null
   >(null);
@@ -410,6 +412,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       let captionKey = "";
       let cardKey = "";
+      let gameStaged = false; // a roadside game on the stage (last frame)
+      let stagePad = 0; // the camera's room for it on the right, eased
       let worldShown: { id: number; playback: { current: { T: number; track: WorldTrack; inner: InnerRoomView[] | null; dug: string | null } } } | null = null;
       const parse = <X,>(text: string): X | null => {
         try {
@@ -1335,7 +1339,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 zoom: map.getZoom() + (SCENE_ZOOM - map.getZoom()) * k,
                 pitch: map.getPitch() + (SCENE_PITCH - map.getPitch()) * k,
                 bearing: map.getBearing() + turn * k,
-                padding: { top: 0, left: 0, right: 0, bottom: 170 },
+                // (a game on: the stage on the right, so the place in the space left of it, eased across)
+                padding: { top: 0, left: 0, right: (stagePad += ((gameStaged ? Math.min(innerWidth * 0.48, 736) + 16 : 0) - stagePad) * Math.min(1, 3 * dt)), bottom: gameStaged ? 40 : 170 },
               });
             } else {
               // Behind them, turning with them (the laptop's chase camera), tilted like the laptop: 60°.
@@ -1396,8 +1401,24 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                   if (g) game = { at: l[0], game: g, result: null, live: {} };
                 } else if (l[1] === "result" && game) game.result = parse<RoadGameResult>(l[2]);
                 else if (l[1] === "live" && game) game.live = parse<RoadGameLive>(l[2]) ?? game.live; // their moves, as they made them
+                else if (l[1] === "move" && game) {
+                  // Their move as sent to be judged (a game played on an older page, which sends no moves as it goes): the
+                  // cards they turned, the cup, the chess move
+                  const g = game.game;
+                  if (g.type === "pairs") game.live = { flips: parse<number[]>(l[2]) ?? game.live.flips ?? [] };
+                  else if (g.type === "cups" && /^d$/.test(l[2])) game.live = { ...game.live, picked: Number(l[2]) };
+                  else if (g.type === "chess" && /^[a-h][1-8][a-h][1-8]/.test(l[2])) game.live = { ...game.live, played: l[2].slice(0, 4) };
+                }
               }
-              if (game && (!ask || game.at >= ask.at)) card = { kind: "game", who: h.name, game: game.game, result: game.result, live: game.live };
+              if (game && (!ask || game.at >= ask.at)) {
+                // Its clock, as theirs: from when it can be played (the cups: once the shuffle's done)
+                const g = game.game;
+                const readyAt = game.at + (g.type === "cups" ? 1500 + g.swaps.length * g.ms : 0);
+                const total = gameSeconds(g);
+                const shuffling = T < readyAt;
+                const left = game.result ? null : shuffling ? total : Math.max(0, Math.ceil((readyAt + total * 1000 - T) / 1000));
+                card = { kind: "game", who: h.name, game: game.game, result: game.result, live: game.live, left, total, shuffling };
+              }
               else if (ask) {
                 // One after the other, as on their own screen (owner, 13 Nov 2026: "Must this 2 show together on the
                 // screen, can it be one after the other, like the user's page"): what's said first, long enough to read;
@@ -1445,6 +1466,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 };
               }
             }
+            gameStaged = card?.kind === "game";
             const cardNow = JSON.stringify(card);
             if (cardNow !== cardKey) {
               cardKey = cardNow;
@@ -1607,7 +1629,53 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       )}
       {/* A box's puzzle or a road game, as the hunter has it: on one side, beside the hunter (owner, 12 Nov 2026: "If it is
           a game, can it show one side like the 3d world"); the caption stays below, clear of it */}
-      {sceneCard && caption && sceneCard.kind !== "ask" && (
+      {sceneCard && caption && sceneCard.kind === "game" && (
+        // A roadside game: the stage (owner, 13 Nov 2026: "The game could be bigger because that is the only event
+        // happening for the user, so let viewers enjoy it see the time countdown and they feel the thrill"): big, beside
+        // the hunter, its clock counting down; the talk hidden meanwhile ("it is not useful, since the user is already
+        // playing")
+        <div className="pointer-events-none absolute bottom-5 right-4 top-[104px] z-20 flex w-[min(48vw,46rem)] justify-end" role="status" aria-label="Scene card" data-card-side data-game-stage>
+          <div className="flex h-full w-full flex-col overflow-hidden rounded-3xl bg-ink/92 p-5 text-paper shadow-2xl ring-2 ring-gold/80">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gold">{caption.icon} {GAME_NAMES[sceneCard.game.type] ?? "A game"} · with {caption.title.split(":")[0]}</p>
+                <p className="mt-1 font-display text-2xl font-extrabold leading-tight" data-game-status>
+                  {sceneCard.result
+                    ? sceneCard.result.won && !sceneCard.result.late
+                      ? `✓ ${sceneCard.who} wins ${sceneCard.result.reward} coins!`
+                      : sceneCard.result.late
+                        ? `✗ Out of time: ${sceneCard.who} loses this one`
+                        : `✗ ${sceneCard.who} loses this one`
+                    : sceneCard.shuffling
+                      ? `👀 ${sceneCard.who} is watching the shuffle…`
+                      : `🎲 ${sceneCard.who} is playing…`}
+                </p>
+              </div>
+              {sceneCard.left !== null && (
+                <span
+                  className={`shrink-0 rounded-2xl px-3 py-1.5 font-mono text-3xl font-extrabold tabular-nums ${sceneCard.left <= 10 && !sceneCard.shuffling ? "animate-pulse bg-danger text-white" : "bg-ink-2 text-gold"}`}
+                  aria-label={`${sceneCard.left} seconds left`}
+                  data-game-left={sceneCard.left}
+                >
+                  ⏱ {sceneCard.left}s
+                </span>
+              )}
+            </div>
+            <div className="mb-3 mt-2 h-2.5 overflow-hidden rounded-full bg-ink-2" aria-hidden="true">
+              <div
+                className={`h-full transition-[width] duration-500 ${sceneCard.result ? (sceneCard.result.won && !sceneCard.result.late ? "bg-[#3DD68C]" : "bg-danger") : (sceneCard.left ?? 0) <= 10 ? "bg-danger" : "bg-gold"}`}
+                style={{ width: `${sceneCard.result ? 100 : Math.round((100 * (sceneCard.left ?? 0)) / Math.max(1, sceneCard.total))}%` }}
+              />
+            </div>
+            <FitBox grow={2.4}>
+              <div className="w-[19rem]">
+                <RoadGameBoard game={sceneCard.game} result={sceneCard.result} mirror={sceneCard.live} onMove={() => {}} />
+              </div>
+            </FitBox>
+          </div>
+        </div>
+      )}
+      {sceneCard && caption && sceneCard.kind === "puzzle" && (
         <div
           className="pointer-events-none absolute right-4 top-[104px] z-20 flex items-start justify-end" // under the leaderboard
           style={{ bottom: `calc(${captionH}px + 2rem)` }}
@@ -1641,22 +1709,13 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                   </div>
                 </FitBox>
               </>
-            ) : sceneCard.kind === "game" ? (
-              <>
-                <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">
-                  {sceneCard.result ? (sceneCard.result.won && !sceneCard.result.late ? `✓ ${sceneCard.who} wins it` : `✗ ${sceneCard.who} loses this one`) : `🎲 ${sceneCard.who} is playing…`}
-                </p>
-                <FitBox>
-                  <RoadGameBoard game={sceneCard.game} result={sceneCard.result} mirror={sceneCard.live} onMove={() => {}} />
-                </FitBox>
-              </>
             ) : null}
           </div>
         </div>
       )}
       {/* At the bottom, one after the other (owner, 12 Nov 2026: "the conversation box, plus the interaction box, is mixed
           up together"): the replies on offer and the one picked, then the caption below it, like TV's lower third */}
-      {caption && (
+      {caption && sceneCard?.kind !== "game" && (
         <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex flex-col items-center gap-3 px-4" data-lower-third>
           {sceneCard?.kind === "ask" ? (
             <div ref={captionBox} className="w-full max-w-2xl rounded-2xl bg-ink/92 px-4 py-3 text-paper shadow-2xl ring-2 ring-gold/70" role="status" aria-label="Scene card">

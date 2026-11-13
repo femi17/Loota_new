@@ -111,6 +111,13 @@ try {
     const all = [...document.querySelectorAll(`${s} [data-card]`)].map((c) => c.getBoundingClientRect());
     return { n: all.length, inside: all.filter((r) => panel && r.top >= panel.top - 1 && r.bottom <= panel.bottom + 1 && r.bottom <= innerHeight).length, rows: new Set(all.map((r) => Math.round(r.top))).size, scale: document.querySelector(`${s} [data-fit]`)?.getAttribute("data-fit") };
   }, CARD);
+  // The stage (owner, 13 Nov 2026: "The game could be bigger… see the time countdown… You can hide the dialogue")
+  const stage1 = await show.evaluate(() => ({ stage: !!document.querySelector("[data-game-stage]"), caption: !!document.querySelector('[aria-label="Scene caption"]'), left: Number(document.querySelector("[data-game-left]")?.getAttribute("data-game-left") ?? NaN), fit: Number(document.querySelector("[data-game-stage] [data-fit]")?.getAttribute("data-fit") ?? NaN) }));
+  await wait(2500);
+  const left2 = await show.evaluate(() => Number(document.querySelector("[data-game-left]")?.getAttribute("data-game-left") ?? NaN));
+  check("0. a game on the broadcast: on the stage, the board made bigger, the talk hidden", stage1.stage && !stage1.caption && stage1.fit > (Number(process.env.HEIGHT ?? 600) >= 600 ? 1.05 : 0.4), JSON.stringify(stage1));
+  check("…its clock counting down", Number.isFinite(stage1.left) && left2 < stage1.left && stage1.left <= 50, `${stage1.left} → ${left2} s`);
+  await show.screenshot({ path: `${OUT}/broadcast-games-0-stage.png` });
   check("1. card match on the broadcast: all 12 cards, 3 rows, none cut off (a short screen: made smaller)", fits.n === 12 && fits.inside === 12 && fits.rows === 3, JSON.stringify(fits));
   await flip(0);
   await wait(250);
@@ -130,7 +137,7 @@ try {
     await wait(250);
     await flip(k + 6);
   }
-  const won1 = await until(() => show.evaluate((s) => /wins it/i.test(document.querySelector(s)?.textContent ?? "") && document.querySelectorAll(`${s} [data-card].ring-\\[\\#3DD68C\\]`).length === 12, CARD), 25000);
+  const won1 = await until(() => show.evaluate((s) => /wins \d+ coins/i.test(document.querySelector(s)?.textContent ?? "") && document.querySelectorAll(`${s} [data-card].ring-\\[\\#3DD68C\\]`).length === 12, CARD), 25000);
   check("…all of them: all 12 matched on the broadcast, and won", !!won1);
   await goOn();
 
@@ -153,7 +160,7 @@ try {
   check("3. mate in one: the piece they picked up, marked on the broadcast", !!lifted, from);
   await game.evaluate((s) => document.querySelector(`[role="dialog"] [data-square="${s}"]`)?.click(), to);
   const moved = await until(() => show.evaluate((s, t) => document.querySelector(`${s} [data-square="${t}"]`)?.getAttribute("aria-label") ?? "", CARD, to).then((l) => (/white/.test(l) ? l : null)), 20000);
-  const won3 = await until(() => show.evaluate((s) => /wins it/i.test(document.querySelector(s)?.textContent ?? ""), CARD), 20000);
+  const won3 = await until(() => show.evaluate((s) => /wins \d+ coins/i.test(document.querySelector(s)?.textContent ?? ""), CARD), 20000);
   check("…the move, made on the broadcast's board, and won", !!moved && !!won3, `${pz.solution}: ${moved}`);
   await show.screenshot({ path: `${OUT}/broadcast-games-3-chess.png` });
   check("no page errors", problems.length === 0, problems.join(" / "));

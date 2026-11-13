@@ -4424,7 +4424,7 @@ export function GameMap({
       let spotsAt = -Infinity;
       let spotsFrom: LngLat | null = null;
       let keg: { fuel: number; usesLeft: number } | null = null;
-      const warned = { energy: 100, fuel: 100, tyre: 100, engine: 100 }; // the level last warned at (100: not warned)
+      const warned = { energy: 100, fuel: 100, tyre: 100, engine: 100, motorTyre: 100 }; // the level last warned at (100: not warned)
       let advicePlace: { name: string; lng: number; lat: number } | null = null;
       let adviceKey = "";
 
@@ -4665,6 +4665,15 @@ export function GameMap({
             warned.engine = 100;
             clearAdvice("engine");
           }
+          // Worn tyres (13 Nov 2026): only worn ones can go flat; a service gives new ones
+          if (mine.tyre > 0 && mine.tyre < 40 && warned.motorTyre > 40) {
+            warned.motorTyre = 40;
+            void advise("motor_tyre", "Tyres worn", `Your ${vehicleName(mine.kind)}'s tyres are worn: worn tyres can go flat. A mechanic's service gives you new ones (60 coins).`, ["mechanic"]);
+          }
+          if (mine.tyre > 60 && warned.motorTyre < 100) {
+            warned.motorTyre = 100;
+            clearAdvice("motor_tyre");
+          }
         }
         if (mine?.kind === "bicycle") {
           if (mine.tyre <= 0 && warned.tyre > 0) {
@@ -4810,7 +4819,7 @@ export function GameMap({
           if (spotHere(["tyres", "fuel"]) && bike && bike.tyre < 95) {
             list.push(bike.tyre <= 0 ? { id: "pump", icon: "🛞", short: "Fix flat · 20", label: "Fix the flat · 20 coins" } : { id: "pump", icon: "🛞", short: "Pump · 5", label: "Pump the tyres · 5 coins" });
           }
-          const motor = motorRidden && motorRidden.engine < 90 ? motorRidden : pocketed((v) => !!v.broken_at);
+          const motor = motorRidden && (motorRidden.engine < 90 || motorRidden.tyre < 60) ? motorRidden : pocketed((v) => !!v.broken_at);
           if (spotHere(["mechanic"]) && motor) {
             list.push({ id: "service", icon: "🔧", short: "Service · 60", label: `Service your ${vehicleName(motor.kind)} · 60 coins` });
           }
@@ -5169,9 +5178,11 @@ export function GameMap({
             clearAdvice("tyre");
           } else if (id === "service") {
             await refreshVehicles();
-            say(`Serviced: your ${r.kind ? vehicleName(r.kind) : "vehicle"} runs like new.`);
+            say(`Serviced: your ${r.kind ? vehicleName(r.kind) : "vehicle"} runs like new, on new tyres.`);
             warned.engine = 100;
+            warned.motorTyre = 100;
             clearAdvice("engine");
+            clearAdvice("motor_tyre");
           } else if (id === "mechanic") {
             await refreshVehicles();
             say(`A mechanic is on the way to you: your ${r.kind ? vehicleName(r.kind) : "vehicle"} will be ready again in about 45 seconds. Then take it out with the vehicle button.`);

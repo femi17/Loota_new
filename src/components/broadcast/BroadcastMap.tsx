@@ -36,6 +36,8 @@ type Hunter = {
   inTrial: boolean;
   /** The vulcanizer walking back with them to change a flat (their name). */
   helper?: string | null;
+  /** Their motorbike, car or bicycle left at the roadside: a flat, or out of fuel (13 Nov 2026), and since when. */
+  parked?: { kind: "bicycle" | "motorbike" | "car"; lng: number; lat: number; why: "flat" | "fuel"; wheel: "off" | "fixed" | null; since: string | null } | null;
   /** The real weather where they are (their ~10 km square's, MET Norway). */
   weather?: Weather | null;
   /** The device they play on now (claim_session): positions from any other are ignored. */
@@ -600,7 +602,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, parked: parkedCar ? { key: parkedCar.key, lng: parkedCar.entity.lng, lat: parkedCar.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -778,6 +780,21 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // the game draws them (helperTick). When they joined and left is noted by the server's clock as each poll sees it,
       // so they're shown at the same moment as the hunter (motionDelay behind); not while a scene plays (the flat's own).
       const helperLog = new Map<string, [number, string | null][]>();
+      // ---- A vehicle left at the roadside (owner, 13 Nov 2026: "when vehicle have flat, it doesnt show on the broadcast"):
+      // shown where it stands with its tag, as on the hunter's screen, from the moment it stopped (by the server's clock).
+      type Parked = NonNullable<Hunter["parked"]>;
+      const parkedLog = new Map<string, [number, Parked | null][]>();
+      const parkedAt = (id: string, T: number) => {
+        let out: Parked | null = null;
+        for (const [at, v] of parkedLog.get(id) ?? []) if (at <= T) out = v;
+        return out;
+      };
+      let parkedCar: { key: string; entity: import("@/game/ThreeMapLayer").MapEntity } | null = null;
+      const dropParked = () => {
+        if (!parkedCar) return;
+        layer.remove(parkedCar.entity);
+        parkedCar = null;
+      };
       const helperAt = (id: string, T: number) => {
         const log = helperLog.get(id);
         if (!log) return null;
@@ -822,6 +839,16 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (latest.now) skew = Date.parse(latest.now) - Date.now();
         const polledAt = latest.now ? Date.parse(latest.now) : Date.now() + skew;
         for (const h of latest.hunters) {
+          const pv = h.parked ?? null;
+          const plog = parkedLog.get(h.id);
+          const pkey = (v: Parked | null) => (v ? `${v.kind}|${v.lng},${v.lat}|${v.why}|${v.wheel}` : "");
+          if (!plog) parkedLog.set(h.id, [[0, pv]]);
+          else if (pkey(plog[plog.length - 1][1]) !== pkey(pv)) {
+            // From when it stopped (if that's news), else from this poll
+            const since = pv?.since && !plog[plog.length - 1][1] ? Date.parse(pv.since) : NaN;
+            plog.push([Number.isFinite(since) ? Math.max(plog[plog.length - 1][0], since) : polledAt, pv]);
+            if (plog.length > 8) plog.shift();
+          }
           const name = h.helper ?? null;
           const log = helperLog.get(h.id);
           if (!log) helperLog.set(h.id, [[0, name]]); // as it was when the broadcast opened
@@ -1304,6 +1331,39 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               jailCell.entity.lat = jp.lat;
               jailCell.light.visible = Math.floor(t / 300) % 2 === 0;
             } else dropJailCell();
+            // Their vehicle left at the roadside: there, with its tag (FLAT TYRE / NO FUEL)
+            const parked = ride ? null : parkedAt(h.id, careT);
+            const pk = parked ? `${h.id}|${parked.kind}|${parked.lng},${parked.lat}|${parked.why}` : "";
+            if (parkedCar && parkedCar.key !== pk) dropParked();
+            if (parked && !parkedCar) {
+              const object = models.makeVehicleModel(parked.kind);
+              const tag = layer.billboard(models.makeNameplate(parked.why === "flat" ? "FLAT TYRE" : "NO FUEL", "#B23A3A"));
+              tag.position.y = parked.kind === "car" ? 2.6 : 2.2;
+              object.add(tag);
+              // By the kerb on the right, facing along the road (as the game parks it)
+              const net = netFor(h.id, p);
+              const rp = net ? roads.snapToNetwork(net, parked, 0) : null;
+              const rd = net && rp ? roads.positionOf(net, rp) : null;
+              let at = { lng: parked.lng, lat: parked.lat, heading: p.heading };
+              if (rd && geo.distanceM([rd.lng, rd.lat], [parked.lng, parked.lat]) < 60) {
+                const off = (parked.kind === "car" ? 2.2 : 1.6) * layer.enlargement();
+                at = { lng: rd.lng + (-Math.cos(rd.heading) * off) / (111320 * Math.cos((rd.lat * Math.PI) / 180)), lat: rd.lat + (-Math.sin(rd.heading) * off) / 110574, heading: rd.heading };
+              }
+              parkedCar = { key: pk, entity: layer.add({ object, lng: at.lng, lat: at.lat, heading: at.heading }) };
+            }
+            const parkedFar = parked ? geo.distanceM([parked.lng, parked.lat], [p.lng, p.lat]) : Infinity;
+            const parkedFresh = !!parked && (careT - Date.parse(parked.since ?? "") < 10 * 60_000 || parkedFar < 60 || !!parked.wheel || !!h.helper);
+            const parkedNote = !parked || !parkedFresh
+              ? null
+              : parked.why === "fuel"
+                ? `⛽ ${h.name}'s ${parked.kind} ran out of fuel${parkedFar < 30 ? " at the roadside" : ": off to get some"}`
+                : h.helper
+                  ? `🛞 ${h.helper} the vulcanizer is walking back with ${h.name} to fix the ${parked.kind}`
+                  : parked.wheel === "off"
+                    ? `🛞 ${h.name} is rolling the ${parked.kind}'s wheel to a vulcanizer`
+                    : parked.wheel === "fixed"
+                      ? `🛞 ${h.name} is rolling the patched wheel back to the ${parked.kind}`
+                      : `🛞 ${h.name}'s ${parked.kind} has a flat tyre${parkedFar < 30 ? "" : ": off to find a vulcanizer"}`;
             const jailLeft = jail ? Math.max(1, Math.ceil(jail.left / 60)) : 0;
             const impounded = jail?.vehicle ? ` · their ${jail.vehicle} impounded` : "";
             const note = jail && jp
@@ -1313,7 +1373,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                   ? `🚓 ${h.name} was arrested for idling on a main road: the police are taking them to ${jail.station ?? "the station"}${impounded}`
                   : `🚓 ${h.name} has been arrested for idling on a main road${impounded}`
               : !care
-              ? null
+              ? parkedNote
               : care.phase === "waiting"
                 ? `🚑 ${h.name} fainted: ${care.ward ? "an ambulance" : "paramedics"} on the way`
                 : care.phase === "riding"
@@ -1617,6 +1677,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           dropTrainCars();
           dropChase();
           dropHelper();
+          dropParked();
           if (weatherKey) {
             weatherKey = "";
             setWeatherShown(null);

@@ -103,8 +103,9 @@ type Hud = {
   busy: boolean;
   /** Turn-by-turn directions, while the player has a destination. */
   guide: Guide | null;
-  /** Other hunters seen nearby (live). */
+  /** Other hunters seen nearby (live): all of them, and how many are drawn (the nearest ten). */
   hunters: number;
+  huntersShown: number;
   /** Radar (while active): seconds left, and which way to the nearest relic and, on a Final Approach, the key. */
   radar: { secondsLeft: number; relic: Pointer | null; key: Pointer | null } | null;
   /** It's raining where the hunter is (a Rain Charm, or the real weather); `slowed` if it slows them; `storm` 30%. */
@@ -467,6 +468,7 @@ export function GameMap({
     busy: false,
     guide: null,
     hunters: 0,
+    huntersShown: 0,
     radar: null,
     rain: null,
     weather: null,
@@ -876,6 +878,7 @@ export function GameMap({
           },
           // The other hunters drawn, and their names (scripts/tests/security-attack-test.mjs)
           __lootaOthers: () => [...others.keys()],
+          __lootaCrowd: () => ({ heard: heard.size, shown: others.size, aside: [...others.values()].filter((o) => o.aside.e || o.aside.n).length }),
           // A police chase: how it stands, and a test steering it: the police blind, their time seeing you (scripts/tests/police-chase-browser-test.mjs)
           __lootaChase: () => (chase ? { event: chase.event, level: chase.level, seen: chase.seen, seenS: chase.seenS, searchLeft: chase.searchLeft, hiding: chase.hiding?.name ?? null, roadblock: chase.roadblock ? { lng: chase.roadblock.lng, lat: chase.roadblock.lat } : null, cops: chase.cops.map((c) => ({ kind: c.kind, lng: c.lng, lat: c.lat })), over: chase.over } : null),
           __lootaChaseTest: (o: { blind?: boolean; seenS?: number }) => {
@@ -3022,8 +3025,19 @@ export function GameMap({
         mode: Mode;
         moving: boolean;
         seen: number;
+        /** Stood on the same spot as others (or as us): drawn a step aside, in a ring, so no one hides another (metres east, north). */
+        aside: { e: number; n: number };
       };
+      // A crowd (owner, 14 Nov 2026: "in order not to over crowd the screen, we can add like 10 player on the screen at
+      // once, then if they pass 10 indicate the count"): every hunter heard nearby is kept track of (`heard`), but only the
+      // ten nearest are drawn (`others`; clanmates first), chosen again every second and a half as people move (one drawn
+      // stays until three nearer ones pass it, so no one flickers); the chip says how many more there are.
+      type HeardHunter = { name: string; look: AvatarLook; to: { lng: number; lat: number; heading: number }; mode: Mode; moving: boolean; seen: number };
+      const heard = new Map<string, HeardHunter>();
       const others = new Map<string, OtherHunter>();
+      const SHOW_MAX = 10;
+      const HEARD_MAX = 300;
+      let crowdAt = 0;
       // Clanmates (owner, 31 Oct 2026: "see each other on the map"): every one of them, wherever they are, as their own
       // hunter with a nameplate in the clan's colour (from the server every 20 s). One close enough to be seen live is
       // drawn by the live channel instead, and glides as they move.
@@ -3059,7 +3073,6 @@ export function GameMap({
       const areaChannels = new Map<string, import("@supabase/supabase-js").RealtimeChannel>();
       let myArea = "";
       let lastAnnounce = 0;
-      const MAX_SHOWN = 25;
 
       function joinAreas(ax: number, ay: number) {
         const want = new Set<string>();
@@ -3101,7 +3114,7 @@ export function GameMap({
         if (disposed || !r?.ok || !r.hunters) return;
         confirmed = new Map(r.hunters.map((h) => [h.id, { name: h.name, look: normalizeLook(h.look), lng: h.lng, lat: h.lat, mirrored: h.mirrored }]));
         // Anyone shown the server doesn't have near (gone, cloaked, or never real): off the map
-        for (const id of [...others.keys()]) if (!confirmedFor(id)) dropHunter(id);
+        for (const id of [...heard.keys()]) if (!confirmedFor(id)) dropHunter(id);
       }
       /** The server's word on a hunter heard (a Mirror's copy: its hunter's, while their Mirror lasts). */
       function confirmedFor(id: string) {
@@ -3120,33 +3133,87 @@ export function GameMap({
         if (geo.distanceM([c.lng, c.lat], [u.lng, u.lat]) > 1500) return; // not where the server has them
         u = { ...u, name: c.name, look: c.look, heading: Number.isFinite(u.heading) ? u.heading : 0 };
         const now = performance.now();
-        const known = others.get(u.id);
+        const to = { lng: u.lng, lat: u.lat, heading: u.heading };
+        const known = heard.get(u.id);
         if (known) {
-          known.to = { lng: u.lng, lat: u.lat, heading: u.heading };
-          known.mode = u.mode;
-          known.moving = u.moving;
-          known.seen = now;
+          Object.assign(known, { to, mode: u.mode, moving: u.moving, seen: now });
+          const o = others.get(u.id);
+          if (o) Object.assign(o, { to, mode: u.mode, moving: u.moving, seen: now });
           return;
         }
-        if (others.size >= MAX_SHOWN) return;
+        if (heard.size >= HEARD_MAX) return;
+        heard.set(u.id, { name: u.name, look: u.look, to, mode: u.mode, moving: u.moving, seen: now });
         lastAnnounce = 0; // a newcomer: let them see us straight away too
-        const mate = clanmates.ids.has(u.id) && clanmates.colour;
-        const far = clanmates.shown.get(u.id);
-        if (far) {
-          layer.remove(far);
-          clanmates.shown.delete(u.id);
-        }
-        const avatar = models.buildAvatar(u.look);
-        avatar.root.add(layer.billboard(models.makeNameplate(mate ? `${clanmates.crest} ${u.name}`.slice(0, 22) : String(u.name).slice(0, 20), mate || "#5B6475")));
-        const entity = layer.add({ object: avatar.root, lng: u.lng, lat: u.lat, heading: u.heading });
-        others.set(u.id, { entity, avatar, to: { lng: u.lng, lat: u.lat, heading: u.heading }, mode: u.mode, moving: u.moving, seen: now });
+        if (others.size < SHOW_MAX) drawHunter(u.id);
+        else crowdAt = 0; // full: choose again (they may be nearer than someone drawn)
       }
 
-      function dropHunter(id: string) {
+      /** One of the hunters heard, drawn on the map. */
+      function drawHunter(id: string) {
+        const h = heard.get(id);
+        if (!h || others.has(id)) return;
+        const mate = clanmates.ids.has(id) && clanmates.colour;
+        const far = clanmates.shown.get(id);
+        if (far) {
+          layer.remove(far);
+          clanmates.shown.delete(id);
+        }
+        const avatar = models.buildAvatar(h.look);
+        avatar.root.add(layer.billboard(models.makeNameplate(mate ? `${clanmates.crest} ${h.name}`.slice(0, 22) : String(h.name).slice(0, 20), mate || "#5B6475")));
+        const entity = layer.add({ object: avatar.root, lng: h.to.lng, lat: h.to.lat, heading: h.to.heading });
+        others.set(id, { entity, avatar, to: h.to, mode: h.mode, moving: h.moving, seen: h.seen, aside: { e: 0, n: 0 } });
+      }
+      /** Off the map, but still kept track of (one of the crowd beyond the nearest ten). */
+      function undrawHunter(id: string) {
         const o = others.get(id);
         if (!o) return;
         layer.remove(o.entity);
         others.delete(id);
+      }
+      /** Gone (said bye, went quiet, or the server doesn't have them near). */
+      function dropHunter(id: string) {
+        undrawHunter(id);
+        heard.delete(id);
+      }
+
+      /** Which ten are drawn: the nearest (clanmates first); and who stands where someone else does, a step aside. */
+      function chooseCrowd() {
+        const me = traveller.pos;
+        const ranked = [...heard.entries()]
+          .map(([id, h]) => ({ id, d: geo.distanceM([me.lng, me.lat], [h.to.lng, h.to.lat]) - (clanmates.ids.has(id) ? 1e7 : 0) }))
+          .sort((a, b) => a.d - b.d);
+        const keep = new Set(ranked.slice(0, SHOW_MAX + 3).map((r) => r.id)); // drawn ones stay a little longer
+        for (const id of [...others.keys()]) if (!keep.has(id)) undrawHunter(id);
+        // The nearest ten not drawn yet: into the room left, or in place of the furthest drawn one if clearly nearer than it
+        // (15 m, or a tenth, nearer: two at about the same distance don't keep swapping)
+        const want = ranked.slice(0, SHOW_MAX);
+        const wanted = new Set(want.map((r) => r.id));
+        const furthest = ranked.filter((r) => others.has(r.id) && !wanted.has(r.id)).reverse();
+        for (const r of want) {
+          if (others.has(r.id)) continue;
+          if (others.size >= SHOW_MAX) {
+            const f = furthest[0];
+            if (!f || r.d > f.d - Math.max(15, Math.abs(f.d) * 0.1)) continue;
+            furthest.shift();
+            undrawHunter(f.id);
+          }
+          drawHunter(r.id);
+        }
+        // A step aside: anyone within a body's width of someone already placed (or of us) goes round them in a ring
+        const step = 1.8 * layer.enlargement();
+        const placed: { lng: number; lat: number }[] = [{ lng: me.lng, lat: me.lat }];
+        const drawn = ranked.filter((r) => others.has(r.id));
+        for (const r of drawn) {
+          const o = others.get(r.id)!;
+          const k = placed.filter((p) => geo.distanceM([p.lng, p.lat], [o.to.lng, o.to.lat]) < step).length;
+          if (!k) o.aside = { e: 0, n: 0 };
+          else {
+            const ring = 1 + Math.floor((k - 1) / 6);
+            const a = ((k - 1) % 6) * (Math.PI / 3) + (ring - 1) * (Math.PI / 6);
+            o.aside = { e: Math.sin(a) * step * ring, n: Math.cos(a) * step * ring };
+          }
+          placed.push(o.to);
+        }
       }
 
       // The Phantom Cloak keeps the hunter off everyone's map; the Mirror of Many shows three copies (Date.now() times).
@@ -3464,16 +3531,19 @@ export function GameMap({
 
       /** Glide other hunters towards their latest announced spot; drop ones gone quiet. */
       function moveOthers(now: number, dt: number, t: number) {
-        if (others.size && now - confirmedAt > 20000) void confirmNear();
+        if (heard.size && now - confirmedAt > 20000) void confirmNear();
+        for (const [id, h] of heard) if (now - h.seen > 15000) dropHunter(id);
+        if (now - crowdAt > 1500) {
+          crowdAt = now;
+          chooseCrowd();
+        }
         const k = Math.min(1, 3 * dt);
-        for (const [id, o] of others) {
-          if (now - o.seen > 15000) {
-            dropHunter(id);
-            continue;
-          }
+        for (const o of others.values()) {
           const before = { lng: o.entity.lng, lat: o.entity.lat };
-          o.entity.lng += (o.to.lng - o.entity.lng) * k;
-          o.entity.lat += (o.to.lat - o.entity.lat) * k;
+          const toLng = o.to.lng + o.aside.e / (111320 * Math.cos((o.to.lat * Math.PI) / 180));
+          const toLat = o.to.lat + o.aside.n / 110574;
+          o.entity.lng += (toLng - o.entity.lng) * k;
+          o.entity.lat += (toLat - o.entity.lat) * k;
           o.entity.heading = geo.turnTowards(o.entity.heading ?? o.to.heading, o.to.heading, Math.min(1, 6 * dt));
           const moved = geo.distanceM([before.lng, before.lat], [o.entity.lng, o.entity.lat]);
           models.animateAvatar(
@@ -9432,7 +9502,8 @@ export function GameMap({
         if (now - lastHud > 100) {
           lastHud = now;
           const energy = Math.round(traveller.energy);
-          const hunters = others.size;
+          const hunters = heard.size;
+          const huntersShown = others.size;
           const radarLeft = Math.max(0, Math.round((radarUntil - Date.now()) / 1000));
           const turnTo = (p: Pointer | null) => (p ? { bearing: Math.round(p.bearing - map.getBearing()), metres: p.metres } : null);
           const radar = radarLeft > 0 ? { secondsLeft: radarLeft, relic: turnTo(radarSeen.relic), key: turnTo(radarSeen.key) } : null;
@@ -9444,10 +9515,11 @@ export function GameMap({
             h.energy === energy &&
             h.speedKmh === speedKmh &&
             h.hunters === hunters &&
+            h.huntersShown === huntersShown &&
             JSON.stringify(h.radar) === JSON.stringify(radar) &&
             JSON.stringify(h.dome) === JSON.stringify(dome)
               ? h
-              : { ...h, energy, speedKmh, hunters, radar, dome },
+              : { ...h, energy, speedKmh, hunters, huntersShown, radar, dome },
           );
         }
       };
@@ -10032,12 +10104,19 @@ export function GameMap({
                   )
                 )}
                 {hud.hunters > 0 && (
-                  <div className={`${chip} bg-ink`} aria-label={`${hud.hunters} other hunters nearby`} title="Hunters nearby">
+                  <div className={`${chip} bg-ink`} aria-label={hud.hunters > hud.huntersShown ? `${hud.hunters} other hunters nearby, the nearest ${hud.huntersShown} on the map` : `${hud.hunters} other hunters nearby`} title={hud.hunters > hud.huntersShown ? `Hunters nearby: the nearest ${hud.huntersShown} on the map, ${hud.hunters - hud.huntersShown} more around` : "Hunters nearby"} data-hunters={hud.hunters} data-hunters-shown={hud.huntersShown}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7FB2FF" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
                       <circle cx="9" cy="8" r="3.5" />
                       <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 4.5a3.5 3.5 0 0 1 0 7M21 20c0-2.6-1.6-4.8-4-5.6" />
                     </svg>
-                    {hud.hunters}
+                    {hud.hunters > hud.huntersShown ? (
+                      <>
+                        {hud.huntersShown}
+                        <span className="text-gold">+{hud.hunters - hud.huntersShown}</span>
+                      </>
+                    ) : (
+                      hud.hunters
+                    )}
                   </div>
                 )}
               </div>

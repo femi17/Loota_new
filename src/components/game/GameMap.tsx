@@ -1,7 +1,7 @@
 "use client";
 
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { LootaLogo } from "@/components/Logo";
 import { HuntInvite, MoveDemo, WelcomeTour, type OpenHunt } from "./WelcomeTour";
@@ -55,6 +55,7 @@ import { RadioPanel, useRadio } from "./RadioPanel";
 import { PenaltyCard, type Penalty } from "./PenaltyCard";
 import { QuarterScene } from "./QuarterScene";
 import { JailCard } from "./JailCard";
+import { ChallengeBar, ShowdownPanel, TrackerCard, type ShowdownApi, type ShowdownTarget, type ShowdownView, type TrackedHolder } from "./ShowdownPanel";
 import { UpdateBanner } from "./UpdateBanner";
 import { ScrollIcon, StoryScroll, useHuntStory } from "./StoryScroll";
 import { DETOUR_REACH_M, LampPanel, type LampActions, type LampDetour, type LampItem, type LampQuestion, type LampResult, type LampState } from "./LampPanel";
@@ -660,6 +661,24 @@ export function GameMap({
   const [flatActions, setFlatActions] = useState<FlatActions | null>(null);
   /** A landmark's guide or the Lamp's messenger, asking their question at the place on the map. */
   const [quizOpen, setQuizOpen] = useState<{ offer: QuizOffer; actions: QuizActions } | null>(null);
+  // Showdowns (owner, 14 Nov 2026): the one under way, the Tracker's key holders, who's near enough to challenge
+  const [showdown, setShowdown] = useState<{ view: ShowdownView; skew: number } | null>(null);
+  const [tracker, setTracker] = useState<{ holders: TrackedHolder[]; until: number } | null>(null);
+  const [challengeable, setChallengeable] = useState<ShowdownTarget[]>([]);
+  const showdownApi = useRef<ShowdownApi | null>(null);
+  // (what the showdown's screen calls: handed on to the map's own, at the time it's called)
+  const sdApi = useMemo<ShowdownApi>(
+    () => ({
+      challenge: (id) => showdownApi.current?.challenge(id) ?? Promise.resolve(null),
+      reply: (c) => showdownApi.current?.reply(c) ?? Promise.resolve(),
+      puzzle: () => showdownApi.current?.puzzle() ?? Promise.resolve(null),
+      solve: (a) => showdownApi.current?.solve(a) ?? Promise.resolve(null),
+      progress: (p) => showdownApi.current?.progress(p),
+      dismiss: () => showdownApi.current?.dismiss(),
+    }),
+    [],
+  );
+  const [mapBearing, setMapBearing] = useState(0);
   /** Buying coins (tap your coins); `notice`: how a payment on Paystack's own page went. */
   /** Who asks the Key Trial at the key's place on the map. */
   const [trialKeeper, setTrialKeeper] = useState("The Keeper");
@@ -878,6 +897,7 @@ export function GameMap({
           },
           // The other hunters drawn, and their names (scripts/tests/security-attack-test.mjs)
           __lootaOthers: () => [...others.keys()],
+          __lootaShowdown: () => sdView,
           __lootaCrowd: () => ({ heard: heard.size, shown: others.size, aside: [...others.values()].filter((o) => o.aside.e || o.aside.n).length }),
           // A police chase: how it stands, and a test steering it: the police blind, their time seeing you (scripts/tests/police-chase-browser-test.mjs)
           __lootaChase: () => (chase ? { event: chase.event, level: chase.level, seen: chase.seen, seenS: chase.seenS, searchLeft: chase.searchLeft, hiding: chase.hiding?.name ?? null, roadblock: chase.roadblock ? { lng: chase.roadblock.lng, lat: chase.roadblock.lat } : null, cops: chase.cops.map((c) => ({ kind: c.kind, lng: c.lng, lat: c.lat })), over: chase.over } : null),
@@ -2780,7 +2800,7 @@ export function GameMap({
               full: "Your tank has 65% or more: a jerry can won't fill it further. Keep it for when it runs dry.",
               gone: "That relic has no uses left.",
               position: "Move a little first, then try again.",
-              no_hunt: "The Lockdown Orb works during a live hunt you've joined: it locks the area of your current key.",
+              no_hunt: "That relic works during a live hunt you've joined (a Lockdown Orb locks your current key's area; a Tracker finds the key holders).",
               final_key: "The Lockdown Orb can't be used on a hunt's final key.",
               dome_up: "A dome is already up in this hunt. Only one at a time.",
             }[r.reason ?? ""] ?? "Couldn't use that relic."
@@ -2829,6 +2849,11 @@ export function GameMap({
           if (trip?.mode === "plane") return "Fast Pass: straight past the check-in queue. You board sooner.";
           return `Fast Pass: no waiting. Your ${trip ? TRANSIT[trip.mode].label.toLowerCase() : "ride"} is here: off you go.`;
         }
+        if (r.relic === "tracker" && r.until) {
+          trackerUntil = new Date(r.until).getTime();
+          trackerAt = 0;
+          return "🎯 Tracker on for 10 minutes: the hunt's key holders, which way and how far (exactly, within 300 m). Get within 50 m of one and challenge them for a key. They'll know someone's tracking…";
+        }
         if (r.relic === "radar" && r.until) {
           radarUntil = new Date(r.until).getTime();
           lastRadarPing = 0;
@@ -2840,6 +2865,176 @@ export function GameMap({
         }
         return "Used.";
       }
+
+      // ---- Showdowns (owner, 14 Nov 2026: "if you have a key now. It should in the leaderboard, which means, others
+      // know you have it, so there as to be a relic, that shows people your location. and when they are close to you. It
+      // will be like a showdown"): the Tracker's scan, who's near enough to challenge, and the showdown under way (asked
+      // every 4 s in a hunt, every second while one is on). See supabase/migrations/*_showdown.sql for the rules.
+      let trackerUntil = 0;
+      let trackerAt = 0;
+      let targetsAt = 0;
+      let targetsShown = false;
+      let sdView: ShowdownView | null = null;
+      let sdAt = 0;
+      let sdAsking = false;
+      let sdDismissed = 0;
+      let sdSkew = 0;
+      let sdProgressAt = 0;
+      let trackedWarnAt = -Infinity;
+      let trackerBearing = 0;
+      const sdLive = (v: ShowdownView | null) => !!v && (v.status === "challenged" || v.status === "running" || v.status === "fight");
+      const sdShow = () => setShowdown(sdView && sdView.id !== sdDismissed ? { view: sdView, skew: sdSkew } : null);
+      async function coinsNow() {
+        const { data } = await supabase.from("profiles").select("coins").eq("id", playerId).maybeSingle();
+        const c = (data as { coins?: number } | null)?.coins;
+        if (c != null) setHud((h) => ({ ...h, coins: Number(c) }));
+      }
+      async function showdownPoll(now: number) {
+        sdAsking = true;
+        sdAt = now;
+        const { data } = await supabase.rpc("showdown_mine");
+        sdAsking = false;
+        const r = data as { showdown: ShowdownView | null; tracked: boolean } | null;
+        if (!r || disposed) return;
+        if (r.tracked && performance.now() - trackedWarnAt > 180_000) {
+          trackedWarnAt = performance.now();
+          say("👁 Someone in the hunt has a Tracker out near you: they can see where you are, and they're after your key. Keep moving, or be ready for a showdown.", true);
+        }
+        const prev = sdView;
+        const v = r.showdown;
+        sdView = v;
+        if (v) {
+          sdSkew = Date.parse(v.now) - Date.now();
+          if (v.role === "target" && v.status === "challenged" && prev?.id !== v.id) {
+            cue("siren");
+            say(`⚔️ ${v.thief.name} challenges you to a showdown for your Key ${v.keyN}!`, true);
+          }
+          if (!sdLive(v) && (!prev || prev.id !== v.id || sdLive(prev))) {
+            // How it ended: the keys moved (the hunt card), the coins, a thief that lost thrown 2 km away
+            window.dispatchEvent(new Event("loota:hunt-changed"));
+            void coinsNow();
+            if (v.role === "thief" && v.thrown && v.status === "defended") placeAt(v.thrown.lng, v.thrown.lat);
+          }
+        }
+        sdShow();
+      }
+      async function trackerPoll(now: number) {
+        trackerAt = now;
+        const { data } = await supabase.rpc("tracker_scan");
+        const r = data as { active: boolean; until?: string; holders?: TrackedHolder[] } | null;
+        if (!r || disposed) return;
+        if (!r.active) {
+          trackerUntil = 0;
+          setTracker(null);
+          return;
+        }
+        if (r.until) trackerUntil = Date.parse(r.until);
+        setTracker({ holders: r.holders ?? [], until: trackerUntil });
+      }
+      async function targetsPoll() {
+        const { data } = await supabase.rpc("showdown_targets");
+        if (disposed) return;
+        const list = (data ?? []) as ShowdownTarget[];
+        targetsShown = list.length > 0;
+        setChallengeable(list);
+      }
+      function showdownTick(now: number) {
+        if (!huntId || disposed) return;
+        const live = sdLive(sdView);
+        if (!sdAsking && now - sdAt > (live ? 1000 : 4000)) void showdownPoll(now);
+        if (trackerUntil > Date.now() && now - trackerAt > 4000) void trackerPoll(now);
+        if (trackerUntil) {
+          const b = Math.round(map.getBearing());
+          if (b !== trackerBearing) {
+            trackerBearing = b;
+            setMapBearing(b); // (the Tracker's arrows turn with the map)
+          }
+        }
+        else if (trackerUntil && trackerUntil <= Date.now()) {
+          trackerUntil = 0;
+          setTracker(null);
+        }
+        // Someone with a key near enough to challenge: only asked when another hunter is about (heard within 70 m)
+        if (now - targetsAt > 4000) {
+          targetsAt = now;
+          const near = !live && !ride && [...heard.values()].some((h) => geo.distanceM([h.to.lng, h.to.lat], [traveller.pos.lng, traveller.pos.lat]) <= 70);
+          if (near) void targetsPoll();
+          else if (targetsShown) {
+            targetsShown = false;
+            setChallengeable([]);
+          }
+        }
+        // In the fight: standing still, both of them
+        if (sdView?.status === "fight") {
+          traveller.v = 0;
+          stuckUntil = Math.max(stuckUntil, performance.now() + 1500);
+        }
+      }
+      if (huntId) void trackerPoll(0); // a Tracker still on from before
+      showdownApi.current = {
+        challenge: async (id) => {
+          await savePosition();
+          const { data } = await supabase.rpc("showdown_challenge", { p_target: id });
+          const r = data as { ok: boolean; reason?: string; stake?: number; showdown?: ShowdownView } | null;
+          if (r?.ok && r.showdown) {
+            sdView = r.showdown;
+            sdSkew = Date.parse(r.showdown.now) - Date.now();
+            sdShow();
+            setChallengeable([]);
+            targetsShown = false;
+            void coinsNow();
+            cue("siren");
+            return null;
+          }
+          const why: Record<string, string> = {
+            far: "Get within 50 m of them first.",
+            coins: `A showdown needs ${r?.stake ?? 50} coins at stake.`,
+            limit: "You've had your five showdowns today.",
+            busy_me: "Finish what you're doing first.",
+            fresh_key: "They've only just won that key: it's safe for a few minutes.",
+            shielded: "They're shielded after a showdown.",
+            done: "You've already had your showdown with them in this hunt.",
+            busy: "They're busy right now.",
+            offline: "They're not playing right now.",
+            no_key: "They have no key to take.",
+            no_hunt: "Showdowns are for a live hunt you've joined.",
+          };
+          const msg = why[r?.reason ?? ""] ?? "Couldn't challenge them just now.";
+          say(msg, true);
+          return msg;
+        },
+        reply: async (choice) => {
+          if (!sdView) return;
+          const { data } = await supabase.rpc("showdown_reply", { p_id: sdView.id, p_choice: choice });
+          const r = data as { ok: boolean; showdown?: ShowdownView } | null;
+          if (r?.showdown) {
+            sdView = r.showdown;
+            sdShow();
+          }
+        },
+        puzzle: async () => {
+          if (!sdView) return null;
+          const res = await fetch("/api/showdown/puzzle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: sdView.id }) });
+          return res.ok ? ((await res.json()) as { kind: string; puzzle: unknown }) : null;
+        },
+        solve: async (answer) => {
+          if (!sdView) return null;
+          const res = await fetch("/api/showdown/solve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: sdView.id, answer }) });
+          const r = res.ok ? ((await res.json()) as { result?: string; triesLeft?: number; rightOf?: { right: number; of: number } | null; reason?: string }) : null;
+          void showdownPoll(performance.now());
+          return r;
+        },
+        progress: (share) => {
+          const t = performance.now();
+          if (!sdView || sdView.status !== "fight" || t - sdProgressAt < 1000) return;
+          sdProgressAt = t;
+          void supabase.rpc("showdown_progress", { p_id: sdView.id, p_progress: share }).then(() => undefined);
+        },
+        dismiss: () => {
+          if (sdView) sdDismissed = sdView.id;
+          sdShow();
+        },
+      };
 
       async function pingRadar() {
         const { data } = await supabase.rpc("radar_ping");
@@ -9497,6 +9692,7 @@ export function GameMap({
         pulseTick(now, t);
         tiredTick(now);
         chaseTick(now, dt, t);
+        showdownTick(now);
         helperTick(dt, t);
         void roadTick(now);
 
@@ -10503,6 +10699,9 @@ export function GameMap({
             <UpdateBanner />
             {penalty && <PenaltyCard penalty={penalty} onClose={() => setPenalty(null)} />}
             {hud.jail && <JailCard jail={hud.jail} coins={hud.coins} onBail={() => actions.current?.payBail()} />}
+            {tracker && !showdown && <TrackerCard holders={tracker.holders} until={tracker.until} mapBearing={mapBearing} />}
+            {!showdown && challengeable.length > 0 && <ChallengeBar targets={challengeable} stake={50} busy={hud.busy} onChallenge={(id) => void sdApi.challenge(id)} />}
+            {showdown && <ShowdownPanel view={showdown.view} skew={showdown.skew} api={sdApi} />}
             {houseOpen && huntId && (
               <QuarterScene
                 huntId={huntId}

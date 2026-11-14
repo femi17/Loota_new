@@ -22,6 +22,7 @@ const USE_LABEL: Record<RelicId, string | null> = {
   shield: null,
   fast_pass: "Use",
   lockdown_orb: "Raise dome",
+  tracker: "Track",
 };
 
 /** What each Wonder's button says (the Djinn's Coin works by itself). */

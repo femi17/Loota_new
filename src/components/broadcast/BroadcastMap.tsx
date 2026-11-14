@@ -21,6 +21,7 @@ import { KeyWorldView, type KeyWorldData, type WorldTrack } from "./KeyWorldView
 import { jamLines } from "@/game/traffic";
 import { loadSignals, signalState, signalsNear, type Signal } from "@/game/signals";
 import { ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, roadCellOf, type RoadCellData, type RoadCellFile } from "@/game/roadData";
+import { BroadcastShowdown, type BroadcastShowdownData } from "@/components/game/ShowdownPanel";
 
 type Hunter = {
   id: string;
@@ -71,6 +72,8 @@ type State = {
   visits?: Visit[];
   /** Hunters in a cell (the idling law): when they went in and come out (served or bailed), what was impounded. */
   /** Police chases (13 Nov 2026): the police's track ([ms, car, lng, lat, heading]) and what happened ([ms, what, detail]). */
+  /** Showdowns going on (and just ended): a thief against a key holder (14 Nov 2026). */
+  showdowns?: BroadcastShowdownData[];
   chases?: {
     userId: string;
     event: number;
@@ -182,6 +185,7 @@ function FitBox({ children, grow = 1 }: { children: React.ReactNode; /** As much
 export function BroadcastMap({ huntId }: { huntId: string }) {
   const container = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<State | null>(null);
+  const [srvSkew, setSrvSkew] = useState(0); // the server's clock minus this one (for the showdown card's clock)
   const [view, setView] = useState<View>({ kind: "field" });
   const [auto, setAuto] = useState(true);
   // Kept for this tab, so a reload onto a new build carries on with the same hunter followed (and the auto camera as it was)
@@ -1010,7 +1014,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (first) setFailed(false);
         latest = data as State;
         setState(latest);
-        if (latest.now) skew = Date.parse(latest.now) - Date.now();
+        if (latest.now) {
+          skew = Date.parse(latest.now) - Date.now();
+          setSrvSkew((was) => (Math.abs(was - skew) > 300 ? skew : was));
+        }
         const polledAt = latest.now ? Date.parse(latest.now) : Date.now() + skew;
         for (const h of latest.hunters) {
           const resting = !!h.restingSince;
@@ -2016,6 +2023,12 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         </>
       )}
       {/* The followed hunter fainted: the ambulance, the ride, the ward (owner, 9 Nov 2026) */}
+      {/* A showdown (owner, 14 Nov 2026): the followed hunter's, or any going on when watching the whole field */}
+      {(() => {
+        const all = state?.showdowns ?? [];
+        const sd = view.kind === "follow" ? all.find((x) => x.thief === view.id || x.target === view.id) : all.find((x) => x.status === "challenged" || x.status === "running" || x.status === "fight") ?? all[0];
+        return sd ? <BroadcastShowdown key={sd.id} sd={sd} skew={srvSkew} /> : null;
+      })()}
       {chaseShown && view.kind === "follow" && (
         <div className="pointer-events-none absolute left-1/2 top-16 z-20 -translate-x-1/2" role="status" aria-label="Police chase" data-chase-shown={chaseShown.status} data-chase-stars={chaseShown.stars}>
           <div className={`flex flex-col items-center gap-0.5 rounded-2xl px-5 py-2 text-white shadow-xl ring-2 ${chaseShown.status === "caught" ? "bg-danger ring-white/40" : chaseShown.status === "escaped" || chaseShown.status === "called_off" ? "bg-[#1E9E62] ring-white/40" : "bg-ink/95 ring-[#3D7BFF]"}`}>

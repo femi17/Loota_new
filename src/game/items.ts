@@ -2,7 +2,7 @@
 
 export type ItemKind = "coins" | "cache" | "intel" | "relic";
 
-export type RelicId = "rain_charm" | "shield" | "radar" | "fast_pass" | "second_wind" | "jerry_can" | "lockdown_orb";
+export type RelicId = "rain_charm" | "shield" | "radar" | "fast_pass" | "second_wind" | "jerry_can" | "lockdown_orb" | "tracker";
 
 export const RELICS: Record<RelicId, { name: string; colour: string; effect: string; rarity: "Common" | "Rare" | "Legendary" }> = {
   shield: { name: "Shield", colour: "#3DD68C", effect: "Blocks one weather or traffic effect.", rarity: "Common" },
@@ -11,6 +11,8 @@ export const RELICS: Record<RelicId, { name: string; colour: string; effect: str
   rain_charm: { name: "Rain Charm", colour: "#8FC7E8", effect: "Rain over 5 km for 10 minutes. Slows walkers and bikes.", rarity: "Common" },
   radar: { name: "Radar", colour: "#F4B41A", effect: "Points to the nearest relic for 5 minutes.", rarity: "Rare" },
   fast_pass: { name: "Fast Pass", colour: "#C3A6FF", effect: "Skip the wait for one bus or train, or a plane's check-in queue.", rarity: "Rare" },
+  // Showdowns (owner, 14 Nov 2026: "there as to be a relic, that shows people your location")
+  tracker: { name: "Tracker", colour: "#FF4D6D", effect: "For 10 minutes in a hunt: which way and how far every key holder is (exactly, within 300 m). Get within 50 m and challenge them to a showdown for a key.", rarity: "Rare" },
   lockdown_orb: {
     name: "Lockdown Orb",
     colour: "#9B5DE5",
@@ -26,6 +28,7 @@ export const RELIC_ICON: Record<RelicId, string> = {
   jerry_can: "⛽",
   rain_charm: "🌧️",
   radar: "📡",
+  tracker: "🎯",
   fast_pass: "🎟️",
   lockdown_orb: "🔮",
 };
@@ -37,6 +40,7 @@ export const RELIC_WEIGHTS: [RelicId, number][] = [
   ["jerry_can", 20],
   ["radar", 10],
   ["fast_pass", 10],
+  ["tracker", 6],
   ["rain_charm", 5],
 ];
 

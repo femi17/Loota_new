@@ -1606,7 +1606,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               const f = Math.max(0, Math.min(1, (serverNow - dep) / Math.max(1, secs * 1000)));
               zoom = trainZoom(total, secs, trainAlong(f) * total, p.lat, 16);
             }
-            if (r && (ride === "bus" || ride === "taxi")) {
+            if (r && ride === "bus") {
+              // (a taxi: as close as a car, 17, as on their screen)
               // As far back as its speed between stops needs, as on the hunter's screen (owner, 9 Nov 2026: "the bus was
               // just moving too fast"): its fastest so far from its motion (a city bus or taxi stops and starts), else about
               // half again its average (a long-distance bus runs at an even speed: its average)

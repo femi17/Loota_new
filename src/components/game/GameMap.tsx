@@ -4164,7 +4164,8 @@ export function GameMap({
 
       /** How close the camera is during a trip: as in play for a bus, further back for a train, high above for a flight. */
       function rideZoom() {
-        if (ride && (ride.trip.mode === "bus" || ride.trip.mode === "taxi")) {
+        if (ride?.trip.mode === "taxi") return GAME_ZOOM; // a taxi: as close as driving your own car (owner, 14 Nov 2026: "normal speed like the person is driving a car")
+        if (ride && ride.trip.mode === "bus") {
           // Pulled back as far as its speed between stops needs: a steady pace on the screen (owner, 9 Nov 2026)
           const rideMs = ride.arrives - ride.departs;
           const plan = ride.way?.plan;
@@ -5884,8 +5885,8 @@ export function GameMap({
           metres,
           fare: Math.ceil(transitFare("taxi", metres) * (night ? NIGHT_TAXI_FARE : 1)),
           driverSeconds: Math.max(15, (cumulativeOf(driverPath).at(-1)! / DRIVER_SPEED) * slow),
-          rideSeconds: (metres / transitSpeedFor("taxi", metres)) * slow,
-          note: [night ? "🌙 Night fare (+30%)." : "", slow >= 1.5 ? "🚦 Rush hour: traffic makes it slower." : ""].filter(Boolean).join(" ") || undefined,
+          rideSeconds: metres / transitSpeedFor("taxi", metres), // at a car's speed, as driving (board_taxi; owner, 14 Nov 2026)
+          note: [night ? "🌙 Night fare (+30%)." : "", slow >= 1.5 ? "🚦 Rush hour: your driver takes longer to come." : ""].filter(Boolean).join(" ") || undefined,
         };
       }
 

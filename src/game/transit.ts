@@ -15,8 +15,8 @@ export const TRANSIT: Record<TransitMode, { label: string; icon: string; kmh: nu
   taxi: { label: "Taxi", icon: "🚕", kmh: 45, wait: "Your taxi is on its way", reachM: 35 },
 };
 
-/** A taxi driver fetching the player drives at 30 km/h in town (driver_speed in the database). */
-export const DRIVER_SPEED = (30 / 3.6) * TIME_SCALE;
+/** A taxi driver fetching the player drives at a car's 45 km/h (driver_speed in the database; was 30 until 14 Nov 2026). */
+export const DRIVER_SPEED = (45 / 3.6) * TIME_SCALE;
 
 /** City buses run up to 40 km from any stop; long-distance buses go further, between motor parks only. */
 export const BUS_RANGE_M = 40_000;

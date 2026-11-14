@@ -216,7 +216,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
    * game's board and how it ended.
    */
   const [sceneCard, setSceneCard] = useState<
-    | { kind: "ask"; who: string; options: string[]; pick: string | null }
+    | { kind: "ask"; who: string; options: string[]; pick: string | null; question: string | null; asker: string }
     | { kind: "game"; who: string; game: RoadGame; result: RoadGameResult | null; live: RoadGameLive; left: number | null; total: number; shuffling: boolean }
     | { kind: "puzzle"; who: string; n: number; puzzleKind: string; puzzle: unknown; left: number; progress: number; result: { right?: boolean; late?: boolean; outcome?: string | null } | null; answers: Record<string, unknown> | null }
     | null
@@ -306,6 +306,109 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         attributionControl: { compact: true, customAttribution: WEATHER_CREDIT },
       });
       foldAttribution(map);
+
+      // ---- The map ahead, fetched before the camera gets there (owner, 14 Nov 2026: "The map sometimes on the broadcast
+      // takes time to load, it will just look the avatar is travelling on a plain"). A tile the map hasn't got takes a
+      // second or so to come (more on a slow line), and a hunter on a motorbike crosses one in a few seconds on the game's
+      // clock: so the tiles on the way (along their bus, train or plane's route; else ahead of them the way they're going)
+      // and round every hunter (to switch to any of them) are fetched beforehand, quietly, a few at a time. The tile server
+      // lets them be kept for years, so the map then has them straight from the browser's cache.
+      let tileUrl: string | null = null;
+      map.once("load", () => {
+        const src = map.getSource("openmaptiles") as { tiles?: string[] } | undefined;
+        tileUrl = src?.tiles?.[0] ?? null;
+      });
+      const fetchedTiles = new Set<string>();
+      const tileQueue: string[] = [];
+      let tilesInFlight = 0;
+      const tileOf = (lng: number, lat: number, z: number) => {
+        const n = 2 ** z;
+        const r = (Math.max(-85, Math.min(85, lat)) * Math.PI) / 180;
+        return { x: Math.floor(((lng + 180) / 360) * n), y: Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n) };
+      };
+      /** The tiles at zoom z under these spots (and `ring` tiles round each), queued to fetch; the first wanted first. */
+      const wantTiles = (spots: [number, number][], z: number, ring = 0, first = false) => {
+        const add: string[] = [];
+        for (const [lng, lat] of spots) {
+          const { x, y } = tileOf(lng, lat, z);
+          for (let dx = -ring; dx <= ring; dx++)
+            for (let dy = -ring; dy <= ring; dy++) {
+              const key = `${z}/${x + dx}/${y + dy}`;
+              if (fetchedTiles.has(key) || tileQueue.includes(key) || add.includes(key)) continue;
+              add.push(key);
+            }
+        }
+        if (first) tileQueue.unshift(...add);
+        else tileQueue.push(...add);
+        if (tileQueue.length > 400) tileQueue.length = 400;
+        pumpTiles();
+      };
+      const pumpTiles = () => {
+        while (tileUrl && tilesInFlight < 4 && tileQueue.length) {
+          const key = tileQueue.shift()!;
+          if (fetchedTiles.has(key)) continue;
+          fetchedTiles.add(key);
+          if (fetchedTiles.size > 5000) fetchedTiles.clear();
+          const [z, x, y] = key.split("/");
+          tilesInFlight++;
+          void fetch(tileUrl.replace("{z}", z).replace("{x}", x).replace("{y}", y))
+            .then((r) => r.arrayBuffer())
+            .catch(() => fetchedTiles.delete(key)) // (tried again when next wanted)
+            .finally(() => {
+              tilesInFlight--;
+              pumpTiles();
+            });
+        }
+      };
+      let prefetchAt = 0;
+      let prefetchAllAt = 0;
+      let prefetchLast: { lng: number; lat: number; at: number; v: number } | null = null;
+      /** The tiles on the followed hunter's way, and (every 10 s) round every hunter. */
+      const prefetch = (now: number, p: { lng: number; lat: number; heading: number } | null, r: { trip: Trip; path: [number, number][]; cum: number[] } | null) => {
+        if (!tileUrl || now - prefetchAt < 1500) return;
+        prefetchAt = now;
+        if (p) {
+          if (r && r.path.length > 1) {
+            // On a bus, train or plane: along its route from where it is now (a plane's from high up too, as it's shown)
+            let near = 0, best = Infinity;
+            for (let i = 0; i < r.path.length; i++) {
+              const d = geo.distanceM(r.path[i], [p.lng, p.lat]);
+              if (d < best) [best, near] = [d, i];
+            }
+            const reach = r.trip.mode === "plane" ? Infinity : 30_000;
+            const ahead: [number, number][] = [];
+            for (let i = near; i < r.path.length && r.cum[i] - r.cum[near] <= reach; i++) ahead.push(r.path[i]);
+            // between the route's points (it's thinned): every ~1 km, so no tile along it is missed
+            const along: [number, number][] = [];
+            for (let i = 0; i < ahead.length; i++) {
+              along.push(ahead[i]);
+              const b = ahead[i + 1];
+              if (!b) break;
+              const steps = Math.floor(geo.distanceM(ahead[i], b) / 1000);
+              for (let k = 1; k <= steps; k++) along.push([ahead[i][0] + ((b[0] - ahead[i][0]) * k) / (steps + 1), ahead[i][1] + ((b[1] - ahead[i][1]) * k) / (steps + 1)]);
+            }
+            if (r.trip.mode === "plane") {
+              wantTiles(along, 10, 1, true);
+              wantTiles([r.path[r.path.length - 1]], 14, 1); // where it lands
+            } else wantTiles(along, 14, 1, true);
+          } else {
+            // On the road: round them, and ahead the way they're going, as far as their speed takes them in a minute
+            const v = prefetchLast ? geo.distanceM([prefetchLast.lng, prefetchLast.lat], [p.lng, p.lat]) / Math.max(0.5, (now - prefetchLast.at) / 1000) : 0;
+            const speed = prefetchLast ? prefetchLast.v * 0.6 + Math.min(300, v) * 0.4 : 0;
+            prefetchLast = { lng: p.lng, lat: p.lat, at: now, v: speed };
+            const reach = Math.max(1500, speed * 60);
+            const spots: [number, number][] = [[p.lng, p.lat]];
+            for (let m = 700; m <= reach; m += 700)
+              spots.push([p.lng + (Math.sin(p.heading) * m) / (111320 * Math.cos((p.lat * Math.PI) / 180)), p.lat + (Math.cos(p.heading) * m) / 110574]);
+            wantTiles(spots, 14, 1, true);
+          }
+        }
+        if (now - prefetchAllAt > 10_000 && latest) {
+          prefetchAllAt = now;
+          const all = latest.hunters.filter((h) => h.lng != null && h.lat != null).slice(0, 30).map((h) => [h.lng!, h.lat!] as [number, number]);
+          wantTiles(all, 14, 1);
+        }
+      };
 
       // ---- Where each hunter is: live updates if fresh, otherwise their last saved spot.
       let latest: State | null = null;
@@ -605,7 +708,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, parked: parkedCar ? { key: parkedCar.key, lng: parkedCar.entity.lng, lat: parkedCar.entity.lat } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, parked: parkedCar ? { key: parkedCar.key, lng: parkedCar.entity.lng, lat: parkedCar.entity.lat } : null, tiles: fetchedTiles.size, tilesQueued: tileQueue.length, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -833,13 +936,19 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // ---- The show's state, every few seconds; new events make a banner.
       const seen = new Set<string>();
       let first = true;
+      let misses = 0; // in a row, before the first answer
       async function poll() {
         const { data, error } = await supabase.rpc("broadcast_state", { p_hunt: huntId });
         if (disposed) return;
         if (error || !data) {
-          if (first) setFailed(true);
+          // Only when it's refused (not the owner), the hunt isn't there, or it's failed a minute running: a slow or busy
+          // moment (a timeout) is tried again at the next poll, not the end of the broadcast
+          misses++;
+          if (first && (!error || /Owner only/i.test(error.message ?? "") || misses >= 15)) setFailed(true);
           return;
         }
+        misses = 0;
+        if (first) setFailed(false);
         latest = data as State;
         setState(latest);
         if (latest.now) skew = Date.parse(latest.now) - Date.now();
@@ -1181,9 +1290,11 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         const v = viewRef.current;
         const viewKey = v.kind === "follow" ? `follow:${v.id}` : "field";
         if (v.kind === "follow" && s.hunters.find((x) => x.id === v.id)?.place != null) setView({ kind: "field" });
+        if (v.kind !== "follow") prefetch(t, null, null); // (round every hunter, to switch to any of them)
         if (v.kind === "follow") {
           const h = s.hunters.find((x) => x.id === v.id);
           const p = h ? shown.get(h.id) : null;
+          prefetch(t, p ?? null, h ? tripOf(h.id) : null);
           const r = h ? tripOf(h.id) : null;
           const ride = r ? r.trip.mode : null;
           if (h && p) {
@@ -1584,10 +1695,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             if (sc) {
               let ask: { at: number; options: string[]; pick: string | null; pickAt: number | null } | null = null;
               let game: { at: number; game: RoadGame; result: RoadGameResult | null; live: RoadGameLive } | null = null;
-              let them: { at: number; len: number } | null = null; // what was last said to them
+              let them: { at: number; len: number; text: string } | null = null; // what was last said to them
               for (const l of sc.lines) {
                 if (l[0] > T) break;
-                if (l[1] === "them") them = { at: l[0], len: String(l[2]).length };
+                if (l[1] === "them") them = { at: l[0], len: String(l[2]).length, text: String(l[2]) };
                 if (l[1] === "ask") {
                   const options = parse<string[]>(l[2]);
                   if (options) ask = { at: l[0], options, pick: null, pickAt: null };
@@ -1619,17 +1730,18 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 card = { kind: "game", who: h.name, game: game.game, result: game.result, live: game.live, left, total, shuffling };
               }
               else if (ask) {
-                // One after the other, as on their own screen (owner, 13 Nov 2026: "Must this 2 show together on the
-                // screen, can it be one after the other, like the user's page"): what's said first, long enough to read;
-                // then the replies on offer in its place; the one picked a moment; then the caption again with the reply.
-                // (The pick may already be known: the broadcast plays a few seconds behind.)
+                // The question and its replies in one card (owner, 14 Nov 2026: "In the street quiz, the question should
+                // not have a separate window from the option, both should be one"), in place of the caption (owner, 13 Nov:
+                // "one after the other, like the user's page"): from when it's asked; the one picked a moment, at least
+                // long enough to read the question (the pick may already be known: the broadcast plays a few seconds behind).
                 const a = ask;
                 const picked = a.pickAt ?? sc.lines.find((l) => l[1] === "pick" && l[0] >= a.at)?.[0] ?? null;
-                const readEnd = them ? them.at + Math.min(7000, 1500 + them.len * 45) : a.at;
-                // (a quick reply: the choices come sooner, but the line still has 2.5 s to itself, and the choices 3.5 s)
-                const from = Math.max(a.at, them ? them.at + 2500 : a.at, Math.min(readEnd, picked !== null ? picked - 1500 : Infinity));
-                const till = picked !== null ? Math.max(picked + 2500, from + 3500) : Infinity;
-                if (T >= from && T < till) card = { kind: "ask", who: h.name, options: a.options, pick: a.pickAt !== null ? a.pick : null };
+                const q = them && them.at <= a.at + 500 ? them : null; // what they were asked
+                const from = Math.max(a.at, q?.at ?? a.at);
+                const readFor = q ? Math.min(7000, 2500 + q.len * 45) : 3500;
+                const till = picked !== null ? Math.max(picked + 2500, from + readFor) : Infinity;
+                if (T >= from && T < till)
+                  card = { kind: "ask", who: h.name, options: a.options, pick: a.pickAt !== null && T >= a.pickAt ? a.pick : null, question: q?.text ?? null, asker: sc.data.keeperName ?? "" };
               }
             }
             if (world) {
@@ -1948,9 +2060,15 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex flex-col items-center gap-3 px-4" data-lower-third>
           {sceneCard?.kind === "ask" ? (
             <div ref={captionBox} className="w-full max-w-2xl rounded-2xl bg-ink/92 px-4 py-3 text-paper shadow-2xl ring-2 ring-gold/70" role="status" aria-label="Scene card">
-              <p className="mb-2 text-xs font-extrabold uppercase tracking-widest text-gold">
+              <p className="mb-1 text-xs font-extrabold uppercase tracking-widest text-gold">
                 {caption.icon} {sceneCard.pick ? `${sceneCard.who} chose` : `${sceneCard.who} is choosing…`}
               </p>
+              {sceneCard.question && (
+                <p className="mb-2 text-lg leading-snug" data-ask-question>
+                  {sceneCard.asker && <b className="text-gold">{sceneCard.asker}: </b>}
+                  {sceneCard.question}
+                </p>
+              )}
               <div className="grid gap-1.5 sm:grid-cols-3">
                 {sceneCard.options.map((o) => (
                   <span

@@ -98,21 +98,18 @@ try {
   for (let i = 0; i < 40 && !(built?.scene?.scale > 1 && /red traffic light/.test(first ?? "")); i++) {
     await wait(500);
     built = await shown();
-    first = await caption();
+    first = (await show.evaluate((nl) => document.querySelector('[aria-label="Scene card"]')?.innerText.split(nl).join(" | ") ?? null, NL)) ?? (await caption()); // (the question: in the card with its answers, or a caption)
   }
   check("on the broadcast: the checkpoint built at the kerb, the camera looking in", !!built?.scene && built.scene.scale > 1, JSON.stringify(built?.scene));
 
   const card = () => show.evaluate((nl) => document.querySelector('[aria-label="Scene card"]')?.innerText.split(nl).join(" | ") ?? null, NL);
-  // One after the other, as on their own screen (owner, 13 Nov 2026: "Must this 2 show together on the screen, can it be
-  // one after the other, like the user's page"): the officer's question alone first; then the answers on offer in its
-  // place; the one picked; then the caption again with the answer
-  const alone = await card();
-  check("…first the caption alone: a police checkpoint, the officer's question", /police checkpoint/i.test(first ?? "") && /red traffic light/.test(first ?? "") && !alone, `${first} · card: ${alone}`);
-  await show.screenshot({ path: `${OUT}/broadcast-scene-1-question.png` });
+  // The question and its answers in one card (owner, 14 Nov 2026: "In the street quiz, the question should not have a
+  // separate window from the option, both should be one"), in place of the caption (one box at a time, 13 Nov); the one
+  // picked; then the caption again with the answer
   let offered = null;
   for (let i = 0; i < 30 && !/Go faster/.test(offered ?? ""); i++) { await wait(300); offered = await card(); }
   const capThen = await caption();
-  check("…then the answers on offer, in its place (the caption gone meanwhile)", /Go faster/.test(offered ?? "") && /Stop/.test(offered ?? "") && /Turn left only/.test(offered ?? "") && !capThen, `${offered} · caption: ${capThen}`);
+  check("…the officer's question and the answers on offer, in one card (no caption beside it)", /red traffic light/.test(offered ?? "") && /Go faster/.test(offered ?? "") && /Stop/.test(offered ?? "") && /Turn left only/.test(offered ?? "") && !capThen, `${offered} · caption: ${capThen} · first: ${first}`);
   await show.screenshot({ path: `${OUT}/broadcast-scene-1b-choosing.png` });
   let chose = null;
   for (let i = 0; i < 30 && !/chose/i.test(chose ?? ""); i++) { await wait(300); chose = await card(); }
@@ -172,8 +169,12 @@ try {
   await show.screenshot({ path: `${OUT}/broadcast-scene-4-won.png` });
 
   const { data: saved } = await admin.from("hunter_scenes").select("data, lines, ended_ms").eq("user_id", hunter.id).order("started_ms", { ascending: true }).limit(1).single();
+  if (process.env.DEBUG_LINES) { const t0 = saved?.lines?.[0]?.[0] ?? 0; console.log("LINES", JSON.stringify((saved?.lines ?? []).map((l) => [l[0] - t0, l[1], String(l[2]).slice(0, 50)]))); }
   check("saved: its model, where it stands, every line, and its end", saved?.data?.model?.make === "makeCheckpointScene" && !!saved.data.origin && saved.lines.filter((l) => l[1] === "them" || l[1] === "you").length >= 3 && saved.lines.some((l) => l[1] === "ask") && saved.lines.some((l) => l[1] === "pick") && !!saved.ended_ms,
     `${saved?.data?.model?.make}, ${saved?.lines?.length} lines, ended ${!!saved?.ended_ms}`);
+  // The map ahead fetched before the camera gets there (owner, 14 Nov 2026: "it will just look the avatar is travelling on a plain")
+  const tiles = await show.evaluate(() => window.__broadcastShown?.().tiles ?? 0);
+  check("the broadcast fetched the map tiles on the hunter's way beforehand", tiles >= 9, `${tiles} tiles`);
   check("no page errors", problems.length === 0, problems.join(" / "));
 } catch (e) {
   fails++;

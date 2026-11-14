@@ -46,6 +46,8 @@ try {
     const problems = [];
     page.on("pageerror", (e) => problems.push(e.message));
     await page.setCookie(...[...who.jar].map(([n, value]) => ({ name: n, value, domain: "localhost", path: "/" })));
+    // (the welcome and the hunt's story intro already seen)
+    await page.evaluateOnNewDocument((id, h) => { try { localStorage.setItem(`loota:welcome:${id}`, "1"); if (h) localStorage.setItem(`loota:riddle-seen:${h}`, "1"); } catch {} }, who.id, huntId);
     await page.goto("http://localhost:3000/play", { waitUntil: "domcontentloaded", timeout: 120000 });
     await wait(18000);
     const text = (sel) => page.evaluate((s, nl) => document.querySelector(s)?.innerText.split(nl).join(" | ") ?? null, sel, NL);
@@ -107,6 +109,8 @@ try {
   const sBefore = await coins(seeker.id);
   await s.clickWhenThere("I'm ready!");
   await s.textWhen('[role="dialog"][aria-label="The silver pouch"]', /s left/);
+  await wait(1500);
+  await s.page.screenshot({ path: `${OUT}/quiz-4b-question.png` });
   const { data: claim } = await admin.from("detour_claims").select("question").eq("detour_id", detourId).eq("user_id", seeker.id).single();
   await s.clickWhenThere(String(claim.question.choices[claim.question.answer]));
   const won = await s.textWhen('[role="dialog"][aria-label="The silver pouch"]', /are yours/);

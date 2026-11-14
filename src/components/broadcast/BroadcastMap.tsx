@@ -36,6 +36,8 @@ type Hunter = {
   inTrial: boolean;
   /** The vulcanizer walking back with them to change a flat (their name). */
   helper?: string | null;
+  /** Resting (at a chill spot, or by the road): since when (cleared once they move on). */
+  restingSince?: string | null;
   /** Their motorbike, car or bicycle left at the roadside: a flat, or out of fuel (13 Nov 2026), and since when. */
   parked?: { kind: "bicycle" | "motorbike" | "car"; lng: number; lat: number; why: "flat" | "fuel" | "left"; wheel: "off" | "fixed" | null; since: string | null } | null;
   /** The real weather where they are (their ~10 km square's, MET Norway). */
@@ -708,7 +710,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, parked: parkedCar ? { key: parkedCar.key, lng: parkedCar.entity.lng, lat: parkedCar.entity.lat } : null, tiles: fetchedTiles.size, tilesQueued: tileQueue.length, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, parked: parkedCar ? { key: parkedCar.key, lng: parkedCar.entity.lng, lat: parkedCar.entity.lat } : null, tiles: fetchedTiles.size, tilesQueued: tileQueue.length, restBike: !!restBike, seat: seat ? { ...seat.at } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -889,6 +891,63 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       // the game draws them (helperTick). When they joined and left is noted by the server's clock as each poll sees it,
       // so they're shown at the same moment as the hunter (motionDelay behind); not while a scene plays (the flat's own).
       const helperLog = new Map<string, [number, string | null][]>();
+      // ---- Resting (owner, 14 Nov 2026: "When a user is resting, that they sit on the road the broadcast doesnt have
+      // that"): sitting at the roadside, off the road and facing it, as their screen draws them (roadsideSeat), their
+      // bicycle on its stand beside them; from the moment they sat down, by the server's clock.
+      const restLog = new Map<string, [number, boolean][]>();
+      const restingAt = (id: string, T: number) => {
+        let on = false;
+        for (const [at, r] of restLog.get(id) ?? []) if (at <= T) on = r;
+        return on;
+      };
+      let seat: { key: string; at: { lng: number; lat: number }; bike: { lng: number; lat: number }; heading: number } | null = null;
+      let restBike: import("@/game/ThreeMapLayer").MapEntity | null = null;
+      const dropRestBike = () => {
+        if (restBike) layer.remove(restBike);
+        restBike = null;
+      };
+      /** A spot `right` metres to the right of the way they face and `ahead` metres on (as the game's besideBus). */
+      const beside = (p: { lng: number; lat: number }, heading: number, right: number, ahead: number) => {
+        const east = -Math.cos(heading) * right + Math.sin(heading) * ahead;
+        const north = -Math.sin(heading) * right - Math.cos(heading) * ahead;
+        return { lng: p.lng + east / (111320 * Math.cos((p.lat * Math.PI) / 180)), lat: p.lat + north / 110574 };
+      };
+      /** Where they sit: off the road, on whichever side is clearest of any road, facing the road (the game's roadsideSeat). */
+      const roadsideSeat = (p: { lng: number; lat: number; heading: number }, net: import("@/game/roads").RoadNetwork | null) => {
+        const key = `${p.lng.toFixed(6)},${p.lat.toFixed(6)},${p.heading.toFixed(2)},${!!net}`;
+        if (seat?.key === key) return seat;
+        const enlarge = layer.enlargement();
+        const kx = 111320 * Math.cos((p.lat * Math.PI) / 180), ky = 110574;
+        const clearance = (q: { lng: number; lat: number }) => {
+          let best = Infinity;
+          if (!net) return best;
+          const px = q.lng * kx, py = q.lat * ky;
+          for (const e of net.edges) {
+            const a = net.nodes[e.a], b = net.nodes[e.b];
+            const ax = a.lng * kx, ay = a.lat * ky, bx = b.lng * kx, by = b.lat * ky;
+            if (Math.min(ax, bx) - px > 120 || px - Math.max(ax, bx) > 120 || Math.min(ay, by) - py > 120 || py - Math.max(ay, by) > 120) continue;
+            const len2 = (bx - ax) ** 2 + (by - ay) ** 2 || 1e-9;
+            const k = Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / len2));
+            best = Math.min(best, Math.hypot(ax + k * (bx - ax) - px, ay + k * (by - ay) - py));
+          }
+          return best;
+        };
+        let pick = { side: 1, off: 2.4, clear: -1 };
+        for (const off of [2.4, 3.4]) {
+          for (const side of [1, -1]) {
+            const clear = clearance(beside(p, p.heading, side * off * enlarge, 0));
+            if (clear > pick.clear + 0.5) pick = { side, off, clear };
+          }
+          if (pick.clear >= 1.6 * enlarge) break;
+        }
+        seat = {
+          key,
+          at: beside(p, p.heading, pick.side * pick.off * enlarge, 0),
+          bike: beside(p, p.heading, pick.side * (pick.off - 0.2) * enlarge, 1.7 * enlarge),
+          heading: p.heading + (pick.side * Math.PI) / 2,
+        };
+        return seat;
+      };
       // ---- A vehicle left at the roadside (owner, 13 Nov 2026: "when vehicle have flat, it doesnt show on the broadcast"):
       // shown where it stands with its tag, as on the hunter's screen, from the moment it stopped (by the server's clock).
       type Parked = NonNullable<Hunter["parked"]>;
@@ -954,6 +1013,14 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         if (latest.now) skew = Date.parse(latest.now) - Date.now();
         const polledAt = latest.now ? Date.parse(latest.now) : Date.now() + skew;
         for (const h of latest.hunters) {
+          const resting = !!h.restingSince;
+          const rlog = restLog.get(h.id);
+          if (!rlog) restLog.set(h.id, [[resting ? Date.parse(h.restingSince!) : 0, resting]]);
+          else if (rlog[rlog.length - 1][1] !== resting) {
+            const since = resting ? Date.parse(h.restingSince!) : NaN;
+            rlog.push([Number.isFinite(since) ? Math.max(rlog[rlog.length - 1][0], since) : polledAt, resting]);
+            if (rlog.length > 8) rlog.shift();
+          }
           const pv = h.parked ?? null;
           const plog = parkedLog.get(h.id);
           const pkey = (v: Parked | null) => (v ? `${v.kind}|${v.lng},${v.lat}|${v.why}|${v.wheel}` : "");
@@ -1093,6 +1160,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         light: import("three").Object3D | null; // an ambulance's flashing light
         pace: number; // metres a second it moves on screen, smoothed (its stride)
         entity: import("@/game/ThreeMapLayer").MapEntity;
+        road?: { lng: number; lat: number }; // where they are on the road (the figure may sit beside it)
       } | null = null;
       let lastView = "";
       let lastFit = 0;
@@ -1258,7 +1326,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             ? `${icon} ${h.name} → ${r.trip.to}`
             : inScene
               ? `${sceneLabel(inScene).icon} ${h.name} · ${sceneLabel(inScene).what}`
-              : `${h.name} · ${h.keysHeld}/${s.hunt.keys}${slow === 1 ? " · 🚦" : slow ? " · 🚗" : ""}${helperAt(h.id, careT) ? " · 🧰" : ""}`;
+              : `${h.name} · ${h.keysHeld}/${s.hunt.keys}${slow === 1 ? " · 🚦" : slow ? " · 🚗" : ""}${helperAt(h.id, careT) ? " · 🧰" : ""}${restingAt(h.id, careT) ? " · 🪑 resting" : ""}`;
           if (m.label !== label) {
             m.label = label;
             m.el.querySelector(".name")!.textContent = label;
@@ -1322,7 +1390,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               object.add(layer.billboard(models.makeNameplate(h.name, "#F4B41A")));
               followed = { id: key, avatar, plane, light: amb?.light ?? null, pace: 0, entity: layer.add({ object, lng: p.lng, lat: p.lat, heading: p.heading, scaleBy: ride === "train" ? 0.8 : plane ? 0.45 : undefined }) };
             }
-            const before = { lng: followed.entity.lng, lat: followed.entity.lat };
+            const before = followed.road ?? { lng: followed.entity.lng, lat: followed.entity.lat };
+            followed.road = { lng: p.lng, lat: p.lat };
             followed.entity.lng = p.lng;
             followed.entity.lat = p.lat;
             followed.entity.heading = p.heading;
@@ -1357,13 +1426,31 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
             } else if (trainCars.length) dropTrainCars();
             const stepM = geo.distanceM([before.lng, before.lat], [p.lng, p.lat]);
             const mode = live.get(h.id)?.mode ?? h.mode ?? "walk";
+            // Resting: sat at the roadside (stood up again as soon as they move on)
+            const sitting = !ride && !care && !!followed.avatar && restingAt(h.id, careT) && followed.pace < 0.4;
+            if (sitting) {
+              const spot = roadsideSeat(p, netFor(h.id, p));
+              followed.entity.lng = spot.at.lng;
+              followed.entity.lat = spot.at.lat;
+              followed.entity.heading = spot.heading;
+              if (mode === "bicycle") {
+                if (!restBike) {
+                  const bike = models.makeVehicleModel("bicycle");
+                  bike.rotation.z = 0.12; // leaning on its stand
+                  restBike = layer.add({ object: bike, lng: spot.bike.lng, lat: spot.bike.lat, heading: p.heading });
+                }
+                restBike.lng = spot.bike.lng;
+                restBike.lat = spot.bike.lat;
+                restBike.heading = p.heading;
+              } else dropRestBike();
+            } else dropRestBike();
             // Its stride by their speed, smoothed: a frame without a step doesn't drop it to standing (which looked like
             // turning back); it comes to a stand only once they've really stopped.
             followed.pace += ((dt > 0 ? stepM / dt : 0) - followed.pace) * Math.min(1, 4 * dt);
             const moving = followed.pace < 0.4 ? 0 : Math.min(1, followed.pace / baseSpeed(mode as Mode));
             // Fainted: lying where they fell (and by the road while paramedics treat them); in the ward, unseen inside
             const lying = !!care && (care.phase === "waiting" || (care.phase === "treated" && !care.ward));
-            if (followed.avatar) models.animateAvatar(followed.avatar, { mode: lying ? "walk" : mode, phase: lying ? "fainted" : "idle", moving: lying ? 0 : moving, distance: stepM / layer.enlargement() }, dt, t / 1000);
+            if (followed.avatar) models.animateAvatar(followed.avatar, { mode: lying ? "walk" : mode, phase: lying ? "fainted" : "idle", moving: lying || sitting ? 0 : moving, distance: sitting ? 0 : stepM / layer.enlargement(), sitting }, dt, t / 1000);
             followed.entity.object.visible = !(care?.phase === "treated" && care.ward);
             if (followed.light) followed.light.visible = Math.floor(t / 250) % 2 === 0;
             // The ambulance on its way to them, and parked at the hospital after
@@ -1802,6 +1889,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           dropChase();
           dropHelper();
           dropParked();
+          dropRestBike();
           if (weatherKey) {
             weatherKey = "";
             setWeatherShown(null);

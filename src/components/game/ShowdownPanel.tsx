@@ -57,6 +57,7 @@ const BLOCKED: Record<string, string> = {
   done: "you've had your showdown with them",
   busy: "busy right now",
   offline: "not playing right now",
+  other_key: "holds a different key from the one you need",
 };
 
 /** Key holders within 50 m: the challenge. */
@@ -104,7 +105,7 @@ export function TrackerCard({ holders, until, mapBearing }: { holders: TrackedHo
         </span>
       </p>
       {holders.length === 0 ? (
-        <p className="mt-1.5 text-xs text-paper/75">No key holders about right now.</p>
+        <p className="mt-1.5 text-xs text-paper/75">Nobody holds the key you need right now.</p>
       ) : (
         <ul className="mt-1.5 flex flex-col gap-1">
           {holders.slice(0, 5).map((h) => (

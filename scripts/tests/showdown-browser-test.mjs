@@ -7,6 +7,8 @@
 //   3. both get the same puzzle after the countdown; the broadcast shows the showdown;
 //   4. B gets it wrong once, then right: B steals Key 1 (A back to win it again, its place kept for them); both told;
 //      the broadcast shows the steal.
+// Also (16 Nov 2026: a showdown is for the key you need): C holds Key 2, 30 m from B. B (no keys) can't see C on the
+// Tracker and can't challenge them ("other_key"): only the holder of the key B needs next (A, Key 1) can be challenged.
 // The hunt and the accounts are deleted.   SHOTS=<folder> node scripts/tests/showdown-browser-test.mjs
 import { createRequire } from "node:module";
 import puppeteer from "puppeteer-core";
@@ -44,10 +46,11 @@ const signedIn = async (u) => {
 try {
   const owner = await user("owner");
   await admin.from("profiles").update({ is_admin: true }).eq("id", owner.id);
-  const a = await user("a"), b = await user("b");
-  const aName = `Holder${Date.now() % 1000}`, bName = `Thief${Date.now() % 1000}`;
+  const a = await user("a"), b = await user("b"), c = await user("c");
+  const aName = `Holder${Date.now() % 1000}`, bName = `Thief${Date.now() % 1000}`, cName = `Ahead${Date.now() % 1000}`;
   const bAt = { lng: start.lng + 20 / (111320 * Math.cos((start.lat * Math.PI) / 180)), lat: start.lat };
-  for (const [u, name, at] of [[a, aName, start], [b, bName, bAt]]) {
+  const cAt = { lng: bAt.lng, lat: bAt.lat + 30 / 110574 };
+  for (const [u, name, at] of [[a, aName, start], [b, bName, bAt], [c, cName, cAt]]) {
     await admin.from("profiles").update({ username: name, home_lng: at.lng, home_lat: at.lat, home_set_at: new Date().toISOString(), coins: 1000 }).eq("id", u.id);
     await admin.from("player_positions").upsert({ user_id: u.id, lng: at.lng, lat: at.lat, mode: "walk", energy: 100, updated_at: ago(5) });
   }
@@ -57,6 +60,7 @@ try {
   for (let n = 1; n <= 3; n++) await admin.from("hunt_keys").insert({ hunt_id: huntId, n, riddle: `Test key ${n}.`, category: "maths", area_lng: 3.40 + n * 0.02, area_lat: 6.55, area_radius_m: 800, spot_lng: 3.40 + n * 0.02, spot_lat: 6.55 });
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: a.id, joined_at: ago(3000), keys_held: 1, last_key_at: ago(1500), guess_n: 2, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 });
   await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: b.id, joined_at: ago(3000), keys_held: 0, guess_n: 1, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 });
+  await admin.from("hunt_players").insert({ hunt_id: huntId, user_id: c.id, joined_at: ago(3000), keys_held: 2, last_key_at: ago(1500), guess_n: 3, guess_name: "Test answer", guess_lng: 0, guess_lat: 0 });
   await admin.from("player_boosts").upsert({ user_id: b.id, tracker_until: new Date(Date.now() + 600e3).toISOString() });
 
   browser = await launch();
@@ -86,6 +90,21 @@ try {
   const warned = await until(async () => /has a Tracker out near you/.test(await text(pa)), 30000, 1000);
   check("…A is warned someone's tracking", !!warned);
   await pb.screenshot({ path: `${OUT}/showdown-1-tracker.png` });
+  // …but not C, who holds Key 2 (B needs Key 1); and B can't challenge C
+  await admin.from("player_positions").update({ updated_at: new Date().toISOString() }).eq("user_id", c.id);
+  await wait(5000);
+  const trackerNow = await pb.evaluate(() => document.querySelector("[data-tracker]")?.textContent ?? "");
+  check("…the Tracker leaves out C (holds Key 2, not the key B needs)", !trackerNow.includes(cName), trackerNow);
+  const asB = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { auth: { persistSession: false } });
+  const inB = await asB.auth.signInWithPassword({ email: b.email, password: b.password });
+  const vsCr = await asB.rpc("showdown_challenge", { p_target: c.id });
+  const vsC = vsCr.data ?? { error: vsCr.error?.message, signIn: inB.error?.message ?? "ok" };
+  check("…B can't challenge C: a different key", vsC?.ok === false && vsC?.reason === "other_key", JSON.stringify(vsC));
+  const asC = createClient(url, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { auth: { persistSession: false } });
+  await asC.auth.signInWithPassword({ email: c.email, password: c.password });
+  const cMineR = await asC.rpc("showdown_mine");
+  const cMine = cMineR.data ?? { error: cMineR.error?.message };
+  check("…and C isn't warned of B's Tracker (it can't see them)", cMine?.tracked === false, JSON.stringify(cMine));
 
   // 2. The challenge; A picks the battle
   const challenged = await until(() => pb.evaluate((id) => { const btn = document.querySelector(`[data-challenge="${id}"]`); btn?.click(); return !!btn; }, a.id), 60000, 1000);

@@ -95,6 +95,9 @@ export function OnboardingForm({ username, initialLook }: { username: string; in
           <span className="text-sm text-muted">
             Start where you are, or anywhere you like: pick a city or search for a place. You can move home once every 30 days.
           </span>
+          <span className="text-sm text-muted" data-start-private>
+            🔒 For your safety, your hunter starts at a public spot near the place you choose (usually a bus stop), never your exact address.
+          </span>
         </div>
         {found && (
           <p role="status" className="rounded-xl bg-ok/15 px-3 py-2 text-sm font-bold text-ok" data-start-chosen>

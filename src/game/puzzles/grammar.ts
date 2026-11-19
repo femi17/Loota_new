@@ -4,6 +4,7 @@
  * stay on the game's server.
  */
 import { seeded } from "./rng.ts";
+import { MORE_GRAMMAR } from "./more-grammar.ts";
 
 export type GrammarPuzzle = { items: { sentence: string; options: string[] }[] };
 export type GrammarAnswer = number[];
@@ -107,10 +108,13 @@ const HARD: [string, string, string[]][] = [
   ["___ it rained, the match went ahead.", "Although", ["Despite", "In spite"]],
 ];
 
+/** Every sentence: those here and those Claude wrote (more-grammar.ts). */
+export const GRAMMAR_ALL = { easy: [...BANK, ...MORE_GRAMMAR.easy], hard: [...HARD, ...MORE_GRAMMAR.hard] };
+
 /** A puzzle of `count` sentences: the harder mix-ups from level 2. */
 export function makeGrammar(seed: number, count = 4, level = 1): { puzzle: GrammarPuzzle; answer: GrammarAnswer } {
   const rng = seeded(seed);
-  const picked = rng.shuffle(level >= 2 ? HARD : BANK).slice(0, count);
+  const picked = rng.shuffle(level >= 2 ? GRAMMAR_ALL.hard : GRAMMAR_ALL.easy).slice(0, count);
   const items = picked.map(([sentence, right, wrong]) => {
     const options = rng.shuffle([right, ...wrong]);
     return { sentence, options, right: options.indexOf(right) };

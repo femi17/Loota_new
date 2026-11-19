@@ -59,11 +59,18 @@ try {
   check("…no marker for them", !new RegExp(`Winner${stamp}`).test(markers), markers);
   const row = await show.evaluate((n) => { const b = [...document.querySelectorAll("ol button")].find((x) => x.textContent?.includes(n)); return b ? { text: b.textContent, disabled: b.disabled } : null; }, `Winner${stamp}`);
   check("on the leaderboard: 🏁 1st, and not to be followed", !!row && /🏁 1st/.test(row.text) && row.disabled, JSON.stringify(row));
+  check("…and no confetti for them (they'd finished before the show opened)", !(await show.$("[data-celebration]")));
   // Following the one still racing; then they finish too
   await show.evaluate((n) => [...document.querySelectorAll("ol button")].find((x) => x.textContent?.includes(n))?.click(), `Racer${stamp}`);
   const following = await until(() => show.evaluate((n) => (document.body.innerText.includes(`Following ${n}`) ? true : null), `Racer${stamp}`), 15000);
   check("following the hunter still racing", !!following);
   await admin.from("hunt_players").update({ keys_held: 1, place: 2, finished_at: new Date().toISOString() }).eq("hunt_id", huntId).eq("user_id", still.id);
+  // All the keys (owner, 19 Nov 2026: "there should be confetti, so viewers and users knows the users now has all keys")
+  const cheer = await until(() => show.evaluate(() => { const c = document.querySelector("[data-celebration]"); return c ? { text: c.textContent, pieces: c.querySelectorAll(".loota-confetti-rain").length } : null; }), 30000);
+  check("they finish: confetti over the whole show, with their name and all the keys", !!cheer && cheer.text.includes(`Racer${stamp} has all the keys!`) && /Finished 2nd/.test(cheer.text) && cheer.pieces > 100, JSON.stringify(cheer));
+  await show.screenshot({ path: `${process.env.SHOTS ?? (await import("node:os")).tmpdir()}/broadcast-all-keys.png` });
+  const gone = await until(() => show.evaluate(() => (document.querySelector("[data-celebration]") ? null : true)), 15000);
+  check("…then it clears", !!gone);
   const back = await until(() => show.evaluate((n) => (!document.body.innerText.includes(`Following ${n}`) ? true : null), `Racer${stamp}`), 20000);
   check("they finish too: the broadcast goes back to the whole field", !!back);
   check("no page errors", problems.length === 0, problems.join(" / "));

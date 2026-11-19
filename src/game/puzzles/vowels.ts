@@ -4,6 +4,7 @@
  * the game's server; only their skeletons ("M_NT _V_R_ST") reach the phone.
  */
 import { seeded } from "./rng.ts";
+import { MORE_VOWELS } from "./more-vowels.ts";
 
 export type VowelsPuzzle = { theme: string; words: { shown: string; clue: string; letters: number }[] };
 export type VowelsAnswer = string[];
@@ -65,12 +66,15 @@ const HARD_THEMES: { theme: string; words: [string, string][] }[] = [
   { theme: "Inventors", words: [["TESLA", "Alternating current"], ["MARCONI", "Radio"], ["NOBEL", "Dynamite, and the prizes in his name"], ["FLEMING", "Penicillin"], ["GUTENBERG", "The printing press"]] },
 ];
 
+/** Every theme: those here and those Claude wrote (more-vowels.ts). */
+export const VOWELS_ALL = { easy: [...THEMES, ...MORE_VOWELS.easy], hard: [...HARD_THEMES, ...MORE_VOWELS.hard] };
+
 const VOWELS = /[AEIOU]/g;
 
 /** A puzzle of `count` words (3 to 5) from one theme: the harder themes from level 2. */
 export function makeVowels(seed: number, count: number, level = 1): { puzzle: VowelsPuzzle; answer: VowelsAnswer } {
   const rng = seeded(seed);
-  const themes = level >= 2 ? HARD_THEMES : THEMES;
+  const themes = level >= 2 ? VOWELS_ALL.hard : VOWELS_ALL.easy;
   const t = themes[rng.int(themes.length)];
   const words = rng.shuffle(t.words).slice(0, Math.max(3, Math.min(5, count)));
   return {

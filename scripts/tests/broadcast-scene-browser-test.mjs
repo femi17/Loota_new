@@ -123,7 +123,7 @@ try {
   check("…then the caption again: the hunter's answer, as they said it (the card gone)", /Go faster/.test(answered ?? "") && !cardThen, `${answered} · card: ${cardThen}`);
   const boxes = () => show.evaluate(() => {
     const at = (sel) => { const e = document.querySelector(sel); if (!e) return null; const r = e.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) }; };
-    return { card: at('[aria-label="Scene card"] > div, [aria-label="Scene card"]'), caption: at('[aria-label="Scene caption"]'), side: !!document.querySelector("[data-card-side]"), w: innerWidth };
+    return { card: at('[aria-label="Scene card"] > div, [aria-label="Scene card"]'), caption: at('[aria-label="Scene caption"]'), centre: !!document.querySelector("[data-card-centre]"), w: innerWidth };
   });
   let fined = null;
   for (let i = 0; i < 30 && !/20-coin fine/.test(fined ?? ""); i++) { await wait(500); fined = await caption(); }
@@ -161,7 +161,7 @@ try {
   }
   check("on the broadcast: the same three cups while they play", board?.cups === 3 && /is playing|watching the shuffle/i.test(board.text), JSON.stringify(board));
   const laidGame = await boxes();
-  check("…the game on one side, as the 3D world's puzzles, clear of the caption", laidGame.side && laidGame.card && laidGame.card.left > laidGame.w / 2 - 40 && (!laidGame.caption || laidGame.card.bottom <= laidGame.caption.top), JSON.stringify(laidGame));
+  check("…the game centred and big (owner, 19 Nov 2026: \"too tiny… center it\"): over half the screen wide, in the middle", laidGame.centre && laidGame.card && laidGame.card.right - laidGame.card.left > laidGame.w * 0.5 && Math.abs((laidGame.card.left + laidGame.card.right) / 2 - laidGame.w / 2) < 30 && (!laidGame.caption || laidGame.card.bottom <= laidGame.caption.top), JSON.stringify(laidGame));
   await show.screenshot({ path: `${OUT}/broadcast-scene-3-cups.png` });
   let won = null;
   for (let i = 0; i < 30 && !/wins /i.test(won ?? ""); i++) { await wait(500); won = await card(); }

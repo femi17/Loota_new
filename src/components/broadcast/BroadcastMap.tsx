@@ -22,6 +22,7 @@ import { jamLines } from "@/game/traffic";
 import { loadSignals, signalState, signalsNear, type Signal } from "@/game/signals";
 import { ROAD_DATA_VERSION, decodeRoadCell, roadCellKey, roadCellOf, type RoadCellData, type RoadCellFile } from "@/game/roadData";
 import { BroadcastShowdown, type BroadcastShowdownData } from "@/components/game/ShowdownPanel";
+import { Celebration } from "@/components/game/Celebration";
 
 type Hunter = {
   id: string;
@@ -215,6 +216,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
   const [board, setBoard] = useState(true);
   const [now, setNow] = useState(() => Date.now());
   const [failed, setFailed] = useState(false);
+  /** A hunter who has just collected the last key: confetti over the show (owner, 19 Nov 2026). */
+  const [cheer, setCheer] = useState<{ id: string; name: string; place: number; keys: number } | null>(null);
   /** A scene the followed hunter is in: what it is, and what was last said (a TV caption). */
   /**
    * The question or game in the scene the followed hunter is in (owner, 9 Nov 2026: "lets see the puzzle, or question
@@ -1024,6 +1027,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // ---- The show's state, every few seconds; new events make a banner.
       const seen = new Set<string>();
+      const finishedSeen = new Set<string>(); // hunters already finished (those finished before the show opened: no cheer)
       let first = true;
       let misses = 0; // in a row, before the first answer
       async function poll() {
@@ -1045,6 +1049,17 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
           setSrvSkew((was) => (Math.abs(was - skew) > 300 ? skew : was));
         }
         const polledAt = latest.now ? Date.parse(latest.now) : Date.now() + skew;
+        // All the keys (owner, 19 Nov 2026): a hunter newly finished rains confetti over the show, as their scene plays
+        // (a few seconds behind, like the rest of the show)
+        for (const h of latest.hunters) {
+          const had = finishedSeen.has(h.id);
+          if (h.place === null || had) continue;
+          finishedSeen.add(h.id);
+          if (!first) {
+            const cheer = { id: h.id, name: h.name, place: h.place, keys: latest.hunt.keys };
+            window.setTimeout(() => !disposed && setCheer(cheer), motionDelay);
+          }
+        }
         for (const h of latest.hunters) {
           const resting = !!h.restingSince;
           const rlog = restLog.get(h.id);
@@ -1827,8 +1842,8 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 zoom: map.getZoom() + (SCENE_ZOOM - map.getZoom()) * k,
                 pitch: map.getPitch() + (SCENE_PITCH - map.getPitch()) * k,
                 bearing: map.getBearing() + turn * k,
-                // (a game on: the stage on the right, so the place in the space left of it, eased across)
-                padding: { top: 0, left: 0, right: (stagePad += ((gameStaged ? Math.min(innerWidth * 0.48, 736) + 16 : 0) - stagePad) * Math.min(1, 3 * dt)), bottom: gameStaged ? 40 : 170 },
+                // (a game on: the stage centred over the place, which stays in the middle behind it)
+                padding: { top: 0, left: 0, right: (stagePad += (0 - stagePad) * Math.min(1, 3 * dt)), bottom: gameStaged ? 40 : 170 },
               });
             } else {
               // Behind them, turning with them (the laptop's chase camera), tilted like the laptop: 60°.
@@ -2081,6 +2096,15 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
 
   return (
     <div className="relative h-dvh w-full overflow-hidden bg-map">
+      {cheer && (
+        <Celebration
+          key={cheer.id}
+          title={`${cheer.name} has all the keys!`}
+          line={cheer.place === 1 ? "🥇 First to finish the hunt!" : `Finished ${ordinal(cheer.place)}`}
+          onDone={() => setCheer(null)}
+          ms={8000}
+        />
+      )}
       {/* The key's place the followed hunter is at: their own arrangement of it, them walking where they walked (step 3) */}
       {keyWorld && (
         <div className="absolute inset-0 z-10" aria-label="The key's place">
@@ -2160,8 +2184,10 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         // happening for the user, so let viewers enjoy it see the time countdown and they feel the thrill"): big, beside
         // the hunter, its clock counting down; the talk hidden meanwhile ("it is not useful, since the user is already
         // playing")
-        <div className="pointer-events-none absolute bottom-5 right-4 top-[104px] z-20 flex w-[min(48vw,46rem)] justify-end" role="status" aria-label="Scene card" data-card-side data-game-stage>
-          <div className="flex h-full w-full flex-col overflow-hidden rounded-3xl bg-ink/92 p-5 text-paper shadow-2xl ring-2 ring-gold/80">
+        // Centred and big (owner, 19 Nov 2026: "the game play show to users is too tiny on the screen… center it and make
+        // it obvious so viewers can see what the user is playing"): the map dimmed behind it.
+        <div className="pointer-events-none absolute inset-0 z-20 flex justify-center bg-ink/45 px-4 pb-5 pt-[96px]" role="status" aria-label="Scene card" data-card-centre data-game-stage>
+          <div className="flex h-full w-[min(100%,64rem)] flex-col overflow-hidden rounded-3xl bg-ink/95 p-5 text-paper shadow-2xl ring-4 ring-gold">
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-gold">{caption.icon} {GAME_NAMES[sceneCard.game.type] ?? "A game"} · with {caption.title.split(":")[0]}</p>
@@ -2193,7 +2219,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 style={{ width: `${sceneCard.result ? 100 : Math.round((100 * (sceneCard.left ?? 0)) / Math.max(1, sceneCard.total))}%` }}
               />
             </div>
-            <FitBox grow={2.4}>
+            <FitBox grow={3.2}>
               <div className="w-[19rem]">
                 <RoadGameBoard game={sceneCard.game} result={sceneCard.result} mirror={sceneCard.live} onMove={() => {}} />
               </div>
@@ -2202,33 +2228,36 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         </div>
       )}
       {sceneCard && caption && sceneCard.kind === "puzzle" && (
+        // The Key Trial's puzzle as they play it: centred and big too, above the caption (owner, 19 Nov 2026)
         <div
-          className="pointer-events-none absolute right-4 top-[104px] z-20 flex items-start justify-end" // under the leaderboard
-          style={{ bottom: `calc(${captionH}px + 2rem)` }}
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center bg-ink/45 px-4 pt-[96px]"
+          style={{ bottom: 0, paddingBottom: `calc(${captionH}px + 2rem)` }}
           role="status"
           aria-label="Scene card"
-          data-card-side
+          data-card-centre
         >
-          <div className="flex max-h-full w-[20rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl bg-ink/92 p-4 text-paper shadow-2xl ring-2 ring-gold/70">
+          <div className="flex h-full w-[min(100%,56rem)] flex-col overflow-hidden rounded-3xl bg-ink/95 p-5 text-paper shadow-2xl ring-4 ring-gold">
             {sceneCard.kind === "puzzle" ? (
               <>
-                <div className="mb-2 flex items-center gap-2">
-                  <p className="min-w-0 flex-1 text-xs font-extrabold uppercase tracking-widest text-gold">
+                <div className="mb-2 flex items-center gap-3">
+                  <p className="min-w-0 flex-1 font-display text-xl font-extrabold leading-tight text-gold">
                     {sceneCard.result?.right
                       ? `✓ ${sceneCard.who} opened ${boxLabel(sceneCard.n)}${sceneCard.result.outcome ? `: ${sceneCard.result.outcome === "key" ? "the key!" : sceneCard.result.outcome === "lock" ? "on to the next lock" : sceneCard.result.outcome}` : ""}`
                       : sceneCard.result?.late
                         ? `⏳ ${sceneCard.who}: too slow, the lock jams`
                         : `${sceneCard.who} · ${boxLabel(sceneCard.n)} · ${PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.name ?? "A puzzle"}`}
                   </p>
-                  {!sceneCard.result?.right && !sceneCard.result?.late && <span className="rounded-full bg-ink-2 px-2 py-0.5 font-mono text-sm font-extrabold text-gold">⏱ {sceneCard.left}s</span>}
+                  {!sceneCard.result?.right && !sceneCard.result?.late && (
+                    <span className={`shrink-0 rounded-2xl px-3 py-1.5 font-mono text-3xl font-extrabold tabular-nums ${sceneCard.left <= 10 ? "animate-pulse bg-danger text-white" : "bg-ink-2 text-gold"}`}>⏱ {sceneCard.left}s</span>
+                  )}
                 </div>
-                <div className="h-2 overflow-hidden rounded bg-ink-2" aria-label="How far they've got">
+                <div className="h-2.5 overflow-hidden rounded-full bg-ink-2" aria-label="How far they've got">
                   <div className={`h-full transition-[width] duration-500 ${sceneCard.result?.right ? "bg-[#3DD68C]" : "bg-gold"}`} style={{ width: `${Math.round(sceneCard.progress * 100)}%` }} />
                 </div>
-                {sceneCard.result && !sceneCard.result.right && !sceneCard.result.late && <p className="mt-1 text-xs font-bold text-danger">✗ Not quite: they look again</p>}
-                <p className="my-2 text-xs text-paper/75">{PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.rule}</p>
-                <FitBox>
-                  <div style={{ zoom: 0.62 }}>
+                {sceneCard.result && !sceneCard.result.right && !sceneCard.result.late && <p className="mt-1 text-sm font-bold text-danger">✗ Not quite: they look again</p>}
+                <p className="my-2 text-sm text-paper/75">{PUZZLE_NAMES[sceneCard.puzzleKind as keyof typeof PUZZLE_NAMES]?.rule}</p>
+                <FitBox grow={2.6}>
+                  <div className="w-[22rem]">
                     <AnswerMirror.Provider value={{ shown: sceneCard.answers }}>
                       <PuzzleBoard key={sceneCard.n} kind={sceneCard.puzzleKind} puzzle={sceneCard.puzzle} disabled onDone={() => {}} />
                     </AnswerMirror.Provider>

@@ -25,6 +25,7 @@ import { toast } from "./NewsToasts"; // hunt news shows on the map's news strip
 import { PuzzleTrial } from "./puzzles/PuzzleTrial";
 import { cue } from "@/game/sound";
 import { Confetti } from "./Confetti";
+import { Celebration } from "./Celebration";
 import { StoryScene } from "./StoryScene";
 import { defaultBeat, taunt, type StoryBeat, type StoryLine } from "@/game/story";
 
@@ -125,6 +126,13 @@ export function HuntPanel({
   const [searching, setSearching] = useState(false);
   const [trial, setTrial] = useState<AnyTrialView | null>(null);
   const [ending, setEnding] = useState<Ending | null>(null);
+  // All the keys (owner, 19 Nov 2026): confetti over the whole screen, from the Key Trial or a Wonder ("loota:all-keys")
+  const [allKeys, setAllKeys] = useState<{ title: string; line: string } | null>(null);
+  useEffect(() => {
+    const onAll = (e: Event) => setAllKeys({ title: "All the keys!", line: (e as CustomEvent<{ line?: string }>).detail?.line ?? "You've finished the hunt!" });
+    window.addEventListener("loota:all-keys", onAll);
+    return () => window.removeEventListener("loota:all-keys", onAll);
+  }, []);
   // The story (owner, 24 Oct 2026: the Masquerade): a beat at the start, after each key, at a relay, at the finish.
   const [story, setStory] = useState<{ lines: StoryLine[]; mood: "sly" | "cross" | "beaten" } | null>(null);
   const [board, setBoard] = useState<BoardRow[] | null>(null);
@@ -491,8 +499,12 @@ export function HuntPanel({
       window.dispatchEvent(new Event("loota:key-earned"));
     } else {
       const won = { kind: "finished" as const, place: r.place, winner: r.winner, bonuses: r.bonuses ?? [] };
-      if (scene) window.setTimeout(() => setEnding(won), 1700);
-      else setEnding(won);
+      const finish = () => {
+        setEnding(won);
+        setAllKeys({ title: r.winner ? "You won! All the keys!" : "All the keys!", line: `You finished ${ordinal(r.place)}` });
+      };
+      if (scene) window.setTimeout(finish, 1700);
+      else finish();
       setRival(null);
       window.dispatchEvent(new Event("loota:key-earned"));
     }
@@ -817,6 +829,7 @@ export function HuntPanel({
           <KeyTrial key={`${trial.attempt}:${trial.index}`} trial={trial} rival={rival} world={scene} keeper={keeper} onAnswer={(choice) => answer(trial.attempt, choice)} />
         ))}
       {recap && <RecapCard recap={recap} onClose={() => setRecap(null)} />}
+      {allKeys && <Celebration title={allKeys.title} line={allKeys.line} onDone={() => setAllKeys(null)} />}
 
       {ending && (
         <div className="pointer-events-auto fixed inset-0 z-20 flex items-center justify-center bg-ink/80 p-4">

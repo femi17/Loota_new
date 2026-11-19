@@ -8588,6 +8588,7 @@ export function GameMap({
         const wonder = r.wonder ?? "";
         const message = `${r.message ?? ""}${r.finished ? " That was the last key: you've finished the hunt!" : ""}`;
         showWonder(wonder, message, false);
+        if (r.finished) window.dispatchEvent(new CustomEvent("loota:all-keys", { detail: { line: "A Wonder brought the last key: you've finished the hunt!" } }));
         if (STRIKES.has(wonder)) strike(wonderOf(wonder).icon, "#9B5DE5", true);
         if (wonder === "carpet_of_kings" && r.lng != null && r.lat != null) {
           pocketed(); // the carpet carries only you; your vehicle rides in your pocket

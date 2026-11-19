@@ -246,9 +246,20 @@ body {
 .loota-confetti { top: 0; animation-name: loota-confetti-fly; animation-timing-function: cubic-bezier(0.25, 0.6, 0.4, 1); animation-fill-mode: both; }
 @keyframes loota-key-spin { 0% { transform: scale(0.2) rotate(-200deg); opacity: 0; } 60% { transform: scale(1.25) rotate(15deg); opacity: 1; } 100% { transform: scale(1) rotate(0deg); } }
 .loota-key-spin { display: inline-block; animation: loota-key-spin 0.8s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+/* All the keys (owner, 19 Nov 2026: "there should be confetti, so viewers and users knows the users now has all keys"):
+   confetti raining over the whole screen, swaying as it falls, and the banner popping in. */
+@keyframes loota-confetti-rain {
+  0% { opacity: 1; transform: translate(0, -12vh) rotate(0deg); }
+  50% { transform: translate(var(--sway), 50vh) rotate(calc(var(--spin) * 0.5)); }
+  90% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc(var(--sway) * -0.5), 108vh) rotate(var(--spin)); }
+}
+.loota-confetti-rain { top: 0; animation-name: loota-confetti-rain; animation-timing-function: linear; animation-fill-mode: both; }
+@keyframes loota-banner-pop { 0% { transform: scale(0.3); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+.loota-banner-pop { animation: loota-banner-pop 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
 @media (prefers-reduced-motion: reduce) {
-  [role="dialog"], .loota-key-spin { animation: none; }
-  .loota-confetti { display: none; }
+  [role="dialog"], .loota-key-spin, .loota-banner-pop { animation: none; }
+  .loota-confetti, .loota-confetti-rain { display: none; }
 }
 
 /* The Masquerade (owner, 24 Oct 2026): he sways, his raffia flutters, his crest bobs; the festival stars twinkle. */

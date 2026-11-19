@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { makePuzzle, type PuzzleKind } from "@/game/puzzles";
+import { makeFreshPuzzle, puzzleItems, type PuzzleKind } from "@/game/puzzles";
 import { inkedPieces, makeTornMap } from "@/game/puzzles/tornmap";
 import { drawingAround } from "@/lib/tornmap-drawing";
 
@@ -42,7 +42,14 @@ export async function POST() {
     puzzle = made.puzzle;
     solution = made.answer;
   } else if (!puzzle) {
-    const made = makePuzzle(t.kind as PuzzleKind, t.level ?? 1, Number(t.seed ?? 1));
+    // None of what they've had before (owner, 19 Nov 2026: "The games are repeated"): their past Key Trials and
+    // showdowns of this kind
+    const [past, fights] = await Promise.all([
+      admin.from("trial_attempts").select("puzzle").eq("user_id", uid).eq("kind", t.kind).not("puzzle", "is", null).neq("id", t.id).order("started_at", { ascending: false }).limit(60),
+      admin.from("showdowns").select("puzzle").or(`thief.eq.${uid},target.eq.${uid}`).eq("kind", t.kind).not("puzzle", "is", null).order("created_at", { ascending: false }).limit(30),
+    ]);
+    const seen = new Set([...(past.data ?? []), ...(fights.data ?? [])].flatMap((r) => puzzleItems(t.kind, r.puzzle)));
+    const made = makeFreshPuzzle(t.kind as PuzzleKind, t.level ?? 1, Number(t.seed ?? 1), seen);
     puzzle = made.puzzle;
     solution = made.answer;
   }

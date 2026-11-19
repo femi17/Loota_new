@@ -91,7 +91,7 @@ try {
       if (t.kind !== "grammar") {
         // Pictures, loaded, from files whose names don't say whose they are
         const pics = await page.evaluate((s) => [...document.querySelectorAll(`${s} img`)].map((im) => ({ ok: im.complete && im.naturalWidth > 0, src: im.getAttribute("src") ?? "", alt: im.alt })), IN);
-        check(`…${t.kind === "flags" ? "the flags" : "the logos"}: pictures, their names hidden`, pics.length === 3 && pics.every((p) => p.ok && /^\/(flags|logos)\/[0-9a-f]{12}\.svg$/.test(p.src) && /^Picture \d$/.test(p.alt)), JSON.stringify(pics));
+        check(`…${t.kind === "flags" ? "the flags" : "the logos"}: pictures, their names hidden`, pics.length >= 3 && pics.length <= 5 && pics.every((p) => p.ok && /^\/(flags|logos)\/[0-9a-f]{12}\.svg$/.test(p.src) && /^Picture \d$/.test(p.alt)), JSON.stringify(pics));
       }
       for (let q = 0; q < t.solution.length; q++) {
         await page.evaluate((s, qq, a) => document.querySelectorAll(`${s} [data-question="${qq}"] button`)[a]?.click(), IN, q, t.solution[q]);

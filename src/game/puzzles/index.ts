@@ -80,6 +80,40 @@ export function makePuzzle(kind: PuzzleKind, level: number, seed: number): { puz
 }
 
 /**
+ * What a puzzle is made of, for the kinds drawn from a list (owner, 19 Nov 2026: "The games are repeated"): the grammar
+ * sentences, the vowels' theme, the flags and logos shown, the countries' letter. Empty for a board made fresh each time.
+ */
+export function puzzleItems(kind: string, puzzle: unknown): string[] {
+  const p = puzzle as { items?: { sentence?: string; image?: string }[]; theme?: string; letter?: string } | null;
+  if (!p) return [];
+  if (kind === "grammar") return (p.items ?? []).map((i) => `g:${i.sentence}`);
+  if (kind === "flags" || kind === "brands") return (p.items ?? []).map((i) => `${kind}:${i.image}`);
+  if (kind === "vowels" && p.theme) return [`v:${p.theme}`];
+  if (kind === "countries" && p.letter) return [`c:${p.letter}`];
+  return [];
+}
+
+/**
+ * The puzzle, but none of what this player has had already (`seen`: puzzleItems of their past ones): other seeds tried
+ * until one has nothing seen, or else the one with least seen (a player who has had nearly everything).
+ */
+export function makeFreshPuzzle(kind: PuzzleKind, level: number, seed: number, seen: Set<string>) {
+  let best = makePuzzle(kind, level, seed);
+  if (!seen.size || !puzzleItems(kind, best.puzzle).length) return best;
+  let least = Infinity;
+  for (let k = 0; k < 60; k++) {
+    const made = k === 0 ? best : makePuzzle(kind, level, (seed + k * 7919) >>> 0);
+    const repeats = puzzleItems(kind, made.puzzle).filter((i) => seen.has(i)).length;
+    if (repeats < least) {
+      least = repeats;
+      best = made;
+    }
+    if (repeats === 0) break;
+  }
+  return best;
+}
+
+/**
  * How many of the answers are right, for a puzzle of questions (the grammar, the algebra, the flags, the logos, the
  * lost vowels): "3 of 4 are right" says where to look again without giving any away. Null for a board (a grid, a path).
  */

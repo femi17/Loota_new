@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { EventScene, type SceneChoice, type SceneLine } from "./EventScene";
+import { EventScene, type SceneChoice, type SceneLine, type SceneMoment } from "./EventScene";
 import { keeperLook, type AvatarLook } from "@/lib/avatar";
 import { FLAT_FIX_PRICE, FLAT_FIX_SECONDS, type VehicleKind } from "@/game/economy";
 import { local } from "@/game/locale";
@@ -26,12 +26,15 @@ export function FlatScene({
   you,
   actions,
   world = false,
+  onMoment,
   onClose,
 }: {
   offer: FlatOffer;
   you: AvatarLook;
   actions: FlatActions;
   world?: boolean;
+  /** The work starting (by the mechanic, or by you with your jack) and done: the map shows it. */
+  onMoment?: (m: SceneMoment) => void;
   onClose: () => void;
 }) {
   type Step = "greet" | "working" | "done" | "bye";
@@ -72,6 +75,7 @@ export function FlatScene({
           return;
         }
         window.clearInterval(timer);
+        onMoment?.({ type: "filled" }); // off the jack
         say({
           who: "them",
           text: !r.ok
@@ -88,7 +92,7 @@ export function FlatScene({
       });
     }, 250);
     return () => window.clearInterval(timer);
-  }, [step, until, actions, how]);
+  }, [step, until, actions, how, onMoment]);
 
   function begin(choice: "jack" | "mechanic") {
     setBusy(true);
@@ -122,6 +126,7 @@ export function FlatScene({
       setUntil(Date.now() + secs * 1000);
       setLeft(secs);
       setStep("working");
+      onMoment?.(choice === "jack" ? { type: "pumping", by: "you" } : { type: "pumping" });
     });
   }
 

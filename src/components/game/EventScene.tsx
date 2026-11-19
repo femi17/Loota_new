@@ -13,7 +13,7 @@ export type SceneChoice = { label: string; primary?: boolean; onPick: () => void
 export type SceneMoment =
   | { type: "served"; base: string; side: string }
   | { type: "plate"; state: "full" | "half" | "empty" }
-  | { type: "pumping" }
+  | { type: "pumping"; by?: "you" }
   | { type: "meter"; n: number }
   | { type: "filled" }
   | { type: "rented" }

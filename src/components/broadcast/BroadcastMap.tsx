@@ -493,9 +493,22 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         spots: { depth: number; keeper: { x: number; z: number }; customer: { x: number; z: number } };
         keeper: { look: unknown; at: { x: number; z: number } };
         you: { from: { x: number; z: number }; to: { x: number; z: number }; lying?: boolean };
+        /** Their vehicle (or wheel, or jerry can) in the place, beside the model, as it stood when they went in. */
+        vehicle?: { prop: string; x: number; y: number; z: number; ry: number; rz: number; s: number };
         title?: string;
         keeperName?: string;
       };
+      /**
+       * The people in a place as their game last saved it ("pose" lines): the keeper and the hunter, each [where they're
+       * going x, z, at work (0 no, 1 bent over a vehicle, 2 an arm out), facing when at work, riding (the hunter)]; and
+       * the vehicle [x, z, tilt, shown 1/0].
+       */
+      type ScenePose = {
+        k: [number, number, 0 | 1 | 2, number | null];
+        y: [number, number, 0 | 1 | 2, number | null, string | null];
+        v: [number, number, number, number] | null;
+      };
+      type Placed = { x: number; z: number; face: number };
       // Lines: [ms, "them" | "you", what's said], and how it's played: "ask" (the replies on offer, JSON), "pick", "game",
       // "move", "result" (JSON)
       type Scene = { id: number; user: string; start: number; end: number | null; data: SceneData; lines: [number, string, string][]; track?: WorldTrack };
@@ -534,7 +547,20 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
         entity: import("@/game/ThreeMapLayer").MapEntity;
         you: ReturnType<typeof models.buildAvatar>;
         keeper: ReturnType<typeof models.buildAvatar>;
+        /** Where each is drawn now, walking towards where the pose says. */
+        youAt: Placed;
+        keeperAt: Placed;
+        vehicle: import("three").Object3D | null;
       } | null = null;
+      /** The vehicle as their game built it beside the place's model. */
+      const sceneProp = (prop: string): import("three").Object3D | null =>
+        prop === "car" || prop === "motorbike" || prop === "bicycle"
+          ? models.makeVehicleModel(prop)
+          : prop === "wheel"
+            ? models.makeRolledWheel()
+            : prop === "jerrycan"
+              ? models.makeJerryCan()
+              : null;
       const dropSceneView = () => {
         if (sceneView) layer.remove(sceneView.entity);
         sceneView = null;
@@ -714,7 +740,7 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
       };
       // For the browser tests (in development only): where each hunter is drawn now, and the map (to read its roads).
       if (process.env.NODE_ENV !== "production") {
-        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, parked: parkedCar ? { key: parkedCar.key, lng: parkedCar.entity.lng, lat: parkedCar.entity.lat } : null, tiles: fetchedTiles.size, tilesQueued: tileQueue.length, restBike: !!restBike, seat: seat ? { ...seat.at } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
+        Object.assign(window, { __broadcastShown: () => ({ ...Object.fromEntries(shown), drawnAt, drawnWall, trips: [...routes.keys()], moving: [...motions.keys()], zoom: map.getZoom(), delay: motionDelay, delayGoal, timed: lateness.length, lateness: [...lateness], scene: sceneView ? { id: sceneView.id, scale: sceneView.entity.scaleBy, keeper: { x: Math.round(sceneView.keeperAt.x * 100) / 100, z: Math.round(sceneView.keeperAt.z * 100) / 100, bent: Math.round(sceneView.keeper.rig.rotation.x * 100) / 100 }, vehicle: sceneView.vehicle ? { shown: sceneView.vehicle.visible, x: Math.round(sceneView.vehicle.position.x * 100) / 100, z: Math.round(sceneView.vehicle.position.z * 100) / 100 } : null } : null, keyWorld: worldShown?.id ?? null, care: careKey || null, careVan: careVan ? { lng: careVan.entity.lng, lat: careVan.entity.lat } : null, trainCars: (followed?.id.endsWith(":train") ? [{ lng: followed.entity.lng, lat: followed.entity.lat }] : []).concat(trainCars.map((c) => ({ lng: c.lng, lat: c.lat }))), jailCell: jailCell ? { lng: jailCell.entity.lng, lat: jailCell.entity.lat } : null, policeCar: policeCar ? { lng: policeCar.entity.lng, lat: policeCar.entity.lat } : null, followedKind: followed?.id ?? null, weather: weatherKey || null, night: nightNow, helper: helperWalker ? { name: helperWalker.name, lng: helperWalker.entity.lng, lat: helperWalker.entity.lat } : null, parked: parkedCar ? { key: parkedCar.key, lng: parkedCar.entity.lng, lat: parkedCar.entity.lat } : null, tiles: fetchedTiles.size, tilesQueued: tileQueue.length, restBike: !!restBike, seat: seat ? { ...seat.at } : null, slowWhy: lastWhy, lights: [...lightModels.keys()].length, scenes: [...scenes.values()].map((sc) => ({ id: sc.id, start: sc.start, end: sc.end, lines: sc.lines.length, title: sc.data.title ?? null })), T: motionSkew !== null ? drawnWall + motionSkew - motionDelay : null }), __broadcastMap: map });
       }
       let drawnAt = 0; // the last frame's time
       let drawnWall = Date.now(); // …by the wall clock
@@ -1714,8 +1740,24 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
                 you.root.position.set(sc.data.you.from.x, 0.14, sc.data.you.from.z);
                 you.root.rotation.y = Math.PI;
                 group.add(keeper.root, you.root);
+                const vd = sc.data.vehicle;
+                const vehicle = vd ? sceneProp(vd.prop) : null;
+                if (vd && vehicle) {
+                  vehicle.position.set(vd.x, vd.y, vd.z);
+                  vehicle.rotation.set(0, vd.ry, vd.rz);
+                  vehicle.scale.setScalar(vd.s);
+                  group.add(vehicle);
+                }
                 const entity = layer.add({ object: group, lng: sc.data.origin.lng, lat: sc.data.origin.lat, heading: sc.data.facing, scaleBy: 0.01 });
-                sceneView = { id: sc.id, entity, you, keeper };
+                sceneView = {
+                  id: sc.id,
+                  entity,
+                  you,
+                  keeper,
+                  youAt: { ...sc.data.you.from, face: Math.PI },
+                  keeperAt: { ...sc.data.keeper.at, face: 0 },
+                  vehicle,
+                };
               } catch {
                 sceneView = null; // a model this broadcast can't build: just the caption
               }
@@ -1725,12 +1767,53 @@ export function BroadcastMap({ huntId }: { huntId: string }) {
               const grow = Math.min(1, (T - sc.start) / 700), shrink = sc.end !== null ? Math.min(1, Math.max(0, (sc.end - T) / 500)) : 1;
               const ease = (x: number) => x * x * (3 - 2 * x);
               sceneView.entity.scaleBy = SCENE_SCALE * Math.max(0.01, ease(grow) * ease(shrink));
-              // The hunter walks in from the door to their place
-              const w = Math.min(1, Math.max(0, (T - sc.start - 300) / 1500));
-              const { from, to } = sc.data.you;
-              sceneView.you.root.position.set(from.x + (to.x - from.x) * w, 0.14, from.z + (to.z - from.z) * w);
-              models.animateAvatar(sceneView.you, { mode: "walk", phase: "idle", moving: w > 0 && w < 1 ? 1 : 0, distance: 0.02 }, dt, t / 1000);
-              models.animateAvatar(sceneView.keeper, { mode: "walk", phase: "idle", moving: 0, distance: 0 }, dt, t / 1000);
+              // The people, as their game moved them (the "pose" lines, as of T): the hunter walks in from the door to
+              // their place, the keeper over to the vehicle (or the pump, or the bed) and works on it, and back.
+              let pose: ScenePose | null = null;
+              for (const l of sc.lines) {
+                if (l[0] > T) break;
+                if (l[1] === "pose") pose = parse<ScenePose>(l[2]) ?? pose;
+              }
+              const sv = sceneView;
+              const youTo = pose ? { x: pose.y[0], z: pose.y[1] } : T - sc.start < 300 ? sc.data.you.from : sc.data.you.to;
+              const keeperTo = pose ? { x: pose.k[0], z: pose.k[1] } : sc.data.keeper.at;
+              const riding = (pose?.y[4] ?? null) as "bicycle" | "motorbike" | "car" | null;
+              const walkTo = (av: ReturnType<typeof models.buildAvatar>, at: Placed, to: { x: number; z: number }, speed: number, ride: typeof riding) => {
+                const dx = to.x - at.x, dz = to.z - at.z, d = Math.hypot(dx, dz);
+                const go = Math.min(d, speed * dt);
+                if (d > 0.02) {
+                  at.x += (dx / d) * go;
+                  at.z += (dz / d) * go;
+                  at.face = Math.atan2(dx, dz);
+                }
+                av.root.position.set(at.x, 0.14, at.z);
+                models.animateAvatar(av, { mode: ride ?? "walk", phase: "idle", moving: d > 0.02 ? 0.8 : 0, distance: go }, dt, t / 1000);
+                return d <= 0.02;
+              };
+              const youThere = walkTo(sv.you, sv.youAt, youTo, riding ? 4 : 2.6, riding);
+              const keeperThere = walkTo(sv.keeper, sv.keeperAt, keeperTo, 2.2, null);
+              const youWork = youThere && pose ? pose.y[2] : 0;
+              const keeperWork = keeperThere && pose ? pose.k[2] : 0;
+              // At work: facing the job, bent over it with a spanner (or an arm out); otherwise facing each other.
+              if (youWork) {
+                sv.youAt.face = pose?.y[3] ?? sv.youAt.face;
+                models.poseAtWork(sv.you, youWork, t / 1000);
+              } else if (youThere && !riding) sv.youAt.face = Math.atan2(sv.keeperAt.x - sv.youAt.x, sv.keeperAt.z - sv.youAt.z);
+              if (keeperWork) {
+                sv.keeperAt.face = pose?.k[3] ?? sv.keeperAt.face;
+                models.poseAtWork(sv.keeper, keeperWork, t / 1000);
+              } else if (keeperThere) sv.keeperAt.face = Math.atan2(sv.youAt.x - sv.keeperAt.x, sv.youAt.z - sv.keeperAt.z);
+              sv.you.root.rotation.y = sv.youAt.face;
+              sv.keeper.root.rotation.y = sv.keeperAt.face;
+              // The vehicle: wheeled in, up on the stand or the jack, ridden away
+              if (sv.vehicle && pose?.v) {
+                const [vx, vz, tilt, shown] = pose.v;
+                const kv = Math.min(1, 6 * dt);
+                sv.vehicle.position.x += (vx - sv.vehicle.position.x) * kv;
+                sv.vehicle.position.z += (vz - sv.vehicle.position.z) * kv;
+                sv.vehicle.rotation.z = tilt;
+                sv.vehicle.visible = shown === 1;
+              }
               // The camera looks in (as the game's: a little past the middle of the place, from the street)
               const sz = layer.enlargement() * SCENE_SCALE;
               const z = -sc.data.spots.depth * 0.62, f = sc.data.facing;

@@ -406,6 +406,20 @@ export function animateAvatar(
 }
 
 /**
+ * At work, after animateAvatar this frame: 1 bent over a vehicle with a spanner (a mechanic, a vulcanizer, you with
+ * your jack), 2 an arm out (the nozzle in the tank, the nurse at the bed). The game and the broadcast both pose it so.
+ */
+export function poseAtWork(av: Avatar3D, how: 1 | 2, t: number) {
+  if (how === 1) {
+    av.rig.rotation.x = 0.45;
+    av.armR.rotation.x = -1.4 + Math.sin(t * 9) * 0.45;
+    av.armL.rotation.x = -1.1 + Math.sin(t * 9 + 1.5) * 0.25;
+  } else {
+    av.armR.rotation.x = -1.3;
+  }
+}
+
+/**
  * A name tag that floats above an avatar. Register it with
  * ThreeMapLayer.billboard() so it turns to face the camera every frame.
  */

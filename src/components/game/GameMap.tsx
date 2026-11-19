@@ -3569,12 +3569,16 @@ export function GameMap({
         trackAt: number;
         /** The key's place: the last boards' answers, [server ms, the puzzle's box, the answers] (kept in its data). */
         board: [number, number, unknown][];
+        /** A place's people and vehicle, as last saved ("pose" lines): placeStep. */
+        pose: string;
+        poseFlags: string;
+        poseAt: number;
       };
       let sceneRec: SceneRec | null = null;
       const serverMs = () => Math.round(Date.now() + (serverSkew ?? 0));
       function sceneStarted(data: object) {
         if (!huntId || serverSkew === null) return;
-        const rec: SceneRec = { id: null, queue: [], said: 0, asked: "", meta: null, ended: null, saving: true, world: (data as { kind?: string }).kind === "keyworld", track: [], trackSaving: false, trackAt: 0, board: [] };
+        const rec: SceneRec = { id: null, queue: [], said: 0, asked: "", meta: null, ended: null, saving: true, world: (data as { kind?: string }).kind === "keyworld", track: [], trackSaving: false, trackAt: 0, board: [], pose: "", poseFlags: "", poseAt: -Infinity };
         sceneRec = rec;
         void supabase.rpc("scene_start", { p_ms: serverMs(), p_data: data }).then(({ data: r }) => {
           rec.saving = false;
@@ -6941,6 +6945,9 @@ export function GameMap({
         setInside(o.kind);
         // Saved for the broadcast: how it's built and where everyone stands
         if (sceneModel) {
+          // Your vehicle (or wheel, or jerry can), added beside the model: the broadcast builds and places it too
+          const v = o.extra?.vehicle;
+          const prop = v?.userData.prop as string | undefined;
           sceneStarted({
             kind: o.kind,
             model: sceneModel,
@@ -6949,6 +6956,7 @@ export function GameMap({
             spots: o.spots,
             keeper: { look: o.keeper.look, at: o.keeper.at },
             you: { from: o.you.from, to: o.you.to, lying: !!o.you.lying },
+            ...(v && prop ? { vehicle: { prop, x: v.position.x, y: v.position.y, z: v.position.z, ry: v.rotation.y, rz: v.rotation.z, s: v.scale.x } } : {}),
           });
         }
         sceneModel = null;
@@ -6961,6 +6969,7 @@ export function GameMap({
         const S = models.SHOP_SPOTS;
         const returning = !!job.readyAt;
         const vehicle = models.makeVehicleModel(job.kind);
+        vehicle.userData.prop = job.kind; // (the broadcast builds it too)
         vehicle.rotation.y = Math.PI / 2;
         vehicle.position.set(returning ? S.stand.x : S.outside.x + 1.4, 0.14, returning ? S.stand.z : S.outside.z);
         group.add(vehicle);
@@ -7007,6 +7016,7 @@ export function GameMap({
         // The vehicle at the pump; or, when it stands at the roadside out of fuel, the jerry can the attendant fills.
         const vehicle = offer.stranded ? models.makeJerryCan() : models.makeVehicleModel(offer.kind);
         if (offer.stranded) vehicle.scale.setScalar(2.2);
+        vehicle.userData.prop = offer.stranded ? "jerrycan" : offer.kind;
         vehicle.position.set(S.stand.x, offer.stranded ? 0.5 : 0.1, S.stand.z);
         petrol.group.add(vehicle);
         return openPlace({
@@ -7055,6 +7065,7 @@ export function GameMap({
         const group = built("makeHireStand", models.makeHireStand, offer.kind);
         const vehicle = models.makeVehicleModel(offer.kind);
         vehicle.userData.kind = offer.kind; // what you ride off on
+        vehicle.userData.prop = offer.kind;
         vehicle.rotation.y = Math.PI / 2;
         vehicle.position.set(S.stand.x, 0, S.stand.z);
         group.add(vehicle);
@@ -7371,6 +7382,7 @@ export function GameMap({
         const vehicle = models.makeVehicleModel(offer.kind);
         vehicle.rotation.y = Math.PI / 2; // along the road
         vehicle.position.set(S.stand.x, 0, S.stand.z);
+        vehicle.userData.prop = offer.kind;
         group.add(vehicle);
         return openPlace({
           kind: "flat",
@@ -7382,6 +7394,7 @@ export function GameMap({
           keeper: { look: { ...keeperLook(offer.mechanic), topColour: "#4A5A3A", extra: "cap" }, at: S.keeper },
           you: { from: S.outside, to: S.customer },
           closeScene: () => setFlatOpen(null),
+          extra: { vehicle },
         });
       }
 
@@ -7393,6 +7406,7 @@ export function GameMap({
         bike.rotation.y = Math.PI / 2;
         bike.position.set(S.stand.x, offer.wheel ? 0.5 : 0.1, S.stand.z);
         if (offer.wheel) bike.scale.setScalar(1.4);
+        bike.userData.prop = offer.wheel ? "wheel" : "bicycle";
         v.group.add(bike);
         return openPlace({
           kind: "pump",
@@ -7415,6 +7429,7 @@ export function GameMap({
         const vehicle = models.makeVehicleModel(offer.kind);
         vehicle.rotation.y = Math.PI / 2;
         vehicle.position.set(S.stand.x, 0.14, S.stand.z);
+        vehicle.userData.prop = offer.kind;
         group.add(vehicle);
         const sparkles = models.makeSparkles();
         sparkles.position.set(S.stand.x, 0.14, S.stand.z);
@@ -7527,6 +7542,19 @@ export function GameMap({
           keeperSpot = { x: S.stand.x - 1.4, z: S.stand.z + 0.4 }; // by the bed while you're treated, and as you wake
           working = !!w.treating;
         }
+        // A flat by the road: the one changing it kneels by the wheel (the mechanic, or you with your jack while they
+        // show you how), the vehicle jacked up a little.
+        const flatWork = w.kind === "flat" && m?.type === "pumping" ? { x: S.stand.x - 1, z: S.stand.z - 1.3 } : null;
+        const youWorking = !!flatWork && m?.type === "pumping" && m.by === "you" && w.closing === null;
+        if (flatWork && !youWorking) {
+          keeperSpot = flatWork;
+          working = true;
+        }
+        if (w.kind === "flat" && w.closing === null) {
+          const to = youWorking && flatWork ? flatWork : S.customer;
+          w.you.tx = to.x;
+          w.you.tz = to.z;
+        }
         w.keeper.tx = keeperSpot.x;
         w.keeper.tz = keeperSpot.z;
 
@@ -7567,21 +7595,23 @@ export function GameMap({
           w.you.riding = (w.vehicle.userData.kind as VehicleKind | undefined) ?? "bicycle";
           w.you.face = Math.PI / 2;
         }
-        if (youThere && w.closing === null && w.you.seat === null && !w.you.lying && !w.you.riding) {
+        const toStand = (p: Walker) => Math.atan2(S.stand.x - p.x, S.stand.z - p.z);
+        const youWork: 0 | 1 = youWorking && youThere ? 1 : 0;
+        if (youWork) {
+          w.you.face = toStand(w.you); // at the wheel with your jack
+          models.poseAtWork(w.you.av, 1, t);
+        } else if (youThere && w.closing === null && w.you.seat === null && !w.you.lying && !w.you.riding) {
           w.you.face = Math.atan2(w.keeper.x - w.you.x, w.keeper.z - w.you.z); // talking to the keeper
         }
         if (keeperThere && !working) w.keeper.face = Math.atan2(w.you.x - w.keeper.x, w.you.z - w.keeper.z);
-        if (keeperThere && working) {
-          // Bent over the vehicle with a spanner, or holding the nozzle in the tank.
-          w.keeper.face = Math.PI / 2;
-          if (w.kind === "repair" || w.kind === "pump" || w.kind === "service") {
-            w.keeper.av.rig.rotation.x = 0.45;
-            w.keeper.av.armR.rotation.x = -1.4 + Math.sin(t * 9) * 0.45;
-            w.keeper.av.armL.rotation.x = -1.1 + Math.sin(t * 9 + 1.5) * 0.25;
-          } else {
-            w.keeper.av.armR.rotation.x = -1.3;
-          }
+        // Bent over the vehicle with a spanner, or holding the nozzle in the tank.
+        const keeperWork: 0 | 1 | 2 =
+          !keeperThere || !working ? 0 : w.kind === "repair" || w.kind === "pump" || w.kind === "service" || w.kind === "flat" ? 1 : 2;
+        if (keeperWork) {
+          w.keeper.face = w.kind === "flat" ? toStand(w.keeper) : Math.PI / 2;
+          models.poseAtWork(w.keeper.av, keeperWork, t);
         }
+        if (w.kind === "flat" && w.vehicle) w.vehicle.rotation.z = flatWork ? 0.08 : 0; // up on the jack
         if (w.kind === "meal" && m?.type === "served" && keeperThere && keeperSpot === S.work) w.buka?.plate("full");
         if (w.kind === "service" && w.sparkles) w.sparkles.visible = m?.type === "filled"; // like new
 
@@ -7684,6 +7714,27 @@ export function GameMap({
         };
         bubble("them", w.keeper);
         bubble("you", w.you);
+
+        // For the broadcast: where the keeper and you are going, whether at work and facing which way, and the vehicle,
+        // each time it changes (at most every 0.4 s while it keeps changing: the vehicle wheeled in beside you).
+        const rec = sceneRec;
+        if (rec && !rec.world) {
+          const r = (n: number) => Math.round(n * 100) / 100;
+          const v = w.vehicle;
+          const pose = JSON.stringify({
+            k: [r(w.keeper.tx), r(w.keeper.tz), keeperWork, keeperWork ? r(w.keeper.face) : null],
+            y: [r(w.you.tx), r(w.you.tz), youWork, youWork ? r(w.you.face) : null, w.you.riding],
+            v: v ? [Math.round(v.position.x * 10) / 10, Math.round(v.position.z * 10) / 10, r(v.rotation.z), v.visible ? 1 : 0] : null,
+          });
+          const flags = `${keeperWork}${youWork}`;
+          if (pose !== rec.pose && (flags !== rec.poseFlags || now - rec.poseAt >= 400)) {
+            rec.pose = pose;
+            rec.poseFlags = flags;
+            rec.poseAt = now;
+            rec.queue.push([serverMs(), "pose", pose]);
+            sceneFlush(rec);
+          }
+        }
 
         if (w.closing !== null && leaving >= 1) endPlace();
       }
@@ -11169,6 +11220,7 @@ export function GameMap({
           you={JSON.parse(lookKey) as AvatarLook}
           actions={flatActions}
           world={inside === "flat"}
+          onMoment={onMoment}
           onClose={() => (inside === "flat" ? actions.current?.leaveShop() : setFlatOpen(null))}
         />
       )}

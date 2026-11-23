@@ -5,17 +5,23 @@ description: Write a complete Loota story hunt (one continuous thriller story hi
 
 # New story hunt
 
-The owner creates a hunt in the admin (Owner tools → New story hunt: keys, prize, winners; one hunt a day, made before 9 am on its day, always 9 am–9 pm Lagos) and sends
+The owner creates a hunt in the admin (Owner tools → New story hunt: keys, prize, winners, the day, the hours within 9 am–9 pm Lagos, and where; one hunt a day, up to 30 days ahead) and sends
 you the request on its card: `/new-story-hunt <hunt id> <N> keys`. You write the story here (no paid API: owner,
 31 Oct 2026) and import it. Arguments: $ARGUMENTS
 
-**Worldwide or Nigeria** (owner, 7 Nov 2026: "The hunt creation should have the option of worldwide and Nigeria"):
-the owner picks "Where" when making the hunt, and a Nigeria hunt's request ends in `Nigeria`
-(`/new-story-hunt <id> 5 keys Nigeria`); `story:pick` prints "Where:". In a Nigeria hunt EVERY key, alias and
-decoy is a real place in Nigeria (spread over several cities and states, not all Lagos), and its clues may rest on what
-anyone who grew up in or follows Nigeria knows (its music, football, history, food, landmarks, Nollywood), still never
-street-level local knowledge. The importer checks each place's country and refuses one outside Nigeria. Worldwide hunts
-keep every rule below as written.
+**Worldwide, a country or a state** (owner, 7 Nov 2026; 23 Nov 2026: "picking a state, a country or worldwide"):
+the owner picks the day, the hours and "Where" when making the hunt, and the request ends with the area
+(`/new-story-hunt <id> 5 keys in Nigeria`, `/new-story-hunt <id> 5 keys in Lagos, Nigeria`; older requests say just
+`Nigeria`); `story:pick` prints "Where:".
+- **A country hunt:** EVERY key, alias and decoy is a real place in that country (spread over several cities and
+  regions, not all one city), and its clues may rest on what anyone who grew up in or follows that country knows (its
+  music, football, history, food, landmarks, films), still never street-level local knowledge.
+- **A state hunt** (e.g. Lagos, for the Lagos ads: "Think you know Lagos? Prove it."): EVERY key, alias and decoy is in
+  that state, spread across its different areas (in Lagos: the Island, the Mainland, Lekki, Ikorodu, Badagry, Epe…, not
+  all on one street), and clues may rest on what someone who lives in or knows that state well knows (its landmarks,
+  markets, bridges, history, slang, songs about it), still fair to anyone from there, never one street's gossip.
+- The importer checks each place's country (and, for a state hunt, its state) and refuses one outside the area.
+  Worldwide hunts keep every rule below as written.
 
 Work in `C:\Users\oduol\loota`. The bar is high: the owner rejected stories that were "too easy" or "not the juice", and then one that read "like work, not a thrill", jumped between eras and people ("the story does not tally"), and parked its decoys together. Fun first.
 Read the Bible in full every time, and meet every rule in it.

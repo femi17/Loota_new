@@ -7,6 +7,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { assignmentOf, newWork, nextStep, type Used } from "../../src/lib/story/engine.ts";
+import { areaLabel, huntArea, type HuntArea } from "../../src/lib/hunt-area.ts";
 
 process.loadEnvFile(".env.local");
 const argv = process.argv;
@@ -17,13 +18,13 @@ const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABA
 
 const huntId = opt("hunt", "");
 let keys = Number(opt("keys", "5"));
-// Worldwide, or every key in Nigeria (owner, 7 Nov 2026): the hunt's choice, or --nigeria
-let region = argv.includes("--nigeria") ? "nigeria" : "world";
+// Worldwide, one country or one state (owner, 7 and 23 Nov 2026): the hunt's choice, or --nigeria
+let area: HuntArea = argv.includes("--nigeria") ? { region: "country", country: "NG" } : { region: "world" };
 if (huntId) {
-  const { data: h } = await db.from("hunts").select("title, keys_wanted, story_status, starts_at, region").eq("id", huntId).maybeSingle();
+  const { data: h } = await db.from("hunts").select("title, keys_wanted, story_status, starts_at, region, area_country, area_state").eq("id", huntId).maybeSingle();
   if (!h) throw new Error(`No hunt ${huntId}`);
   keys = h.keys_wanted ?? keys;
-  region = h.region ?? region;
+  area = huntArea(h);
   console.log(`Hunt: ${h.title} (${h.story_status ?? "made by hand"}), starts ${h.starts_at}, ${keys} keys`);
 }
 const { data: rows } = await db.from("story_registry").select("title, genre, theme, locks, channels, places, decoys, characters").order("id");
@@ -36,7 +37,7 @@ mkdirSync("docs/stories/drafts", { recursive: true });
 const file = `docs/stories/drafts/${date}-${huntId ? huntId.slice(0, 8) : "new"}.json`;
 writeFileSync(file, JSON.stringify(work, null, 2));
 
-console.log(`\nGenre: ${work.picked!.genre}\nTheme: ${work.picked!.theme}\nKeys: ${keys}\nWhere: ${region === "nigeria" ? "NIGERIA: every key and every decoy in Nigeria (the importer checks)" : "worldwide: spread the keys around the world"}\n`);
+console.log(`\nGenre: ${work.picked!.genre}\nTheme: ${work.picked!.theme}\nKeys: ${keys}\nWhere: ${area.region === "world" ? "worldwide: spread the keys around the world" : `${areaLabel(area).toUpperCase()}: every key and every decoy ${areaLabel(area)}, spread across it (the importer checks)`}\n`);
 for (const a of assignmentOf(work)) {
   console.log(`Key ${a.n}: lock "${a.lock.id}" (${a.lock.name}: ${a.lock.how})`);
   console.log(`        channel "${a.channel.id}" (${a.channel.name}: ${a.channel.how})${a.channel.game === "to-build" ? " [game feature to build]" : ""}`);

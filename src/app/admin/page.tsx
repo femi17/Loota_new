@@ -15,6 +15,8 @@ import { StoryTrailer } from "./StoryTrailer";
 import { CreateButton } from "./CreateButton";
 import { TrailerScript, type Trailer } from "./TrailerScript";
 import { DeleteHunt } from "./DeleteHunt";
+import { NewHuntFields } from "./NewHuntFields";
+import { COUNTRIES, areaLabel, areaRequest, huntArea } from "@/lib/hunt-area";
 
 export const metadata: Metadata = { title: "Owner tools · Loota" };
 
@@ -29,6 +31,9 @@ export default function AdminPage({ searchParams }: { searchParams: SearchParams
           <span className="text-muted">Owner tools</span>
           <Link href="/admin/penalties" className="text-sm font-bold text-gold">
             Penalties
+          </Link>
+          <Link href="/admin/prizes" className="text-sm font-bold text-gold">
+            Prizes
           </Link>
           <Link href="/lobby" className="ml-auto text-sm font-bold text-gold">
             Back to the lobby
@@ -55,7 +60,9 @@ type HuntRow = {
   /** A story hunt: writing, ready or failed (null: made by hand). */
   story_status: "waiting" | "writing" | "ready" | "failed" | null;
   keys_wanted: number | null;
-  region: "world" | "nigeria";
+  region: "world" | "country" | "state";
+  area_country: string | null;
+  area_state: string | null;
   story_pictures: { n: number; chapter: number; prompt: string; path: string | null }[];
   /** The story's trailer in Storage (bucket story-trailers), shown in the lobby. */
   trailer_path: string | null;
@@ -66,11 +73,13 @@ type HuntRow = {
 
 /** Where a hunt is in its life, read per request (the page is dynamic). */
 function huntStatus(h: { published: boolean; starts_at: string; ends_at: string }) {
-  const now = Date.now();
+  const now = clockNow();
   if (Date.parse(h.ends_at) <= now) return "finished";
   if (!h.published) return "draft";
   return Date.parse(h.starts_at) > now ? "upcoming" : "live";
 }
+/** The time now (read per request: the page is dynamic). */
+const clockNow = () => Date.now();
 const STATUS = { live: "● Live", upcoming: "Coming up", draft: "Draft", finished: "Finished" } as const;
 /** A story picture's public address in Storage. */
 const pictureUrl = (path: string) => `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/story-pictures/${path}`;
@@ -98,7 +107,7 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
 
   const { data } = await createAdminClient()
     .from("hunts")
-    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, region, trailer_path, trailer:story->production->trailer, voices:story->production->voices, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
+    .select("id, title, prize, winners, starts_at, ends_at, published, story_status, keys_wanted, region, area_country, area_state, trailer_path, trailer:story->production->trailer, voices:story->production->voices, hunt_keys(count), hunt_players(count), story_pictures(n, chapter, prompt, path)")
     .order("starts_at", { ascending: false });
   const hunts = (data ?? []) as HuntRow[];
   // Live first, then coming up, drafts, and the finished ones folded away (owner, 31 Oct 2026: tidy the admin).
@@ -109,10 +118,15 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
     { label: "Drafts", hunts: hunts.filter((h) => status(h) === "draft"), open: true },
     { label: "Finished", hunts: hunts.filter((h) => status(h) === "finished"), open: false },
   ];
-  // One hunt a day, 9 am to 9 pm Lagos, made before 9 am on its day (owner, 31 Oct 2026).
-  const day = nextHuntDay();
-  const nextDay = dayName(day);
-  const taken = hunts.find((h) => lagosDay(Date.parse(h.starts_at)) === day);
+  // One hunt a day (owner, 31 Oct 2026), planned up to 30 days ahead (owner, 23 Nov 2026: for daily hunts and ads)
+  const now = clockNow();
+  const firstDay = lagosDay(now);
+  const lastDay = lagosDay(now + 30 * 86_400_000);
+  const taken: Record<string, string> = {};
+  for (const h of hunts) taken[lagosDay(Date.parse(h.starts_at))] = h.title;
+  let defaultDay = nextHuntDay(now);
+  for (let i = 0; i < 31 && taken[defaultDay]; i++) defaultDay = lagosDay(Date.parse(`${defaultDay}T12:00:00+01:00`) + 86_400_000);
+  const planned = Object.keys(taken).filter((d) => d >= firstDay).sort();
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6">
@@ -122,37 +136,29 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
       <section className="flex flex-col gap-4 rounded-3xl bg-ink-2 p-6">
         <div>
           <h1 className="font-display text-2xl font-extrabold">New story hunt</h1>
-          {taken ? (
-            <p className="text-sm text-muted" aria-label="Next hunt made">
-              <b className="text-paper">{nextDay}</b> has its hunt: {taken.title}. One hunt a day: the next day opens at 9 am on {nextDay}.
-            </p>
-          ) : (
-            <p className="text-sm text-muted">
-              The next hunt is on <b className="text-paper">{nextDay}, 9 am to 9 pm</b> (Lagos time). Set the keys and the prize; then give the request on the
-              hunt&apos;s card to Claude Code, which writes the story, its title and description, and hides the keys in it.
+          <p className="text-sm text-muted">
+            One hunt a day, planned up to 30 days ahead, between 9 am and 9 pm (Lagos time). Set the day, the hours, where the keys are, the keys and the prize;
+            then give the request on the hunt&apos;s card to Claude Code, which writes the story, its title and description, and hides the keys in it.
+          </p>
+          {planned.length > 0 && (
+            <p className="text-xs text-muted" aria-label="Days with a hunt">
+              Days with a hunt: {planned.map((d) => dayName(d).replace(/ \w+$/, "")).join(" · ")}
             </p>
           )}
         </div>
-        {!taken && (
         <form action={createStoryHunt} className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+          <NewHuntFields firstDay={firstDay} lastDay={lastDay} defaultDay={defaultDay} taken={taken} countries={COUNTRIES} />
           <Field label="Keys">
             <input name="keys" type="number" min={1} max={30} defaultValue={5} required className={field} />
           </Field>
           <Field label="Prize">
-            <input name="prize" required minLength={2} maxLength={200} className={field} placeholder="₦50,000 voucher" />
+            <input name="prize" required minLength={2} maxLength={200} className={field} placeholder="₦10,000 cash" />
           </Field>
           <Field label="Winners">
-            <input name="winners" type="number" min={1} max={1000} defaultValue={3} required className={field} />
-          </Field>
-          <Field label="Where">
-            <select name="region" defaultValue="world" className={field}>
-              <option value="world">🌍 Worldwide</option>
-              <option value="nigeria">🇳🇬 Nigeria</option>
-            </select>
+            <input name="winners" type="number" min={1} max={1000} defaultValue={1} required className={field} />
           </Field>
           <CreateButton />
         </form>
-        )}
       </section>
 
       {hunts.length === 0 && <p className="text-center text-muted">No hunts yet. Create one above.</p>}
@@ -200,10 +206,10 @@ async function Admin({ searchParams }: { searchParams: SearchParams }) {
                       </div>
                     </div>
                     <p className="text-sm text-muted">
-                      Prize: {h.prize} · {h.winners} winners · {lagos(h.starts_at)} to {lagos(h.ends_at)} · {keys || h.keys_wanted || 0} keys{h.region === "nigeria" ? " in Nigeria" : " worldwide"} · {players} hunters joined
+                      Prize: {h.prize} · {h.winners} winners · {lagos(h.starts_at)} to {lagos(h.ends_at)} · {keys || h.keys_wanted || 0} keys {areaLabel(huntArea(h))} · {players} hunters joined
                     </p>
 
-                    {h.story_status === "waiting" && <StoryWaiting hunt={h.id} keys={h.keys_wanted ?? 5} nigeria={h.region === "nigeria"} />}
+                    {h.story_status === "waiting" && <StoryWaiting hunt={h.id} keys={h.keys_wanted ?? 5} area={areaRequest(huntArea(h))} />}
                     {(h.story_status === "writing" || h.story_status === "failed") && <StoryProgress hunt={h.id} status={h.story_status} />}
                     {h.story_status === "ready" && (
                       <>

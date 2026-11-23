@@ -133,6 +133,25 @@ export function HuntPanel({
     window.addEventListener("loota:all-keys", onAll);
     return () => window.removeEventListener("loota:all-keys", onAll);
   }, []);
+  // The finish email (owner, 23 Nov 2026): sent once the panel shows the hunter finished, whatever brought the last key;
+  // a winner's holds the prize code (src/lib/prize.ts). The server sends it once, so a reload only asks where it went.
+  const finishedHere = !!state?.finishedAt;
+  const [mailed, setMailed] = useState<{ status: string; to?: string; winner?: boolean } | null>(null);
+  useEffect(() => {
+    if (!finishedHere) return;
+    let live = true;
+    void fetch("/api/hunt/finish-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hunt: huntId }) })
+      .then((r) => r.json())
+      .then((r: { status: string; to?: string; winner?: boolean }) => live && setMailed(r))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [finishedHere, huntId]);
+  const prizeLine =
+    mailed?.status === "sent"
+      ? `We've emailed your prize code to ${mailed.to}. Reply to that email to claim your prize.`
+      : "The Loota team will email you about your prize.";
   // The story (owner, 24 Oct 2026: the Masquerade): a beat at the start, after each key, at a relay, at the finish.
   const [story, setStory] = useState<{ lines: StoryLine[]; mood: "sly" | "cross" | "beaten" } | null>(null);
   const [board, setBoard] = useState<BoardRow[] | null>(null);
@@ -769,7 +788,7 @@ export function HuntPanel({
             {done && (
               <p>
                 You collected every key and finished {ordinal(state.place ?? 0)}.
-                {state.place != null && state.place <= state.winners ? " You're a winner! The Loota team will contact you about your prize." : ""}
+                {state.place != null && state.place <= state.winners ? ` You're a winner! ${prizeLine}` : ""}
               </p>
             )}
             {racing && tip && tip.key === state.keysHeld + 1 && (
@@ -891,7 +910,7 @@ export function HuntPanel({
                 <p>
                   You collected every key and finished <b>{ordinal(ending.place)}</b>.
                 </p>
-                {ending.winner && <p className="text-muted">The Loota team will contact you about your prize.</p>}
+                {ending.winner && <p className="text-muted" data-prize-line>{prizeLine}</p>}
                 {storyHunt && (
                   <p className="rounded-xl bg-[#F7EBCF] px-3 py-2 text-sm font-bold text-[#3B2A16]" data-story-unlock>
                     📜 The story&apos;s ending has opened on your scroll.

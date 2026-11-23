@@ -31,6 +31,10 @@ export function SignupForm() {
       <button type="submit" disabled={pending} className={primaryButton}>
         {pending ? "Creating…" : "Create hunter"}
       </button>
+      <p className="text-center text-xs text-muted">
+        By creating a hunter you agree to the <Link href="/terms" className="text-gold">Terms</Link> and the{" "}
+        <Link href="/rules" className="text-gold">Hunt rules</Link>, and our <Link href="/privacy" className="text-gold">Privacy policy</Link> explains how we use your data.
+      </p>
       <p className="text-center text-sm text-muted">
         Already hunting? <Link href="/login" className="text-gold hover:text-gold-hover">Log in</Link>
       </p>

@@ -10,7 +10,8 @@ import { getPlayer } from "@/lib/player";
 import { KEY_SCENE_INFO, isKeyScene, type KeyScene } from "@/game/keyScenes";
 import { sideStreetSpot } from "@/lib/road-cells";
 import { nearestRoad } from "@/lib/nearest-road";
-import { dayName, nextHuntDay } from "./huntDay";
+import { dayName, lagosDay } from "./huntDay";
+import { COUNTRIES, NIGERIA_STATES } from "@/lib/hunt-area";
 
 /** Only the owner may change hunts; everything below uses the secret key after this check. */
 async function owner() {
@@ -92,22 +93,42 @@ async function guessScene(spot: { lng: number; lat: number }): Promise<{ scene: 
 }
 
 /**
- * A new story hunt (owner, 31 Oct 2026: "enter the number of keys, the start time is from 9am to 9pm, it will always
- * be"): the owner gives the keys, the day, how many days, the prize and the winners. The hunt then waits for its story:
- * the owner asks Claude Code ("/new-story-hunt <hunt id>"), which writes it and imports it (npm run story:import), so no
- * paid API is used (owner, 31 Oct 2026). Hunting hours are always 9 am to 9 pm, Lagos time.
+ * A new story hunt (owner, 31 Oct 2026: "enter the number of keys…"; 23 Nov 2026: pick the day, the hours and where:
+ * worldwide, a country or a state). The owner gives the keys, the prize, the winners, the day (today up to 30 days
+ * ahead; one hunt a day), its hours within 9 am – 9 pm Lagos time, and where the keys are. The hunt then waits for its
+ * story: the owner asks Claude Code ("/new-story-hunt <hunt id> …"), which writes it and imports it (npm run
+ * story:import), so no paid API is used (owner, 31 Oct 2026).
  */
 export async function createStoryHunt(form: FormData) {
   const player = await owner();
   const keys = whole(form, "keys");
   if (!(keys >= 1 && keys <= 30)) back("Choose between 1 and 30 keys.", true);
-  // One hunt a day, 9 am to 9 pm Lagos, made before 9 am on its day (owner, 31 Oct 2026).
+  const day = text(form, "day");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < lagosDay(Date.now()) || day > lagosDay(Date.now() + 30 * 86_400_000)) back("Pick a day from today up to 30 days ahead.", true);
+  const hhmm = (v: string, fallback: string) => (/^\d{2}:\d{2}$/.test(v) ? v : fallback);
+  const start = hhmm(text(form, "start"), "09:00");
+  const end = hhmm(text(form, "end"), "21:00");
+  // Hunting hours are 9 am – 9 pm Lagos time (the game rests at night: src/game/hunt.ts)
+  if (start < "09:00" || end > "21:00" || end <= start) back("The hunt must start and end between 9 am and 9 pm (Lagos time), and end after it starts.", true);
+  const startsAt = new Date(`${day}T${start}:00+01:00`);
+  const endsAt = new Date(`${day}T${end}:00+01:00`);
+  if (endsAt.getTime() - startsAt.getTime() < 3_600_000) back("Give the hunt at least an hour.", true);
+  if (startsAt.getTime() < Date.now()) back("That start time has passed: pick a later one.", true);
+  // Where the keys are (owner, 23 Nov 2026: "picking a state, a country or worldwide")
+  const region = text(form, "region");
+  const country = text(form, "country").toUpperCase();
+  const state = text(form, "state");
+  let area: { region: string; area_country: string | null; area_state: string | null } = { region: "world", area_country: null, area_state: null };
+  if (region === "country" || region === "state") {
+    if (!COUNTRIES.some((c) => c.code === country)) back("Pick the country.", true);
+    if (region === "state") {
+      if (country === "NG" ? !NIGERIA_STATES.includes(state) : !(state.length >= 2 && state.length <= 60)) back("Pick the state.", true);
+      area = { region, area_country: country, area_state: state };
+    } else area = { region, area_country: country, area_state: null };
+  }
   const db = createAdminClient();
-  const day = nextHuntDay();
-  const startsAt = new Date(`${day}T09:00:00+01:00`);
-  const endsAt = new Date(startsAt.getTime() + 12 * 3_600_000);
-  const { data: taken } = await db.from("hunts").select("title").gte("starts_at", `${day}T00:00:00+01:00`).lt("starts_at", endsAt.toISOString()).limit(1).maybeSingle();
-  if (taken) back(`${dayName(day)}'s hunt is already made (it's below). One hunt a day: the next day's opens at 9 am on ${dayName(day)}.`);
+  const { data: taken } = await db.from("hunts").select("title").gte("starts_at", `${day}T00:00:00+01:00`).lte("starts_at", `${day}T23:59:59+01:00`).limit(1).maybeSingle();
+  if (taken) back(`${dayName(day)} already has its hunt (${taken.title}). One hunt a day: pick another day.`, true);
   const { error } = await db.from("hunts").insert({
     title: "A new story hunt (waiting for its story)",
     prize: text(form, "prize") || "To be announced",
@@ -120,12 +141,11 @@ export async function createStoryHunt(form: FormData) {
     created_by: player.id,
     keys_wanted: keys,
     story_status: "waiting",
-    // Worldwide, or every key in Nigeria (owner, 7 Nov 2026)
-    region: text(form, "region") === "nigeria" ? "nigeria" : "world",
+    ...area,
   });
   if (error) back(`Couldn't start the hunt: ${error.message}`, true);
   revalidatePath("/admin");
-  back(`Hunt created for ${dayName(day)}, 9 am to 9 pm. Copy the request on its card and give it to Claude Code to write the story.`);
+  back(`Hunt created for ${dayName(day)}, ${start} to ${end}. Copy the request on its card and give it to Claude Code to write the story.`);
 }
 
 /** Carry on writing a story that stopped (out of credit, a lost connection…). */

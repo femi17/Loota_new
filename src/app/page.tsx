@@ -319,6 +319,9 @@ export default function Home() {
         <nav aria-label="Footer" className="flex gap-5">
           <Link href="/login" className="hover:text-paper">Log in</Link>
           <Link href="/signup" className="hover:text-paper">Sign up</Link>
+          <Link href="/rules" className="hover:text-paper">Hunt rules</Link>
+          <Link href="/terms" className="hover:text-paper">Terms</Link>
+          <Link href="/privacy" className="hover:text-paper">Privacy</Link>
         </nav>
         <p>© Loota</p>
       </footer>

@@ -78,8 +78,13 @@ try {
   await page.type('input[aria-label="Type DELETE to confirm"]', "delete");
   await page.screenshot({ path: `${OUT}/admin-2-confirm.png` });
   await Promise.all([page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 }).catch(() => {}), page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Delete for good")?.click())]);
-  await wait(1500);
-  const { data: gone } = await admin.from("hunts").select("id").eq("id", done);
+  // The server action can take several seconds on a busy dev server: wait for the hunt to go, then for the message
+  let gone = [{ id: done }];
+  for (let i = 0; i < 30 && gone.length; i++) {
+    await wait(1000);
+    gone = (await admin.from("hunts").select("id").eq("id", done)).data ?? [];
+  }
+  await page.waitForFunction(() => /deleted/.test(document.body.innerText), { timeout: 15000 }).catch(() => {});
   check("…typed: the finished hunt is gone from the database", (gone ?? []).length === 0);
   check("…and the page says so", /deleted/.test(await page.evaluate(() => document.body.innerText)));
   const { data: still } = await admin.from("hunts").select("id").eq("id", live);

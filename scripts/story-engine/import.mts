@@ -16,6 +16,7 @@ import { blueprintOf, chapterLeaks, checkCodes, checkMapKey, houseProblems, mapC
 import { mapPass } from "../../src/lib/story/map-pass.ts";
 import { finishStoryHunt } from "../../src/lib/story/finish.ts";
 import { renderStory } from "./render.mts";
+import { areaLabel, huntArea, sameState, type HuntArea } from "../../src/lib/hunt-area.ts";
 
 process.loadEnvFile(".env.local");
 const argv = process.argv;
@@ -37,16 +38,17 @@ const warnings: string[] = [];
 const app = createRequire(new URL("../../package.json", import.meta.url));
 const { createClient } = app("@supabase/supabase-js");
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
-// Worldwide, or every key in Nigeria (owner, 7 Nov 2026): the hunt's choice, or --nigeria
-const nigeria = argv.includes("--nigeria") || (opt("hunt", "") ? (await db.from("hunts").select("region").eq("id", opt("hunt", "")).maybeSingle()).data?.region === "nigeria" : false);
-/** The country a spot is in (its two-letter code), from OpenStreetMap; null when it can't tell. */
-async function countryAt(at: Spot) {
+// Worldwide, one country or one state (owner, 7 and 23 Nov 2026): the hunt's choice, or --nigeria
+const huntRow = opt("hunt", "") ? (await db.from("hunts").select("region, area_country, area_state").eq("id", opt("hunt", "")).maybeSingle()).data : null;
+const area: HuntArea = huntRow ? huntArea(huntRow) : argv.includes("--nigeria") ? { region: "country", country: "NG" } : { region: "world" };
+/** The country (its two-letter code) and state a spot is in, from OpenStreetMap; nulls when it can't tell. */
+async function whereIs(at: Spot) {
   try {
     const res = await fetch(`https://photon.komoot.io/reverse?lon=${at.lng}&lat=${at.lat}&lang=en&limit=1`, { headers: { "User-Agent": "Loota/0.1 (story check)" }, signal: AbortSignal.timeout(15_000) });
-    const p = ((await res.json()) as { features: { properties: { countrycode?: string } }[] }).features[0]?.properties;
-    return p?.countrycode?.toUpperCase() ?? null;
+    const p = ((await res.json()) as { features: { properties: { countrycode?: string; state?: string } }[] }).features[0]?.properties;
+    return { country: p?.countrycode?.toUpperCase() ?? null, state: p?.state ?? null };
   } catch {
-    return null;
+    return { country: null, state: null };
   }
 }
 
@@ -130,12 +132,13 @@ for (const key of b.keys) {
   if (!m.found) problems.push(`key ${key.n}: "${key.answer.searchName}" isn't found on the map (change searchName; or, if every lookup fails, the map search is busy: try again later)`);
   for (const a of m.aliases.filter((x) => !x.ok)) warnings.push(`key ${key.n}: alias "${a.alias}" finds ${a.got} (add it to the game's own places, or drop it)`);
   for (const d of m.decoys.filter((x) => !x.ok)) (/only \d+ m/.test(d.why) ? problems : warnings).push(`key ${key.n}: decoy "${d.place}" ${d.why}`);
-  // A Nigeria hunt (owner, 7 Nov 2026: "worldwide and Nigeria"): every key and decoy found in Nigeria
-  if (nigeria) {
+  // A country or state hunt (owner, 7 and 23 Nov 2026): every key and decoy found in it
+  if (area.region !== "world") {
     for (const [what, at] of [[`key ${key.n} (${key.answer.name})`, m.found] as const, ...m.decoys.map((d) => [`key ${key.n}: decoy "${d.place}"`, d.at] as const)]) {
       if (!at) continue;
-      const code = await countryAt(at);
-      if (code && code !== "NG") problems.push(`${what} is in ${code}, not Nigeria (a Nigeria hunt keeps every place in Nigeria)`);
+      const w = await whereIs(at);
+      if (w.country && w.country !== area.country) problems.push(`${what} is in ${w.country}, not ${areaLabel(area)} (this hunt keeps every place ${areaLabel(area)})`);
+      else if (area.region === "state" && w.state && !sameState(w.state, area.state)) problems.push(`${what} is in ${w.state}, not ${areaLabel(area)} (this hunt keeps every place ${areaLabel(area)})`);
     }
   }
 }
@@ -165,7 +168,7 @@ if (hunt) {
   const { data: h, error } = await db.from("hunts").insert({
     title: b.title.slice(0, 80), prize: opt("prize", "To be announced"), description: "", winners: Number(opt("winners", "3")),
     questions_per_trial: 3, seconds_per_question: 12, starts_at: startsAt.toISOString(),
-    ends_at: new Date(startsAt.getTime() + (days - 1) * 86_400_000 + 12 * 3_600_000).toISOString(), keys_wanted: work.keys, story_status: "waiting", region: nigeria ? "nigeria" : "world",
+    ends_at: new Date(startsAt.getTime() + (days - 1) * 86_400_000 + 12 * 3_600_000).toISOString(), keys_wanted: work.keys, story_status: "waiting", region: area.region, area_country: area.region === "world" ? null : area.country, area_state: area.region === "state" ? area.state : null,
   }).select("id").single();
   if (error) throw error;
   hunt = h.id;
